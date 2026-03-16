@@ -9,12 +9,11 @@ setup(
     install_requires=[
         "numpy>=1.21.0",
         "Pillow>=9.0.0",
-        "flask>=2.3.0",
     ],
     entry_points={
         "console_scripts": [
             "captureAIshi=main:main",
-            "captureAIshi-web=web_ui:main",
+            "captureAIshi-gui=gui:main",
         ],
     },
 )
