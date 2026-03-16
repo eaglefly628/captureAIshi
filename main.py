@@ -70,6 +70,22 @@ def create_grabber(args):
         raise ValueError(f"Unknown grabber: {args.grabber}")
 
 
+def create_ui_hider(args):
+    """Create UI hider chain from CLI arguments."""
+    from ui_hiders.chain import build_ui_hider_chain
+
+    # Determine engine from driver type
+    engine_map = {"ue5": "ue5", "unity": "unity"}
+    engine = engine_map.get(args.driver)
+
+    return build_ui_hider_chain(
+        engine=engine,
+        console_host=args.driver_host,
+        console_port=args.driver_port,
+        use_renderdoc=(args.grabber == "renderdoc"),
+    )
+
+
 def run_capture(args):
     """Main capture loop."""
     # Define capture volume
@@ -130,11 +146,19 @@ def run_capture(args):
     # Execute capture
     driver = create_driver(args)
     grabber = create_grabber(args)
+    ui_hider = create_ui_hider(args) if not args.no_hide_ui else None
 
     with driver:
         grabber_ctx = grabber if grabber else None
         if grabber_ctx:
             grabber_ctx.setup()
+
+        # Attempt to hide UI before capture loop
+        ui_method = None
+        if ui_hider:
+            result = ui_hider.hide()
+            ui_method = ui_hider.active_method
+            logging.info(f"UI hide result: {result.method} — {result.message}")
 
         try:
             for i, pose in enumerate(all_poses):
@@ -145,8 +169,18 @@ def run_capture(args):
                     rgb, depth = grabber_ctx.capture_frame()
                     grabber_ctx.save_frame(rgb, depth, output_dir / "frames", i)
         finally:
+            # Restore UI after capture
+            if ui_hider:
+                ui_hider.restore()
             if grabber_ctx:
                 grabber_ctx.teardown()
+
+    # Update poses metadata with UI removal info
+    ui_removed = ui_method is not None and ui_method != "noop"
+    for p in poses_data:
+        p["ui_removed"] = ui_removed
+        p["ui_hide_method"] = ui_method or "none"
+    poses_file.write_text(json.dumps(poses_data, indent=2))
 
     logging.info("Capture complete!")
 
@@ -188,6 +222,12 @@ def main():
     # Grabber
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
+
+    # UI hiding
+    parser.add_argument(
+        "--no-hide-ui", action="store_true",
+        help="Disable automatic UI/HUD hiding",
+    )
 
     # Output
     parser.add_argument("--output-dir", type=str, default="./output")
