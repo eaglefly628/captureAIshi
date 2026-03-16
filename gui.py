@@ -199,7 +199,7 @@ class CaptureApp(tk.Tk):
 
         canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
 
-        pad = dict(padx=12, pady=(0, 2), sticky="ew")
+        pad = dict(padx=12, pady=(0, 2), anchor="w", fill=tk.X)
 
         # ---- Capture Volume ----
         self._section(sidebar, "Capture Volume")
