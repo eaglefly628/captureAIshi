@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>captureAIshi</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --card: #1a1d27;
+  --border: #2a2d3a;
+  --accent: #6c5ce7;
+  --accent-hover: #7c6df7;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --success: #00b894;
+  --danger: #e74c3c;
+  --warn: #fdcb6e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, 'Segoe UI', Roboto, monospace;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* Header */
+header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+header h1 span { color: var(--accent); }
+.status-badge {
+  padding: 4px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.status-idle { background: var(--border); color: var(--text-dim); }
+.status-running { background: #00b89433; color: var(--success); }
+.status-error { background: #e74c3c33; color: var(--danger); }
+
+/* Layout */
+.container {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 0;
+  height: calc(100vh - 57px);
+}
+
+/* Sidebar (config panel) */
+.sidebar {
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 20px;
+}
+.section { margin-bottom: 20px; }
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--accent);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Form elements */
+.field { margin-bottom: 10px; }
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.field input[type="text"],
+.field input[type="number"],
+.field select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.row { display: flex; gap: 8px; }
+.row .field { flex: 1; }
+
+/* Toggle */
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.toggle input { display: none; }
+.toggle .switch {
+  width: 36px; height: 20px;
+  background: var(--border);
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle .switch::after {
+  content: '';
+  position: absolute;
+  width: 16px; height: 16px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  top: 2px; left: 2px;
+  transition: transform 0.2s, background 0.2s;
+}
+.toggle input:checked + .switch {
+  background: var(--accent);
+}
+.toggle input:checked + .switch::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+/* Buttons */
+.actions {
+  display: flex; gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.btn {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled {
+  background: var(--border);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+.btn-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.btn-secondary:hover { background: #353849; }
+
+/* Log panel */
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.log-header {
+  padding: 12px 20px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.log-count {
+  background: var(--border);
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.log-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 20px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.log-body .line {
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-body .line-info { color: var(--text-dim); }
+.log-body .line-warn { color: var(--warn); }
+.log-body .line-error { color: var(--danger); }
+
+/* Conditional fields */
+.hidden { display: none !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #444; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>capture</span>AIshi</h1>
+  <div id="statusBadge" class="status-badge status-idle">Idle</div>
+</header>
+
+<div class="container">
+  <!-- Config sidebar -->
+  <div class="sidebar">
+
+    <div class="section">
+      <div class="section-title">Capture Volume</div>
+      <label style="font-size:12px;color:var(--text-dim);margin-bottom:6px;display:block;">Min (x, y, z)</label>
+      <div class="row">
+        <div class="field"><input type="number" id="vol_min_x" value="-5" step="0.5"></div>
+        <div class="field"><input type="number" id="vol_min_y" value="0" step="0.5"></div>
+        <div class="field"><input type="number" id="vol_min_z" value="-5" step="0.5"></div>
+      </div>
+      <label style="font-size:12px;color:var(--text-dim);margin-bottom:6px;display:block;">Max (x, y, z)</label>
+      <div class="row">
+        <div class="field"><input type="number" id="vol_max_x" value="5" step="0.5"></div>
+        <div class="field"><input type="number" id="vol_max_y" value="3" step="0.5"></div>
+        <div class="field"><input type="number" id="vol_max_z" value="5" step="0.5"></div>
+      </div>
+      <div class="field">
+        <label>Spacing (m)</label>
+        <input type="number" id="spacing" value="2.0" step="0.1" min="0.1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Path</div>
+      <label class="toggle">
+        <input type="checkbox" id="smooth">
+        <div class="switch"></div>
+        Smooth Path
+      </label>
+      <div class="field" id="smoothPointsWrap">
+        <label>Points per Segment</label>
+        <input type="number" id="smooth_points" value="5" min="2" max="50">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Cone Rotation</div>
+      <div class="field">
+        <label>Half Angle (deg, 0 = off)</label>
+        <input type="number" id="cone_angle" value="0" step="1" min="0" max="90">
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Ring Samples</label>
+          <input type="number" id="cone_samples" value="8" min="1">
+        </div>
+        <div class="field">
+          <label>Rings</label>
+          <input type="number" id="cone_rings" value="2" min="1">
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Driver</div>
+      <div class="field">
+        <label>Type</label>
+        <select id="driver">
+          <option value="manual">Manual</option>
+          <option value="ue5">UE5 Console</option>
+          <option value="unity">Unity Socket</option>
+          <option value="cheatengine">Cheat Engine</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Host</label>
+          <input type="text" id="driver_host" value="127.0.0.1">
+        </div>
+        <div class="field">
+          <label>Port</label>
+          <input type="number" id="driver_port" value="9999">
+        </div>
+      </div>
+      <div class="field" id="ceModeWrap">
+        <label>CE Mode</label>
+        <select id="ce_mode">
+          <option value="file">File</option>
+          <option value="socket">Socket</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Grabber</div>
+      <div class="field">
+        <label>Type</label>
+        <select id="grabber">
+          <option value="none">None</option>
+          <option value="renderdoc">RenderDoc</option>
+          <option value="screenshot">Screenshot</option>
+        </select>
+      </div>
+      <div class="field" id="targetExeWrap">
+        <label>Target Executable</label>
+        <input type="text" id="target_exe" placeholder="/path/to/game.exe">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Options</div>
+      <label class="toggle">
+        <input type="checkbox" id="no_hide_ui">
+        <div class="switch"></div>
+        Disable UI Hiding
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="dry_run">
+        <div class="switch"></div>
+        Dry Run (poses only)
+      </label>
+      <div class="field">
+        <label>Output Directory</label>
+        <input type="text" id="output_dir" value="./output">
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btnStart" onclick="startCapture()">Start Capture</button>
+      <button class="btn btn-secondary" onclick="clearLogs()">Clear Log</button>
+    </div>
+  </div>
+
+  <!-- Log panel -->
+  <div class="log-panel">
+    <div class="log-header">
+      <span>Log Output</span>
+      <span class="log-count" id="logCount">0 lines</span>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="line line-info">Ready. Configure parameters and click "Start Capture".</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let polling = null;
+
+function getFormData() {
+  return {
+    volume_min: [pf('vol_min_x'), pf('vol_min_y'), pf('vol_min_z')],
+    volume_max: [pf('vol_max_x'), pf('vol_max_y'), pf('vol_max_z')],
+    spacing: pf('spacing'),
+    smooth: cb('smooth'),
+    smooth_points: pi('smooth_points'),
+    cone_angle: pf('cone_angle'),
+    cone_samples: pi('cone_samples'),
+    cone_rings: pi('cone_rings'),
+    driver: val('driver'),
+    driver_host: val('driver_host'),
+    driver_port: pi('driver_port'),
+    ce_mode: val('ce_mode'),
+    grabber: val('grabber'),
+    target_exe: val('target_exe'),
+    no_hide_ui: cb('no_hide_ui'),
+    output_dir: val('output_dir'),
+    dry_run: cb('dry_run'),
+  };
+}
+
+function pf(id) { return parseFloat(document.getElementById(id).value) || 0; }
+function pi(id) { return parseInt(document.getElementById(id).value) || 0; }
+function val(id) { return document.getElementById(id).value; }
+function cb(id) { return document.getElementById(id).checked; }
+
+async function startCapture() {
+  const btn = document.getElementById('btnStart');
+  btn.disabled = true;
+
+  const data = getFormData();
+  try {
+    const resp = await fetch('/api/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data),
+    });
+    const result = await resp.json();
+    if (!result.ok) {
+      addLog('ERROR: ' + result.error, 'error');
+      btn.disabled = false;
+      return;
+    }
+    setBadge('running');
+    startPolling();
+  } catch (e) {
+    addLog('ERROR: ' + e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+function startPolling() {
+  if (polling) clearInterval(polling);
+  let lastLen = 0;
+  polling = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/status');
+      const st = await resp.json();
+      // Append new logs
+      if (st.logs.length > lastLen) {
+        for (let i = lastLen; i < st.logs.length; i++) {
+          addLog(st.logs[i]);
+        }
+        lastLen = st.logs.length;
+      }
+      if (!st.running) {
+        clearInterval(polling);
+        polling = null;
+        document.getElementById('btnStart').disabled = false;
+        if (st.error) {
+          setBadge('error');
+          addLog('CAPTURE FAILED: ' + st.error, 'error');
+        } else {
+          setBadge('idle');
+          addLog('Capture finished.', 'info');
+        }
+      }
+    } catch (_) {}
+  }, 500);
+}
+
+function addLog(text, forceLevel) {
+  const body = document.getElementById('logBody');
+  const div = document.createElement('div');
+  div.className = 'line';
+  if (forceLevel) {
+    div.classList.add('line-' + forceLevel);
+  } else if (text.includes('[ERROR]')) {
+    div.classList.add('line-error');
+  } else if (text.includes('[WARNING]')) {
+    div.classList.add('line-warn');
+  } else {
+    div.classList.add('line-info');
+  }
+  div.textContent = text;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+  document.getElementById('logCount').textContent = body.children.length + ' lines';
+}
+
+function clearLogs() {
+  const body = document.getElementById('logBody');
+  body.innerHTML = '';
+  document.getElementById('logCount').textContent = '0 lines';
+}
+
+function setBadge(state) {
+  const badge = document.getElementById('statusBadge');
+  badge.className = 'status-badge status-' + state;
+  badge.textContent = state === 'running' ? 'Running' : state === 'error' ? 'Error' : 'Idle';
+}
+
+// Conditional field visibility
+function updateVisibility() {
+  document.getElementById('smoothPointsWrap').classList.toggle('hidden', !cb('smooth'));
+  document.getElementById('ceModeWrap').classList.toggle('hidden', val('driver') !== 'cheatengine');
+  document.getElementById('targetExeWrap').classList.toggle('hidden', val('grabber') !== 'renderdoc');
+}
+
+document.getElementById('smooth').addEventListener('change', updateVisibility);
+document.getElementById('driver').addEventListener('change', updateVisibility);
+document.getElementById('grabber').addEventListener('change', updateVisibility);
+updateVisibility();
+</script>
+</body>
+</html>
