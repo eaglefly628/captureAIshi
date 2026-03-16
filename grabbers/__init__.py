@@ -1,0 +1,1 @@
+"""Frame grabber implementations."""
