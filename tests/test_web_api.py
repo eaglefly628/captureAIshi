@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from web_ui import app, _build_args, _validate_float_list
+from web_ui import app, _build_args, _validate_float_list, _PRESETS
 
 
 @pytest.fixture
@@ -36,6 +36,44 @@ class TestDefaults:
         assert isinstance(data["volume_min"], list)
         assert isinstance(data["smooth"], bool)
         assert isinstance(data["driver_port"], int)
+
+
+# ── GET /api/presets ─────────────────────────────────────────────────────────
+
+class TestPresets:
+
+    def test_returns_preset_list(self, client):
+        """Should return a list of presets."""
+        resp = client.get("/api/presets")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+
+    def test_preset_structure(self, client):
+        """Each preset should have required fields."""
+        resp = client.get("/api/presets")
+        data = resp.get_json()
+        for preset in data:
+            assert "id" in preset
+            assert "name" in preset
+            assert "params" in preset
+            assert "tags" in preset
+            assert isinstance(preset["params"], dict)
+
+    def test_preset_params_are_valid(self, client):
+        """Each preset's params should pass _build_args validation."""
+        resp = client.get("/api/presets")
+        data = resp.get_json()
+        for preset in data:
+            args = _build_args(preset["params"])
+            assert args.driver in ("manual", "ue5", "unity", "cheatengine")
+            assert args.grabber in ("none", "renderdoc", "screenshot")
+
+    def test_preset_ids_unique(self):
+        """Preset IDs should be unique."""
+        ids = [p["id"] for p in _PRESETS]
+        assert len(ids) == len(set(ids))
 
 
 # ── GET /api/status ──────────────────────────────────────────────────────────
