@@ -52,7 +52,13 @@ def start_capture():
             return jsonify({"ok": False, "error": "Capture already running"}), 409
 
     data = request.json
-    args = _build_args(data)
+    if data is None:
+        return jsonify({"ok": False, "error": "Request body must be JSON"}), 400
+
+    try:
+        args = _build_args(data)
+    except (ValueError, TypeError, KeyError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
     with _lock:
         _capture_state["running"] = True
@@ -99,25 +105,54 @@ def defaults():
     })
 
 
+_VALID_DRIVERS = {"manual", "ue5", "unity", "cheatengine"}
+_VALID_GRABBERS = {"none", "renderdoc", "screenshot"}
+_VALID_CE_MODES = {"file", "socket"}
+
+
+def _validate_float_list(val, length: int, name: str) -> list:
+    """Validate that val is a list of floats with the expected length."""
+    if not isinstance(val, list) or len(val) != length:
+        raise ValueError(f"{name} must be a list of {length} numbers")
+    return [float(v) for v in val]
+
+
 def _build_args(data: dict) -> Namespace:
-    """Convert JSON form data to an argparse-like Namespace."""
+    """Convert and validate JSON form data to an argparse-like Namespace."""
+    if not isinstance(data, dict):
+        raise ValueError("Request body must be a JSON object")
+
     args = Namespace()
-    args.volume_min = data.get("volume_min", [-5, 0, -5])
-    args.volume_max = data.get("volume_max", [5, 3, 5])
-    args.spacing = float(data.get("spacing", 2.0))
+    args.volume_min = _validate_float_list(data.get("volume_min", [-5, 0, -5]), 3, "volume_min")
+    args.volume_max = _validate_float_list(data.get("volume_max", [5, 3, 5]), 3, "volume_max")
+    args.spacing = max(0.01, float(data.get("spacing", 2.0)))
     args.smooth = bool(data.get("smooth", False))
-    args.smooth_points = int(data.get("smooth_points", 5))
-    args.cone_angle = float(data.get("cone_angle", 0))
-    args.cone_samples = int(data.get("cone_samples", 8))
-    args.cone_rings = int(data.get("cone_rings", 2))
-    args.driver = data.get("driver", "manual")
-    args.driver_host = data.get("driver_host", "127.0.0.1")
-    args.driver_port = int(data.get("driver_port", 9999))
-    args.ce_mode = data.get("ce_mode", "file")
-    args.grabber = data.get("grabber", "none")
-    args.target_exe = data.get("target_exe") or None
+    args.smooth_points = max(2, int(data.get("smooth_points", 5)))
+    args.cone_angle = max(0.0, min(90.0, float(data.get("cone_angle", 0))))
+    args.cone_samples = max(1, int(data.get("cone_samples", 8)))
+    args.cone_rings = max(1, int(data.get("cone_rings", 2)))
+
+    driver = str(data.get("driver", "manual"))
+    if driver not in _VALID_DRIVERS:
+        raise ValueError(f"Invalid driver: {driver}")
+    args.driver = driver
+
+    args.driver_host = str(data.get("driver_host", "127.0.0.1"))
+    args.driver_port = max(1, min(65535, int(data.get("driver_port", 9999))))
+
+    ce_mode = str(data.get("ce_mode", "file"))
+    if ce_mode not in _VALID_CE_MODES:
+        raise ValueError(f"Invalid ce_mode: {ce_mode}")
+    args.ce_mode = ce_mode
+
+    grabber = str(data.get("grabber", "none"))
+    if grabber not in _VALID_GRABBERS:
+        raise ValueError(f"Invalid grabber: {grabber}")
+    args.grabber = grabber
+
+    args.target_exe = str(data.get("target_exe", "")) or None
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
-    args.output_dir = Path(data.get("output_dir", "./output"))
+    args.output_dir = Path(str(data.get("output_dir", "./output")))
     args.dry_run = bool(data.get("dry_run", False))
     return args
 

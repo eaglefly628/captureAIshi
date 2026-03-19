@@ -81,7 +81,7 @@ class ScreenshotGrabber(FrameGrabber):
                 monitor = sct.monitors[1]  # Primary monitor
                 screenshot = sct.grab(monitor)
                 arr = np.array(screenshot)
-                return arr[:, :, :3]  # BGR to RGB handled by caller if needed
+                return arr[:, :, 2::-1]  # BGRA -> RGB (reverse BGR channels)
         except ImportError:
             logger.error("Neither PIL.ImageGrab nor mss available for screenshots")
 

@@ -9,6 +9,8 @@ setup(
     install_requires=[
         "numpy>=1.21.0",
         "Pillow>=9.0.0",
+        "flask>=2.0.0",
+        "mss>=6.0.0",
     ],
     entry_points={
         "console_scripts": [

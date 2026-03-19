@@ -32,16 +32,28 @@ def pipeline_to_ue5_rotation(rot: np.ndarray) -> np.ndarray:
     """Convert rotation (pitch, yaw, roll) from Pipeline to UE5 conventions.
 
     Pipeline: pitch=X-axis rotation, yaw=Y-axis rotation, roll=Z-axis.
-    UE5: pitch=Y-axis, yaw=Z-axis, roll=X-axis. Values in degrees.
+              Right-hand, Y-up, looking along -Z.
+    UE5: pitch=Y-axis (right), yaw=Z-axis (up), roll=X-axis (forward).
+         Left-hand, Z-up. Values in degrees.
+
+    Axis remapping (matching position conversion):
+      Pipeline X-rot (pitch) → UE5 roll  (X-axis in UE5 = forward)
+      Pipeline Y-rot (yaw)   → UE5 pitch (Y-axis in UE5 = right)
+      Pipeline Z-rot (roll)  → UE5 yaw   (Z-axis in UE5 = up), sign flipped for handedness
     """
     pitch, yaw, roll = rot
-    # UE5 uses (Pitch, Yaw, Roll) but with different axis mapping
-    return np.array([pitch, yaw, roll])
+    ue5_pitch = yaw
+    ue5_yaw = -roll
+    ue5_roll = pitch
+    return np.array([ue5_pitch, ue5_yaw, ue5_roll])
 
 
 def ue5_to_pipeline_rotation(rot: np.ndarray) -> np.ndarray:
-    """Convert rotation from UE5 to Pipeline conventions."""
-    pitch, yaw, roll = rot
+    """Convert rotation from UE5 to Pipeline conventions (inverse of above)."""
+    ue5_pitch, ue5_yaw, ue5_roll = rot
+    pitch = ue5_roll
+    yaw = ue5_pitch
+    roll = -ue5_yaw
     return np.array([pitch, yaw, roll])
 
 

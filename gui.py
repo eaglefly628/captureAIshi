@@ -608,6 +608,8 @@ class CaptureApp(tk.Tk):
         root_logger.setLevel(logging.DEBUG)
         root_logger.addHandler(self._log_handler)
 
+        args._stop_event = self._stop_event
+
         def _run():
             try:
                 from main import run_capture

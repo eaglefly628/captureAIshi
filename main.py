@@ -21,6 +21,16 @@ from core.cone_rotation import generate_cone_poses
 from core.tangent_smoothing import smooth_waypoints
 
 
+def _find_hider_in_chain(hider, cls):
+    """Walk a UIHider chain and return the first instance of cls, or None."""
+    current = hider
+    while current is not None:
+        if isinstance(current, cls):
+            return current
+        current = getattr(current, '_fallback', None)
+    return None
+
+
 def create_driver(args):
     """Create camera driver from CLI arguments."""
     if args.driver == "manual":
@@ -55,9 +65,12 @@ def create_grabber(args):
         return None
     if args.grabber == "renderdoc":
         from grabbers.renderdoc_grabber import RenderDocGrabber
+        # Get the RenderDoc UI hider if available
+        rdoc_ui_hider = getattr(args, '_rdoc_ui_hider', None)
         return RenderDocGrabber(
             capture_dir=str(args.output_dir / "captures"),
             target_exe=args.target_exe,
+            ui_hider=rdoc_ui_hider,
         )
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber
@@ -145,15 +158,25 @@ def run_capture(args):
 
     # Execute capture
     driver = create_driver(args)
-    grabber = create_grabber(args)
+
+    # For RenderDoc grabber, extract the RenderDoc UI hider from the chain
+    # so it can be integrated into per-frame replay instead of pre-loop
     ui_hider = create_ui_hider(args) if not args.no_hide_ui else None
+    if ui_hider and args.grabber == "renderdoc":
+        from ui_hiders.renderdoc_hider import RenderDocUIHider
+        rdoc_hider = _find_hider_in_chain(ui_hider, RenderDocUIHider)
+        if rdoc_hider:
+            args._rdoc_ui_hider = rdoc_hider
+
+    grabber = create_grabber(args)
+    stop_event = getattr(args, '_stop_event', None)
 
     with driver:
         grabber_ctx = grabber if grabber else None
         if grabber_ctx:
             grabber_ctx.setup()
 
-        # Attempt to hide UI before capture loop
+        # Attempt to hide UI before capture loop (console-based hiding)
         ui_method = None
         if ui_hider:
             result = ui_hider.hide()
@@ -162,6 +185,11 @@ def run_capture(args):
 
         try:
             for i, pose in enumerate(all_poses):
+                # Check stop event (from GUI or external signal)
+                if stop_event is not None and stop_event.is_set():
+                    logging.info("Capture stopped by user.")
+                    break
+
                 logging.info(f"Capturing pose {i + 1}/{len(all_poses)}")
                 driver.set_pose(pose)
 

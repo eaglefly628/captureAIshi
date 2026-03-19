@@ -41,23 +41,53 @@ class ConsoleUIHider(UIHider):
         self.host = host
         self.port = port
         self.timeout = timeout
+        self._sock: socket.socket | None = None
 
     def name(self) -> str:
         return f"console_{self.engine}"
 
-    def _send_commands(self, commands: list) -> bool:
-        """Send console commands over TCP. Returns True on success."""
+    def _get_socket(self) -> socket.socket | None:
+        """Get or create a persistent TCP connection."""
+        if self._sock is not None:
+            try:
+                # Check if socket is still alive
+                self._sock.sendall(b"")
+                return self._sock
+            except OSError:
+                self._close_socket()
+
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             sock.connect((self.host, self.port))
+            self._sock = sock
+            return self._sock
+        except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            logger.debug(f"Console connection failed: {e}")
+            return None
+
+    def _close_socket(self):
+        """Close the persistent socket."""
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+
+    def _send_commands(self, commands: list) -> bool:
+        """Send console commands over TCP. Returns True on success."""
+        sock = self._get_socket()
+        if sock is None:
+            return False
+        try:
             for cmd in commands:
                 sock.sendall((cmd + "\n").encode("utf-8"))
                 time.sleep(0.05)
-            sock.close()
             return True
         except (ConnectionRefusedError, socket.timeout, OSError) as e:
             logger.debug(f"Console command failed: {e}")
+            self._close_socket()
             return False
 
     def _try_hide(self) -> UIHideResult:
@@ -87,7 +117,9 @@ class ConsoleUIHider(UIHider):
         elif self.engine == "unity":
             commands = [UNITY_RESTORE_COMMAND]
         else:
+            self._close_socket()
             return UIHideResult(success=False, method=self.name())
 
         ok = self._send_commands(commands)
+        self._close_socket()
         return UIHideResult(success=ok, method=self.name())
