@@ -9,3 +9,11 @@ captures/
 screenshots/
 ce_camera_pose.json
 *.rdc
+
+# Native bridge build artifacts
+capture_bridge*.so
+capture_bridge*.pyd
+*.o
+*.obj
+CMakeCache.txt
+CMakeFiles/
