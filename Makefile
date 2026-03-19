@@ -1,10 +1,10 @@
-.PHONY: test test-fast test-verbose test-integration test-coverage lint build clean help
+.PHONY: test test-fast test-verbose test-integration test-core test-drivers test-grabbers test-hiders test-web build clean help dry-run
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# ── Testing ──────────────────────────────────────────────────────────────────
+# ── Testing (zero extra deps — only pytest + stdlib) ────────────────────────
 
 test:  ## Run all tests
 	python -m pytest tests/ -v
@@ -18,16 +18,9 @@ test-verbose:  ## Run all tests with full output
 test-integration:  ## Run integration tests only
 	python -m pytest tests/test_integration.py -v
 
-test-coverage:  ## Run tests with coverage report
-	python -m pytest tests/ --cov=. --cov-report=term-missing --cov-report=html:htmlcov \
-		--cov-config=.coveragerc
-
-test-watch:  ## Re-run tests on file changes (requires pytest-watch)
-	ptw tests/ -- -v --tb=short
-
 # ── Specific test modules ────────────────────────────────────────────────────
 
-test-core:  ## Test core modules (path, cone, smoothing, waypoint)
+test-core:  ## Test core modules (path, cone, smoothing, coords)
 	python -m pytest tests/test_snake_path.py tests/test_cone_rotation.py \
 		tests/test_tangent_smoothing.py tests/test_coords.py -v
 
@@ -52,18 +45,9 @@ build-from-source:  ## Build bridge + RenderDoc from source
 	./renderdoc_ext/build.sh --from-source
 
 clean:  ## Clean build artifacts
-	rm -rf build/ dist/ *.egg-info htmlcov/ .pytest_cache/
+	rm -rf build/ dist/ *.egg-info .pytest_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
-
-# ── Dev ──────────────────────────────────────────────────────────────────────
-
-install:  ## Install dependencies
-	pip install -e ".[dev]"
-
-install-dev:  ## Install dev + test dependencies
-	pip install -e .
-	pip install pytest pytest-cov pybind11
 
 dry-run:  ## Quick dry-run test
 	python main.py --dry-run --volume-min -2 0 -2 --volume-max 2 1 2 --spacing 2 -v
