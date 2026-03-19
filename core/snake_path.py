@@ -4,10 +4,13 @@ Generates a serpentine (snake) pattern of waypoints that systematically
 covers a 3D volume, similar to how SnakeCaptureVolume worked in UE5.
 """
 
+import logging
 from typing import List
 import numpy as np
 
 from core.waypoint import BoundingVolume, Waypoint
+
+logger = logging.getLogger(__name__)
 
 
 def generate_snake_path(
@@ -44,6 +47,14 @@ def generate_snake_path(
     primary_vals = axis_range(primary)
     secondary_vals = axis_range(secondary)
     tertiary_vals = axis_range(tertiary)
+
+    logger.debug(
+        f"[SNAKE] axis_order={axis_order}, "
+        f"primary({axis_order[0]})={len(primary_vals)} steps, "
+        f"secondary({axis_order[1]})={len(secondary_vals)} steps, "
+        f"tertiary({axis_order[2]})={len(tertiary_vals)} steps, "
+        f"expected_total={len(primary_vals) * len(secondary_vals) * len(tertiary_vals)}"
+    )
 
     waypoints: List[Waypoint] = []
     reverse_primary = False

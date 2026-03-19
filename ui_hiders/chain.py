@@ -59,5 +59,7 @@ def build_ui_hider_chain(
 
     names = [p.name() for p in chain_parts]
     logger.info(f"UI hider chain: {' → '.join(names)}")
+    logger.debug(f"[UI_CHAIN] engine={engine}, console={console_host}:{console_port}, "
+                 f"renderdoc={use_renderdoc}, chain_length={len(chain_parts)}")
 
     return head

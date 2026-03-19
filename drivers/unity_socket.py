@@ -73,6 +73,15 @@ class UnitySocketDriver(CameraDriver):
         unity_pos = pipeline_to_unity_position(pose.position)
         unity_rot = pipeline_to_unity_rotation(pose.rotation)
 
+        logger.debug(
+            f"[UNITY] Pipeline pos=({pose.position[0]:.2f}, {pose.position[1]:.2f}, {pose.position[2]:.2f}) "
+            f"→ Unity pos=({unity_pos[0]:.2f}, {unity_pos[1]:.2f}, {unity_pos[2]:.2f})"
+        )
+        logger.debug(
+            f"[UNITY] Pipeline rot=({pose.rotation[0]:.1f}, {pose.rotation[1]:.1f}, {pose.rotation[2]:.1f}) "
+            f"→ Unity rot=({unity_rot[0]:.1f}, {unity_rot[1]:.1f}, {unity_rot[2]:.1f})"
+        )
+
         self._send_json({
             "cmd": "set_pose",
             "x": float(unity_pos[0]),

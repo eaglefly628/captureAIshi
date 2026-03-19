@@ -110,15 +110,18 @@ class RenderDocUIHider(UIHider):
 
     def _try_hide(self) -> UIHideResult:
         if self._controller is None or self._rd_module is None:
+            logger.debug("[RDOC_HIDE] No replay context — skipping UI draw call filtering")
             return UIHideResult(
                 success=False, method=self.name(),
                 message="No RenderDoc replay context set. "
                         "Call set_replay_context() first.",
             )
 
+        logger.debug("[RDOC_HIDE] Classifying UI draw calls...")
         self._excluded_events = classify_ui_draw_calls(
             self._controller, self._rd_module,
         )
+        logger.debug(f"[RDOC_HIDE] Found {len(self._excluded_events)} UI draw calls to exclude")
 
         if not self._excluded_events:
             return UIHideResult(

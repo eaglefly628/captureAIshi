@@ -60,6 +60,15 @@ class UE5ConsoleDriver(CameraDriver):
         ue_pos = pipeline_to_ue5_position(pose.position)
         ue_rot = pipeline_to_ue5_rotation(pose.rotation)
 
+        logger.debug(
+            f"[UE5] Pipeline pos=({pose.position[0]:.2f}, {pose.position[1]:.2f}, {pose.position[2]:.2f}) "
+            f"→ UE5 pos=({ue_pos[0]:.2f}, {ue_pos[1]:.2f}, {ue_pos[2]:.2f})"
+        )
+        logger.debug(
+            f"[UE5] Pipeline rot=({pose.rotation[0]:.1f}, {pose.rotation[1]:.1f}, {pose.rotation[2]:.1f}) "
+            f"→ UE5 rot=({ue_rot[0]:.1f}, {ue_rot[1]:.1f}, {ue_rot[2]:.1f})"
+        )
+
         self.send_command(
             f"SetViewLocation {ue_pos[0]:.2f} {ue_pos[1]:.2f} {ue_pos[2]:.2f}"
         )

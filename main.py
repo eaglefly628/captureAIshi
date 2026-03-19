@@ -33,6 +33,7 @@ def _find_hider_in_chain(hider, cls):
 
 def create_driver(args):
     """Create camera driver from CLI arguments."""
+    logging.debug(f"[INIT] Creating driver: type={args.driver}, host={args.driver_host}, port={args.driver_port}")
     if args.driver == "manual":
         from drivers.manual import ManualDriver
         return ManualDriver(auto_confirm=args.dry_run)
@@ -50,6 +51,7 @@ def create_driver(args):
         )
     elif args.driver == "cheatengine":
         from drivers.cheat_engine import CheatEngineDriver
+        logging.debug(f"[INIT] CheatEngine mode={args.ce_mode}")
         return CheatEngineDriver(
             mode=args.ce_mode,
             host=args.driver_host,
@@ -61,12 +63,16 @@ def create_driver(args):
 
 def create_grabber(args):
     """Create frame grabber from CLI arguments."""
+    logging.debug(f"[INIT] Creating grabber: type={args.grabber}, dry_run={args.dry_run}")
     if args.dry_run:
+        logging.debug("[INIT] Dry run — skipping grabber creation")
         return None
     if args.grabber == "renderdoc":
         from grabbers.renderdoc_grabber import RenderDocGrabber
         # Get the RenderDoc UI hider if available
         rdoc_ui_hider = getattr(args, '_rdoc_ui_hider', None)
+        logging.debug(f"[INIT] RenderDoc grabber: capture_dir={args.output_dir / 'captures'}, "
+                       f"target_exe={args.target_exe}, ui_hider={'yes' if rdoc_ui_hider else 'no'}")
         return RenderDocGrabber(
             capture_dir=str(args.output_dir / "captures"),
             target_exe=args.target_exe,
@@ -74,10 +80,12 @@ def create_grabber(args):
         )
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber
+        logging.debug(f"[INIT] Screenshot grabber: dir={args.output_dir / 'screenshots'}")
         return ScreenshotGrabber(
             screenshot_dir=str(args.output_dir / "screenshots"),
         )
     elif args.grabber == "none":
+        logging.debug("[INIT] No grabber selected")
         return None
     else:
         raise ValueError(f"Unknown grabber: {args.grabber}")
@@ -90,6 +98,7 @@ def create_ui_hider(args):
     # Determine engine from driver type
     engine_map = {"ue5": "ue5", "unity": "unity"}
     engine = engine_map.get(args.driver)
+    logging.debug(f"[INIT] Building UI hider chain: engine={engine}, use_renderdoc={args.grabber == 'renderdoc'}")
 
     return build_ui_hider_chain(
         engine=engine,
@@ -101,6 +110,14 @@ def create_ui_hider(args):
 
 def run_capture(args):
     """Main capture loop."""
+    import time as _time
+
+    t_start = _time.monotonic()
+
+    logging.debug(f"[CONFIG] driver={args.driver}, grabber={args.grabber}, "
+                  f"smooth={args.smooth}, cone_angle={args.cone_angle}, "
+                  f"dry_run={args.dry_run}, output_dir={args.output_dir}")
+
     # Define capture volume
     volume = BoundingVolume(
         min_corner=np.array(args.volume_min),
@@ -112,19 +129,34 @@ def run_capture(args):
         f"(size: {volume.size})"
     )
 
-    # Generate waypoints
+    # ── Step 1: Generate waypoints ──
+    t0 = _time.monotonic()
     waypoints = generate_snake_path(volume, spacing=args.spacing)
-    logging.info(f"Generated {len(waypoints)} raw waypoints")
+    elapsed = _time.monotonic() - t0
+    logging.info(f"Generated {len(waypoints)} raw waypoints (spacing={args.spacing}m)")
+    logging.debug(f"[PERF] Snake path generation took {elapsed:.3f}s")
+    if waypoints:
+        logging.debug(f"[PATH] First waypoint: {waypoints[0].position}, "
+                       f"Last waypoint: {waypoints[-1].position}")
 
-    # Smooth path
+    # ── Step 2: Smooth path ──
     if args.smooth and len(waypoints) >= 2:
+        count_before = len(waypoints)
+        t0 = _time.monotonic()
         waypoints = smooth_waypoints(
             waypoints,
             points_per_segment=args.smooth_points,
         )
-        logging.info(f"Smoothed to {len(waypoints)} waypoints")
+        elapsed = _time.monotonic() - t0
+        logging.info(f"Smoothed {count_before} → {len(waypoints)} waypoints "
+                     f"(points_per_segment={args.smooth_points})")
+        logging.debug(f"[PERF] Path smoothing took {elapsed:.3f}s")
+    else:
+        logging.debug(f"[PATH] Smoothing skipped (smooth={args.smooth}, "
+                       f"waypoint_count={len(waypoints)})")
 
-    # Generate all camera poses (with cone rotation)
+    # ── Step 3: Generate all camera poses (with cone rotation) ──
+    t0 = _time.monotonic()
     all_poses = []
     for wp in waypoints:
         if args.cone_angle > 0:
@@ -141,22 +173,32 @@ def run_capture(args):
                 rotation=np.array([0.0, 0.0, 0.0]),
                 fov=wp.fov,
             ))
+    elapsed = _time.monotonic() - t0
 
-    logging.info(f"Total camera poses: {len(all_poses)}")
+    if args.cone_angle > 0:
+        poses_per_wp = 1 + args.cone_samples * args.cone_rings
+        logging.info(f"Total camera poses: {len(all_poses)} "
+                     f"({len(waypoints)} waypoints x {poses_per_wp} cone poses)")
+    else:
+        logging.info(f"Total camera poses: {len(all_poses)} (no cone rotation)")
+    logging.debug(f"[PERF] Pose generation took {elapsed:.3f}s")
 
-    # Save poses metadata
+    # ── Step 4: Save poses metadata ──
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     poses_data = [p.to_dict() for p in all_poses]
     poses_file = output_dir / "poses.json"
     poses_file.write_text(json.dumps(poses_data, indent=2))
     logging.info(f"Poses saved to {poses_file}")
+    logging.debug(f"[IO] poses.json size: {poses_file.stat().st_size} bytes")
 
     if args.dry_run:
-        logging.info("Dry run complete. No frames captured.")
+        elapsed_total = _time.monotonic() - t_start
+        logging.info(f"Dry run complete. No frames captured. (total time: {elapsed_total:.2f}s)")
         return
 
-    # Execute capture
+    # ── Step 5: Initialize driver, UI hider, grabber ──
+    logging.info("Initializing capture components...")
     driver = create_driver(args)
 
     # For RenderDoc grabber, extract the RenderDoc UI hider from the chain
@@ -167,14 +209,19 @@ def run_capture(args):
         rdoc_hider = _find_hider_in_chain(ui_hider, RenderDocUIHider)
         if rdoc_hider:
             args._rdoc_ui_hider = rdoc_hider
+            logging.debug("[INIT] RenderDoc UI hider attached to grabber for per-frame filtering")
 
     grabber = create_grabber(args)
     stop_event = getattr(args, '_stop_event', None)
 
+    # ── Step 6: Execute capture loop ──
+    logging.info(f"Starting capture loop: {len(all_poses)} poses")
     with driver:
+        logging.debug("[DRIVER] Driver connected")
         grabber_ctx = grabber if grabber else None
         if grabber_ctx:
             grabber_ctx.setup()
+            logging.debug("[GRABBER] Grabber setup complete")
 
         # Attempt to hide UI before capture loop (console-based hiding)
         ui_method = None
@@ -182,7 +229,12 @@ def run_capture(args):
             result = ui_hider.hide()
             ui_method = ui_hider.active_method
             logging.info(f"UI hide result: {result.method} — {result.message}")
+        else:
+            logging.debug("[UI] UI hiding disabled (no_hide_ui={})".format(args.no_hide_ui))
 
+        frames_ok = 0
+        frames_no_rgb = 0
+        frames_no_depth = 0
         try:
             for i, pose in enumerate(all_poses):
                 # Check stop event (from GUI or external signal)
@@ -191,17 +243,55 @@ def run_capture(args):
                     break
 
                 logging.info(f"Capturing pose {i + 1}/{len(all_poses)}")
+                logging.debug(
+                    f"[POSE {i+1}] pos=({pose.position[0]:.2f}, {pose.position[1]:.2f}, {pose.position[2]:.2f}) "
+                    f"rot=({pose.rotation[0]:.1f}, {pose.rotation[1]:.1f}, {pose.rotation[2]:.1f}) "
+                    f"fov={pose.fov:.0f}"
+                )
+
+                t_pose = _time.monotonic()
                 driver.set_pose(pose)
+                driver_elapsed = _time.monotonic() - t_pose
+                logging.debug(f"[POSE {i+1}] Driver set_pose took {driver_elapsed:.3f}s")
 
                 if grabber_ctx:
+                    t_grab = _time.monotonic()
                     rgb, depth = grabber_ctx.capture_frame()
+                    grab_elapsed = _time.monotonic() - t_grab
+
+                    rgb_info = f"{rgb.shape[1]}x{rgb.shape[0]}" if rgb is not None else "None"
+                    depth_info = f"{depth.shape[1]}x{depth.shape[0]}" if depth is not None else "None"
+                    logging.debug(
+                        f"[POSE {i+1}] Frame captured in {grab_elapsed:.3f}s — "
+                        f"rgb={rgb_info}, depth={depth_info}"
+                    )
+
+                    if rgb is None:
+                        frames_no_rgb += 1
+                    if depth is None:
+                        frames_no_depth += 1
+                    if rgb is not None:
+                        frames_ok += 1
+
+                    t_save = _time.monotonic()
                     grabber_ctx.save_frame(rgb, depth, output_dir / "frames", i)
+                    save_elapsed = _time.monotonic() - t_save
+                    logging.debug(f"[POSE {i+1}] Frame saved in {save_elapsed:.3f}s")
+
+                # Progress logging every 10%
+                if len(all_poses) >= 10 and (i + 1) % max(1, len(all_poses) // 10) == 0:
+                    pct = (i + 1) / len(all_poses) * 100
+                    logging.info(f"Progress: {pct:.0f}% ({i + 1}/{len(all_poses)})")
+
         finally:
             # Restore UI after capture
             if ui_hider:
+                logging.debug("[UI] Restoring UI...")
                 ui_hider.restore()
             if grabber_ctx:
+                logging.debug("[GRABBER] Tearing down grabber...")
                 grabber_ctx.teardown()
+        logging.debug("[DRIVER] Driver disconnecting")
 
     # Update poses metadata with UI removal info
     ui_removed = ui_method is not None and ui_method != "noop"
@@ -209,8 +299,13 @@ def run_capture(args):
         p["ui_removed"] = ui_removed
         p["ui_hide_method"] = ui_method or "none"
     poses_file.write_text(json.dumps(poses_data, indent=2))
+    logging.debug(f"[IO] Updated poses.json with ui_removed={ui_removed}, method={ui_method or 'none'}")
 
-    logging.info("Capture complete!")
+    elapsed_total = _time.monotonic() - t_start
+    logging.info(
+        f"Capture complete! {len(all_poses)} poses in {elapsed_total:.1f}s "
+        f"(rgb_ok={frames_ok}, no_rgb={frames_no_rgb}, no_depth={frames_no_depth})"
+    )
 
 
 def main():

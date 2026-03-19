@@ -89,6 +89,12 @@ class CheatEngineDriver(CameraDriver):
             pos = pipeline_to_unity_position(pos)
             rot = pipeline_to_unity_rotation(rot)
 
+        logger.debug(
+            f"[CE] mode={self.mode}, coord_system={self.coord_system}, "
+            f"pos=({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}), "
+            f"rot=({rot[0]:.1f}, {rot[1]:.1f}, {rot[2]:.1f}), fov={pose.fov:.0f}"
+        )
+
         if self.mode == "socket":
             self._send_lua(pos, rot, pose.fov)
         elif self.mode == "file":

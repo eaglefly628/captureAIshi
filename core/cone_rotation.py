@@ -5,10 +5,13 @@ a cone around a base look direction. This provides multi-angle coverage
 for 3D reconstruction or NeRF-style capture.
 """
 
+import logging
 from typing import List
 import numpy as np
 
 from core.waypoint import CameraPose, Waypoint
+
+logger = logging.getLogger(__name__)
 
 
 def generate_cone_poses(
@@ -49,6 +52,13 @@ def generate_cone_poses(
     right /= np.linalg.norm(right)
     up = np.cross(right, base_direction)
     up /= np.linalg.norm(up)
+
+    expected_count = (1 if include_center else 0) + num_ring_samples * num_rings
+    logger.debug(
+        f"[CONE] half_angle={half_angle_deg}°, rings={num_rings}, "
+        f"samples/ring={num_ring_samples}, include_center={include_center}, "
+        f"expected_poses={expected_count}, base_dir={base_direction}"
+    )
 
     poses: List[CameraPose] = []
 

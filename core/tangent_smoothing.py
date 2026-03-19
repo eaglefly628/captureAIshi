@@ -4,10 +4,13 @@ Smoothly interpolates between waypoints using Catmull-Rom splines,
 producing a continuous camera path with smooth tangents.
 """
 
+import logging
 from typing import List
 import numpy as np
 
 from core.waypoint import Waypoint
+
+logger = logging.getLogger(__name__)
 
 
 def catmull_rom_segment(
@@ -67,10 +70,16 @@ def smooth_waypoints(
         Smoothed list of waypoints with interpolated positions.
     """
     if len(waypoints) < 2:
+        logger.debug("[SMOOTH] Fewer than 2 waypoints — skipping smoothing")
         return list(waypoints)
 
     positions = np.array([w.position for w in waypoints])
     n = len(positions)
+    expected_out = (n - 1) * points_per_segment + 1
+    logger.debug(
+        f"[SMOOTH] input={n} waypoints, points_per_segment={points_per_segment}, "
+        f"alpha={alpha}, expected_output~={expected_out}"
+    )
 
     # Extend endpoints for the spline boundary condition
     p_ext = np.zeros((n + 2, 3))

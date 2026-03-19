@@ -1,10 +1,13 @@
 """Abstract base class for frame grabbers."""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 from pathlib import Path
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class FrameGrabber(ABC):
@@ -41,8 +44,13 @@ class FrameGrabber(ABC):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if rgb is not None:
+            rgb_path = output_dir / f"rgb_{frame_idx:06d}.png"
             img = Image.fromarray(rgb)
-            img.save(output_dir / f"rgb_{frame_idx:06d}.png")
+            img.save(rgb_path)
+            logger.debug(f"[SAVE] RGB frame {frame_idx}: {rgb_path} "
+                         f"({rgb.shape[1]}x{rgb.shape[0]}, {rgb_path.stat().st_size} bytes)")
+        else:
+            logger.debug(f"[SAVE] RGB frame {frame_idx}: skipped (None)")
 
         if depth is not None:
             # Save as 16-bit PNG (normalized)
@@ -53,10 +61,16 @@ class FrameGrabber(ABC):
                 depth_norm = np.zeros_like(depth)
             depth_u16 = (depth_norm * 65535).astype(np.uint16)
             img = Image.fromarray(depth_u16, mode="I;16")
-            img.save(output_dir / f"depth_{frame_idx:06d}.png")
+            depth_png_path = output_dir / f"depth_{frame_idx:06d}.png"
+            img.save(depth_png_path)
 
             # Also save raw float32
-            np.save(output_dir / f"depth_{frame_idx:06d}.npy", depth)
+            depth_npy_path = output_dir / f"depth_{frame_idx:06d}.npy"
+            np.save(depth_npy_path, depth)
+            logger.debug(f"[SAVE] Depth frame {frame_idx}: range=[{d_min:.4f}, {d_max:.4f}], "
+                         f"{depth.shape[1]}x{depth.shape[0]}")
+        else:
+            logger.debug(f"[SAVE] Depth frame {frame_idx}: skipped (None)")
 
     def __enter__(self):
         self.setup()

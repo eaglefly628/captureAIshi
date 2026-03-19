@@ -96,16 +96,20 @@ class ConsoleUIHider(UIHider):
         elif self.engine == "unity":
             commands = [UNITY_HIDE_COMMAND]
         else:
+            logger.debug(f"[CONSOLE_HIDE] Unknown engine: {self.engine}")
             return UIHideResult(
                 success=False, method=self.name(),
                 message=f"Unknown engine: {self.engine}",
             )
 
+        logger.debug(f"[CONSOLE_HIDE] Sending {len(commands)} hide commands to "
+                     f"{self.engine} at {self.host}:{self.port}")
         ok = self._send_commands(commands)
         if ok:
             logger.info(f"UI hidden via {self.engine} console commands")
             return UIHideResult(success=True, method=self.name())
 
+        logger.debug(f"[CONSOLE_HIDE] Failed to connect to {self.engine} console")
         return UIHideResult(
             success=False, method=self.name(),
             message="Could not connect to game console",

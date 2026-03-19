@@ -225,8 +225,14 @@ class RenderDocGrabber(FrameGrabber):
         Triggers a capture and replays it to extract RGB + depth.
         Prefers native bridge for replay, falls back to Python API.
         """
+        import time as _time
+        t0 = _time.monotonic()
+
         rdc_path = self.trigger_capture()
+        trigger_elapsed = _time.monotonic() - t0
+        logger.debug(f"[RDOC] Capture trigger took {trigger_elapsed:.3f}s → {rdc_path}")
         if rdc_path is None:
+            logger.warning("[RDOC] Capture trigger returned None")
             return None, None
 
         # Try native bridge replay first
@@ -239,8 +245,11 @@ class RenderDocGrabber(FrameGrabber):
                 logger.warning(f"Native bridge replay failed: {e}")
 
         # Fall back to Python API replay
+        logger.debug("[RDOC] Trying Python API replay fallback")
         try:
             rgb, depth = self._replay_python(rdc_path)
+            logger.debug(f"[RDOC] Python replay result: rgb={'ok' if rgb is not None else 'None'}, "
+                         f"depth={'ok' if depth is not None else 'None'}")
             return rgb, depth
         except Exception as e:
             logger.warning(f"RenderDoc replay failed: {e}")

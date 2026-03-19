@@ -55,11 +55,22 @@ class ScreenshotGrabber(FrameGrabber):
 
     def capture_frame(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         self._frame_count += 1
+        logger.debug(f"[SCREENSHOT] Capturing frame #{self._frame_count} "
+                     f"(delay={self.capture_delay}s, reshade_depth={self.use_reshade_depth})")
 
         rgb = self._capture_screenshot()
+        if rgb is not None:
+            logger.debug(f"[SCREENSHOT] RGB captured: {rgb.shape[1]}x{rgb.shape[0]}")
+        else:
+            logger.warning(f"[SCREENSHOT] RGB capture failed for frame #{self._frame_count}")
+
         depth = None
         if self.use_reshade_depth and self.depth_dir:
             depth = self._read_reshade_depth()
+            if depth is not None:
+                logger.debug(f"[SCREENSHOT] ReShade depth read: shape={depth.shape}")
+            else:
+                logger.debug("[SCREENSHOT] ReShade depth not available")
 
         return rgb, depth
 
