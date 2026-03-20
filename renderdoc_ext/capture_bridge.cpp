@@ -552,7 +552,7 @@ std::vector<float> ReplaySession::get_projection_matrix(uint32_t event_id) const
     const PipeState &pipe = m_impl->controller->GetPipelineState();
 
     // Check for vertex shader constant buffers that might contain ViewProjection
-    ShaderReflection *vs_refl = pipe.GetShaderReflection(ShaderStage::Vertex);
+    const ShaderReflection *vs_refl = pipe.GetShaderReflection(ShaderStage::Vertex);
     if(vs_refl)
     {
         for(const auto &cb : vs_refl->constantBlocks)

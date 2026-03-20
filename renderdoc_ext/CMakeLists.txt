@@ -67,6 +67,15 @@ add_library(captureai_bridge SHARED
     capture_bridge.h
 )
 
+# Platform defines required by RenderDoc API headers (apidefs.h)
+if(WIN32)
+    target_compile_definitions(captureai_bridge PUBLIC RENDERDOC_PLATFORM_WIN32)
+elseif(APPLE)
+    target_compile_definitions(captureai_bridge PUBLIC RENDERDOC_PLATFORM_APPLE)
+elseif(UNIX)
+    target_compile_definitions(captureai_bridge PUBLIC RENDERDOC_PLATFORM_LINUX)
+endif()
+
 target_include_directories(captureai_bridge PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..  # for "renderdoc/renderdoc/api/..." includes
     ${CMAKE_CURRENT_SOURCE_DIR}
