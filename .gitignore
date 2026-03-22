@@ -8,7 +8,19 @@ output/
 captures/
 screenshots/
 ce_camera_pose.json
+ce_streaming_pos.json
 *.rdc
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
 
 # Native bridge build artifacts
 capture_bridge*.so
