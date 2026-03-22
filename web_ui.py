@@ -102,6 +102,8 @@ def defaults():
         "no_hide_ui": False,
         "output_dir": "./output",
         "dry_run": False,
+        "streaming": True,
+        "streaming_settle": 0.5,
     })
 
 
@@ -136,6 +138,8 @@ _PRESETS = [
             "no_hide_ui": False,
             "output_dir": "./output_ue5",
             "dry_run": False,
+            "streaming": True,
+            "streaming_settle": 0.5,
         },
     },
     {
@@ -162,6 +166,8 @@ _PRESETS = [
             "no_hide_ui": False,
             "output_dir": "./output_ue5_full",
             "dry_run": False,
+            "streaming": True,
+            "streaming_settle": 1.0,
         },
     },
     {
@@ -188,6 +194,8 @@ _PRESETS = [
             "no_hide_ui": False,
             "output_dir": "./output_unity",
             "dry_run": False,
+            "streaming": True,
+            "streaming_settle": 0.3,
         },
     },
     {
@@ -214,6 +222,8 @@ _PRESETS = [
             "no_hide_ui": False,
             "output_dir": "./output_unity_full",
             "dry_run": False,
+            "streaming": True,
+            "streaming_settle": 0.5,
         },
     },
     {
@@ -240,6 +250,8 @@ _PRESETS = [
             "no_hide_ui": False,
             "output_dir": "./output_ce",
             "dry_run": False,
+            "streaming": True,
+            "streaming_settle": 0.5,
         },
     },
     {
@@ -266,6 +278,8 @@ _PRESETS = [
             "no_hide_ui": False,
             "output_dir": "./output_test",
             "dry_run": True,
+            "streaming": False,
+            "streaming_settle": 0.0,
         },
     },
 ]
@@ -320,6 +334,10 @@ def _build_args(data: dict) -> Namespace:
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
     args.output_dir = Path(str(data.get("output_dir", "./output")))
     args.dry_run = bool(data.get("dry_run", False))
+
+    # Streaming / LOD management
+    args.streaming = bool(data.get("streaming", True))
+    args.streaming_settle = max(0.0, min(10.0, float(data.get("streaming_settle", 0.5))))
     return args
 
 

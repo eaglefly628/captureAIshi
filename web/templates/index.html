@@ -570,6 +570,29 @@ header {
           </div>
         </div>
 
+        <!-- Streaming / LOD -->
+        <div class="section">
+          <button class="section-toggle open" onclick="toggleSection(this)">
+            <span class="arrow">&#9654;</span> Streaming &amp; LOD
+          </button>
+          <div class="section-content open">
+            <label class="toggle">
+              <input type="checkbox" id="streaming" checked onchange="updateVisibility()">
+              <div class="switch"></div>
+              Enable Streaming Management
+            </label>
+            <p style="font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.5;">
+              Moves the game's streaming center to follow the capture camera.
+              Without this, areas far from the player will have low-LOD meshes
+              and blurry textures.
+            </p>
+            <div class="field" id="streamingSettleWrap">
+              <label>Streaming Settle Time (seconds)</label>
+              <input type="number" id="streaming_settle" value="0.5" step="0.1" min="0" max="10">
+            </div>
+          </div>
+        </div>
+
         <!-- Options -->
         <div class="section">
           <button class="section-toggle" onclick="toggleSection(this)">
@@ -722,6 +745,8 @@ function applyParams(p) {
   document.getElementById('no_hide_ui').checked = p.no_hide_ui;
   document.getElementById('output_dir').value = p.output_dir;
   document.getElementById('dry_run').checked = p.dry_run;
+  document.getElementById('streaming').checked = p.streaming !== false;
+  document.getElementById('streaming_settle').value = p.streaming_settle || 0.5;
   updateVisibility();
 }
 
@@ -758,6 +783,8 @@ function getFormData() {
     no_hide_ui: cb('no_hide_ui'),
     output_dir: val('output_dir'),
     dry_run: cb('dry_run'),
+    streaming: cb('streaming'),
+    streaming_settle: pf('streaming_settle'),
   };
 }
 
@@ -866,6 +893,8 @@ function updateVisibility() {
   if (ceWrap) ceWrap.classList.toggle('hidden', val('driver') !== 'cheatengine');
   const exeWrap = document.getElementById('targetExeWrap');
   if (exeWrap) exeWrap.classList.toggle('hidden', val('grabber') !== 'renderdoc');
+  const streamSettle = document.getElementById('streamingSettleWrap');
+  if (streamSettle) streamSettle.classList.toggle('hidden', !cb('streaming'));
 }
 
 // ─── Keyboard shortcuts ───

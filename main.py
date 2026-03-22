@@ -215,7 +215,13 @@ def run_capture(args):
     stop_event = getattr(args, '_stop_event', None)
 
     # ── Step 6: Execute capture loop ──
-    logging.info(f"Starting capture loop: {len(all_poses)} poses")
+    streaming_enabled = getattr(args, 'streaming', True)
+    streaming_settle = getattr(args, 'streaming_settle', 0.5)
+    logging.info(
+        f"Starting capture loop: {len(all_poses)} poses "
+        f"(streaming={'on' if streaming_enabled else 'off'}, "
+        f"settle={streaming_settle}s)"
+    )
     with driver:
         logging.debug("[DRIVER] Driver connected")
         grabber_ctx = grabber if grabber else None
@@ -249,10 +255,25 @@ def run_capture(args):
                     f"fov={pose.fov:.0f}"
                 )
 
+                # Update streaming center BEFORE setting camera pose
+                # This ensures the engine starts loading assets at the
+                # target position as early as possible
+                if streaming_enabled:
+                    t_stream = _time.monotonic()
+                    driver.update_streaming(pose)
+                    stream_elapsed = _time.monotonic() - t_stream
+                    logging.debug(f"[POSE {i+1}] Streaming update took {stream_elapsed:.3f}s")
+
                 t_pose = _time.monotonic()
                 driver.set_pose(pose)
                 driver_elapsed = _time.monotonic() - t_pose
                 logging.debug(f"[POSE {i+1}] Driver set_pose took {driver_elapsed:.3f}s")
+
+                # Wait for streaming to settle after camera has moved
+                # This gives the engine time to load textures/LODs at
+                # the new position before we capture the frame
+                if streaming_enabled:
+                    driver.wait_for_streaming(streaming_settle)
 
                 if grabber_ctx:
                     t_grab = _time.monotonic()
@@ -352,6 +373,16 @@ def main():
         help="Disable automatic UI/HUD hiding",
     )
 
+    # Streaming / LOD management
+    parser.add_argument(
+        "--no-streaming", action="store_true",
+        help="Disable streaming center updates (camera-only mode, may cause low LOD/textures)",
+    )
+    parser.add_argument(
+        "--streaming-settle", type=float, default=0.5,
+        help="Seconds to wait for texture/level streaming after each camera move (default: 0.5)",
+    )
+
     # Output
     parser.add_argument("--output-dir", type=str, default="./output")
     parser.add_argument("--dry-run", action="store_true", help="Generate poses only, no capture")
@@ -361,6 +392,7 @@ def main():
 
     args = parser.parse_args()
     args.output_dir = Path(args.output_dir)
+    args.streaming = not args.no_streaming
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

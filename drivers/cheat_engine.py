@@ -119,3 +119,29 @@ class CheatEngineDriver(CameraDriver):
             "timestamp": time.time(),
         }
         self.shared_file.write_text(json.dumps(data))
+
+    def update_streaming(self, pose: CameraPose) -> None:
+        """Write streaming position for CE Lua script to update.
+
+        The companion Lua script in Cheat Engine should read this file
+        and write the position to the game's streaming center address
+        (which must be found via memory scanning per game).
+        """
+        pos = pose.position.copy()
+        if self.coord_system == "ue5":
+            from utils.coords import pipeline_to_ue5_position
+            pos = pipeline_to_ue5_position(pos)
+        elif self.coord_system == "unity":
+            from utils.coords import pipeline_to_unity_position
+            pos = pipeline_to_unity_position(pos)
+
+        streaming_file = self.shared_file.parent / "ce_streaming_pos.json"
+        data = {
+            "streaming_position": [float(pos[0]), float(pos[1]), float(pos[2])],
+            "timestamp": time.time(),
+        }
+        streaming_file.write_text(json.dumps(data))
+        logger.debug(
+            f"[STREAMING] Wrote streaming pos to {streaming_file}: "
+            f"({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})"
+        )
