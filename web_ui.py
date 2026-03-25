@@ -7,6 +7,7 @@ All capture logic is reused from main.py — this is just a GUI shell.
 
 import json
 import logging
+import shutil
 import threading
 import time
 import webbrowser
@@ -60,6 +61,11 @@ def start_capture():
     except (ValueError, TypeError, KeyError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
+    # Clean start: remove previous output in this session dir
+    if args.clean_start and args.output_dir.exists():
+        shutil.rmtree(args.output_dir)
+        logging.info(f"Cleaned output directory: {args.output_dir}")
+
     with _lock:
         _capture_state["running"] = True
         _capture_state["logs"] = []
@@ -108,29 +114,51 @@ def defaults():
     })
 
 
-@app.route("/api/captures")
-def list_captures():
-    """List captured image files from the current output directory."""
+@app.route("/api/sessions")
+def list_sessions():
+    """List capture session subdirectories under the base output dir."""
     with _lock:
         output_dir = _capture_state.get("output_dir", "./output")
-    out = Path(output_dir)
-    if not out.is_dir():
-        return jsonify({"files": []})
-    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".exr"}
-    files = sorted(
-        [f.name for f in out.iterdir() if f.suffix.lower() in exts],
+    # Walk up to the base dir (parent of session subdir)
+    base = Path(output_dir).parent
+    if not base.is_dir():
+        return jsonify({"sessions": [], "active": ""})
+    sessions = sorted(
+        [d.name for d in base.iterdir() if d.is_dir()],
         key=lambda n: n,
     )
-    return jsonify({"files": files})
+    active = Path(output_dir).name if Path(output_dir).is_dir() else ""
+    return jsonify({"sessions": sessions, "active": active})
 
 
-@app.route("/api/captures/<path:filename>")
-def serve_capture(filename):
-    """Serve a captured image file."""
+@app.route("/api/captures")
+@app.route("/api/captures/<session>")
+def list_captures(session=None):
+    """List captured image files from a session directory."""
     with _lock:
         output_dir = _capture_state.get("output_dir", "./output")
-    out = Path(output_dir).resolve()
-    return send_from_directory(str(out), filename)
+    base = Path(output_dir).parent
+    if session:
+        target = base / session
+    else:
+        target = Path(output_dir)
+    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".exr"}
+    files = []
+    if target.is_dir():
+        for f in sorted(target.rglob("*")):
+            if f.suffix.lower() in exts:
+                files.append(str(f.relative_to(target)))
+    return jsonify({"files": files, "session": target.name if target.is_dir() else ""})
+
+
+@app.route("/api/captures/<session>/<path:filename>")
+def serve_capture(session, filename):
+    """Serve a captured image file from a session directory."""
+    with _lock:
+        output_dir = _capture_state.get("output_dir", "./output")
+    base = Path(output_dir).parent
+    target = (base / session).resolve()
+    return send_from_directory(str(target), filename)
 
 
 @app.route("/api/presets")
@@ -162,7 +190,7 @@ _PRESETS = [
             "grabber": "renderdoc",
             "target_exe": "",
             "no_hide_ui": False,
-            "output_dir": "./output_ue5",
+            "output_dir": "./output",
             "dry_run": False,
             "streaming": True,
             "streaming_settle": 0.5,
@@ -190,7 +218,7 @@ _PRESETS = [
             "grabber": "renderdoc",
             "target_exe": "",
             "no_hide_ui": False,
-            "output_dir": "./output_ue5_full",
+            "output_dir": "./output",
             "dry_run": False,
             "streaming": True,
             "streaming_settle": 1.0,
@@ -218,7 +246,7 @@ _PRESETS = [
             "grabber": "renderdoc",
             "target_exe": "",
             "no_hide_ui": False,
-            "output_dir": "./output_unity",
+            "output_dir": "./output",
             "dry_run": False,
             "streaming": True,
             "streaming_settle": 0.3,
@@ -246,7 +274,7 @@ _PRESETS = [
             "grabber": "renderdoc",
             "target_exe": "",
             "no_hide_ui": False,
-            "output_dir": "./output_unity_full",
+            "output_dir": "./output",
             "dry_run": False,
             "streaming": True,
             "streaming_settle": 0.5,
@@ -274,7 +302,7 @@ _PRESETS = [
             "grabber": "screenshot",
             "target_exe": "",
             "no_hide_ui": False,
-            "output_dir": "./output_ce",
+            "output_dir": "./output",
             "dry_run": False,
             "streaming": True,
             "streaming_settle": 0.5,
@@ -302,7 +330,7 @@ _PRESETS = [
             "grabber": "none",
             "target_exe": "",
             "no_hide_ui": False,
-            "output_dir": "./output_test",
+            "output_dir": "./output",
             "dry_run": True,
             "streaming": False,
             "streaming_settle": 0.0,
@@ -358,13 +386,32 @@ def _build_args(data: dict) -> Namespace:
 
     args.target_exe = str(data.get("target_exe", "")) or None
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
-    args.output_dir = Path(str(data.get("output_dir", "./output")))
     args.dry_run = bool(data.get("dry_run", False))
 
     # Streaming / LOD management
     args.streaming = bool(data.get("streaming", True))
     args.streaming_settle = max(0.0, min(10.0, float(data.get("streaming_settle", 0.5))))
+
+    # Build output dir: base_dir / <session_name>
+    base_dir = Path(str(data.get("output_dir", "./output")))
+    session_name = _build_session_name(driver, grabber, args.dry_run)
+    args.output_dir = base_dir / session_name
+    args.clean_start = bool(data.get("clean_start", True))
     return args
+
+
+def _build_session_name(driver: str, grabber: str, dry_run: bool) -> str:
+    """Build a short session subdirectory name from capture config."""
+    _driver_abbrev = {
+        "manual": "man", "ue5": "ue5", "unity": "uni", "cheatengine": "ce",
+    }
+    _grabber_abbrev = {
+        "none": "nograb", "renderdoc": "rdoc", "screenshot": "scrn",
+    }
+    parts = [_driver_abbrev.get(driver, driver), _grabber_abbrev.get(grabber, grabber)]
+    if dry_run:
+        parts.append("dry")
+    return "_".join(parts)
 
 
 def _run_in_thread(args):
