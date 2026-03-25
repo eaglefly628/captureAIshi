@@ -13,7 +13,7 @@ import webbrowser
 from argparse import Namespace
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from main import run_capture
 
@@ -64,6 +64,7 @@ def start_capture():
         _capture_state["running"] = True
         _capture_state["logs"] = []
         _capture_state["error"] = None
+        _capture_state["output_dir"] = str(args.output_dir)
 
     thread = threading.Thread(target=_run_in_thread, args=(args,), daemon=True)
     thread.start()
@@ -105,6 +106,31 @@ def defaults():
         "streaming": True,
         "streaming_settle": 0.5,
     })
+
+
+@app.route("/api/captures")
+def list_captures():
+    """List captured image files from the current output directory."""
+    with _lock:
+        output_dir = _capture_state.get("output_dir", "./output")
+    out = Path(output_dir)
+    if not out.is_dir():
+        return jsonify({"files": []})
+    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".exr"}
+    files = sorted(
+        [f.name for f in out.iterdir() if f.suffix.lower() in exts],
+        key=lambda n: n,
+    )
+    return jsonify({"files": files})
+
+
+@app.route("/api/captures/<path:filename>")
+def serve_capture(filename):
+    """Serve a captured image file."""
+    with _lock:
+        output_dir = _capture_state.get("output_dir", "./output")
+    out = Path(output_dir).resolve()
+    return send_from_directory(str(out), filename)
 
 
 @app.route("/api/presets")

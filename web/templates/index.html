@@ -31,6 +31,7 @@
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html { color-scheme: dark; }
 
 body {
   font-family: var(--font);
@@ -459,12 +460,87 @@ body {
   color: var(--accent);
 }
 
+/* ─── Content Split ─── */
+.content-split {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
 /* ─── Terminal ─── */
 .terminal {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
+}
+
+/* ─── Preview Panel ─── */
+.preview-panel {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 0.5px solid var(--separator);
+  background: var(--bg);
+}
+.preview-header {
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-bottom: 0.5px solid var(--separator);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  background: var(--bg-grouped);
+}
+.preview-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-content: start;
+}
+.preview-card {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 0.5px solid var(--separator);
+  transition: border-color 0.2s;
+  cursor: pointer;
+}
+.preview-card:hover {
+  border-color: rgba(255,255,255,0.2);
+}
+.preview-card img {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  display: block;
+  background: rgba(255,255,255,0.03);
+}
+.preview-card .pc-label {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .terminal-header {
   padding: 10px 20px;
@@ -766,15 +842,31 @@ body {
     </div>
   </div>
 
-  <!-- Terminal -->
-  <div class="terminal">
-    <div class="terminal-header">
-      <span>Output</span>
-      <span id="logCount">0 lines</span>
+  <!-- Content Split: Terminal + Preview -->
+  <div class="content-split">
+    <!-- Terminal (left) -->
+    <div class="terminal">
+      <div class="terminal-header">
+        <span>Output</span>
+        <span id="logCount">0 lines</span>
+      </div>
+      <div class="terminal-body" id="logBody">
+        <div class="line line-info">$ captureAIshi ready</div>
+        <div class="line line-info">  Select a preset and click Start, or open Settings for full control.</div>
+      </div>
     </div>
-    <div class="terminal-body" id="logBody">
-      <div class="line line-info">$ captureAIshi ready</div>
-      <div class="line line-info">  Select a preset and click Start, or open Settings for full control.</div>
+
+    <!-- Preview (right) -->
+    <div class="preview-panel">
+      <div class="preview-header">
+        <span>Captures</span>
+        <span id="captureCount">0 frames</span>
+      </div>
+      <div class="preview-body" id="previewBody">
+        <div class="preview-empty">
+          No captures yet.<br>Start a capture to see preview frames here.
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1045,9 +1137,45 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ─── Preview Panel ───
+let knownCaptures = [];
+
+async function pollCaptures() {
+  try {
+    const resp = await fetch('/api/captures');
+    const data = await resp.json();
+    if (data.files && data.files.length !== knownCaptures.length) {
+      knownCaptures = data.files;
+      renderPreviews();
+    }
+  } catch (_) {}
+}
+
+function renderPreviews() {
+  const body = document.getElementById('previewBody');
+  document.getElementById('captureCount').textContent = knownCaptures.length + ' frames';
+  if (knownCaptures.length === 0) {
+    body.innerHTML = '<div class="preview-empty">No captures yet.<br>Start a capture to see preview frames here.</div>';
+    return;
+  }
+  body.innerHTML = '';
+  // Show newest first
+  const items = [...knownCaptures].reverse();
+  items.forEach(f => {
+    const card = document.createElement('div');
+    card.className = 'preview-card';
+    card.innerHTML = `<img src="/api/captures/${encodeURIComponent(f)}" loading="lazy" alt="${f}"><div class="pc-label">${f}</div>`;
+    body.appendChild(card);
+  });
+}
+
+// Poll captures every 2 seconds
+setInterval(pollCaptures, 2000);
+
 // ─── Init ───
 updateVisibility();
 loadPresets();
+pollCaptures();
 </script>
 </body>
 </html>
