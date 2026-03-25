@@ -565,14 +565,18 @@ body {
 }
 
 .line {
-  padding: 1px 0;
+  padding: 2px 0 2px 10px;
   white-space: pre-wrap;
   word-break: break-all;
+  border-left: 3px solid transparent;
+  border-radius: 1px;
 }
 .line-info { color: var(--text-secondary); }
-.line-warn { color: var(--warn); }
-.line-error { color: var(--danger); }
-.line-success { color: var(--success); }
+.line-warn { color: var(--warn); border-left-color: var(--warn); background: rgba(255,214,10,0.04); }
+.line-error { color: var(--danger); border-left-color: var(--danger); background: rgba(255,69,58,0.06); }
+.line-success { color: var(--success); border-left-color: var(--success); background: rgba(48,209,88,0.05); }
+.line-capture { color: var(--accent); border-left-color: var(--accent); background: rgba(10,132,255,0.04); }
+.line-progress { color: var(--orange); border-left-color: var(--orange); }
 
 /* ─── Bottom Bar ─── */
 .bottom-bar {
@@ -1091,14 +1095,26 @@ function startPolling() {
 }
 
 // ─── Logging ───
+function classifyLog(text) {
+  const t = text.toLowerCase();
+  if (t.includes('[error]') || t.includes('failed') || t.includes('exception') || t.includes('traceback'))
+    return 'error';
+  if (t.includes('[warning]') || t.includes('[warn]') || t.includes('warning:') || t.includes('timeout') || t.includes('retry'))
+    return 'warn';
+  if (t.includes('saved') || t.includes('complete') || t.includes('finished') || t.includes('success') || t.includes('done'))
+    return 'success';
+  if (t.includes('captured') || t.includes('frame') || t.includes('grabbed') || t.includes('screenshot'))
+    return 'capture';
+  if (/\d+\s*\/\s*\d+/.test(t) || t.includes('progress') || t.includes('waypoint') || t.includes('moving'))
+    return 'progress';
+  return 'info';
+}
+
 function addLog(text, forceLevel) {
   const body = document.getElementById('logBody');
   const div = document.createElement('div');
-  div.className = 'line';
-  if (forceLevel) div.classList.add('line-' + forceLevel);
-  else if (text.includes('[ERROR]')) div.classList.add('line-error');
-  else if (text.includes('[WARNING]')) div.classList.add('line-warn');
-  else div.classList.add('line-info');
+  const level = forceLevel || classifyLog(text);
+  div.className = 'line line-' + level;
   div.textContent = text;
   body.appendChild(div);
   body.scrollTop = body.scrollHeight;
