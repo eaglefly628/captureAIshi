@@ -565,14 +565,18 @@ body {
 }
 
 .line {
-  padding: 1px 0;
+  padding: 2px 0 2px 10px;
   white-space: pre-wrap;
   word-break: break-all;
+  border-left: 3px solid transparent;
+  border-radius: 1px;
 }
 .line-info { color: var(--text-secondary); }
-.line-warn { color: var(--warn); }
-.line-error { color: var(--danger); }
-.line-success { color: var(--success); }
+.line-warn { color: var(--warn); border-left-color: var(--warn); background: rgba(255,214,10,0.04); }
+.line-error { color: var(--danger); border-left-color: var(--danger); background: rgba(255,69,58,0.06); }
+.line-success { color: var(--success); border-left-color: var(--success); background: rgba(48,209,88,0.05); }
+.line-capture { color: var(--accent); border-left-color: var(--accent); background: rgba(10,132,255,0.04); }
+.line-progress { color: var(--orange); border-left-color: var(--orange); }
 
 /* ─── Bottom Bar ─── */
 .bottom-bar {
@@ -649,6 +653,11 @@ body {
     <option value="renderdoc">RenderDoc</option>
     <option value="screenshot">Screenshot</option>
   </select>
+  <label class="apple-toggle" style="margin-left:4px;">
+    <input type="checkbox" id="clean_start" checked>
+    <div class="track"></div>
+    <span>Clean Start</span>
+  </label>
   <label class="apple-toggle" style="margin-left:4px;">
     <input type="checkbox" id="dry_run">
     <div class="track"></div>
@@ -859,7 +868,9 @@ body {
     <!-- Preview (right) -->
     <div class="preview-panel">
       <div class="preview-header">
-        <span>Captures</span>
+        <select class="apple-select" id="sessionSelect" onchange="switchSession(this.value)" style="font-size:12px;padding:4px 24px 4px 8px;">
+          <option value="">Captures</option>
+        </select>
         <span id="captureCount">0 frames</span>
       </div>
       <div class="preview-body" id="previewBody">
@@ -1025,6 +1036,7 @@ function getFormData() {
     no_hide_ui: cb('no_hide_ui'),
     output_dir: val('output_dir'),
     dry_run: cb('dry_run'),
+    clean_start: cb('clean_start'),
     streaming: cb('streaming'),
     streaming_settle: pf('streaming_settle'),
   };
@@ -1091,14 +1103,26 @@ function startPolling() {
 }
 
 // ─── Logging ───
+function classifyLog(text) {
+  const t = text.toLowerCase();
+  if (t.includes('[error]') || t.includes('failed') || t.includes('exception') || t.includes('traceback'))
+    return 'error';
+  if (t.includes('[warning]') || t.includes('[warn]') || t.includes('warning:') || t.includes('timeout') || t.includes('retry'))
+    return 'warn';
+  if (t.includes('saved') || t.includes('complete') || t.includes('finished') || t.includes('success') || t.includes('done'))
+    return 'success';
+  if (t.includes('captured') || t.includes('frame') || t.includes('grabbed') || t.includes('screenshot'))
+    return 'capture';
+  if (/\d+\s*\/\s*\d+/.test(t) || t.includes('progress') || t.includes('waypoint') || t.includes('moving'))
+    return 'progress';
+  return 'info';
+}
+
 function addLog(text, forceLevel) {
   const body = document.getElementById('logBody');
   const div = document.createElement('div');
-  div.className = 'line';
-  if (forceLevel) div.classList.add('line-' + forceLevel);
-  else if (text.includes('[ERROR]')) div.classList.add('line-error');
-  else if (text.includes('[WARNING]')) div.classList.add('line-warn');
-  else div.classList.add('line-info');
+  const level = forceLevel || classifyLog(text);
+  div.className = 'line line-' + level;
   div.textContent = text;
   body.appendChild(div);
   body.scrollTop = body.scrollHeight;
@@ -1139,19 +1163,52 @@ document.addEventListener('keydown', (e) => {
 
 // ─── Preview Panel ───
 let knownCaptures = [];
+let activeSession = '';
+let viewSession = ''; // which session the user is viewing
 
-async function pollCaptures() {
+async function pollSessions() {
   try {
-    const resp = await fetch('/api/captures');
+    const resp = await fetch('/api/sessions');
     const data = await resp.json();
-    if (data.files && data.files.length !== knownCaptures.length) {
-      knownCaptures = data.files;
-      renderPreviews();
+    const sel = document.getElementById('sessionSelect');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All Sessions</option>';
+    data.sessions.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      sel.appendChild(opt);
+    });
+    // Auto-switch to active session when a new capture starts
+    if (data.active && data.active !== activeSession) {
+      activeSession = data.active;
+      viewSession = data.active;
+      sel.value = data.active;
+    } else {
+      sel.value = viewSession || current;
     }
   } catch (_) {}
 }
 
-function renderPreviews() {
+function switchSession(s) {
+  viewSession = s;
+  knownCaptures = [];
+  pollCaptures();
+}
+
+async function pollCaptures() {
+  try {
+    const url = viewSession ? `/api/captures/${encodeURIComponent(viewSession)}` : '/api/captures';
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.files && (data.files.length !== knownCaptures.length || data.session !== activeSession)) {
+      knownCaptures = data.files;
+      renderPreviews(data.session);
+    }
+  } catch (_) {}
+}
+
+function renderPreviews(session) {
   const body = document.getElementById('previewBody');
   document.getElementById('captureCount').textContent = knownCaptures.length + ' frames';
   if (knownCaptures.length === 0) {
@@ -1159,22 +1216,25 @@ function renderPreviews() {
     return;
   }
   body.innerHTML = '';
-  // Show newest first
+  const sess = session || viewSession || activeSession;
   const items = [...knownCaptures].reverse();
   items.forEach(f => {
     const card = document.createElement('div');
     card.className = 'preview-card';
-    card.innerHTML = `<img src="/api/captures/${encodeURIComponent(f)}" loading="lazy" alt="${f}"><div class="pc-label">${f}</div>`;
+    const src = sess ? `/api/captures/${encodeURIComponent(sess)}/${encodeURIComponent(f)}` : `/api/captures/_/${encodeURIComponent(f)}`;
+    const label = f.split('/').pop();
+    card.innerHTML = `<img src="${src}" loading="lazy" alt="${label}"><div class="pc-label">${label}</div>`;
     body.appendChild(card);
   });
 }
 
-// Poll captures every 2 seconds
-setInterval(pollCaptures, 2000);
+// Poll every 2 seconds
+setInterval(() => { pollSessions(); pollCaptures(); }, 2000);
 
 // ─── Init ───
 updateVisibility();
 loadPresets();
+pollSessions();
 pollCaptures();
 </script>
 </body>
