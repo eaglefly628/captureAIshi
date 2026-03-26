@@ -6,530 +6,400 @@
 <title>captureAIshi</title>
 <style>
 :root {
-  --bg: #1c1c1e;
-  --bg-elevated: #2c2c2e;
-  --bg-grouped: #242426;
-  --bg-card: rgba(255,255,255,0.06);
-  --bg-card-hover: rgba(255,255,255,0.09);
-  --separator: rgba(255,255,255,0.08);
-  --separator-opaque: #38383a;
-  --accent: #0a84ff;
-  --accent-hover: #409cff;
-  --accent-dim: rgba(10,132,255,0.15);
-  --text: #f5f5f7;
-  --text-secondary: rgba(255,255,255,0.55);
-  --text-tertiary: rgba(255,255,255,0.3);
-  --success: #30d158;
-  --danger: #ff453a;
-  --warn: #ffd60a;
-  --orange: #ff9f0a;
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 16px;
-  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', monospace;
+  --bg-base: #0a0a0a;
+  --bg-surface: #111111;
+  --bg-elevated: #1a1a1a;
+  --bg-overlay: #222222;
+  --bg-hover: rgba(255,255,255,0.04);
+  --bg-selected: rgba(255,255,255,0.08);
+
+  --border-subtle: rgba(255,255,255,0.08);
+  --border-default: rgba(255,255,255,0.12);
+  --border-strong: rgba(255,255,255,0.20);
+
+  --text-primary: #ededed;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #5a5a5a;
+  --text-placeholder: #3a3a3a;
+
+  --accent: #5b8af0;
+  --accent-hover: #7ba3f7;
+  --accent-dim: rgba(91,138,240,0.15);
+  --success: #3ecf8e;
+  --success-dim: rgba(62,207,142,0.12);
+  --warning: #f5a623;
+  --warning-dim: rgba(245,166,35,0.10);
+  --danger: #f03e3e;
+  --danger-dim: rgba(240,62,62,0.10);
+  --info: #60a5fa;
+  --orange: #f5a623;
+
+  --radius: 4px;
+  --radius-md: 6px;
+
+  --font: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html { color-scheme: dark; }
 
 body {
   font-family: var(--font);
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  font-variant-numeric: tabular-nums;
 }
 
-/* ─── Titlebar ─── */
-.titlebar {
-  height: 52px;
-  background: rgba(44,44,46,0.72);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 0.5px solid var(--separator);
+/* ─── Toolbar ─── */
+.toolbar {
+  height: 40px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 12px;
+  gap: 8px;
   flex-shrink: 0;
   -webkit-app-region: drag;
-  position: sticky;
-  top: 0;
-  z-index: 100;
 }
-
-.titlebar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.logo {
-  font-size: 15px;
+.toolbar-logo {
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.2px;
-  color: var(--text);
-}
-.logo span { color: var(--accent); }
-
-.status-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 20px;
-  background: rgba(255,255,255,0.06);
-  font-size: 12px;
-  font-weight: 500;
   color: var(--text-secondary);
-  transition: all 0.3s ease;
+  margin-right: 4px;
 }
-.status-badge .dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-  transition: background 0.3s;
+.toolbar-logo b { color: var(--accent); font-weight: 600; }
+.toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border-default);
 }
-.status-badge.running { background: rgba(48,209,88,0.12); color: var(--success); }
-.status-badge.running .dot { background: var(--success); animation: pulse 1.8s ease-in-out infinite; }
-.status-badge.error { background: rgba(255,69,58,0.12); color: var(--danger); }
-.status-badge.error .dot { background: var(--danger); }
+.toolbar-spacer { flex: 1; }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.85); }
-}
-
-/* ─── Control Bar ─── */
-.control-bar {
-  background: var(--bg-grouped);
-  border-bottom: 0.5px solid var(--separator);
-  padding: 10px 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
+/* Buttons */
 .btn {
   font-family: var(--font);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
-  padding: 7px 16px;
-  border-radius: var(--radius-sm);
-  border: none;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  transition: all 0.2s ease;
+  gap: 5px;
+  transition: background 0.1s, border-color 0.1s;
   -webkit-app-region: no-drag;
+  white-space: nowrap;
 }
-
-.btn-primary {
+.btn:hover { background: var(--bg-overlay); border-color: var(--border-strong); }
+.btn:active { opacity: 0.85; }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-accent {
   background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-primary:active { transform: scale(0.97); }
-.btn-primary:disabled {
-  background: rgba(255,255,255,0.1);
-  color: var(--text-tertiary);
-  cursor: not-allowed;
-}
-
+.btn-accent:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn-danger {
-  background: rgba(255,69,58,0.15);
+  background: var(--danger-dim);
+  border-color: rgba(240,62,62,0.3);
   color: var(--danger);
 }
-.btn-danger:hover { background: rgba(255,69,58,0.25); }
+.btn-danger:hover { background: rgba(240,62,62,0.18); }
 
-.btn-secondary {
-  background: rgba(255,255,255,0.08);
-  color: var(--text);
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--radius);
 }
-.btn-secondary:hover { background: rgba(255,255,255,0.14); }
-.btn-secondary:active { transform: scale(0.97); }
-.btn-secondary.active {
-  background: var(--accent-dim);
-  color: var(--accent);
+.badge-idle { background: var(--bg-selected); color: var(--text-secondary); }
+.badge-running { background: var(--success-dim); color: var(--success); }
+.badge-error { background: var(--danger-dim); color: var(--danger); }
+.badge .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.badge-running .dot { animation: pulse 1.5s infinite; }
+@keyframes pulse {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
-.bar-sep {
-  width: 0.5px;
-  height: 20px;
-  background: var(--separator-opaque);
-  margin: 0 4px;
-}
-
-.bar-spacer { flex: 1; }
-
-/* Apple-style select */
-.apple-select {
+/* Select */
+.sel {
   font-family: var(--font);
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  background: rgba(255,255,255,0.08);
-  border: 0.5px solid var(--separator-opaque);
-  border-radius: var(--radius-sm);
-  padding: 6px 28px 6px 10px;
+  font-size: 12px;
+  height: 28px;
+  padding: 0 24px 0 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
   cursor: pointer;
   appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='rgba(255,255,255,0.4)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 8 5' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%235a5a5a' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 8px center;
-  transition: all 0.2s;
+  background-position: right 7px center;
 }
-.apple-select:hover { background-color: rgba(255,255,255,0.12); }
-.apple-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(10,132,255,0.25); }
+.sel:hover { border-color: var(--border-strong); }
+.sel:focus { outline: none; border-color: var(--accent); }
 
-.bar-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-/* Apple-style toggle */
-.apple-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  -webkit-user-select: none;
-  user-select: none;
-}
-.apple-toggle input { display: none; }
-.apple-toggle .track {
-  width: 38px; height: 22px;
-  background: rgba(255,255,255,0.15);
-  border-radius: 11px;
+/* Toggle */
+.tog { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: var(--text-secondary); user-select: none; }
+.tog input { display: none; }
+.tog .track {
+  width: 32px; height: 18px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 9px;
   position: relative;
-  transition: background 0.25s ease;
+  transition: background 0.15s;
   flex-shrink: 0;
 }
-.apple-toggle .track::after {
+.tog .track::after {
   content: '';
   position: absolute;
-  width: 18px; height: 18px;
+  width: 14px; height: 14px;
   background: #fff;
   border-radius: 50%;
   top: 2px; left: 2px;
-  transition: transform 0.25s cubic-bezier(0.45, 0.05, 0.55, 0.95);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform 0.15s;
 }
-.apple-toggle input:checked + .track { background: var(--success); }
-.apple-toggle input:checked + .track::after { transform: translateX(16px); }
+.tog input:checked + .track { background: var(--success); }
+.tog input:checked + .track::after { transform: translateX(14px); }
 
-/* ─── Main Layout ─── */
-.main {
+/* ─── Layout ─── */
+.layout {
   flex: 1;
   display: flex;
+  overflow: hidden;
+}
+
+/* ─── Left Sidebar (Params) ─── */
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
   flex-direction: column;
   overflow: hidden;
-  position: relative;
 }
-
-/* ─── Settings Overlay ─── */
-.settings-overlay {
-  display: none;
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 50;
-  background: rgba(0,0,0,0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-.settings-overlay.open {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 24px;
-}
-
-.settings-panel {
-  background: var(--bg-elevated);
-  border-radius: var(--radius-lg);
-  width: 580px;
-  max-height: calc(100% - 48px);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  box-shadow:
-    0 0 0 0.5px rgba(255,255,255,0.1),
-    0 24px 60px rgba(0,0,0,0.5),
-    0 8px 20px rgba(0,0,0,0.3);
-}
-
-.settings-header {
-  padding: 18px 22px;
-  border-bottom: 0.5px solid var(--separator);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.sidebar-header {
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
-.settings-header h2 {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
-}
-
-.close-btn {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.1);
-  border: none;
-  color: var(--text-secondary);
-  font-size: 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-.close-btn:hover { background: rgba(255,255,255,0.18); color: var(--text); }
-
-.settings-body {
-  padding: 8px 22px 22px;
+.sidebar-body {
+  flex: 1;
   overflow-y: auto;
+  padding: 8px 0;
 }
 
-/* ─── Card Sections ─── */
-.section {
-  margin-bottom: 12px;
-}
-
-.section-toggle {
-  width: 100%;
+/* Sections */
+.sec { border-bottom: 1px solid var(--border-subtle); }
+.sec:last-child { border-bottom: none; }
+.sec-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 0;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
   background: none;
   border: none;
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  letter-spacing: -0.1px;
-}
-.section-toggle:hover { color: var(--accent); }
-
-.section-toggle .arrow {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  display: inline-block;
-}
-.section-toggle.open .arrow { transform: rotate(90deg); }
-
-.section-content {
-  display: none;
-  padding: 4px 0 8px;
-}
-.section-content.open { display: block; }
-
-.card {
-  background: var(--bg-card);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  border: 0.5px solid var(--separator);
-}
-
-/* ─── Form Elements ─── */
-.field { margin-bottom: 12px; }
-.field:last-child { margin-bottom: 0; }
-.field label {
-  display: block;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-}
-.field input[type="text"],
-.field input[type="number"],
-.field select {
   width: 100%;
   font-family: var(--font);
-  font-size: 14px;
-  color: var(--text);
-  background: rgba(255,255,255,0.06);
-  border: 0.5px solid var(--separator-opaque);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  transition: all 0.2s;
 }
-.field input:focus, .field select:focus {
+.sec-head:hover { color: var(--text-primary); }
+.sec-head .arr {
+  font-size: 8px;
+  color: var(--text-tertiary);
+  transition: transform 0.12s;
+  display: inline-block;
+}
+.sec-head.open .arr { transform: rotate(90deg); }
+.sec-body { display: none; padding: 4px 12px 8px; }
+.sec-body.open { display: block; }
+
+/* Form fields */
+.f { margin-bottom: 6px; }
+.f:last-child { margin-bottom: 0; }
+.f label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin-bottom: 3px;
+}
+.f input, .f select {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  height: 28px;
+  transition: border-color 0.1s;
+}
+.f input:focus, .f select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10,132,255,0.25);
 }
-.field input::placeholder { color: var(--text-tertiary); }
+.f input::placeholder { color: var(--text-placeholder); }
+.row { display: flex; gap: 6px; }
+.row .f { flex: 1; min-width: 0; }
 
-.row { display: flex; gap: 10px; }
-.row .field { flex: 1; }
-.row-3 .field { flex: 1; min-width: 0; }
-
-.field-hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  line-height: 1.5;
-  margin-top: 6px;
-}
-
-/* ─── Presets ─── */
-.preset-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* Presets (compact list) */
+.preset-list { display: flex; flex-direction: column; gap: 2px; }
 .preset-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--bg-card);
-  border: 0.5px solid var(--separator);
+  gap: 8px;
+  padding: 6px 8px;
   border-radius: var(--radius);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.1s;
+  border: 1px solid transparent;
 }
-.preset-item:hover {
-  background: var(--bg-card-hover);
-  border-color: rgba(255,255,255,0.15);
-}
-.preset-item.selected {
-  background: var(--accent-dim);
-  border-color: rgba(10,132,255,0.4);
-}
-
-.preset-icon {
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.06);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  flex-shrink: 0;
-}
-.preset-item.selected .preset-icon {
-  background: rgba(10,132,255,0.2);
-}
-
-.pi-info { flex: 1; min-width: 0; }
-.pi-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 2px;
-}
-.pi-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pi-tags {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
+.preset-item:hover { background: var(--bg-hover); }
+.preset-item.selected { background: var(--accent-dim); border-color: rgba(91,138,240,0.25); }
+.preset-icon { font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
+.pi-name { font-size: 12px; font-weight: 500; color: var(--text-primary); }
+.pi-tags { display: flex; gap: 3px; margin-left: auto; }
 .pi-tag {
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
   background: rgba(255,255,255,0.06);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
-.preset-item.selected .pi-tag {
-  background: rgba(10,132,255,0.2);
-  color: var(--accent);
-}
+.preset-item.selected .pi-tag { background: rgba(91,138,240,0.2); color: var(--accent); }
 
-/* ─── Content Split ─── */
-.content-split {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-}
-
-/* ─── Terminal ─── */
-.terminal {
+/* ─── Center (Log) ─── */
+.center {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
 }
-
-/* ─── Preview Panel ─── */
-.preview-panel {
-  width: 360px;
+.center-header {
+  height: 32px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
+}
+.log-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-base);
+}
+.log-line {
+  padding: 1px 12px 1px 10px;
+  border-left: 2px solid transparent;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-info { color: var(--text-secondary); }
+.log-warn { color: var(--warning); border-left-color: var(--warning); background: var(--warning-dim); }
+.log-error { color: var(--danger); border-left-color: var(--danger); background: var(--danger-dim); }
+.log-success { color: var(--success); border-left-color: var(--success); background: var(--success-dim); }
+.log-capture { color: var(--info); border-left-color: var(--info); background: rgba(96,165,250,0.06); }
+.log-progress { color: var(--orange); border-left-color: var(--orange); }
+
+/* ─── Right Panel (Preview) ─── */
+.preview {
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-left: 0.5px solid var(--separator);
-  background: var(--bg);
 }
 .preview-header {
-  padding: 10px 16px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  border-bottom: 0.5px solid var(--separator);
+  height: 32px;
+  padding: 0 12px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
-  background: var(--bg-grouped);
 }
 .preview-body {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 8px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
   align-content: start;
 }
 .preview-card {
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   overflow: hidden;
-  background: var(--bg-card);
-  border: 0.5px solid var(--separator);
-  transition: border-color 0.2s;
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
   cursor: pointer;
+  transition: border-color 0.1s;
 }
-.preview-card:hover {
-  border-color: rgba(255,255,255,0.2);
-}
+.preview-card:hover { border-color: var(--border-strong); }
 .preview-card img {
   width: 100%;
   aspect-ratio: 16/9;
   object-fit: cover;
   display: block;
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-elevated);
 }
 .preview-card .pc-label {
-  padding: 6px 8px;
-  font-size: 11px;
-  color: var(--text-secondary);
+  padding: 3px 6px;
+  font-size: 10px;
   font-family: var(--font-mono);
+  color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -537,428 +407,225 @@ body {
 .preview-empty {
   grid-column: 1 / -1;
   text-align: center;
-  padding: 40px 16px;
+  padding: 32px 12px;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.6;
 }
-.terminal-header {
-  padding: 10px 20px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  border-bottom: 0.5px solid var(--separator);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-shrink: 0;
-  background: var(--bg-grouped);
-}
-.terminal-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px 20px;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.8;
-  background: var(--bg);
-}
 
-.line {
-  padding: 2px 0 2px 10px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  border-left: 3px solid transparent;
-  border-radius: 1px;
-}
-.line-info { color: var(--text-secondary); }
-.line-warn { color: var(--warn); border-left-color: var(--warn); background: rgba(255,214,10,0.04); }
-.line-error { color: var(--danger); border-left-color: var(--danger); background: rgba(255,69,58,0.06); }
-.line-success { color: var(--success); border-left-color: var(--success); background: rgba(48,209,88,0.05); }
-.line-capture { color: var(--accent); border-left-color: var(--accent); background: rgba(10,132,255,0.04); }
-.line-progress { color: var(--orange); border-left-color: var(--orange); }
-
-/* ─── Bottom Bar ─── */
-.bottom-bar {
-  background: var(--bg-grouped);
-  border-top: 0.5px solid var(--separator);
-  padding: 8px 20px;
+/* ─── Status Bar ─── */
+.statusbar {
+  height: 24px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
+  padding: 0 12px;
+  font-size: 11px;
   color: var(--text-tertiary);
   flex-shrink: 0;
+  gap: 16px;
 }
+.statusbar-spacer { flex: 1; }
 
-/* ─── Scrollbar (macOS style) ─── */
-::-webkit-scrollbar { width: 8px; }
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.15);
-  border-radius: 4px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
 .hidden { display: none !important; }
-
-/* ─── Animations ─── */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.settings-overlay.open .settings-panel {
-  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
 </style>
 </head>
 <body>
 
-<!-- Titlebar -->
-<div class="titlebar">
-  <div class="titlebar-left">
-    <div class="logo"><span>capture</span>AIshi</div>
-  </div>
-  <div id="statusBadge" class="status-badge">
-    <div class="dot"></div>
-    <span id="statusText">Idle</span>
-  </div>
-</div>
-
-<!-- Control Bar -->
-<div class="control-bar">
-  <button class="btn btn-primary" id="btnStart" onclick="startCapture()">
-    &#9654;&#xFE0E; Start Capture
-  </button>
-  <button class="btn btn-danger" id="btnStop" onclick="stopCapture()" style="display:none;">
-    &#9632;&#xFE0E; Stop
-  </button>
-  <div class="bar-sep"></div>
-  <span class="bar-label">Preset</span>
-  <select class="apple-select" id="presetSelect" onchange="selectPresetById(this.value)">
-    <option value="">Select...</option>
+<!-- Toolbar -->
+<div class="toolbar">
+  <span class="toolbar-logo"><b>capture</b>AIshi</span>
+  <div class="toolbar-sep"></div>
+  <button class="btn btn-accent" id="btnStart" onclick="startCapture()">&#9654;&#xFE0E; Start</button>
+  <button class="btn btn-danger" id="btnStop" onclick="stopCapture()" style="display:none">&#9632;&#xFE0E; Stop</button>
+  <div class="toolbar-sep"></div>
+  <select class="sel" id="presetSelect" onchange="selectPresetById(this.value)">
+    <option value="">Preset...</option>
   </select>
-  <span class="bar-label">Driver</span>
-  <select class="apple-select" id="driver" onchange="updateVisibility()">
+  <select class="sel" id="driver" onchange="updateVisibility()">
     <option value="manual">Manual</option>
     <option value="ue5">UE5</option>
     <option value="unity">Unity</option>
-    <option value="cheatengine">CheatEngine</option>
+    <option value="cheatengine">CE</option>
   </select>
-  <span class="bar-label">Grabber</span>
-  <select class="apple-select" id="grabber" onchange="updateVisibility()">
-    <option value="none">None</option>
+  <select class="sel" id="grabber" onchange="updateVisibility()">
+    <option value="none">No Grab</option>
     <option value="renderdoc">RenderDoc</option>
     <option value="screenshot">Screenshot</option>
   </select>
-  <label class="apple-toggle" style="margin-left:4px;">
-    <input type="checkbox" id="clean_start" checked>
-    <div class="track"></div>
-    <span>Clean Start</span>
-  </label>
-  <label class="apple-toggle" style="margin-left:4px;">
-    <input type="checkbox" id="dry_run">
-    <div class="track"></div>
-    <span>Dry Run</span>
-  </label>
-  <div class="bar-spacer"></div>
-  <button class="btn btn-secondary" id="btnSettings" onclick="toggleSettings()">
-    &#9881;&#xFE0E; Settings
-  </button>
-  <button class="btn btn-secondary" onclick="clearLogs()">
-    Clear
-  </button>
+  <div class="toolbar-sep"></div>
+  <label class="tog"><input type="checkbox" id="clean_start" checked><div class="track"></div>Clean</label>
+  <label class="tog"><input type="checkbox" id="dry_run"><div class="track"></div>Dry</label>
+  <div class="toolbar-spacer"></div>
+  <div id="statusBadge" class="badge badge-idle"><div class="dot"></div><span id="statusText">Idle</span></div>
 </div>
 
-<!-- Main Area -->
-<div class="main">
+<!-- Layout -->
+<div class="layout">
 
-  <!-- Settings Overlay -->
-  <div class="settings-overlay" id="settingsOverlay" onclick="closeSettingsOutside(event)">
-    <div class="settings-panel" onclick="event.stopPropagation()">
-      <div class="settings-header">
-        <h2>Settings</h2>
-        <button class="close-btn" onclick="toggleSettings()">&times;</button>
+  <!-- Left Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">Parameters</div>
+    <div class="sidebar-body">
+
+      <!-- Presets -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Presets</button>
+        <div class="sec-body open"><div class="preset-list" id="presetList"></div></div>
       </div>
-      <div class="settings-body">
 
-        <!-- Presets -->
-        <div class="section">
-          <button class="section-toggle open" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Presets
-          </button>
-          <div class="section-content open" id="presetListContainer">
-            <div class="preset-list" id="presetList"></div>
-          </div>
-        </div>
-
-        <!-- Capture Volume -->
-        <div class="section">
-          <button class="section-toggle" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Capture Volume
-          </button>
-          <div class="section-content">
-            <div class="card">
-              <div class="field">
-                <label>Min (X, Y, Z)</label>
-                <div class="row row-3">
-                  <div class="field"><input type="number" id="vol_min_x" value="-5" step="0.5"></div>
-                  <div class="field"><input type="number" id="vol_min_y" value="0" step="0.5"></div>
-                  <div class="field"><input type="number" id="vol_min_z" value="-5" step="0.5"></div>
-                </div>
-              </div>
-              <div class="field">
-                <label>Max (X, Y, Z)</label>
-                <div class="row row-3">
-                  <div class="field"><input type="number" id="vol_max_x" value="5" step="0.5"></div>
-                  <div class="field"><input type="number" id="vol_max_y" value="3" step="0.5"></div>
-                  <div class="field"><input type="number" id="vol_max_z" value="5" step="0.5"></div>
-                </div>
-              </div>
-              <div class="field">
-                <label>Spacing (m)</label>
-                <input type="number" id="spacing" value="2.0" step="0.1" min="0.1">
-              </div>
+      <!-- Volume -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Capture Volume</button>
+        <div class="sec-body open">
+          <div class="f"><label>Min (X, Y, Z)</label>
+            <div class="row">
+              <div class="f"><input type="number" id="vol_min_x" value="-5" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_min_y" value="0" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_min_z" value="-5" step="0.5"></div>
             </div>
           </div>
-        </div>
-
-        <!-- Path -->
-        <div class="section">
-          <button class="section-toggle" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Path
-          </button>
-          <div class="section-content">
-            <div class="card">
-              <label class="apple-toggle" style="margin-bottom:10px;">
-                <input type="checkbox" id="smooth" onchange="updateVisibility()">
-                <div class="track"></div>
-                <span>Smooth Path</span>
-              </label>
-              <div class="field" id="smoothPointsWrap">
-                <label>Points per Segment</label>
-                <input type="number" id="smooth_points" value="5" min="2" max="50">
-              </div>
+          <div class="f"><label>Max (X, Y, Z)</label>
+            <div class="row">
+              <div class="f"><input type="number" id="vol_max_x" value="5" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_max_y" value="3" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_max_z" value="5" step="0.5"></div>
             </div>
           </div>
+          <div class="f"><label>Spacing (m)</label><input type="number" id="spacing" value="2.0" step="0.1" min="0.1"></div>
         </div>
-
-        <!-- Cone Rotation -->
-        <div class="section">
-          <button class="section-toggle" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Cone Rotation
-          </button>
-          <div class="section-content">
-            <div class="card">
-              <div class="field">
-                <label>Half Angle (0 = off)</label>
-                <input type="number" id="cone_angle" value="0" step="1" min="0" max="90">
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>Ring Samples</label>
-                  <input type="number" id="cone_samples" value="8" min="1">
-                </div>
-                <div class="field">
-                  <label>Rings</label>
-                  <input type="number" id="cone_rings" value="2" min="1">
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Connection -->
-        <div class="section">
-          <button class="section-toggle" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Connection
-          </button>
-          <div class="section-content">
-            <div class="card">
-              <div class="row">
-                <div class="field">
-                  <label>Host</label>
-                  <input type="text" id="driver_host" value="127.0.0.1">
-                </div>
-                <div class="field">
-                  <label>Port</label>
-                  <input type="number" id="driver_port" value="9999">
-                </div>
-              </div>
-              <div class="field" id="ceModeWrap">
-                <label>CE Mode</label>
-                <select id="ce_mode">
-                  <option value="file">File</option>
-                  <option value="socket">Socket</option>
-                </select>
-              </div>
-              <div class="field" id="targetExeWrap">
-                <label>Target Executable</label>
-                <input type="text" id="target_exe" placeholder="/path/to/game.exe">
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Streaming & LOD -->
-        <div class="section">
-          <button class="section-toggle open" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Streaming &amp; LOD
-          </button>
-          <div class="section-content open">
-            <div class="card">
-              <label class="apple-toggle" style="margin-bottom:10px;">
-                <input type="checkbox" id="streaming" checked onchange="updateVisibility()">
-                <div class="track"></div>
-                <span>Enable Streaming Management</span>
-              </label>
-              <p class="field-hint">
-                Moves the game's streaming center to follow the capture camera.
-                Without this, areas far from the player will have low-LOD meshes
-                and blurry textures.
-              </p>
-              <div class="field" id="streamingSettleWrap" style="margin-top:10px;">
-                <label>Settle Time (seconds)</label>
-                <input type="number" id="streaming_settle" value="0.5" step="0.1" min="0" max="10">
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Options -->
-        <div class="section">
-          <button class="section-toggle" onclick="toggleSection(this)">
-            <span class="arrow">&#9654;&#xFE0E;</span> Options
-          </button>
-          <div class="section-content">
-            <div class="card">
-              <label class="apple-toggle" style="margin-bottom:10px;">
-                <input type="checkbox" id="no_hide_ui">
-                <div class="track"></div>
-                <span>Disable UI Hiding</span>
-              </label>
-              <div class="field">
-                <label>Output Directory</label>
-                <input type="text" id="output_dir" value="./output">
-              </div>
-            </div>
-          </div>
-        </div>
-
       </div>
+
+      <!-- Path -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Path</button>
+        <div class="sec-body">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="smooth" onchange="updateVisibility()"><div class="track"></div>Smooth Path</label>
+          <div class="f" id="smoothPointsWrap"><label>Points / Segment</label><input type="number" id="smooth_points" value="5" min="2" max="50"></div>
+        </div>
+      </div>
+
+      <!-- Cone Rotation -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Cone Rotation</button>
+        <div class="sec-body">
+          <div class="f"><label>Half Angle (0=off)</label><input type="number" id="cone_angle" value="0" step="1" min="0" max="90"></div>
+          <div class="row">
+            <div class="f"><label>Ring Samples</label><input type="number" id="cone_samples" value="8" min="1"></div>
+            <div class="f"><label>Rings</label><input type="number" id="cone_rings" value="2" min="1"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connection -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Connection</button>
+        <div class="sec-body">
+          <div class="row">
+            <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1"></div>
+            <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999"></div>
+          </div>
+          <div class="f" id="ceModeWrap"><label>CE Mode</label>
+            <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
+          </div>
+          <div class="f" id="targetExeWrap"><label>Target Exe</label><input type="text" id="target_exe" placeholder="/path/to/game.exe"></div>
+        </div>
+      </div>
+
+      <!-- Streaming -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Streaming</button>
+        <div class="sec-body">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="streaming" checked onchange="updateVisibility()"><div class="track"></div>Streaming Mgmt</label>
+          <div class="f" id="streamingSettleWrap"><label>Settle (s)</label><input type="number" id="streaming_settle" value="0.5" step="0.1" min="0" max="10"></div>
+        </div>
+      </div>
+
+      <!-- Options -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Options</button>
+        <div class="sec-body">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="no_hide_ui"><div class="track"></div>Disable UI Hiding</label>
+          <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output"></div>
+        </div>
+      </div>
+
     </div>
   </div>
 
-  <!-- Content Split: Terminal + Preview -->
-  <div class="content-split">
-    <!-- Terminal (left) -->
-    <div class="terminal">
-      <div class="terminal-header">
-        <span>Output</span>
-        <span id="logCount">0 lines</span>
-      </div>
-      <div class="terminal-body" id="logBody">
-        <div class="line line-info">$ captureAIshi ready</div>
-        <div class="line line-info">  Select a preset and click Start, or open Settings for full control.</div>
-      </div>
+  <!-- Center: Log -->
+  <div class="center">
+    <div class="center-header">
+      <span>Output</span>
+      <span id="logCount" style="font-weight:400;text-transform:none;letter-spacing:0">0 lines</span>
     </div>
-
-    <!-- Preview (right) -->
-    <div class="preview-panel">
-      <div class="preview-header">
-        <select class="apple-select" id="sessionSelect" onchange="switchSession(this.value)" style="font-size:12px;padding:4px 24px 4px 8px;">
-          <option value="">Captures</option>
-        </select>
-        <span id="captureCount">0 frames</span>
-      </div>
-      <div class="preview-body" id="previewBody">
-        <div class="preview-empty">
-          No captures yet.<br>Start a capture to see preview frames here.
-        </div>
-      </div>
+    <div class="log-body" id="logBody">
+      <div class="log-line log-info">$ captureAIshi ready</div>
     </div>
   </div>
+
+  <!-- Right: Preview -->
+  <div class="preview">
+    <div class="preview-header">
+      <select class="sel" id="sessionSelect" onchange="switchSession(this.value)" style="height:24px;font-size:11px;padding-left:6px;">
+        <option value="">Captures</option>
+      </select>
+      <span id="captureCount" style="font-size:10px;color:var(--text-tertiary)">0</span>
+    </div>
+    <div class="preview-body" id="previewBody">
+      <div class="preview-empty">No captures yet</div>
+    </div>
+  </div>
+
 </div>
 
-<!-- Bottom Bar -->
-<div class="bottom-bar">
-  <span id="configSummary">No preset selected</span>
-  <span id="bottomRight">captureAIshi v1.0</span>
+<!-- Status Bar -->
+<div class="statusbar">
+  <span id="configSummary">No preset</span>
+  <div class="statusbar-spacer"></div>
+  <span>captureAIshi v1.0</span>
 </div>
 
 <script>
 // ─── State ───
-let polling = null;
-let presets = [];
-let selectedPresetId = null;
+let polling = null, presets = [], selectedPresetId = null;
+let knownCaptures = [], activeSession = '', viewSession = '';
 
-// ─── Settings panel ───
-function toggleSettings() {
-  const overlay = document.getElementById('settingsOverlay');
-  overlay.classList.toggle('open');
-  document.getElementById('btnSettings').classList.toggle('active', overlay.classList.contains('open'));
-}
-function closeSettingsOutside(e) {
-  if (e.target === e.currentTarget) toggleSettings();
-}
-
-// ─── Collapsible sections ───
-function toggleSection(btn) {
-  btn.classList.toggle('open');
-  btn.nextElementSibling.classList.toggle('open');
-}
+// ─── Sections ───
+function toggleSec(btn) { btn.classList.toggle('open'); btn.nextElementSibling.classList.toggle('open'); }
 
 // ─── Presets ───
+const presetIcons = { gamepad:'\u{1F3AE}', cube:'\u{1F4E6}', unity:'\u{1F3AE}', wrench:'\u{1F527}', flask:'\u{1F9EA}' };
+
 async function loadPresets() {
   try {
-    const resp = await fetch('/api/presets');
-    presets = await resp.json();
-    renderPresetSelect();
+    const r = await fetch('/api/presets');
+    presets = await r.json();
+    const sel = document.getElementById('presetSelect');
+    sel.innerHTML = '<option value="">Preset...</option>';
+    presets.forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; sel.appendChild(o); });
     renderPresetList();
-  } catch (e) {
-    console.error('Failed to load presets:', e);
-  }
+  } catch(e) { console.error(e); }
 }
-
-function renderPresetSelect() {
-  const sel = document.getElementById('presetSelect');
-  sel.innerHTML = '<option value="">Select...</option>';
-  presets.forEach(p => {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
-    sel.appendChild(opt);
-  });
-}
-
-const presetIcons = {
-  gamepad: '\u{1F3AE}',
-  cube: '\u{1F4E6}',
-  unity: '\u{1F3AE}',
-  wrench: '\u{1F527}',
-  flask: '\u{1F9EA}',
-};
 
 function renderPresetList() {
   const list = document.getElementById('presetList');
   list.innerHTML = '';
   presets.forEach(p => {
     const icon = presetIcons[p.icon] || '\u{1F4CB}';
-    const item = document.createElement('div');
-    item.className = 'preset-item';
-    item.dataset.id = p.id;
-    item.onclick = () => selectPresetById(p.id);
-    item.innerHTML = `
-      <div class="preset-icon">${icon}</div>
-      <div class="pi-info">
-        <div class="pi-name">${p.name}</div>
-        <div class="pi-desc">${p.desc}</div>
-      </div>
-      <div class="pi-tags">${p.tags.map(t => `<span class="pi-tag">${t}</span>`).join('')}</div>
-    `;
-    list.appendChild(item);
+    const d = document.createElement('div');
+    d.className = 'preset-item';
+    d.dataset.id = p.id;
+    d.onclick = () => selectPresetById(p.id);
+    d.innerHTML = `<span class="preset-icon">${icon}</span><span class="pi-name">${p.name}</span><span class="pi-tags">${p.tags.map(t=>`<span class="pi-tag">${t}</span>`).join('')}</span>`;
+    list.appendChild(d);
   });
 }
 
@@ -968,274 +635,159 @@ function selectPresetById(id) {
   const preset = presets.find(p => p.id === id);
   if (!preset) return;
   document.getElementById('presetSelect').value = id;
-  document.querySelectorAll('.preset-item').forEach(el => {
-    el.classList.toggle('selected', el.dataset.id === id);
-  });
+  document.querySelectorAll('.preset-item').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
   applyParams(preset.params);
-  updateConfigSummary(preset);
-  addLog(`Preset loaded: ${preset.name}`, 'info');
+  const dl = {manual:'Manual',ue5:'UE5',unity:'Unity',cheatengine:'CE'};
+  const gl = {none:'None',renderdoc:'RDoc',screenshot:'Scrn'};
+  document.getElementById('configSummary').textContent = `${preset.name} \u2022 ${dl[preset.params.driver]||preset.params.driver} \u2022 ${gl[preset.params.grabber]||preset.params.grabber} \u2022 ${preset.params.spacing}m`;
+  addLog(`Preset: ${preset.name}`, 'info');
 }
 
 function applyParams(p) {
-  document.getElementById('vol_min_x').value = p.volume_min[0];
-  document.getElementById('vol_min_y').value = p.volume_min[1];
-  document.getElementById('vol_min_z').value = p.volume_min[2];
-  document.getElementById('vol_max_x').value = p.volume_max[0];
-  document.getElementById('vol_max_y').value = p.volume_max[1];
-  document.getElementById('vol_max_z').value = p.volume_max[2];
-  document.getElementById('spacing').value = p.spacing;
-  document.getElementById('smooth').checked = p.smooth;
-  document.getElementById('smooth_points').value = p.smooth_points;
-  document.getElementById('cone_angle').value = p.cone_angle;
-  document.getElementById('cone_samples').value = p.cone_samples;
-  document.getElementById('cone_rings').value = p.cone_rings;
-  document.getElementById('driver').value = p.driver;
-  document.getElementById('driver_host').value = p.driver_host;
-  document.getElementById('driver_port').value = p.driver_port;
-  document.getElementById('ce_mode').value = p.ce_mode;
-  document.getElementById('grabber').value = p.grabber;
-  document.getElementById('target_exe').value = p.target_exe || '';
-  document.getElementById('no_hide_ui').checked = p.no_hide_ui;
-  document.getElementById('output_dir').value = p.output_dir;
-  document.getElementById('dry_run').checked = p.dry_run;
-  document.getElementById('streaming').checked = p.streaming !== false;
-  document.getElementById('streaming_settle').value = p.streaming_settle || 0.5;
+  document.getElementById('vol_min_x').value=p.volume_min[0]; document.getElementById('vol_min_y').value=p.volume_min[1]; document.getElementById('vol_min_z').value=p.volume_min[2];
+  document.getElementById('vol_max_x').value=p.volume_max[0]; document.getElementById('vol_max_y').value=p.volume_max[1]; document.getElementById('vol_max_z').value=p.volume_max[2];
+  document.getElementById('spacing').value=p.spacing;
+  document.getElementById('smooth').checked=p.smooth; document.getElementById('smooth_points').value=p.smooth_points;
+  document.getElementById('cone_angle').value=p.cone_angle; document.getElementById('cone_samples').value=p.cone_samples; document.getElementById('cone_rings').value=p.cone_rings;
+  document.getElementById('driver').value=p.driver; document.getElementById('driver_host').value=p.driver_host; document.getElementById('driver_port').value=p.driver_port;
+  document.getElementById('ce_mode').value=p.ce_mode; document.getElementById('grabber').value=p.grabber;
+  document.getElementById('target_exe').value=p.target_exe||''; document.getElementById('no_hide_ui').checked=p.no_hide_ui;
+  document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run;
+  document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
   updateVisibility();
 }
 
-function updateConfigSummary(preset) {
-  const p = preset.params;
-  const driverLabel = {manual:'Manual', ue5:'UE5', unity:'Unity', cheatengine:'CE'}[p.driver] || p.driver;
-  const grabberLabel = {none:'None', renderdoc:'RenderDoc', screenshot:'Screenshot'}[p.grabber] || p.grabber;
-  document.getElementById('configSummary').textContent =
-    `${preset.name}  \u2022  ${driverLabel} @ ${p.driver_host}:${p.driver_port}  \u2022  ${grabberLabel}  \u2022  spacing ${p.spacing}m`;
-}
-
-// ─── Form data ───
-function pf(id) { return parseFloat(document.getElementById(id).value) || 0; }
-function pi(id) { return parseInt(document.getElementById(id).value) || 0; }
-function val(id) { return document.getElementById(id).value; }
-function cb(id) { return document.getElementById(id).checked; }
+// ─── Form ───
+function pf(id){return parseFloat(document.getElementById(id).value)||0;}
+function pi(id){return parseInt(document.getElementById(id).value)||0;}
+function val(id){return document.getElementById(id).value;}
+function cb(id){return document.getElementById(id).checked;}
 
 function getFormData() {
   return {
-    volume_min: [pf('vol_min_x'), pf('vol_min_y'), pf('vol_min_z')],
-    volume_max: [pf('vol_max_x'), pf('vol_max_y'), pf('vol_max_z')],
-    spacing: pf('spacing'),
-    smooth: cb('smooth'),
-    smooth_points: pi('smooth_points'),
-    cone_angle: pf('cone_angle'),
-    cone_samples: pi('cone_samples'),
-    cone_rings: pi('cone_rings'),
-    driver: val('driver'),
-    driver_host: val('driver_host'),
-    driver_port: pi('driver_port'),
-    ce_mode: val('ce_mode'),
-    grabber: val('grabber'),
-    target_exe: val('target_exe'),
-    no_hide_ui: cb('no_hide_ui'),
-    output_dir: val('output_dir'),
-    dry_run: cb('dry_run'),
-    clean_start: cb('clean_start'),
-    streaming: cb('streaming'),
-    streaming_settle: pf('streaming_settle'),
+    volume_min:[pf('vol_min_x'),pf('vol_min_y'),pf('vol_min_z')],
+    volume_max:[pf('vol_max_x'),pf('vol_max_y'),pf('vol_max_z')],
+    spacing:pf('spacing'), smooth:cb('smooth'), smooth_points:pi('smooth_points'),
+    cone_angle:pf('cone_angle'), cone_samples:pi('cone_samples'), cone_rings:pi('cone_rings'),
+    driver:val('driver'), driver_host:val('driver_host'), driver_port:pi('driver_port'), ce_mode:val('ce_mode'),
+    grabber:val('grabber'), target_exe:val('target_exe'), no_hide_ui:cb('no_hide_ui'),
+    output_dir:val('output_dir'), dry_run:cb('dry_run'), clean_start:cb('clean_start'),
+    streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
   };
 }
 
 // ─── Capture ───
 async function startCapture() {
   const btn = document.getElementById('btnStart');
-  const data = getFormData();
   btn.disabled = true;
   try {
-    const resp = await fetch('/api/start', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(data),
-    });
-    const result = await resp.json();
-    if (!result.ok) {
-      addLog('ERROR: ' + result.error, 'error');
-      btn.disabled = false;
-      return;
-    }
+    const resp = await fetch('/api/start', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(getFormData()) });
+    const r = await resp.json();
+    if (!r.ok) { addLog('ERROR: '+r.error,'error'); btn.disabled=false; return; }
     setBadge('running');
-    document.getElementById('btnStart').style.display = 'none';
-    document.getElementById('btnStop').style.display = '';
+    btn.style.display='none';
+    document.getElementById('btnStop').style.display='';
     startPolling();
-  } catch (e) {
-    addLog('ERROR: ' + e.message, 'error');
-    btn.disabled = false;
-  }
+  } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
-
-function stopCapture() {
-  addLog('Stop requested...', 'warn');
-}
+function stopCapture() { addLog('Stop requested...','warn'); }
 
 function startPolling() {
-  if (polling) clearInterval(polling);
-  let lastLen = 0;
-  polling = setInterval(async () => {
+  if(polling) clearInterval(polling);
+  let last=0;
+  polling = setInterval(async()=>{
     try {
-      const resp = await fetch('/api/status');
-      const st = await resp.json();
-      if (st.logs.length > lastLen) {
-        for (let i = lastLen; i < st.logs.length; i++) addLog(st.logs[i]);
-        lastLen = st.logs.length;
+      const r = await(await fetch('/api/status')).json();
+      if(r.logs.length>last){ for(let i=last;i<r.logs.length;i++) addLog(r.logs[i]); last=r.logs.length; }
+      if(!r.running){
+        clearInterval(polling); polling=null;
+        document.getElementById('btnStart').disabled=false;
+        document.getElementById('btnStart').style.display='';
+        document.getElementById('btnStop').style.display='none';
+        if(r.error){ setBadge('error'); addLog('FAILED: '+r.error,'error'); }
+        else { setBadge('idle'); addLog('Capture finished.','success'); }
       }
-      if (!st.running) {
-        clearInterval(polling);
-        polling = null;
-        document.getElementById('btnStart').disabled = false;
-        document.getElementById('btnStart').style.display = '';
-        document.getElementById('btnStop').style.display = 'none';
-        if (st.error) {
-          setBadge('error');
-          addLog('CAPTURE FAILED: ' + st.error, 'error');
-        } else {
-          setBadge('idle');
-          addLog('Capture finished.', 'info');
-        }
-      }
-    } catch (_) {}
-  }, 500);
+    } catch(_){}
+  },500);
 }
 
-// ─── Logging ───
-function classifyLog(text) {
-  const t = text.toLowerCase();
-  if (t.includes('[error]') || t.includes('failed') || t.includes('exception') || t.includes('traceback'))
-    return 'error';
-  if (t.includes('[warning]') || t.includes('[warn]') || t.includes('warning:') || t.includes('timeout') || t.includes('retry'))
-    return 'warn';
-  if (t.includes('saved') || t.includes('complete') || t.includes('finished') || t.includes('success') || t.includes('done'))
-    return 'success';
-  if (t.includes('captured') || t.includes('frame') || t.includes('grabbed') || t.includes('screenshot'))
-    return 'capture';
-  if (/\d+\s*\/\s*\d+/.test(t) || t.includes('progress') || t.includes('waypoint') || t.includes('moving'))
-    return 'progress';
+// ─── Log ───
+function classifyLog(t) {
+  const l=t.toLowerCase();
+  if(l.includes('[error]')||l.includes('failed')||l.includes('exception')||l.includes('traceback')) return 'error';
+  if(l.includes('[warning]')||l.includes('[warn]')||l.includes('timeout')||l.includes('retry')) return 'warn';
+  if(l.includes('saved')||l.includes('complete')||l.includes('finished')||l.includes('success')||l.includes('done')) return 'success';
+  if(l.includes('captured')||l.includes('frame')||l.includes('grabbed')||l.includes('screenshot')) return 'capture';
+  if(/\d+\s*\/\s*\d+/.test(l)||l.includes('progress')||l.includes('waypoint')||l.includes('moving')) return 'progress';
   return 'info';
 }
-
-function addLog(text, forceLevel) {
-  const body = document.getElementById('logBody');
-  const div = document.createElement('div');
-  const level = forceLevel || classifyLog(text);
-  div.className = 'line line-' + level;
-  div.textContent = text;
-  body.appendChild(div);
-  body.scrollTop = body.scrollHeight;
-  document.getElementById('logCount').textContent = body.children.length + ' lines';
+function addLog(text, force) {
+  const body=document.getElementById('logBody');
+  const d=document.createElement('div');
+  d.className='log-line log-'+(force||classifyLog(text));
+  d.textContent=text;
+  body.appendChild(d);
+  body.scrollTop=body.scrollHeight;
+  document.getElementById('logCount').textContent=body.children.length+' lines';
 }
-
-function clearLogs() {
-  document.getElementById('logBody').innerHTML = '';
-  document.getElementById('logCount').textContent = '0 lines';
-}
-
-function setBadge(state) {
-  const badge = document.getElementById('statusBadge');
-  const txt = document.getElementById('statusText');
-  badge.className = 'status-badge' + (state !== 'idle' ? ' ' + state : '');
-  txt.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+function clearLogs(){ document.getElementById('logBody').innerHTML=''; document.getElementById('logCount').textContent='0 lines'; }
+function setBadge(s) {
+  const b=document.getElementById('statusBadge'), t=document.getElementById('statusText');
+  b.className='badge badge-'+s;
+  t.textContent=s.charAt(0).toUpperCase()+s.slice(1);
 }
 
 // ─── Visibility ───
 function updateVisibility() {
-  const smoothWrap = document.getElementById('smoothPointsWrap');
-  if (smoothWrap) smoothWrap.classList.toggle('hidden', !cb('smooth'));
-  const ceWrap = document.getElementById('ceModeWrap');
-  if (ceWrap) ceWrap.classList.toggle('hidden', val('driver') !== 'cheatengine');
-  const exeWrap = document.getElementById('targetExeWrap');
-  if (exeWrap) exeWrap.classList.toggle('hidden', val('grabber') !== 'renderdoc');
-  const streamSettle = document.getElementById('streamingSettleWrap');
-  if (streamSettle) streamSettle.classList.toggle('hidden', !cb('streaming'));
+  const h=(id,hide)=>{const el=document.getElementById(id);if(el)el.classList.toggle('hidden',hide);};
+  h('smoothPointsWrap',!cb('smooth'));
+  h('ceModeWrap',val('driver')!=='cheatengine');
+  h('targetExeWrap',val('grabber')!=='renderdoc');
+  h('streamingSettleWrap',!cb('streaming'));
 }
 
-// ─── Keyboard ───
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    const overlay = document.getElementById('settingsOverlay');
-    if (overlay.classList.contains('open')) toggleSettings();
-  }
-});
-
-// ─── Preview Panel ───
-let knownCaptures = [];
-let activeSession = '';
-let viewSession = ''; // which session the user is viewing
-
+// ─── Preview ───
 async function pollSessions() {
   try {
-    const resp = await fetch('/api/sessions');
-    const data = await resp.json();
-    const sel = document.getElementById('sessionSelect');
-    const current = sel.value;
-    sel.innerHTML = '<option value="">All Sessions</option>';
-    data.sessions.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s;
-      opt.textContent = s;
-      sel.appendChild(opt);
-    });
-    // Auto-switch to active session when a new capture starts
-    if (data.active && data.active !== activeSession) {
-      activeSession = data.active;
-      viewSession = data.active;
-      sel.value = data.active;
-    } else {
-      sel.value = viewSession || current;
-    }
-  } catch (_) {}
+    const d=await(await fetch('/api/sessions')).json();
+    const sel=document.getElementById('sessionSelect');
+    const cur=sel.value;
+    sel.innerHTML='<option value="">All</option>';
+    d.sessions.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;sel.appendChild(o);});
+    if(d.active&&d.active!==activeSession){activeSession=d.active;viewSession=d.active;sel.value=d.active;}
+    else{sel.value=viewSession||cur;}
+  } catch(_){}
 }
-
-function switchSession(s) {
-  viewSession = s;
-  knownCaptures = [];
-  pollCaptures();
-}
-
+function switchSession(s){viewSession=s;knownCaptures=[];pollCaptures();}
 async function pollCaptures() {
   try {
-    const url = viewSession ? `/api/captures/${encodeURIComponent(viewSession)}` : '/api/captures';
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (data.files && (data.files.length !== knownCaptures.length || data.session !== activeSession)) {
-      knownCaptures = data.files;
-      renderPreviews(data.session);
-    }
-  } catch (_) {}
+    const url=viewSession?`/api/captures/${encodeURIComponent(viewSession)}`:'/api/captures';
+    const d=await(await fetch(url)).json();
+    if(d.files&&(d.files.length!==knownCaptures.length||d.session!==activeSession)){knownCaptures=d.files;renderPreviews(d.session);}
+  } catch(_){}
 }
-
 function renderPreviews(session) {
-  const body = document.getElementById('previewBody');
-  document.getElementById('captureCount').textContent = knownCaptures.length + ' frames';
-  if (knownCaptures.length === 0) {
-    body.innerHTML = '<div class="preview-empty">No captures yet.<br>Start a capture to see preview frames here.</div>';
-    return;
-  }
-  body.innerHTML = '';
-  const sess = session || viewSession || activeSession;
-  const items = [...knownCaptures].reverse();
-  items.forEach(f => {
-    const card = document.createElement('div');
-    card.className = 'preview-card';
-    const src = sess ? `/api/captures/${encodeURIComponent(sess)}/${encodeURIComponent(f)}` : `/api/captures/_/${encodeURIComponent(f)}`;
-    const label = f.split('/').pop();
-    card.innerHTML = `<img src="${src}" loading="lazy" alt="${label}"><div class="pc-label">${label}</div>`;
-    body.appendChild(card);
+  const body=document.getElementById('previewBody');
+  document.getElementById('captureCount').textContent=knownCaptures.length;
+  if(!knownCaptures.length){body.innerHTML='<div class="preview-empty">No captures yet</div>';return;}
+  body.innerHTML='';
+  const sess=session||viewSession||activeSession;
+  [...knownCaptures].reverse().forEach(f=>{
+    const c=document.createElement('div');c.className='preview-card';
+    const src=sess?`/api/captures/${encodeURIComponent(sess)}/${encodeURIComponent(f)}`:'';
+    c.innerHTML=`<img src="${src}" loading="lazy" alt="${f}"><div class="pc-label">${f.split('/').pop()}</div>`;
+    body.appendChild(c);
   });
 }
 
-// Poll every 2 seconds
-setInterval(() => { pollSessions(); pollCaptures(); }, 2000);
+// ─── Keyboard ───
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') clearLogs(); });
 
 // ─── Init ───
 updateVisibility();
 loadPresets();
-pollSessions();
-pollCaptures();
+setInterval(()=>{pollSessions();pollCaptures();},2000);
+pollSessions();pollCaptures();
 </script>
 </body>
 </html>
