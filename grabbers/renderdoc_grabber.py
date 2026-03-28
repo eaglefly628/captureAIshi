@@ -105,17 +105,8 @@ class RenderDocGrabber(FrameGrabber):
                             "(game may not be launched through RenderDoc)")
 
         if self.auto_launch and self.target_exe:
-            # Resolve renderdoccmd path — fail early with a clear message
-            import shutil
-            rdoc_cmd = self.renderdoc_path
-            resolved = shutil.which(rdoc_cmd)
-            if resolved is None and not Path(rdoc_cmd).is_file():
-                raise FileNotFoundError(
-                    f"renderdoccmd not found: '{rdoc_cmd}'. "
-                    f"Set the full path (e.g. C:\\captureAIshi\\renderdoc\\x64\\Development\\renderdoccmd.exe)"
-                )
-            if resolved:
-                rdoc_cmd = resolved
+            # Resolve renderdoccmd path with auto-discovery
+            rdoc_cmd = self._resolve_renderdoccmd()
             logger.info(f"Launching {self.target_exe} via RenderDoc ({rdoc_cmd})...")
             # renderdoccmd syntax: capture [--opts] <exe> [game args]
             # All --opt flags must come BEFORE the executable path.
@@ -136,6 +127,65 @@ class RenderDocGrabber(FrameGrabber):
                 "RenderDoc grabber ready. Attach RenderDoc to your game manually "
                 f"or launch with: {self.renderdoc_path} capture <game.exe>"
             )
+
+    def _resolve_renderdoccmd(self) -> str:
+        """Find renderdoccmd executable.
+
+        Search order:
+          1. User-provided path (if it's a valid file or in PATH)
+          2. Sibling 'renderdoc' directory relative to project root
+             (e.g. ../renderdoc/x64/Development/renderdoccmd.exe)
+          3. Common install locations
+        """
+        import shutil
+        import sys
+
+        user_path = self.renderdoc_path
+        exe_name = "renderdoccmd.exe" if sys.platform == "win32" else "renderdoccmd"
+
+        # 1. User-provided path — exact file or in PATH
+        if Path(user_path).is_file():
+            logger.debug(f"renderdoccmd: using user path (file): {user_path}")
+            return user_path
+        resolved = shutil.which(user_path)
+        if resolved:
+            logger.debug(f"renderdoccmd: found in PATH: {resolved}")
+            return resolved
+
+        # 2. Search relative to project root (parent of this file's package)
+        #    Covers layouts like:  captureAIshi/  and  renderdoc/  as siblings
+        project_root = Path(__file__).resolve().parent.parent
+        search_roots = [project_root, project_root.parent]
+        # Typical build output directories
+        relative_candidates = [
+            Path("renderdoc") / "x64" / "Development" / exe_name,
+            Path("renderdoc") / "x64" / "Release" / exe_name,
+            Path("renderdoc") / "build" / "bin" / exe_name,
+            Path("renderdoc") / "bin" / exe_name,
+        ]
+        for root in search_roots:
+            for candidate in relative_candidates:
+                full = root / candidate
+                if full.is_file():
+                    found = str(full)
+                    logger.info(f"renderdoccmd: auto-discovered at {found}")
+                    return found
+
+        # 3. Common system install locations (Windows)
+        if sys.platform == "win32":
+            for prog_dir in [Path("C:/Program Files"), Path("C:/Program Files (x86)")]:
+                for rdoc_dir in prog_dir.glob("RenderDoc*"):
+                    candidate = rdoc_dir / exe_name
+                    if candidate.is_file():
+                        found = str(candidate)
+                        logger.info(f"renderdoccmd: found in system install: {found}")
+                        return found
+
+        searched = ", ".join(str(r) for r in search_roots)
+        raise FileNotFoundError(
+            f"renderdoccmd not found. Searched: PATH, {searched}/renderdoc/..., "
+            f"Program Files. Set full path in UI or add to PATH."
+        )
 
     def _wait_for_game_ready(self) -> None:
         """Poll until the game is ready or renderdoccmd exits.
