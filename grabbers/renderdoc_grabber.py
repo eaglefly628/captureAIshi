@@ -101,7 +101,8 @@ class RenderDocGrabber(FrameGrabber):
                 self.renderdoc_path, "capture",
                 "--opt-api-validation",
                 "--opt-capture-callstacks",
-                f"--opt-ref-all-resources",
+                "--opt-ref-all-resources",
+                "--opt-capture-child-processes",
                 self.target_exe,
             ])
             time.sleep(5)  # Wait for game to start
