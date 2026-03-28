@@ -105,6 +105,17 @@ class RenderDocGrabber(FrameGrabber):
                             "(game may not be launched through RenderDoc)")
 
         if self.auto_launch and self.target_exe:
+            # If user put exe + args all in one string, split them apart
+            if not Path(self.target_exe).is_file() and " " in self.target_exe:
+                import shlex
+                parts = shlex.split(self.target_exe, posix=False)
+                self.target_exe = parts[0]
+                self.target_args = parts[1:] + self.target_args
+                logger.info(
+                    f"Split target_exe into exe={self.target_exe}, "
+                    f"args={self.target_args}"
+                )
+
             # Resolve renderdoccmd path with auto-discovery
             rdoc_cmd = self._resolve_renderdoccmd()
             logger.info(f"Launching {self.target_exe} via RenderDoc ({rdoc_cmd})...")
