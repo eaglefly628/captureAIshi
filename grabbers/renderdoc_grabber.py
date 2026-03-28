@@ -530,29 +530,100 @@ class RenderDocGrabber(FrameGrabber):
         finally:
             session.close()
 
-    def _ensure_renderdoc_module(self) -> bool:
-        """Ensure the real renderdoc Python API is importable.
+    def _replay_python(self, rdc_path: Path):
+        """Replay using the RenderDoc Python module via subprocess worker.
 
-        Auto-discovers renderdoc.pyd/.so from the RenderDoc build tree
-        (pymodules/ directory) and adds it to sys.path if needed.
-        Also adds the parent directory (containing renderdoc.dll) to
-        the DLL search path on Windows.
-        Returns True if the module is available.
+        Runs _rdoc_replay_worker.py in a separate process to avoid:
+        - Module name conflict (project's renderdoc/ dir shadows the .pyd)
+        - In-process crash from loading renderdoc.pyd directly
+
+        The worker saves rgb.npy and depth.npy, which we load back.
         """
         import sys as _sys
 
-        # Check if already importable and valid
+        # Find the worker script (sibling of this file)
+        worker_script = Path(__file__).parent / "_rdoc_replay_worker.py"
+        if not worker_script.is_file():
+            logger.error(f"[RDOC] Replay worker script not found: {worker_script}")
+            return None, None
+
+        # Find renderdoc.pyd and renderdoc.dll directories
+        pyd_dir, dll_dir = self._find_renderdoc_dirs()
+        if pyd_dir is None:
+            return None, None
+
+        # Output directory for .npy files
+        replay_out = self.capture_dir / f"_replay_{rdc_path.stem}"
+        replay_out.mkdir(parents=True, exist_ok=True)
+
+        # Build subprocess command
+        cmd = [
+            _sys.executable, str(worker_script),
+            str(rdc_path), str(replay_out),
+            "--dll-dir", str(dll_dir),
+            "--pyd-dir", str(pyd_dir),
+        ]
+        logger.debug(f"[RDOC] Replay worker command: {' '.join(cmd)}")
+
         try:
-            import renderdoc as _rd
-            if hasattr(_rd, 'OpenCaptureFile'):
-                return True
-            # Wrong module (probably the source tree directory) — remove it
-            # so we can try to import the real one after adjusting sys.path
-            del _sys.modules['renderdoc']
-        except ImportError:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=30,
+                cwd=str(Path(__file__).parent),  # Avoid renderdoc/ dir in cwd
+            )
+
+            stdout = result.stdout.decode("utf-8", errors="replace").strip()
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+
+            if stdout:
+                for line in stdout.splitlines():
+                    logger.info(f"[RDOC worker] {line}")
+            if stderr:
+                for line in stderr.splitlines():
+                    logger.warning(f"[RDOC worker stderr] {line}")
+
+            if result.returncode != 0:
+                logger.error(f"[RDOC] Replay worker exited with code {result.returncode}")
+                return None, None
+
+        except subprocess.TimeoutExpired:
+            logger.error("[RDOC] Replay worker timed out (30s)")
+            return None, None
+        except Exception as e:
+            logger.error(f"[RDOC] Failed to run replay worker: {e}")
+            return None, None
+
+        # Load results
+        rgb = None
+        depth = None
+        rgb_file = replay_out / "rgb.npy"
+        depth_file = replay_out / "depth.npy"
+
+        if rgb_file.exists():
+            rgb = np.load(str(rgb_file))
+            rgb_file.unlink()
+            logger.debug(f"[RDOC] Loaded RGB: {rgb.shape[1]}x{rgb.shape[0]}")
+        if depth_file.exists():
+            depth = np.load(str(depth_file))
+            depth_file.unlink()
+            logger.debug(f"[RDOC] Loaded depth: {depth.shape[1]}x{depth.shape[0]}")
+
+        # Clean up temp dir
+        try:
+            replay_out.rmdir()
+        except OSError:
             pass
 
-        # Auto-discover renderdoc.pyd/renderdoc.so in build output
+        return rgb, depth
+
+    def _find_renderdoc_dirs(self):
+        """Find renderdoc.pyd and renderdoc.dll directories.
+
+        Returns (pyd_dir, dll_dir) or (None, None) if not found.
+        """
+        import sys as _sys
+
         pyd_name = "renderdoc.pyd" if _sys.platform == "win32" else "renderdoc.so"
         project_root = Path(__file__).resolve().parent.parent
         search_roots = [project_root, project_root.parent]
@@ -566,106 +637,13 @@ class RenderDocGrabber(FrameGrabber):
                 pyd_dir = root / candidate
                 pyd_file = pyd_dir / pyd_name
                 if pyd_file.is_file():
-                    pyd_dir_str = str(pyd_dir)
-                    if pyd_dir_str not in _sys.path:
-                        _sys.path.insert(0, pyd_dir_str)
-
-                    # renderdoc.pyd depends on renderdoc.dll which lives in the
-                    # parent directory (e.g. x64/Development/). We must add that
-                    # to the DLL search path before importing.
                     dll_dir = pyd_dir.parent  # e.g. x64/Development/
-                    if _sys.platform == "win32":
-                        import os
-                        os.add_dll_directory(str(dll_dir))
-                        # Also add to PATH as fallback for older Python / deps
-                        os.environ["PATH"] = str(dll_dir) + ";" + os.environ.get("PATH", "")
-                        logger.debug(f"[RDOC] Added DLL search dir: {dll_dir}")
-
-                    logger.info(f"[RDOC] Auto-discovered {pyd_name} at {pyd_dir}")
-                    # Verify it works
-                    try:
-                        if 'renderdoc' in _sys.modules:
-                            del _sys.modules['renderdoc']
-                        import renderdoc as _rd2
-                        if hasattr(_rd2, 'OpenCaptureFile'):
-                            return True
-                        logger.warning(f"[RDOC] {pyd_file} loaded but missing OpenCaptureFile")
-                    except ImportError as e:
-                        logger.warning(f"[RDOC] Failed to import from {pyd_dir}: {e}")
+                    logger.debug(f"[RDOC] Found {pyd_name} at {pyd_dir}, DLLs at {dll_dir}")
+                    return pyd_dir, dll_dir
 
         logger.error(
-            f"[RDOC] renderdoc Python bindings not found. "
-            f"Build the 'pyrenderdoc_module' project in Visual Studio "
-            f"(produces renderdoc.pyd in x64/Development/pymodules/). "
+            f"[RDOC] renderdoc Python bindings ({pyd_name}) not found. "
+            f"Build 'pyrenderdoc_module' in Visual Studio. "
             f"Searched: {', '.join(str(r) for r in search_roots)}"
         )
-        return False
-
-    def _replay_python(self, rdc_path: Path):
-        """Replay using the RenderDoc Python module. Returns (rgb, depth)."""
-        if not self._ensure_renderdoc_module():
-            return None, None
-
-        import renderdoc as rd
-
-        cap = rd.OpenCaptureFile()
-        result = cap.OpenFile(str(rdc_path), "", None)
-        if result != rd.ResultCode.Succeeded:
-            logger.error(f"Failed to open capture: {rdc_path}")
-            cap.Shutdown()
-            return None, None
-
-        controller = cap.OpenCapture(rd.ReplayOptions(), None)
-        if controller is None:
-            logger.error("Failed to create replay controller")
-            cap.Shutdown()
-            return None, None
-
-        try:
-            # If a RenderDoc UI hider is configured, set up its replay
-            # context and filter UI draw calls for this frame
-            if self.ui_hider is not None and hasattr(self.ui_hider, "set_replay_context"):
-                self.ui_hider.set_replay_context(controller, rd)
-                self.ui_hider.hide()
-                excluded = self.ui_hider.get_excluded_events()
-                if excluded:
-                    logger.debug(f"Excluding {len(excluded)} UI draw calls")
-
-            rgb = self._extract_backbuffer(controller, rd)
-            depth = self._extract_depth(controller, rd)
-            return rgb, depth
-        finally:
-            if self.ui_hider is not None and hasattr(self.ui_hider, "set_replay_context"):
-                self.ui_hider.restore()
-            controller.Shutdown()
-            cap.Shutdown()
-
-    def _extract_backbuffer(self, controller, rd):
-        """Extract the RGB backbuffer from a replay."""
-        textures = controller.GetTextures()
-        for tex in textures:
-            if tex.creationFlags & rd.TextureCategory.SwapBuffer:
-                data = controller.GetTextureData(tex.resourceId, rd.Subresource())
-                if data is not None:
-                    w, h = tex.width, tex.height
-                    arr = np.frombuffer(data, dtype=np.uint8)
-                    if len(arr) >= w * h * 4:
-                        rgba = arr[:w * h * 4].reshape(h, w, 4)
-                        return rgba[:, :, :3]  # Drop alpha
-        logger.warning("Backbuffer not found in capture")
-        return None
-
-    def _extract_depth(self, controller, rd):
-        """Extract the depth buffer from a replay."""
-        textures = controller.GetTextures()
-        for tex in textures:
-            if tex.creationFlags & rd.TextureCategory.DepthTarget:
-                data = controller.GetTextureData(tex.resourceId, rd.Subresource())
-                if data is not None:
-                    w, h = tex.width, tex.height
-                    arr = np.frombuffer(data, dtype=np.float32)
-                    if len(arr) >= w * h:
-                        depth = arr[:w * h].reshape(h, w)
-                        return depth
-        logger.warning("Depth buffer not found in capture")
-        return None
+        return None, None
