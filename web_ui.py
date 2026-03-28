@@ -99,6 +99,31 @@ def capture_status():
         })
 
 
+_CONFIG_FILE = Path("./captureAIshi_config.json")
+
+
+@app.route("/api/config", methods=["GET"])
+def load_config():
+    """Load saved config from disk. Falls back to defaults."""
+    if _CONFIG_FILE.exists():
+        try:
+            data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+            return jsonify(data)
+        except Exception:
+            pass
+    return defaults()
+
+
+@app.route("/api/config", methods=["POST"])
+def save_config():
+    """Save current form config to disk."""
+    data = request.json
+    if data is None:
+        return jsonify({"ok": False}), 400
+    _CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return jsonify({"ok": True})
+
+
 @app.route("/api/defaults")
 def defaults():
     """Return default parameter values for the form."""

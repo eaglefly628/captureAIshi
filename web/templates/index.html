@@ -790,7 +790,32 @@ function renderPreviews(session) {
 // ─── Keyboard ───
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') clearLogs(); });
 
+// ─── Config Save/Load ───
+async function loadSavedConfig() {
+  try {
+    const resp = await fetch('/api/config');
+    const p = await resp.json();
+    applyParams(p);
+    addLog('Config restored from last session', 'info');
+  } catch(_) {}
+}
+
+function saveConfig() {
+  const data = getFormData();
+  fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data),
+  }).catch(()=>{});
+}
+
+// Auto-save on any form change
+document.querySelectorAll('input, select').forEach(el => {
+  el.addEventListener('change', saveConfig);
+});
+
 // ─── Init ───
+loadSavedConfig();
 updateVisibility();
 loadPresets();
 setInterval(()=>{pollSessions();pollCaptures();},2000);
