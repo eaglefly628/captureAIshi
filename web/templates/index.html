@@ -690,7 +690,14 @@ async function startCapture() {
     startPolling();
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
-function stopCapture() { addLog('Stop requested...','warn'); }
+async function stopCapture() {
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+    addLog('Stop requested...', 'warn');
+  } catch(e) {
+    addLog('Failed to send stop: ' + e.message, 'error');
+  }
+}
 
 function startPolling() {
   if(polling) clearInterval(polling);

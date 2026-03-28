@@ -27,6 +27,7 @@ _capture_state = {
     "error": None,
 }
 _lock = threading.Lock()
+_stop_event = threading.Event()
 
 
 class WebLogHandler(logging.Handler):
@@ -66,6 +67,9 @@ def start_capture():
         shutil.rmtree(args.output_dir)
         logging.info(f"Cleaned output directory: {args.output_dir}")
 
+    _stop_event.clear()
+    args._stop_event = _stop_event
+
     with _lock:
         _capture_state["running"] = True
         _capture_state["logs"] = []
@@ -75,6 +79,13 @@ def start_capture():
     thread = threading.Thread(target=_run_in_thread, args=(args,), daemon=True)
     thread.start()
 
+    return jsonify({"ok": True})
+
+
+@app.route("/api/stop", methods=["POST"])
+def stop_capture():
+    _stop_event.set()
+    logging.info("Stop requested by user")
     return jsonify({"ok": True})
 
 
