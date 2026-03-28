@@ -318,11 +318,49 @@ class RenderDocGrabber(FrameGrabber):
 
     def teardown(self) -> None:
         if self._replay_session is not None:
-            self._replay_session.close()
+            try:
+                self._replay_session.close()
+            except Exception as e:
+                logger.warning(f"[TEARDOWN] Failed to close replay session: {e}")
             self._replay_session = None
+
         if self._process:
-            self._process.terminate()
+            logger.info("[TEARDOWN] Stopping renderdoccmd and game process...")
+            try:
+                # Kill the entire process tree (renderdoccmd + game children)
+                import sys
+                if sys.platform == "win32":
+                    # On Windows, terminate() only kills renderdoccmd, not child
+                    # processes. Use taskkill /T to kill the whole tree.
+                    import subprocess as _sp
+                    _sp.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self._process.pid)],
+                        capture_output=True, timeout=10,
+                    )
+                else:
+                    import os
+                    import signal
+                    # Send SIGTERM to the process group
+                    os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+            except Exception as e:
+                logger.warning(f"[TEARDOWN] Process tree kill failed, trying terminate: {e}")
+                try:
+                    self._process.terminate()
+                except Exception:
+                    pass
+
+            # Wait for process to actually exit
+            try:
+                self._process.wait(timeout=5)
+                logger.info("[TEARDOWN] renderdoccmd process exited")
+            except Exception:
+                logger.warning("[TEARDOWN] renderdoccmd did not exit in 5s, killing")
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
             self._process = None
+
         logger.info(f"RenderDoc grabber: {self._capture_count} frames captured")
 
     # ── Capture triggering ───────────────────────────────────────────────────
@@ -501,6 +539,17 @@ class RenderDocGrabber(FrameGrabber):
                 "renderdoc Python module not found. "
                 "Build the native bridge or add RenderDoc Python bindings to PYTHONPATH. "
                 "Typically: export PYTHONPATH=/path/to/renderdoc/lib"
+            )
+            return None, None
+
+        # Validate we got the real RenderDoc replay API, not the source tree
+        if not hasattr(rd, 'OpenCaptureFile'):
+            rd_path = getattr(rd, '__file__', None) or getattr(rd, '__path__', ['?'])[0]
+            logger.error(
+                f"Found a 'renderdoc' module at {rd_path} but it's not the "
+                f"RenderDoc replay API (missing OpenCaptureFile). "
+                f"This is likely the RenderDoc source tree, not the Python bindings. "
+                f"Add the real renderdoc.pyd/.so to PYTHONPATH before the project root."
             )
             return None, None
 

@@ -11,6 +11,7 @@ import argparse
 import json
 import logging
 import sys
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -120,9 +121,17 @@ def run_capture(args):
 
     t_start = _time.monotonic()
 
-    logging.debug(f"[CONFIG] driver={args.driver}, grabber={args.grabber}, "
-                  f"smooth={args.smooth}, cone_angle={args.cone_angle}, "
-                  f"dry_run={args.dry_run}, output_dir={args.output_dir}")
+    logging.info(
+        f"[CONFIG] driver={args.driver}, grabber={args.grabber}, "
+        f"target_exe={getattr(args, 'target_exe', None)}, "
+        f"target_args={getattr(args, 'target_args', [])}, "
+        f"dry_run={args.dry_run}, output_dir={args.output_dir}"
+    )
+    logging.debug(
+        f"[CONFIG] smooth={args.smooth}, smooth_points={args.smooth_points}, "
+        f"cone_angle={args.cone_angle}, cone_samples={args.cone_samples}, "
+        f"cone_rings={args.cone_rings}"
+    )
 
     # Define capture volume
     volume = BoundingVolume(
@@ -191,12 +200,21 @@ def run_capture(args):
 
     # ── Step 4: Save poses metadata ──
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logging.error(f"[IO] Failed to create output directory {output_dir}: {e}")
+        raise
+
     poses_data = [p.to_dict() for p in all_poses]
     poses_file = output_dir / "poses.json"
-    poses_file.write_text(json.dumps(poses_data, indent=2))
-    logging.info(f"Poses saved to {poses_file}")
-    logging.debug(f"[IO] poses.json size: {poses_file.stat().st_size} bytes")
+    try:
+        poses_file.write_text(json.dumps(poses_data, indent=2))
+        logging.info(f"Poses saved to {poses_file}")
+        logging.debug(f"[IO] poses.json size: {poses_file.stat().st_size} bytes")
+    except OSError as e:
+        logging.error(f"[IO] Failed to write poses file {poses_file}: {e}")
+        raise
 
     if args.dry_run:
         elapsed_total = _time.monotonic() - t_start
@@ -205,11 +223,22 @@ def run_capture(args):
 
     # ── Step 5: Initialize driver, UI hider, grabber ──
     logging.info("Initializing capture components...")
-    driver = create_driver(args)
+
+    try:
+        driver = create_driver(args)
+    except Exception as e:
+        logging.error(f"[INIT] Failed to create driver '{args.driver}': {e}")
+        raise
 
     # For RenderDoc grabber, extract the RenderDoc UI hider from the chain
     # so it can be integrated into per-frame replay instead of pre-loop
-    ui_hider = create_ui_hider(args) if not args.no_hide_ui else None
+    ui_hider = None
+    if not args.no_hide_ui:
+        try:
+            ui_hider = create_ui_hider(args)
+        except Exception as e:
+            logging.warning(f"[INIT] Failed to create UI hider (continuing without): {e}")
+
     if ui_hider and args.grabber == "renderdoc":
         from ui_hiders.renderdoc_hider import RenderDocUIHider
         rdoc_hider = _find_hider_in_chain(ui_hider, RenderDocUIHider)
@@ -217,7 +246,12 @@ def run_capture(args):
             args._rdoc_ui_hider = rdoc_hider
             logging.debug("[INIT] RenderDoc UI hider attached to grabber for per-frame filtering")
 
-    grabber = create_grabber(args)
+    try:
+        grabber = create_grabber(args)
+    except Exception as e:
+        logging.error(f"[INIT] Failed to create grabber '{args.grabber}': {e}")
+        raise
+
     stop_event = getattr(args, '_stop_event', None)
 
     # ── Step 6: Launch game via grabber BEFORE connecting driver ──
@@ -225,8 +259,12 @@ def run_capture(args):
     # by the time the driver tries to connect its socket.
     grabber_ctx = grabber if grabber else None
     if grabber_ctx:
-        grabber_ctx.setup()
-        logging.info("[GRABBER] Grabber setup complete, game should be running")
+        try:
+            grabber_ctx.setup()
+            logging.info("[GRABBER] Grabber setup complete, game should be running")
+        except Exception as e:
+            logging.error(f"[GRABBER] Grabber setup failed: {e}")
+            raise
 
     # ── Step 7: Execute capture loop ──
     streaming_enabled = getattr(args, 'streaming', True)
@@ -236,56 +274,89 @@ def run_capture(args):
         f"(streaming={'on' if streaming_enabled else 'off'}, "
         f"settle={streaming_settle}s)"
     )
-    with driver:
-        logging.debug("[DRIVER] Driver connected")
+
+    try:
+        with driver:
+            logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
+    except Exception as e:
+        logging.error(
+            f"[DRIVER] Failed to connect {args.driver} driver to "
+            f"{args.driver_host}:{args.driver_port}: {e}"
+        )
+        if grabber_ctx:
+            grabber_ctx.teardown()
+        raise
+
+    # Re-enter the driver context (the above was just a connection test pattern;
+    # actually we need to keep it open). Let me restructure properly:
+    # The with-statement needs to wrap the whole capture loop.
+
+    # Actually, restructure: use try/finally for proper cleanup ordering
+    driver_connected = False
+    try:
+        driver.connect()
+        driver_connected = True
+        logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
 
         # Attempt to hide UI before capture loop (console-based hiding)
         ui_method = None
         if ui_hider:
-            result = ui_hider.hide()
-            ui_method = ui_hider.active_method
-            logging.info(f"UI hide result: {result.method} — {result.message}")
+            try:
+                result = ui_hider.hide()
+                ui_method = ui_hider.active_method
+                logging.info(f"[UI] Hide result: {result.method} — {result.message}")
+            except Exception as e:
+                logging.warning(f"[UI] Failed to hide UI (continuing): {e}")
         else:
             logging.debug("[UI] UI hiding disabled (no_hide_ui={})".format(args.no_hide_ui))
 
         frames_ok = 0
         frames_no_rgb = 0
         frames_no_depth = 0
-        try:
-            for i, pose in enumerate(all_poses):
-                # Check stop event (from GUI or external signal)
-                if stop_event is not None and stop_event.is_set():
-                    logging.info("Capture stopped by user.")
-                    break
+        frames_failed = 0
 
-                logging.info(f"Capturing pose {i + 1}/{len(all_poses)}")
-                logging.debug(
-                    f"[POSE {i+1}] pos=({pose.position[0]:.2f}, {pose.position[1]:.2f}, {pose.position[2]:.2f}) "
-                    f"rot=({pose.rotation[0]:.1f}, {pose.rotation[1]:.1f}, {pose.rotation[2]:.1f}) "
-                    f"fov={pose.fov:.0f}"
-                )
+        for i, pose in enumerate(all_poses):
+            # Check stop event (from GUI or external signal)
+            if stop_event is not None and stop_event.is_set():
+                logging.info(f"Capture stopped by user at pose {i + 1}/{len(all_poses)}.")
+                break
 
-                # Update streaming center BEFORE setting camera pose
-                # This ensures the engine starts loading assets at the
-                # target position as early as possible
-                if streaming_enabled:
+            logging.info(f"Capturing pose {i + 1}/{len(all_poses)}")
+            logging.debug(
+                f"[POSE {i+1}] pos=({pose.position[0]:.2f}, {pose.position[1]:.2f}, {pose.position[2]:.2f}) "
+                f"rot=({pose.rotation[0]:.1f}, {pose.rotation[1]:.1f}, {pose.rotation[2]:.1f}) "
+                f"fov={pose.fov:.0f}"
+            )
+
+            # Update streaming center BEFORE setting camera pose
+            if streaming_enabled:
+                try:
                     t_stream = _time.monotonic()
                     driver.update_streaming(pose)
                     stream_elapsed = _time.monotonic() - t_stream
                     logging.debug(f"[POSE {i+1}] Streaming update took {stream_elapsed:.3f}s")
+                except Exception as e:
+                    logging.warning(f"[POSE {i+1}] Streaming update failed (continuing): {e}")
 
+            try:
                 t_pose = _time.monotonic()
                 driver.set_pose(pose)
                 driver_elapsed = _time.monotonic() - t_pose
                 logging.debug(f"[POSE {i+1}] Driver set_pose took {driver_elapsed:.3f}s")
+            except Exception as e:
+                logging.error(
+                    f"[POSE {i+1}] Driver set_pose failed: {e}\n"
+                    f"  pose: pos={pose.position}, rot={pose.rotation}, fov={pose.fov}"
+                )
+                frames_failed += 1
+                continue
 
-                # Wait for streaming to settle after camera has moved
-                # This gives the engine time to load textures/LODs at
-                # the new position before we capture the frame
-                if streaming_enabled:
-                    driver.wait_for_streaming(streaming_settle)
+            # Wait for streaming to settle after camera has moved
+            if streaming_enabled:
+                driver.wait_for_streaming(streaming_settle)
 
-                if grabber_ctx:
+            if grabber_ctx:
+                try:
                     t_grab = _time.monotonic()
                     rgb, depth = grabber_ctx.capture_frame()
                     grab_elapsed = _time.monotonic() - t_grab
@@ -303,39 +374,77 @@ def run_capture(args):
                         frames_no_depth += 1
                     if rgb is not None:
                         frames_ok += 1
+                except Exception as e:
+                    logging.error(f"[POSE {i+1}] Frame capture failed: {e}")
+                    frames_failed += 1
+                    rgb, depth = None, None
 
+                try:
                     t_save = _time.monotonic()
                     grabber_ctx.save_frame(rgb, depth, output_dir / "frames", i)
                     save_elapsed = _time.monotonic() - t_save
                     logging.debug(f"[POSE {i+1}] Frame saved in {save_elapsed:.3f}s")
+                except Exception as e:
+                    logging.error(f"[POSE {i+1}] Frame save failed: {e}")
 
-                # Progress logging every 10%
-                if len(all_poses) >= 10 and (i + 1) % max(1, len(all_poses) // 10) == 0:
-                    pct = (i + 1) / len(all_poses) * 100
-                    logging.info(f"Progress: {pct:.0f}% ({i + 1}/{len(all_poses)})")
+            # Progress logging every 10%
+            if len(all_poses) >= 10 and (i + 1) % max(1, len(all_poses) // 10) == 0:
+                pct = (i + 1) / len(all_poses) * 100
+                logging.info(f"Progress: {pct:.0f}% ({i + 1}/{len(all_poses)})")
 
-        finally:
-            # Restore UI after capture
-            if ui_hider:
+    except ConnectionRefusedError:
+        logging.error(
+            f"[DRIVER] Connection refused to {args.driver_host}:{args.driver_port}. "
+            f"Is the game running and the control port open?"
+        )
+        raise
+    except ConnectionError as e:
+        logging.error(f"[DRIVER] Connection error during capture: {e}")
+        raise
+    except Exception as e:
+        logging.error(f"[CAPTURE] Unexpected error: {e}\n{traceback.format_exc()}")
+        raise
+    finally:
+        # Restore UI
+        if ui_hider:
+            try:
                 logging.debug("[UI] Restoring UI...")
                 ui_hider.restore()
-            if grabber_ctx:
+            except Exception as e:
+                logging.warning(f"[UI] Failed to restore UI: {e}")
+
+        # Teardown grabber
+        if grabber_ctx:
+            try:
                 logging.debug("[GRABBER] Tearing down grabber...")
                 grabber_ctx.teardown()
-        logging.debug("[DRIVER] Driver disconnecting")
+            except Exception as e:
+                logging.warning(f"[GRABBER] Teardown failed: {e}")
+
+        # Disconnect driver
+        if driver_connected:
+            try:
+                logging.debug("[DRIVER] Disconnecting driver...")
+                driver.disconnect()
+            except Exception as e:
+                logging.warning(f"[DRIVER] Disconnect failed: {e}")
 
     # Update poses metadata with UI removal info
     ui_removed = ui_method is not None and ui_method != "noop"
     for p in poses_data:
         p["ui_removed"] = ui_removed
         p["ui_hide_method"] = ui_method or "none"
-    poses_file.write_text(json.dumps(poses_data, indent=2))
-    logging.debug(f"[IO] Updated poses.json with ui_removed={ui_removed}, method={ui_method or 'none'}")
+    try:
+        poses_file.write_text(json.dumps(poses_data, indent=2))
+        logging.debug(f"[IO] Updated poses.json with ui_removed={ui_removed}, method={ui_method or 'none'}")
+    except OSError as e:
+        logging.warning(f"[IO] Failed to update poses.json: {e}")
 
     elapsed_total = _time.monotonic() - t_start
     logging.info(
         f"Capture complete! {len(all_poses)} poses in {elapsed_total:.1f}s "
-        f"(rgb_ok={frames_ok}, no_rgb={frames_no_rgb}, no_depth={frames_no_depth})"
+        f"(rgb_ok={frames_ok}, no_rgb={frames_no_rgb}, "
+        f"no_depth={frames_no_depth}, failed={frames_failed})"
     )
 
 

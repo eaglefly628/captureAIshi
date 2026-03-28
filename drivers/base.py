@@ -1,7 +1,10 @@
 """Abstract base class for camera control drivers."""
 
+import logging
 from abc import ABC, abstractmethod
 from core.waypoint import CameraPose
+
+logger = logging.getLogger(__name__)
 
 
 class CameraDriver(ABC):
@@ -42,5 +45,8 @@ class CameraDriver(ABC):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.disconnect()
+        try:
+            self.disconnect()
+        except Exception as e:
+            logger.warning(f"[DRIVER] Error during disconnect: {e}")
         return False

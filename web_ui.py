@@ -64,8 +64,12 @@ def start_capture():
 
     # Clean start: remove previous output in this session dir
     if args.clean_start and args.output_dir.exists():
-        shutil.rmtree(args.output_dir)
-        logging.info(f"Cleaned output directory: {args.output_dir}")
+        logging.info(f"[CLEAN] Removing previous output: {args.output_dir}")
+        try:
+            shutil.rmtree(args.output_dir)
+            logging.info(f"[CLEAN] Cleaned output directory: {args.output_dir}")
+        except OSError as e:
+            logging.warning(f"[CLEAN] Failed to clean {args.output_dir}: {e}")
 
     _stop_event.clear()
     args._stop_event = _stop_event
@@ -118,8 +122,8 @@ def load_config():
         try:
             data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
             return jsonify(data)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to load config from {_CONFIG_FILE}: {e}")
     return defaults()
 
 
@@ -150,7 +154,8 @@ def list_profiles():
                 "grabber": data.get("grabber", "?"),
                 "spacing": data.get("spacing", "?"),
             })
-        except Exception:
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to parse profile {f.name}: {e}")
             profiles.append({"name": f.stem, "driver": "?", "grabber": "?", "spacing": "?"})
     return jsonify(profiles)
 
@@ -194,8 +199,8 @@ def list_recent():
         try:
             data = json.loads(_RECENT_FILE.read_text(encoding="utf-8"))
             return jsonify(data)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to load recent history: {e}")
     return jsonify([])
 
 
@@ -206,7 +211,8 @@ def _push_recent(config: dict):
     if _RECENT_FILE.exists():
         try:
             recent = json.loads(_RECENT_FILE.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to parse recent file: {e}")
             recent = []
     import datetime
     entry = {
@@ -570,9 +576,10 @@ def _run_in_thread(args):
     try:
         run_capture(args)
     except Exception as e:
+        import traceback
         with _lock:
             _capture_state["error"] = str(e)
-        logging.error(f"Capture failed: {e}")
+        logging.error(f"Capture failed: {e}\n{traceback.format_exc()}")
     finally:
         with _lock:
             _capture_state["running"] = False
