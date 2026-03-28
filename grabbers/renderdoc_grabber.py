@@ -206,14 +206,44 @@ class RenderDocGrabber(FrameGrabber):
             + ")..."
         )
 
+        # RenderDoc ResultCode mapping for actionable error messages
+        _RESULT_CODES = {
+            0: "Succeeded", 1: "UnknownError", 2: "InternalError",
+            3: "FileNotFound", 4: "InjectionFailed", 5: "IncompatibleProcess",
+            6: "NetworkIOFailed", 7: "NetworkRemoteBusy",
+        }
+
         while elapsed < self.startup_timeout:
             # Check if renderdoccmd died
             rc = self._process.poll()
             if rc is not None:
+                code_name = _RESULT_CODES.get(rc, f"code {rc}")
                 logger.error(
-                    f"renderdoccmd exited after {elapsed:.0f}s with code {rc}"
+                    f"renderdoccmd exited after {elapsed:.0f}s: {code_name} ({rc})"
                 )
-                return
+                if rc == 4:
+                    logger.error(
+                        "InjectionFailed: RenderDoc could not inject into the process. "
+                        "Common causes:\n"
+                        "  - Architecture mismatch (32-bit renderdoccmd vs 64-bit game or vice versa)\n"
+                        "  - Anti-cheat or process protection blocking injection\n"
+                        "  - UE5 launcher exited before injection completed "
+                        "(try launching the actual game exe, not the launcher)"
+                    )
+                elif rc == 3:
+                    logger.error(
+                        f"FileNotFound: RenderDoc could not find the executable: "
+                        f"{self.target_exe}"
+                    )
+                elif rc == 5:
+                    logger.error(
+                        "IncompatibleProcess: The target process architecture doesn't "
+                        "match renderdoccmd. Check if both are x64 or both are x86."
+                    )
+                raise RuntimeError(
+                    f"renderdoccmd failed: {code_name} (exit code {rc}). "
+                    f"Cannot proceed without a running game."
+                )
 
             # If a port is specified, probe it
             if self.wait_for_port and not port_ready:
@@ -245,7 +275,10 @@ class RenderDocGrabber(FrameGrabber):
             else:
                 logger.info(f"Game appears to be running after {elapsed:.0f}s")
         else:
-            logger.error("Game process is not running after timeout")
+            raise RuntimeError(
+                "Game process is not running after timeout. "
+                "Check renderdoccmd output above for details."
+            )
 
     def teardown(self) -> None:
         if self._replay_session is not None:
