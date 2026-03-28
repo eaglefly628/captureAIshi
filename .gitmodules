@@ -1,3 +1,0 @@
-[submodule "renderdoc"]
-	path = renderdoc
-	url = https://github.com/baldurk/renderdoc.git
