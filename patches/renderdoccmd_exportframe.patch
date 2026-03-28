@@ -1,0 +1,179 @@
+diff --git a/renderdoccmd/renderdoccmd.cpp b/renderdoccmd/renderdoccmd.cpp
+index a65cbb0aa..ae9341996 100644
+--- a/renderdoccmd/renderdoccmd.cpp
++++ b/renderdoccmd/renderdoccmd.cpp
+@@ -1028,6 +1028,166 @@ public:
+   }
+ };
+ 
++// ── captureAIshi: export backbuffer + depth from a capture file ──────────────
++struct ExportFrameCommand : public Command
++{
++private:
++  std::string filename;
++  std::string outdir;
++  std::string format;
++
++public:
++  ExportFrameCommand() : Command() {}
++  virtual void AddOptions(cmdline::parser &parser)
++  {
++    parser.set_footer("<capture.rdc>");
++    parser.add<std::string>("out", 'o', "Output directory for exported images", false, ".");
++    parser.add<std::string>("format", 'f', "Image format: png, jpg, exr, hdr, bmp, tga", false,
++                            "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
++  }
++  virtual const char *Description()
++  {
++    return "Export backbuffer (RGB) and depth buffer from a capture file.";
++  }
++  virtual bool IsInternalOnly() { return false; }
++  virtual bool IsCaptureCommand() { return false; }
++  virtual bool Parse(cmdline::parser &parser, GlobalEnvironment &)
++  {
++    std::vector<std::string> rest = parser.rest();
++    if(rest.empty())
++    {
++      std::cerr << "Error: exportframe requires a capture filename." << std::endl
++                << std::endl
++                << parser.usage();
++      return false;
++    }
++    filename = rest[0];
++    rest.erase(rest.begin());
++    parser.set_rest(rest);
++
++    outdir = parser.get<std::string>("out");
++    format = parser.get<std::string>("format");
++    return true;
++  }
++
++  virtual int Execute(const CaptureOptions &)
++  {
++    FileType type = FileType::PNG;
++    if(format == "jpg")
++      type = FileType::JPG;
++    else if(format == "exr")
++      type = FileType::EXR;
++    else if(format == "hdr")
++      type = FileType::HDR;
++    else if(format == "bmp")
++      type = FileType::BMP;
++    else if(format == "tga")
++      type = FileType::TGA;
++
++    std::cout << "Opening capture '" << filename << "'..." << std::endl;
++
++    ICaptureFile *file = RENDERDOC_OpenCaptureFile();
++    ResultDetails res = file->OpenFile(conv(filename), "rdc", NULL);
++    if(res.code != ResultCode::Succeeded)
++    {
++      std::cerr << "Failed to open capture: " << res.Message() << std::endl;
++      file->Shutdown();
++      return 1;
++    }
++
++    IReplayController *controller = NULL;
++    ResultDetails result = {};
++    rdctie(result, controller) = file->OpenCapture(ReplayOptions(), NULL);
++    if(result.code != ResultCode::Succeeded || controller == NULL)
++    {
++      std::cerr << "Failed to open replay: " << result.Message() << std::endl;
++      file->Shutdown();
++      return 2;
++    }
++
++    // Move to the last action (final present) to get the complete frame
++    const rdcarray<ActionDescription> &actions = controller->GetRootActions();
++    if(!actions.empty())
++    {
++      // Find the last action recursively
++      const ActionDescription *last = &actions.back();
++      while(!last->children.empty())
++        last = &last->children.back();
++      controller->SetFrameEvent(last->eventId, true);
++    }
++
++    rdcarray<TextureDescription> textures = controller->GetTextures();
++
++    bool foundRGB = false;
++    bool foundDepth = false;
++
++    for(const TextureDescription &tex : textures)
++    {
++      // Export backbuffer (swap chain)
++      if(!foundRGB && (tex.creationFlags & TextureCategory::SwapBuffer))
++      {
++        std::string rgbPath = outdir + "/rgb." + format;
++        TextureSave texsave;
++        texsave.resourceId = tex.resourceId;
++        texsave.mip = 0;
++        texsave.slice.sliceIndex = 0;
++        texsave.alpha = AlphaMapping::Discard;
++        texsave.destType = type;
++
++        ResultDetails saveRes = controller->SaveTexture(texsave, conv(rgbPath));
++        if(saveRes.OK())
++        {
++          std::cout << "OK rgb " << tex.width << "x" << tex.height << " -> " << rgbPath
++                    << std::endl;
++          foundRGB = true;
++        }
++        else
++        {
++          std::cerr << "Failed to save RGB: " << saveRes.Message() << std::endl;
++        }
++      }
++
++      // Export depth buffer
++      if(!foundDepth && (tex.creationFlags & TextureCategory::DepthTarget))
++      {
++        // Depth is best saved as EXR (float) or HDR regardless of user format choice
++        std::string depthPath = outdir + "/depth.exr";
++        TextureSave texsave;
++        texsave.resourceId = tex.resourceId;
++        texsave.mip = 0;
++        texsave.slice.sliceIndex = 0;
++        texsave.alpha = AlphaMapping::Discard;
++        texsave.destType = FileType::EXR;
++
++        ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
++        if(saveRes.OK())
++        {
++          std::cout << "OK depth " << tex.width << "x" << tex.height << " -> " << depthPath
++                    << std::endl;
++          foundDepth = true;
++        }
++        else
++        {
++          std::cerr << "Failed to save depth: " << saveRes.Message() << std::endl;
++        }
++      }
++
++      if(foundRGB && foundDepth)
++        break;
++    }
++
++    if(!foundRGB)
++      std::cerr << "WARN: No backbuffer (SwapBuffer) found in capture" << std::endl;
++    if(!foundDepth)
++      std::cerr << "WARN: No depth buffer (DepthTarget) found in capture" << std::endl;
++
++    controller->Shutdown();
++    file->Shutdown();
++
++    return (foundRGB || foundDepth) ? 0 : 3;
++  }
++};
++
+ struct EmbeddedSectionCommand : public Command
+ {
+ private:
+@@ -1572,6 +1732,7 @@ int renderdoccmd(GlobalEnvironment &env, std::vector<std::string> &argv)
+     add_command("capaltbit", new CapAltBitCommand());
+     add_command("test", new TestCommand());
+     add_command("convert", new ConvertCommand());
++    add_command("exportframe", new ExportFrameCommand());
+     add_command("embed", new EmbeddedSectionCommand(false));
+     add_command("extract", new EmbeddedSectionCommand(true));
+ #endif    // !defined(RDOC_SELFCAPTURE_LIMITEDAPI)
