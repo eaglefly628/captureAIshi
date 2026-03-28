@@ -133,7 +133,10 @@ class UE5ConsoleDriver(CameraDriver):
         if pose.fov != 90.0:
             self.send_command(f"FOV {pose.fov:.1f}")
 
-        time.sleep(self.settle_time)
+        # Wait for UE5 to process camera commands before capture
+        # 0.1s is too short — UE5 needs time to apply view changes
+        settle = max(self.settle_time, 0.3)
+        time.sleep(settle)
 
     def update_streaming(self, pose: CameraPose) -> None:
         """Force UE5 streaming system to load assets around camera position."""

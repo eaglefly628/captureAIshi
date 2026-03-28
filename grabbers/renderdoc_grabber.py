@@ -747,7 +747,7 @@ class RenderDocGrabber(FrameGrabber):
 
         # Copy preview files to session output before cleanup
         session_out = self.capture_dir.parent
-        for keep_name in ("depth_preview.png",):
+        for keep_name in ("depth_preview.png", "depth_preview.jpg"):
             src = replay_out / keep_name
             if src.exists():
                 dst = session_out / f"{rdc_path.stem}_{keep_name}"
@@ -902,14 +902,15 @@ class RenderDocGrabber(FrameGrabber):
         if reversed_z:
             normalized = 1.0 - normalized
 
-        # Save preview PNG
+        # Save preview as both PNG and JPG for compatibility
         try:
             preview_u8 = (normalized * 255).astype(np.uint8)
             from PIL import Image
             preview = Image.fromarray(preview_u8, mode="L")
-            preview_path = output_dir / "depth_preview.png"
-            preview.save(str(preview_path))
-            logger.info(f"[RDOC] Saved depth preview: {preview_path}")
+            for ext in ("png", "jpg"):
+                preview_path = output_dir / f"depth_preview.{ext}"
+                preview.save(str(preview_path))
+            logger.info(f"[RDOC] Saved depth preview (png+jpg)")
         except Exception as e:
             logger.debug(f"[RDOC] Could not save depth preview: {e}")
 
