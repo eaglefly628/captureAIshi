@@ -1204,8 +1204,7 @@ public:
 
           // Also save a normalized depth preview PNG
           // Get raw texture data to find min/max for normalization
-          bytebuf rawData;
-          controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0), rawData);
+          bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
 
           if(!rawData.empty())
           {
