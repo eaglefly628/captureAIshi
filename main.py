@@ -73,6 +73,8 @@ def create_grabber(args):
         rdoc_ui_hider = getattr(args, '_rdoc_ui_hider', None)
         logging.debug(f"[INIT] RenderDoc grabber: capture_dir={args.output_dir / 'captures'}, "
                        f"target_exe={args.target_exe}, ui_hider={'yes' if rdoc_ui_hider else 'no'}")
+        # Pass the driver port so the grabber can detect when the game is ready
+        driver_port = getattr(args, 'driver_port', None)
         return RenderDocGrabber(
             renderdoc_path=getattr(args, 'renderdoc_path', 'renderdoccmd'),
             capture_dir=str(args.output_dir / "captures"),
@@ -80,6 +82,7 @@ def create_grabber(args):
             target_args=getattr(args, 'target_args', []),
             auto_launch=bool(args.target_exe),
             ui_hider=rdoc_ui_hider,
+            wait_for_port=int(driver_port) if driver_port else None,
         )
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber

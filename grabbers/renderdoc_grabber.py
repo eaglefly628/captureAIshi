@@ -59,6 +59,8 @@ class RenderDocGrabber(FrameGrabber):
         ui_hider=None,
         ui_tail_fraction: float = 0.2,
         ui_extra_keywords: Optional[list] = None,
+        startup_timeout: float = 60.0,
+        wait_for_port: Optional[int] = None,
     ):
         """
         Args:
@@ -71,6 +73,8 @@ class RenderDocGrabber(FrameGrabber):
             ui_hider: Optional RenderDocUIHider for filtering UI draw calls.
             ui_tail_fraction: Fraction of late draw calls to consider as UI (0-1).
             ui_extra_keywords: Additional keywords for UI draw call detection.
+            startup_timeout: Max seconds to wait for game to start (default 60).
+            wait_for_port: If set, poll this TCP port to detect when the game is ready.
         """
         self.renderdoc_path = renderdoc_path
         self.capture_dir = Path(capture_dir)
@@ -81,6 +85,8 @@ class RenderDocGrabber(FrameGrabber):
         self.ui_hider = ui_hider
         self.ui_tail_fraction = ui_tail_fraction
         self.ui_extra_keywords = ui_extra_keywords or []
+        self.startup_timeout = startup_timeout
+        self.wait_for_port = wait_for_port
         self._process = None
         self._capture_count = 0
         self._use_native = _HAS_NATIVE_BRIDGE
@@ -113,17 +119,72 @@ class RenderDocGrabber(FrameGrabber):
             ] + self.target_args
             logger.info(f"renderdoccmd command: {' '.join(cmd)}")
             self._process = subprocess.Popen(cmd)
-            logger.info("Waiting 10s for game to start...")
-            time.sleep(10)
-            if self._process.poll() is not None:
-                logger.error(f"renderdoccmd exited early with code {self._process.returncode}")
-            else:
-                logger.info("Game launched with RenderDoc attached")
+            self._wait_for_game_ready()
         else:
             logger.info(
                 "RenderDoc grabber ready. Attach RenderDoc to your game manually "
                 f"or launch with: {self.renderdoc_path} capture <game.exe>"
             )
+
+    def _wait_for_game_ready(self) -> None:
+        """Poll until the game is ready or renderdoccmd exits.
+
+        Checks every second and logs progress every 5s. If wait_for_port
+        is set, also probes that TCP port — once it responds, the game's
+        control channel is confirmed up.
+        """
+        import socket as _socket
+
+        poll_interval = 1.0
+        elapsed = 0.0
+        port_ready = False
+
+        logger.info(
+            f"Waiting for game to start (timeout={self.startup_timeout}s"
+            + (f", port={self.wait_for_port}" if self.wait_for_port else "")
+            + ")..."
+        )
+
+        while elapsed < self.startup_timeout:
+            # Check if renderdoccmd died
+            rc = self._process.poll()
+            if rc is not None:
+                logger.error(
+                    f"renderdoccmd exited after {elapsed:.0f}s with code {rc}"
+                )
+                return
+
+            # If a port is specified, probe it
+            if self.wait_for_port and not port_ready:
+                try:
+                    with _socket.create_connection(
+                        ("127.0.0.1", self.wait_for_port), timeout=0.3
+                    ):
+                        port_ready = True
+                        logger.info(
+                            f"Game port {self.wait_for_port} is open after {elapsed:.0f}s"
+                        )
+                        return  # Game is ready
+                except (ConnectionRefusedError, OSError):
+                    pass  # Not ready yet
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+            if int(elapsed) % 5 == 0:
+                logger.info(f"Still waiting for game... ({elapsed:.0f}s elapsed)")
+
+        # Timeout reached
+        if self._process.poll() is None:
+            if self.wait_for_port and not port_ready:
+                logger.warning(
+                    f"Timeout: game process alive but port {self.wait_for_port} "
+                    f"not open after {elapsed:.0f}s. Proceeding anyway."
+                )
+            else:
+                logger.info(f"Game appears to be running after {elapsed:.0f}s")
+        else:
+            logger.error("Game process is not running after timeout")
 
     def teardown(self) -> None:
         if self._replay_session is not None:
