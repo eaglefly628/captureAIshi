@@ -22,6 +22,14 @@ env/
 *.swp
 .DS_Store
 
+# RenderDoc build artifacts (source is tracked, build output is not)
+renderdoc/x64/
+renderdoc/Win32/
+renderdoc/*.sdf
+renderdoc/*.suo
+renderdoc/*.user
+renderdoc/.vs/
+
 # Native bridge build artifacts
 capture_bridge*.so
 capture_bridge*.pyd
