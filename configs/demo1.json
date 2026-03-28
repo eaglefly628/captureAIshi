@@ -1,0 +1,30 @@
+{
+  "volume_min": [
+    -5,
+    0,
+    -5
+  ],
+  "volume_max": [
+    5,
+    3,
+    5
+  ],
+  "spacing": 8,
+  "smooth": false,
+  "smooth_points": 5,
+  "cone_angle": 0,
+  "cone_samples": 8,
+  "cone_rings": 2,
+  "driver": "ue5",
+  "driver_host": "127.0.0.1",
+  "driver_port": 1985,
+  "ce_mode": "file",
+  "grabber": "renderdoc",
+  "target_exe": "C:\\copy\\Windows\\EagleWalkLJB.exe -ResX=320 -ResY=160 -Windowed -log -messaging",
+  "no_hide_ui": false,
+  "output_dir": "./output",
+  "dry_run": false,
+  "clean_start": true,
+  "streaming": true,
+  "streaming_settle": 0.5
+}
