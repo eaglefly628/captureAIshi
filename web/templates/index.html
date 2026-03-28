@@ -566,7 +566,9 @@ body {
           <div class="f" id="ceModeWrap"><label>CE Mode</label>
             <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
           </div>
-          <div class="f" id="targetExeWrap"><label>Target Exe</label><input type="text" id="target_exe" placeholder="/path/to/game.exe"></div>
+          <div class="f" id="targetExeWrap"><label>Target Exe</label><input type="text" id="target_exe" placeholder="C:\path\to\game.exe"></div>
+          <div class="f" id="targetArgsWrap"><label>Game Args</label><input type="text" id="target_args" placeholder="-Windowed -ResX=640 -ResY=360"></div>
+          <div class="f" id="rdocPathWrap"><label>renderdoccmd</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
         </div>
       </div>
 
@@ -701,7 +703,7 @@ function applyParams(p) {
   document.getElementById('cone_angle').value=p.cone_angle; document.getElementById('cone_samples').value=p.cone_samples; document.getElementById('cone_rings').value=p.cone_rings;
   document.getElementById('driver').value=p.driver; document.getElementById('driver_host').value=p.driver_host; document.getElementById('driver_port').value=p.driver_port;
   document.getElementById('ce_mode').value=p.ce_mode; document.getElementById('grabber').value=p.grabber;
-  document.getElementById('target_exe').value=p.target_exe||''; document.getElementById('no_hide_ui').checked=p.no_hide_ui;
+  document.getElementById('target_exe').value=p.target_exe||''; document.getElementById('target_args').value=p.target_args||''; document.getElementById('renderdoc_path').value=p.renderdoc_path||''; document.getElementById('no_hide_ui').checked=p.no_hide_ui;
   document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run;
   document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
   updateVisibility();
@@ -720,7 +722,7 @@ function getFormData() {
     spacing:pf('spacing'), smooth:cb('smooth'), smooth_points:pi('smooth_points'),
     cone_angle:pf('cone_angle'), cone_samples:pi('cone_samples'), cone_rings:pi('cone_rings'),
     driver:val('driver'), driver_host:val('driver_host'), driver_port:pi('driver_port'), ce_mode:val('ce_mode'),
-    grabber:val('grabber'), target_exe:val('target_exe'), no_hide_ui:cb('no_hide_ui'),
+    grabber:val('grabber'), target_exe:val('target_exe'), target_args:val('target_args'), renderdoc_path:val('renderdoc_path'), no_hide_ui:cb('no_hide_ui'),
     output_dir:val('output_dir'), dry_run:cb('dry_run'), clean_start:cb('clean_start'),
     streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
   };
@@ -801,6 +803,8 @@ function updateVisibility() {
   h('smoothPointsWrap',!cb('smooth'));
   h('ceModeWrap',val('driver')!=='cheatengine');
   h('targetExeWrap',val('grabber')!=='renderdoc');
+  h('targetArgsWrap',val('grabber')!=='renderdoc');
+  h('rdocPathWrap',val('grabber')!=='renderdoc');
   h('streamingSettleWrap',!cb('streaming'));
 }
 

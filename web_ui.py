@@ -518,6 +518,10 @@ def _build_args(data: dict) -> Namespace:
     args.grabber = grabber
 
     args.target_exe = str(data.get("target_exe", "")) or None
+    args.renderdoc_path = str(data.get("renderdoc_path", "")) or "renderdoccmd"
+    # Parse game launch args (space-separated string → list)
+    _target_args_str = str(data.get("target_args", "")).strip()
+    args.target_args = _target_args_str.split() if _target_args_str else []
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
     args.dry_run = bool(data.get("dry_run", False))
 

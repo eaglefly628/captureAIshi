@@ -53,6 +53,7 @@ class RenderDocGrabber(FrameGrabber):
         renderdoc_path: str = "renderdoccmd",
         capture_dir: str = "./captures",
         target_exe: Optional[str] = None,
+        target_args: Optional[list] = None,
         capture_key: str = "F12",
         auto_launch: bool = False,
         ui_hider=None,
@@ -64,6 +65,7 @@ class RenderDocGrabber(FrameGrabber):
             renderdoc_path: Path to renderdoccmd executable.
             capture_dir: Directory to store .rdc capture files.
             target_exe: Game executable path (for auto-launch).
+            target_args: Extra arguments passed to the game executable.
             capture_key: Key to trigger capture.
             auto_launch: Whether to launch the game through RenderDoc.
             ui_hider: Optional RenderDocUIHider for filtering UI draw calls.
@@ -73,6 +75,7 @@ class RenderDocGrabber(FrameGrabber):
         self.renderdoc_path = renderdoc_path
         self.capture_dir = Path(capture_dir)
         self.target_exe = target_exe
+        self.target_args = target_args or []
         self.capture_key = capture_key
         self.auto_launch = auto_launch
         self.ui_hider = ui_hider
@@ -97,14 +100,19 @@ class RenderDocGrabber(FrameGrabber):
 
         if self.auto_launch and self.target_exe:
             logger.info(f"Launching {self.target_exe} via RenderDoc...")
-            self._process = subprocess.Popen([
+            # renderdoccmd syntax: capture [--opts] <exe> [game args]
+            # All --opt flags must come BEFORE the executable path.
+            # See renderdoc/renderdoccmd/renderdoccmd.cpp lines 1628-1687.
+            cmd = [
                 self.renderdoc_path, "capture",
-                "--opt-api-validation",
-                "--opt-capture-callstacks",
+                "--opt-hook-children",
                 "--opt-ref-all-resources",
-                "--opt-capture-child-processes",
+                "--capture-file", str(self.capture_dir / "frame"),
+                "--wait-for-exit",
                 self.target_exe,
-            ])
+            ] + self.target_args
+            logger.info(f"renderdoccmd command: {' '.join(cmd)}")
+            self._process = subprocess.Popen(cmd)
             time.sleep(5)  # Wait for game to start
             logger.info("Game launched with RenderDoc attached")
         else:

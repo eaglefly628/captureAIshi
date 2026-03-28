@@ -74,8 +74,10 @@ def create_grabber(args):
         logging.debug(f"[INIT] RenderDoc grabber: capture_dir={args.output_dir / 'captures'}, "
                        f"target_exe={args.target_exe}, ui_hider={'yes' if rdoc_ui_hider else 'no'}")
         return RenderDocGrabber(
+            renderdoc_path=getattr(args, 'renderdoc_path', 'renderdoccmd'),
             capture_dir=str(args.output_dir / "captures"),
             target_exe=args.target_exe,
+            target_args=getattr(args, 'target_args', []),
             auto_launch=bool(args.target_exe),
             ui_hider=rdoc_ui_hider,
         )
