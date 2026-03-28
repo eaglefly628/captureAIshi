@@ -1084,6 +1084,23 @@ public:
     else if(format == "tga")
       type = FileType::TGA;
 
+    // Ensure output directory exists
+    {
+      std::string mkdirCmd;
+#if ENABLED(RDOC_WIN32)
+      // Normalize forward slashes to backslashes for Windows
+      std::string normDir = outdir;
+      for(char &c : normDir)
+        if(c == '/')
+          c = '\\';
+      outdir = normDir;
+      mkdirCmd = "mkdir \"" + outdir + "\" 2>nul";
+#else
+      mkdirCmd = "mkdir -p \"" + outdir + "\"";
+#endif
+      system(mkdirCmd.c_str());
+    }
+
     std::cout << "Opening capture '" << filename << "'..." << std::endl;
 
     ICaptureFile *file = RENDERDOC_OpenCaptureFile();
@@ -1117,16 +1134,31 @@ public:
     }
 
     rdcarray<TextureDescription> textures = controller->GetTextures();
+    std::cout << "Found " << textures.size() << " textures in capture" << std::endl;
 
     bool foundRGB = false;
     bool foundDepth = false;
 
-    for(const TextureDescription &tex : textures)
+    for(size_t i = 0; i < textures.size(); i++)
     {
+      const TextureDescription &tex = textures[i];
+      // Log texture info for debugging
+      uint32_t flags = (uint32_t)tex.creationFlags;
+      if(flags & (uint32_t)TextureCategory::SwapBuffer)
+        std::cout << "  [" << i << "] SwapBuffer " << tex.width << "x" << tex.height << std::endl;
+      if(flags & (uint32_t)TextureCategory::DepthTarget)
+        std::cout << "  [" << i << "] DepthTarget " << tex.width << "x" << tex.height
+                  << " fmt=" << (uint32_t)tex.format.type << std::endl;
+      if(flags & (uint32_t)TextureCategory::ColorTarget)
+        std::cout << "  [" << i << "] ColorTarget " << tex.width << "x" << tex.height << std::endl;
       // Export backbuffer (swap chain)
       if(!foundRGB && (tex.creationFlags & TextureCategory::SwapBuffer))
       {
-        std::string rgbPath = outdir + "/rgb." + format;
+        std::string sep = "/";
+#if ENABLED(RDOC_WIN32)
+        sep = "\\";
+#endif
+        std::string rgbPath = outdir + sep + "rgb." + format;
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
@@ -1151,7 +1183,11 @@ public:
       if(!foundDepth && (tex.creationFlags & TextureCategory::DepthTarget))
       {
         // Depth is best saved as EXR (float) or HDR regardless of user format choice
-        std::string depthPath = outdir + "/depth.exr";
+        std::string dsep = "/";
+#if ENABLED(RDOC_WIN32)
+        dsep = "\\";
+#endif
+        std::string depthPath = outdir + dsep + "depth.exr";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
