@@ -105,12 +105,23 @@ class RenderDocGrabber(FrameGrabber):
                             "(game may not be launched through RenderDoc)")
 
         if self.auto_launch and self.target_exe:
-            logger.info(f"Launching {self.target_exe} via RenderDoc...")
+            # Resolve renderdoccmd path — fail early with a clear message
+            import shutil
+            rdoc_cmd = self.renderdoc_path
+            resolved = shutil.which(rdoc_cmd)
+            if resolved is None and not Path(rdoc_cmd).is_file():
+                raise FileNotFoundError(
+                    f"renderdoccmd not found: '{rdoc_cmd}'. "
+                    f"Set the full path (e.g. C:\\captureAIshi\\renderdoc\\x64\\Development\\renderdoccmd.exe)"
+                )
+            if resolved:
+                rdoc_cmd = resolved
+            logger.info(f"Launching {self.target_exe} via RenderDoc ({rdoc_cmd})...")
             # renderdoccmd syntax: capture [--opts] <exe> [game args]
             # All --opt flags must come BEFORE the executable path.
             # See renderdoc/renderdoccmd/renderdoccmd.cpp lines 1628-1687.
             cmd = [
-                self.renderdoc_path, "capture",
+                rdoc_cmd, "capture",
                 "--opt-hook-children",
                 "--opt-ref-all-resources",
                 "--capture-file", str(self.capture_dir / "frame"),
