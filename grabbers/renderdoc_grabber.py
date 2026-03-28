@@ -531,46 +531,44 @@ class RenderDocGrabber(FrameGrabber):
             session.close()
 
     def _replay_python(self, rdc_path: Path):
-        """Replay using the RenderDoc Python module via subprocess worker.
+        """Replay using renderdoccmd exportframe (custom C++ command).
 
-        Runs _rdoc_replay_worker.py in a separate process to avoid:
-        - Module name conflict (project's renderdoc/ dir shadows the .pyd)
-        - In-process crash from loading renderdoc.pyd directly
+        The renderdoc.pyd Python module crashes with ACCESS_VIOLATION when
+        loaded outside of qrenderdoc, so we use our custom `exportframe`
+        command compiled into renderdoccmd instead. It saves:
+          - rgb.png   (backbuffer, uint8)
+          - depth.exr (depth target, float32)
 
-        The worker saves rgb.npy and depth.npy, which we load back.
+        We then load these files back as numpy arrays.
         """
-        import sys as _sys
-
-        # Find the worker script (sibling of this file)
-        worker_script = Path(__file__).parent / "_rdoc_replay_worker.py"
-        if not worker_script.is_file():
-            logger.error(f"[RDOC] Replay worker script not found: {worker_script}")
+        if not rdc_path.exists():
+            logger.warning(f"[RDOC] Capture file does not exist: {rdc_path}")
             return None, None
 
-        # Find renderdoc.pyd and renderdoc.dll directories
-        pyd_dir, dll_dir = self._find_renderdoc_dirs()
-        if pyd_dir is None:
+        # Resolve renderdoccmd (same logic as setup)
+        try:
+            rdoc_cmd = self._resolve_renderdoccmd()
+        except FileNotFoundError as e:
+            logger.error(f"[RDOC] {e}")
             return None, None
 
-        # Output directory for .npy files
+        # Output directory for exported frames
         replay_out = self.capture_dir / f"_replay_{rdc_path.stem}"
         replay_out.mkdir(parents=True, exist_ok=True)
 
-        # Build subprocess command
         cmd = [
-            _sys.executable, str(worker_script),
-            str(rdc_path), str(replay_out),
-            "--dll-dir", str(dll_dir),
-            "--pyd-dir", str(pyd_dir),
+            rdoc_cmd, "exportframe",
+            str(rdc_path),
+            "--out", str(replay_out),
+            "--format", "png",
         ]
-        logger.debug(f"[RDOC] Replay worker command: {' '.join(cmd)}")
+        logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
 
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                timeout=30,
-                cwd=str(Path(__file__).parent),  # Avoid renderdoc/ dir in cwd
+                timeout=60,
             )
 
             stdout = result.stdout.decode("utf-8", errors="replace").strip()
@@ -578,44 +576,132 @@ class RenderDocGrabber(FrameGrabber):
 
             if stdout:
                 for line in stdout.splitlines():
-                    logger.info(f"[RDOC worker] {line}")
+                    logger.info(f"[RDOC export] {line}")
             if stderr:
                 for line in stderr.splitlines():
-                    logger.warning(f"[RDOC worker stderr] {line}")
+                    logger.warning(f"[RDOC export stderr] {line}")
 
-            if result.returncode != 0:
-                logger.error(f"[RDOC] Replay worker exited with code {result.returncode}")
-                return None, None
+            if result.returncode not in (0,):
+                if result.returncode == 3:
+                    logger.warning("[RDOC] exportframe found neither RGB nor depth in capture")
+                else:
+                    logger.error(f"[RDOC] exportframe exited with code {result.returncode}")
+                    return None, None
 
         except subprocess.TimeoutExpired:
-            logger.error("[RDOC] Replay worker timed out (30s)")
+            logger.error("[RDOC] exportframe timed out (60s)")
             return None, None
         except Exception as e:
-            logger.error(f"[RDOC] Failed to run replay worker: {e}")
+            logger.error(f"[RDOC] Failed to run exportframe: {e}")
             return None, None
 
-        # Load results
-        rgb = None
-        depth = None
-        rgb_file = replay_out / "rgb.npy"
-        depth_file = replay_out / "depth.npy"
+        # Load exported images
+        rgb = self._load_rgb_image(replay_out)
+        depth = self._load_depth_exr(replay_out)
 
-        if rgb_file.exists():
-            rgb = np.load(str(rgb_file))
-            rgb_file.unlink()
-            logger.debug(f"[RDOC] Loaded RGB: {rgb.shape[1]}x{rgb.shape[0]}")
-        if depth_file.exists():
-            depth = np.load(str(depth_file))
-            depth_file.unlink()
-            logger.debug(f"[RDOC] Loaded depth: {depth.shape[1]}x{depth.shape[0]}")
-
-        # Clean up temp dir
+        # Clean up exported files
+        for f in replay_out.iterdir():
+            try:
+                f.unlink()
+            except OSError:
+                pass
         try:
             replay_out.rmdir()
         except OSError:
             pass
 
         return rgb, depth
+
+    def _load_rgb_image(self, directory: Path) -> Optional[np.ndarray]:
+        """Load exported RGB image (png/jpg/bmp) as uint8 numpy array (H, W, 3)."""
+        for ext in ("png", "jpg", "bmp", "tga"):
+            rgb_file = directory / f"rgb.{ext}"
+            if rgb_file.exists():
+                try:
+                    from PIL import Image
+                    img = Image.open(str(rgb_file)).convert("RGB")
+                    arr = np.array(img, dtype=np.uint8)
+                    logger.debug(f"[RDOC] Loaded RGB: {arr.shape[1]}x{arr.shape[0]} from {rgb_file.name}")
+                    return arr
+                except ImportError:
+                    logger.warning("[RDOC] Pillow not installed — trying imageio for RGB")
+                    try:
+                        import imageio.v3 as iio
+                        arr = iio.imread(str(rgb_file))
+                        if arr.ndim == 3 and arr.shape[2] == 4:
+                            arr = arr[:, :, :3]
+                        logger.debug(f"[RDOC] Loaded RGB: {arr.shape[1]}x{arr.shape[0]} from {rgb_file.name}")
+                        return arr
+                    except ImportError:
+                        logger.error("[RDOC] Neither Pillow nor imageio installed — cannot load RGB")
+                        return None
+                except Exception as e:
+                    logger.error(f"[RDOC] Failed to load RGB from {rgb_file}: {e}")
+                    return None
+        logger.debug("[RDOC] No RGB image found in export directory")
+        return None
+
+    def _load_depth_exr(self, directory: Path) -> Optional[np.ndarray]:
+        """Load exported depth EXR as float32 numpy array (H, W)."""
+        depth_file = directory / "depth.exr"
+        if not depth_file.exists():
+            logger.debug("[RDOC] No depth.exr found in export directory")
+            return None
+
+        # Try OpenEXR first (most reliable for float data)
+        try:
+            import OpenEXR
+            import Imath
+            exr = OpenEXR.InputFile(str(depth_file))
+            header = exr.header()
+            dw = header["dataWindow"]
+            w = dw.max.x - dw.min.x + 1
+            h = dw.max.y - dw.min.y + 1
+            # Read the first channel (R) as float
+            channels = list(header["channels"].keys())
+            ch_name = channels[0] if channels else "R"
+            raw = exr.channel(ch_name, Imath.PixelType(Imath.PixelType.FLOAT))
+            arr = np.frombuffer(raw, dtype=np.float32).reshape(h, w)
+            logger.debug(f"[RDOC] Loaded depth: {w}x{h} from depth.exr (OpenEXR)")
+            return arr
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"[RDOC] OpenEXR failed to load depth: {e}")
+
+        # Try imageio with freeimage backend
+        try:
+            import imageio.v3 as iio
+            arr = iio.imread(str(depth_file))
+            if arr.ndim == 3:
+                arr = arr[:, :, 0]  # Take first channel
+            arr = arr.astype(np.float32)
+            logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.exr (imageio)")
+            return arr
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"[RDOC] imageio failed to load depth.exr: {e}")
+
+        # Try cv2
+        try:
+            import cv2
+            arr = cv2.imread(str(depth_file), cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
+            if arr is not None:
+                if arr.ndim == 3:
+                    arr = arr[:, :, 0]
+                arr = arr.astype(np.float32)
+                logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.exr (cv2)")
+                return arr
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"[RDOC] cv2 failed to load depth.exr: {e}")
+
+        logger.error(
+            "[RDOC] Cannot load depth.exr — install one of: OpenEXR, imageio[freeimage], opencv-python"
+        )
+        return None
 
     def _find_renderdoc_dirs(self):
         """Find renderdoc.pyd and renderdoc.dll directories.
