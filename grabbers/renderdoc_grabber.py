@@ -535,6 +535,8 @@ class RenderDocGrabber(FrameGrabber):
 
         Auto-discovers renderdoc.pyd/.so from the RenderDoc build tree
         (pymodules/ directory) and adds it to sys.path if needed.
+        Also adds the parent directory (containing renderdoc.dll) to
+        the DLL search path on Windows.
         Returns True if the module is available.
         """
         import sys as _sys
@@ -567,6 +569,18 @@ class RenderDocGrabber(FrameGrabber):
                     pyd_dir_str = str(pyd_dir)
                     if pyd_dir_str not in _sys.path:
                         _sys.path.insert(0, pyd_dir_str)
+
+                    # renderdoc.pyd depends on renderdoc.dll which lives in the
+                    # parent directory (e.g. x64/Development/). We must add that
+                    # to the DLL search path before importing.
+                    dll_dir = pyd_dir.parent  # e.g. x64/Development/
+                    if _sys.platform == "win32":
+                        import os
+                        os.add_dll_directory(str(dll_dir))
+                        # Also add to PATH as fallback for older Python / deps
+                        os.environ["PATH"] = str(dll_dir) + ";" + os.environ.get("PATH", "")
+                        logger.debug(f"[RDOC] Added DLL search dir: {dll_dir}")
+
                     logger.info(f"[RDOC] Auto-discovered {pyd_name} at {pyd_dir}")
                     # Verify it works
                     try:
