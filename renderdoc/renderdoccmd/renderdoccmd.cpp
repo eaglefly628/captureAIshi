@@ -1201,6 +1201,50 @@ public:
           std::cout << "OK depth " << tex.width << "x" << tex.height << " -> " << depthPath
                     << std::endl;
           foundDepth = true;
+
+          // Also save a normalized depth preview PNG
+          // Get raw texture data to find min/max for normalization
+          bytebuf rawData;
+          controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0), rawData);
+
+          if(!rawData.empty())
+          {
+            size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
+            // Depth textures are typically float32 (R32F) or D32F
+            const float *depthData = (const float *)rawData.data();
+            size_t floatCount = rawData.size() / sizeof(float);
+            if(floatCount >= pixelCount)
+            {
+              // Find actual min/max depth values
+              float dmin = 1.0f, dmax = 0.0f;
+              for(size_t p = 0; p < pixelCount; p++)
+              {
+                float d = depthData[p];
+                if(d >= 0.0f && d <= 1.0f)
+                {
+                  if(d < dmin) dmin = d;
+                  if(d > dmax) dmax = d;
+                }
+              }
+              std::cout << "  depth range: [" << dmin << ", " << dmax << "]" << std::endl;
+
+              // UE5 uses reversed-Z: near=1.0, far=0.0
+              // Normalize and invert so near=dark, far=bright (standard depth convention)
+              float range = dmax - dmin;
+              if(range < 1e-6f) range = 1.0f;
+
+              // Create normalized 8-bit grayscale as RGB PNG via SaveTexture
+              // Since we can't easily write raw pixels, save a hint file for Python
+              std::string previewHint = outdir + dsep + "depth_range.txt";
+              FILE *fh = fopen(previewHint.c_str(), "w");
+              if(fh)
+              {
+                fprintf(fh, "min=%f\nmax=%f\nreversed_z=1\n", dmin, dmax);
+                fclose(fh);
+                std::cout << "  depth_range.txt written for normalization" << std::endl;
+              }
+            }
+          }
         }
         else
         {

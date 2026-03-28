@@ -599,7 +599,24 @@ class RenderDocGrabber(FrameGrabber):
         rgb = self._load_rgb_image(replay_out)
         depth = self._load_depth_exr(replay_out)
 
-        # Clean up exported files
+        # Normalize depth and save preview
+        if depth is not None:
+            depth = self._normalize_depth(depth, replay_out)
+
+        # Copy preview files to session output before cleanup
+        session_out = self.capture_dir.parent
+        for keep_name in ("depth_preview.png",):
+            src = replay_out / keep_name
+            if src.exists():
+                dst = session_out / f"{rdc_path.stem}_{keep_name}"
+                try:
+                    import shutil
+                    shutil.copy2(str(src), str(dst))
+                    logger.info(f"[RDOC] Preview saved: {dst}")
+                except Exception as e:
+                    logger.debug(f"[RDOC] Could not copy preview: {e}")
+
+        # Clean up temp exported files
         for f in replay_out.iterdir():
             try:
                 f.unlink()
@@ -702,6 +719,59 @@ class RenderDocGrabber(FrameGrabber):
             "[RDOC] Cannot load depth.exr — install one of: OpenEXR, imageio[freeimage], opencv-python"
         )
         return None
+
+    def _normalize_depth(self, depth: np.ndarray, output_dir: Path) -> np.ndarray:
+        """Normalize raw depth buffer to linear 0-1 range.
+
+        UE5 uses reversed-Z: near=1.0, far=0.0.
+        We invert so that near=0 (dark), far=1 (bright) — standard convention.
+        Also saves a depth_preview.png for visual inspection.
+        """
+        # Read depth_range.txt if available (written by exportframe)
+        reversed_z = True  # Default for UE5
+        range_file = output_dir / "depth_range.txt"
+        if range_file.exists():
+            try:
+                text = range_file.read_text()
+                for line in text.splitlines():
+                    if line.startswith("reversed_z="):
+                        reversed_z = line.split("=")[1].strip() == "1"
+            except Exception:
+                pass
+
+        # Clamp to valid range
+        valid = depth[(depth >= 0) & (depth <= 1)]
+        if valid.size == 0:
+            logger.warning("[RDOC] Depth buffer has no valid values in [0,1]")
+            return depth
+
+        dmin, dmax = float(valid.min()), float(valid.max())
+        logger.debug(f"[RDOC] Raw depth range: [{dmin:.6f}, {dmax:.6f}], reversed_z={reversed_z}")
+
+        # Normalize to 0-1
+        drange = dmax - dmin
+        if drange < 1e-6:
+            logger.warning("[RDOC] Depth range too small, skipping normalization")
+            return depth
+
+        normalized = np.clip((depth - dmin) / drange, 0, 1).astype(np.float32)
+
+        # Invert for reversed-Z (UE5): so near=dark, far=bright
+        if reversed_z:
+            normalized = 1.0 - normalized
+
+        # Save preview PNG
+        try:
+            preview_u8 = (normalized * 255).astype(np.uint8)
+            from PIL import Image
+            preview = Image.fromarray(preview_u8, mode="L")
+            preview_path = output_dir / "depth_preview.png"
+            preview.save(str(preview_path))
+            logger.info(f"[RDOC] Saved depth preview: {preview_path}")
+        except Exception as e:
+            logger.debug(f"[RDOC] Could not save depth preview: {e}")
+
+        return normalized
 
     def _find_renderdoc_dirs(self):
         """Find renderdoc.pyd and renderdoc.dll directories.
