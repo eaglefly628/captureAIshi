@@ -434,6 +434,37 @@ body {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
+/* ─── Config Panel ─── */
+.cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+.cfg-row:hover { background: var(--bg-hover); }
+.cfg-row .cfg-name { flex: 1; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-row .cfg-meta { font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono); }
+.cfg-row .cfg-del {
+  opacity: 0;
+  font-size: 11px;
+  color: var(--danger);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+  font-family: var(--font);
+}
+.cfg-row:hover .cfg-del { opacity: 0.7; }
+.cfg-row:hover .cfg-del:hover { opacity: 1; }
+.cfg-actions { display: flex; gap: 4px; padding: 4px 8px 2px; }
+.cfg-actions .btn { flex: 1; font-size: 11px; height: 24px; justify-content: center; }
+.cfg-empty { padding: 8px; font-size: 11px; color: var(--text-tertiary); text-align: center; }
+
 .hidden { display: none !important; }
 </style>
 </head>
@@ -554,6 +585,25 @@ body {
         <div class="sec-body">
           <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="no_hide_ui"><div class="track"></div>Disable UI Hiding</label>
           <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output"></div>
+        </div>
+      </div>
+
+      <!-- Saved Configs -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Saved Configs</button>
+        <div class="sec-body open">
+          <div class="cfg-actions">
+            <button class="btn" onclick="promptSaveProfile()">Save As...</button>
+          </div>
+          <div id="profileList"><div class="cfg-empty">No saved configs</div></div>
+        </div>
+      </div>
+
+      <!-- Recent -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Recent</button>
+        <div class="sec-body open">
+          <div id="recentList"><div class="cfg-empty">No recent runs</div></div>
         </div>
       </div>
 
@@ -688,6 +738,7 @@ async function startCapture() {
     btn.style.display='none';
     document.getElementById('btnStop').style.display='';
     startPolling();
+    loadRecent();
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
 async function stopCapture() {
@@ -814,10 +865,81 @@ document.querySelectorAll('input, select').forEach(el => {
   el.addEventListener('change', saveConfig);
 });
 
+// ─── Profiles ───
+async function loadProfiles() {
+  try {
+    const resp = await fetch('/api/config/profiles');
+    const profiles = await resp.json();
+    const el = document.getElementById('profileList');
+    if (!profiles.length) { el.innerHTML = '<div class="cfg-empty">No saved configs</div>'; return; }
+    el.innerHTML = '';
+    profiles.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'cfg-row';
+      row.onclick = () => loadProfile(p.name);
+      row.innerHTML = `<span class="cfg-name">${p.name}</span><span class="cfg-meta">${p.driver}/${p.grabber}</span><button class="cfg-del" onclick="event.stopPropagation();deleteProfile('${p.name}')" title="Delete">&times;</button>`;
+      el.appendChild(row);
+    });
+  } catch(_) {}
+}
+
+async function loadProfile(name) {
+  try {
+    const resp = await fetch(`/api/config/profiles/${encodeURIComponent(name)}`);
+    const p = await resp.json();
+    if (p.ok === false) { addLog('Profile not found: ' + name, 'error'); return; }
+    applyParams(p);
+    saveConfig();
+    addLog(`Loaded config: ${name}`, 'success');
+  } catch(_) {}
+}
+
+async function promptSaveProfile() {
+  const name = prompt('Config name:');
+  if (!name || !name.trim()) return;
+  const clean = name.trim().replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_');
+  try {
+    await fetch(`/api/config/profiles/${encodeURIComponent(clean)}`, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(getFormData()),
+    });
+    addLog(`Config saved: ${clean}`, 'success');
+    loadProfiles();
+  } catch(_) {}
+}
+
+async function deleteProfile(name) {
+  try {
+    await fetch(`/api/config/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    loadProfiles();
+  } catch(_) {}
+}
+
+// ─── Recent ───
+async function loadRecent() {
+  try {
+    const resp = await fetch('/api/config/recent');
+    const recent = await resp.json();
+    const el = document.getElementById('recentList');
+    if (!recent.length) { el.innerHTML = '<div class="cfg-empty">No recent runs</div>'; return; }
+    el.innerHTML = '';
+    recent.forEach(r => {
+      const row = document.createElement('div');
+      row.className = 'cfg-row';
+      row.onclick = () => { applyParams(r.config); saveConfig(); addLog('Restored recent config', 'info'); };
+      row.innerHTML = `<span class="cfg-name">${r.driver}/${r.grabber} ${r.spacing}m</span><span class="cfg-meta">${r.timestamp}</span>`;
+      el.appendChild(row);
+    });
+  } catch(_) {}
+}
+
 // ─── Init ───
 loadSavedConfig();
 updateVisibility();
 loadPresets();
+loadProfiles();
+loadRecent();
 setInterval(()=>{pollSessions();pollCaptures();},2000);
 pollSessions();pollCaptures();
 </script>
