@@ -394,7 +394,12 @@ class RenderDocGrabber(FrameGrabber):
             if self._wait_for_capture(rdc_path, timeout=5.0):
                 return rdc_path
 
-        logger.warning(f"Capture #{self._capture_count} may not have triggered")
+        # Log what's actually in the capture directory
+        existing_rdcs = list(self.capture_dir.glob("*.rdc"))
+        logger.warning(
+            f"Capture #{self._capture_count} may not have triggered. "
+            f"Existing .rdc files in {self.capture_dir}: {[f.name for f in existing_rdcs]}"
+        )
         return rdc_path  # Return expected path; caller checks existence
 
     def _trigger_via_python_api(self, rdc_path: Path) -> bool:
@@ -418,11 +423,17 @@ class RenderDocGrabber(FrameGrabber):
         return False
 
     def _trigger_via_keypress(self) -> bool:
-        """Simulate the capture key press to trigger RenderDoc."""
+        """Simulate the capture key press to trigger RenderDoc.
+
+        On Windows: find the game window, bring it to foreground, then
+        send the key using SendInput (more reliable than keybd_event).
+        """
         import sys
         try:
             if sys.platform == "win32":
                 import ctypes
+                from ctypes import wintypes
+
                 vk_map = {
                     "F12": 0x7B, "F11": 0x7A, "F10": 0x79, "F9": 0x78,
                     "PRINT_SCREEN": 0x2C, "PRINTSCREEN": 0x2C,
@@ -430,9 +441,43 @@ class RenderDocGrabber(FrameGrabber):
                 vk = vk_map.get(self.capture_key.upper())
                 if vk is None:
                     vk = ord(self.capture_key.upper())
-                ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+
+                # Try to focus the game window first
+                if self._process:
+                    self._focus_game_window()
+
+                # Use SendInput instead of keybd_event (works with more apps)
+                INPUT_KEYBOARD = 1
+                KEYEVENTF_KEYUP = 0x0002
+
+                class KEYBDINPUT(ctypes.Structure):
+                    _fields_ = [
+                        ("wVk", wintypes.WORD),
+                        ("wScan", wintypes.WORD),
+                        ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+                    ]
+
+                class INPUT(ctypes.Structure):
+                    class _INPUT_UNION(ctypes.Union):
+                        _fields_ = [("ki", KEYBDINPUT)]
+                    _fields_ = [
+                        ("type", wintypes.DWORD),
+                        ("union", _INPUT_UNION),
+                    ]
+
+                def send_key(vk_code, up=False):
+                    inp = INPUT()
+                    inp.type = INPUT_KEYBOARD
+                    inp.union.ki.wVk = vk_code
+                    inp.union.ki.dwFlags = KEYEVENTF_KEYUP if up else 0
+                    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+                send_key(vk)
                 time.sleep(0.05)
-                ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
+                send_key(vk, up=True)
+                logger.debug(f"[CAPTURE] Sent {self.capture_key} (vk=0x{vk:02X}) via SendInput")
                 return True
             else:
                 result = subprocess.run(
@@ -441,8 +486,48 @@ class RenderDocGrabber(FrameGrabber):
                 )
                 return result.returncode == 0
         except Exception as e:
-            logger.debug(f"Keypress simulation failed: {e}")
+            logger.warning(f"Keypress simulation failed: {e}")
         return False
+
+    def _focus_game_window(self) -> None:
+        """Find and focus the game window by process ID."""
+        import ctypes
+        try:
+            pid = self._process.pid
+            found_hwnd = None
+
+            # EnumWindows callback to find window belonging to our process tree
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
+
+            def enum_callback(hwnd, _):
+                nonlocal found_hwnd
+                window_pid = ctypes.c_ulong()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+                # Check if window is visible and belongs to a child process
+                if ctypes.windll.user32.IsWindowVisible(hwnd):
+                    title_buf = ctypes.create_unicode_buffer(256)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, title_buf, 256)
+                    title = title_buf.value
+                    if title and len(title) > 0:
+                        # Game windows typically have non-empty titles
+                        # Skip known non-game windows
+                        skip = ("renderdoc", "cmd.exe", "python", "conhost")
+                        if not any(s in title.lower() for s in skip):
+                            found_hwnd = hwnd
+                            logger.debug(f"[CAPTURE] Found game window: '{title}' (pid={window_pid.value})")
+                            return False  # Stop enumeration
+                return True  # Continue
+
+            ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+
+            if found_hwnd:
+                ctypes.windll.user32.SetForegroundWindow(found_hwnd)
+                time.sleep(0.1)  # Brief pause for window to come to front
+                logger.debug("[CAPTURE] Game window focused")
+            else:
+                logger.debug("[CAPTURE] Could not find game window to focus")
+        except Exception as e:
+            logger.debug(f"[CAPTURE] Failed to focus game window: {e}")
 
     def _wait_for_capture(self, rdc_path: Path, timeout: float = 5.0) -> bool:
         """Wait for a capture file to appear on disk."""
