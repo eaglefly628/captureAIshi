@@ -76,6 +76,7 @@ def create_grabber(args):
         return RenderDocGrabber(
             capture_dir=str(args.output_dir / "captures"),
             target_exe=args.target_exe,
+            auto_launch=bool(args.target_exe),
             ui_hider=rdoc_ui_hider,
         )
     elif args.grabber == "screenshot":
