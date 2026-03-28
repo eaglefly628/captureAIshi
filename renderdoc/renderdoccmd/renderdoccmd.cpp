@@ -1087,7 +1087,7 @@ public:
     // Ensure output directory exists
     {
       std::string mkdirCmd;
-#if ENABLED(RDOC_WIN32)
+#if defined(_WIN32)
       // Normalize forward slashes to backslashes for Windows
       std::string normDir = outdir;
       for(char &c : normDir)
@@ -1155,7 +1155,7 @@ public:
       if(!foundRGB && (tex.creationFlags & TextureCategory::SwapBuffer))
       {
         std::string sep = "/";
-#if ENABLED(RDOC_WIN32)
+#if defined(_WIN32)
         sep = "\\";
 #endif
         std::string rgbPath = outdir + sep + "rgb." + format;
@@ -1184,7 +1184,7 @@ public:
       {
         // Depth is best saved as EXR (float) or HDR regardless of user format choice
         std::string dsep = "/";
-#if ENABLED(RDOC_WIN32)
+#if defined(_WIN32)
         dsep = "\\";
 #endif
         std::string depthPath = outdir + dsep + "depth.exr";
