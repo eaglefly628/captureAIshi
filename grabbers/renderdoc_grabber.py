@@ -120,7 +120,30 @@ class RenderDocGrabber(FrameGrabber):
                 self.target_exe,
             ] + self.target_args
             logger.info(f"renderdoccmd command: {' '.join(cmd)}")
-            self._process = subprocess.Popen(cmd)
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            # Drain stdout/stderr in background threads to prevent pipe deadlock
+            # (renderdoccmd with --wait-for-exit stays alive for the game's lifetime)
+            self._rdoc_stdout_lines: list = []
+            self._rdoc_stderr_lines: list = []
+            import threading
+            def _drain(stream, sink, label):
+                for raw_line in stream:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        sink.append(line)
+                        logger.info(f"[renderdoccmd {label}] {line}")
+            threading.Thread(
+                target=_drain, args=(self._process.stdout, self._rdoc_stdout_lines, "out"),
+                daemon=True,
+            ).start()
+            threading.Thread(
+                target=_drain, args=(self._process.stderr, self._rdoc_stderr_lines, "err"),
+                daemon=True,
+            ).start()
             self._wait_for_game_ready()
         else:
             logger.info(
@@ -217,6 +240,8 @@ class RenderDocGrabber(FrameGrabber):
             # Check if renderdoccmd died
             rc = self._process.poll()
             if rc is not None:
+                # Give drain threads a moment to flush remaining output
+                time.sleep(0.2)
                 code_name = _RESULT_CODES.get(rc, f"code {rc}")
                 logger.error(
                     f"renderdoccmd exited after {elapsed:.0f}s: {code_name} ({rc})"
