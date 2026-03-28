@@ -1267,6 +1267,162 @@ public:
   }
 };
 
+// ── captureAIshi: trigger capture on a running RenderDoc-injected game ────────
+struct TriggerCaptureCommand : public Command
+{
+private:
+  uint32_t numFrames;
+  std::string outdir;
+
+public:
+  TriggerCaptureCommand() : Command() {}
+  virtual void AddOptions(cmdline::parser &parser)
+  {
+    parser.set_footer("");
+    parser.add<uint32_t>("frames", 'n', "Number of frames to capture", false, 1);
+    parser.add<std::string>("out", 'o', "Directory for capture files (passed to game at launch)", false, ".");
+  }
+  virtual const char *Description()
+  {
+    return "Trigger a capture on a running RenderDoc-injected application.";
+  }
+  virtual bool IsInternalOnly() { return false; }
+  virtual bool IsCaptureCommand() { return false; }
+  virtual bool Parse(cmdline::parser &parser, GlobalEnvironment &)
+  {
+    numFrames = parser.get<uint32_t>("frames");
+    outdir = parser.get<std::string>("out");
+    return true;
+  }
+
+  virtual int Execute(const CaptureOptions &)
+  {
+    // Enumerate active targets on localhost
+    std::cout << "Searching for active RenderDoc targets..." << std::endl;
+
+    uint32_t ident = 0;
+    uint32_t foundIdent = 0;
+    int targetCount = 0;
+
+    // Scan all active targets
+    while(true)
+    {
+      uint32_t next = RENDERDOC_EnumerateRemoteTargets("", ident);
+      if(next == 0)
+        break;
+
+      targetCount++;
+      foundIdent = next;
+
+      // Try to connect to get info
+      ITargetControl *tc = RENDERDOC_CreateTargetControl("", next, "captureAIshi", false);
+      if(tc)
+      {
+        std::cout << "  Target ident=" << next << " pid=" << tc->GetPID()
+                  << " target='" << tc->GetTarget().c_str() << "'"
+                  << " api='" << tc->GetAPI().c_str() << "'" << std::endl;
+        tc->Shutdown();
+      }
+      else
+      {
+        std::cout << "  Target ident=" << next << " (busy or unavailable)" << std::endl;
+      }
+
+      ident = next;
+    }
+
+    if(targetCount == 0)
+    {
+      std::cerr << "No active RenderDoc targets found on localhost." << std::endl;
+      return 1;
+    }
+
+    // Connect to the (last) found target and trigger capture
+    std::cout << "Connecting to target ident=" << foundIdent << "..." << std::endl;
+    ITargetControl *tc = RENDERDOC_CreateTargetControl("", foundIdent, "captureAIshi", true);
+    if(!tc)
+    {
+      std::cerr << "Failed to connect to target " << foundIdent << std::endl;
+      return 2;
+    }
+
+    std::cout << "Connected to '" << tc->GetTarget().c_str() << "' (pid=" << tc->GetPID()
+              << ", api=" << tc->GetAPI().c_str() << ")" << std::endl;
+    std::cout << "Triggering " << numFrames << " frame capture(s)..." << std::endl;
+
+    tc->TriggerCapture(numFrames);
+
+    // Pump messages to process the capture
+    // Wait for capture confirmation (NewCapture message)
+    int capturesReceived = 0;
+    int timeoutMs = 10000;    // 10 seconds max
+    int elapsedMs = 0;
+    int pollMs = 100;
+
+    while(elapsedMs < timeoutMs && capturesReceived < (int)numFrames)
+    {
+      TargetControlMessage msg = tc->ReceiveMessage(NULL);
+
+      if(msg.type == TargetControlMessageType::NewCapture)
+      {
+        capturesReceived++;
+        std::cout << "OK capture #" << capturesReceived
+                  << " id=" << msg.newCapture.captureId
+                  << " path='" << msg.newCapture.path.c_str() << "'"
+                  << " " << msg.newCapture.frameNumber << "f"
+                  << std::endl;
+
+        // Copy capture to output directory if specified
+        if(outdir != ".")
+        {
+          std::string localPath = outdir;
+#if defined(_WIN32)
+          localPath += "\\";
+#else
+          localPath += "/";
+#endif
+          localPath += "capture_" + std::to_string(capturesReceived) + ".rdc";
+          std::cout << "Copying capture to " << localPath << "..." << std::endl;
+          tc->CopyCapture(msg.newCapture.captureId, conv(localPath));
+
+          // Pump until copy is done
+          bool copyDone = false;
+          int copyTimeout = 30000;
+          int copyElapsed = 0;
+          while(!copyDone && copyElapsed < copyTimeout)
+          {
+            TargetControlMessage cmsg = tc->ReceiveMessage(NULL);
+            if(cmsg.type == TargetControlMessageType::CaptureCopied)
+            {
+              copyDone = true;
+              std::cout << "OK copied capture #" << capturesReceived << " -> " << localPath << std::endl;
+            }
+            copyElapsed += pollMs;
+          }
+        }
+      }
+      else if(msg.type == TargetControlMessageType::Disconnected)
+      {
+        std::cerr << "Target disconnected" << std::endl;
+        break;
+      }
+
+      elapsedMs += pollMs;
+    }
+
+    tc->Shutdown();
+
+    if(capturesReceived == 0)
+    {
+      std::cerr << "No captures received within timeout" << std::endl;
+      return 3;
+    }
+
+    std::cout << "Done: " << capturesReceived << " capture(s)" << std::endl;
+    return 0;
+  }
+};
+
 struct EmbeddedSectionCommand : public Command
 {
 private:
@@ -1812,6 +1968,7 @@ int renderdoccmd(GlobalEnvironment &env, std::vector<std::string> &argv)
     add_command("test", new TestCommand());
     add_command("convert", new ConvertCommand());
     add_command("exportframe", new ExportFrameCommand());
+    add_command("triggercapture", new TriggerCaptureCommand());
     add_command("embed", new EmbeddedSectionCommand(false));
     add_command("extract", new EmbeddedSectionCommand(true));
 #endif    // !defined(RDOC_SELFCAPTURE_LIMITEDAPI)

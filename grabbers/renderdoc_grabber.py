@@ -385,11 +385,15 @@ class RenderDocGrabber(FrameGrabber):
                 if rdc_path.exists():
                     return rdc_path
 
-        # Method 2: RenderDoc Python module API
+        # Method 2: renderdoccmd triggercapture (most reliable for external capture)
+        if self._trigger_via_renderdoccmd(rdc_path):
+            return rdc_path
+
+        # Method 3: RenderDoc Python module API
         if self._trigger_via_python_api(rdc_path):
             return rdc_path
 
-        # Method 3: Simulate capture key press
+        # Method 4: Simulate capture key press
         if self._trigger_via_keypress():
             if self._wait_for_capture(rdc_path, timeout=5.0):
                 return rdc_path
@@ -401,6 +405,59 @@ class RenderDocGrabber(FrameGrabber):
             f"Existing .rdc files in {self.capture_dir}: {[f.name for f in existing_rdcs]}"
         )
         return rdc_path  # Return expected path; caller checks existence
+
+    def _trigger_via_renderdoccmd(self, rdc_path: Path) -> bool:
+        """Trigger capture via renderdoccmd triggercapture command.
+
+        Uses RenderDoc's TargetControl API to connect to the injected game
+        and trigger a capture programmatically — no keypress simulation needed.
+        """
+        try:
+            rdoc_cmd = self._resolve_renderdoccmd()
+        except FileNotFoundError:
+            return False
+
+        cmd = [
+            rdoc_cmd, "triggercapture",
+            "--frames", "1",
+            "--out", str(self.capture_dir),
+        ]
+        logger.debug(f"[CAPTURE] triggercapture command: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=15,
+            )
+            stdout = result.stdout.decode("utf-8", errors="replace").strip()
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+
+            if stdout:
+                for line in stdout.splitlines():
+                    logger.info(f"[CAPTURE trigger] {line}")
+            if stderr:
+                for line in stderr.splitlines():
+                    logger.warning(f"[CAPTURE trigger err] {line}")
+
+            if result.returncode == 0:
+                # Find the captured file — triggercapture saves as capture_1.rdc
+                captured = self.capture_dir / "capture_1.rdc"
+                if captured.exists():
+                    captured.rename(rdc_path)
+                    logger.info(f"[CAPTURE] Got capture via triggercapture → {rdc_path}")
+                    return True
+                # Also scan for any new .rdc
+                if self._wait_for_capture(rdc_path, timeout=3.0):
+                    return True
+            else:
+                logger.debug(f"[CAPTURE] triggercapture returned {result.returncode}")
+        except subprocess.TimeoutExpired:
+            logger.debug("[CAPTURE] triggercapture timed out")
+        except Exception as e:
+            logger.debug(f"[CAPTURE] triggercapture failed: {e}")
+
+        return False
 
     def _trigger_via_python_api(self, rdc_path: Path) -> bool:
         """Try triggering capture through RenderDoc's Python API."""
