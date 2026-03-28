@@ -113,8 +113,12 @@ class RenderDocGrabber(FrameGrabber):
             ] + self.target_args
             logger.info(f"renderdoccmd command: {' '.join(cmd)}")
             self._process = subprocess.Popen(cmd)
-            time.sleep(5)  # Wait for game to start
-            logger.info("Game launched with RenderDoc attached")
+            logger.info("Waiting 10s for game to start...")
+            time.sleep(10)
+            if self._process.poll() is not None:
+                logger.error(f"renderdoccmd exited early with code {self._process.returncode}")
+            else:
+                logger.info("Game launched with RenderDoc attached")
         else:
             logger.info(
                 "RenderDoc grabber ready. Attach RenderDoc to your game manually "

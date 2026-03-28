@@ -217,7 +217,15 @@ def run_capture(args):
     grabber = create_grabber(args)
     stop_event = getattr(args, '_stop_event', None)
 
-    # ── Step 6: Execute capture loop ──
+    # ── Step 6: Launch game via grabber BEFORE connecting driver ──
+    # RenderDoc auto-launch must happen first so the game is running
+    # by the time the driver tries to connect its socket.
+    grabber_ctx = grabber if grabber else None
+    if grabber_ctx:
+        grabber_ctx.setup()
+        logging.info("[GRABBER] Grabber setup complete, game should be running")
+
+    # ── Step 7: Execute capture loop ──
     streaming_enabled = getattr(args, 'streaming', True)
     streaming_settle = getattr(args, 'streaming_settle', 0.5)
     logging.info(
@@ -227,10 +235,6 @@ def run_capture(args):
     )
     with driver:
         logging.debug("[DRIVER] Driver connected")
-        grabber_ctx = grabber if grabber else None
-        if grabber_ctx:
-            grabber_ctx.setup()
-            logging.debug("[GRABBER] Grabber setup complete")
 
         # Attempt to hide UI before capture loop (console-based hiding)
         ui_method = None
