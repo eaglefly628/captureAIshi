@@ -517,11 +517,19 @@ def _build_args(data: dict) -> Namespace:
         raise ValueError(f"Invalid grabber: {grabber}")
     args.grabber = grabber
 
-    args.target_exe = str(data.get("target_exe", "")) or None
+    # "Game Command" field: "C:\path\game.exe -Windowed -ResX=640"
+    # Split into exe path + args. The grabber also does this defensively,
+    # but splitting here keeps args clean for logging and config display.
+    import shlex
+    _game_cmd = str(data.get("target_exe", "")).strip()
+    if _game_cmd:
+        parts = shlex.split(_game_cmd, posix=False)
+        args.target_exe = parts[0]
+        args.target_args = parts[1:]
+    else:
+        args.target_exe = None
+        args.target_args = []
     args.renderdoc_path = str(data.get("renderdoc_path", "")) or "renderdoccmd"
-    # Parse game launch args (space-separated string → list)
-    _target_args_str = str(data.get("target_args", "")).strip()
-    args.target_args = _target_args_str.split() if _target_args_str else []
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
     args.dry_run = bool(data.get("dry_run", False))
 
