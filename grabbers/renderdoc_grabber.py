@@ -881,19 +881,19 @@ class RenderDocGrabber(FrameGrabber):
             except Exception:
                 pass
 
-        # Clamp to valid range
-        valid = depth[(depth >= 0) & (depth <= 1)]
-        if valid.size == 0:
-            logger.warning("[RDOC] Depth buffer has no valid values in [0,1]")
-            return depth
+        # Compute percentile-based range to handle outliers
+        # (reversed-Z: most values cluster near 1.0 for near, 0.0 for far)
+        dmin_raw, dmax_raw = float(depth.min()), float(depth.max())
+        logger.info(f"[RDOC] Raw depth range: [{dmin_raw:.6f}, {dmax_raw:.6f}], reversed_z={reversed_z}")
 
-        dmin, dmax = float(valid.min()), float(valid.max())
-        logger.debug(f"[RDOC] Raw depth range: [{dmin:.6f}, {dmax:.6f}], reversed_z={reversed_z}")
+        # Use percentiles for robust normalization (ignore extreme outliers)
+        dmin = float(np.percentile(depth, 1))
+        dmax = float(np.percentile(depth, 99))
+        logger.info(f"[RDOC] Percentile depth range (1-99%): [{dmin:.6f}, {dmax:.6f}]")
 
-        # Normalize to 0-1
         drange = dmax - dmin
-        if drange < 1e-6:
-            logger.warning("[RDOC] Depth range too small, skipping normalization")
+        if drange < 1e-10:
+            logger.warning(f"[RDOC] Depth range too small ({drange}), skipping normalization")
             return depth
 
         normalized = np.clip((depth - dmin) / drange, 0, 1).astype(np.float32)
