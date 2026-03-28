@@ -530,28 +530,69 @@ class RenderDocGrabber(FrameGrabber):
         finally:
             session.close()
 
+    def _ensure_renderdoc_module(self) -> bool:
+        """Ensure the real renderdoc Python API is importable.
+
+        Auto-discovers renderdoc.pyd/.so from the RenderDoc build tree
+        (pymodules/ directory) and adds it to sys.path if needed.
+        Returns True if the module is available.
+        """
+        import sys as _sys
+
+        # Check if already importable and valid
+        try:
+            import renderdoc as _rd
+            if hasattr(_rd, 'OpenCaptureFile'):
+                return True
+            # Wrong module (probably the source tree directory) — remove it
+            # so we can try to import the real one after adjusting sys.path
+            del _sys.modules['renderdoc']
+        except ImportError:
+            pass
+
+        # Auto-discover renderdoc.pyd/renderdoc.so in build output
+        pyd_name = "renderdoc.pyd" if _sys.platform == "win32" else "renderdoc.so"
+        project_root = Path(__file__).resolve().parent.parent
+        search_roots = [project_root, project_root.parent]
+        candidates = [
+            Path("renderdoc") / "x64" / "Development" / "pymodules",
+            Path("renderdoc") / "x64" / "Release" / "pymodules",
+            Path("renderdoc") / "build" / "lib" / "pymodules",
+        ]
+        for root in search_roots:
+            for candidate in candidates:
+                pyd_dir = root / candidate
+                pyd_file = pyd_dir / pyd_name
+                if pyd_file.is_file():
+                    pyd_dir_str = str(pyd_dir)
+                    if pyd_dir_str not in _sys.path:
+                        _sys.path.insert(0, pyd_dir_str)
+                    logger.info(f"[RDOC] Auto-discovered {pyd_name} at {pyd_dir}")
+                    # Verify it works
+                    try:
+                        if 'renderdoc' in _sys.modules:
+                            del _sys.modules['renderdoc']
+                        import renderdoc as _rd2
+                        if hasattr(_rd2, 'OpenCaptureFile'):
+                            return True
+                        logger.warning(f"[RDOC] {pyd_file} loaded but missing OpenCaptureFile")
+                    except ImportError as e:
+                        logger.warning(f"[RDOC] Failed to import from {pyd_dir}: {e}")
+
+        logger.error(
+            f"[RDOC] renderdoc Python bindings not found. "
+            f"Build the 'pyrenderdoc_module' project in Visual Studio "
+            f"(produces renderdoc.pyd in x64/Development/pymodules/). "
+            f"Searched: {', '.join(str(r) for r in search_roots)}"
+        )
+        return False
+
     def _replay_python(self, rdc_path: Path):
         """Replay using the RenderDoc Python module. Returns (rgb, depth)."""
-        try:
-            import renderdoc as rd
-        except ImportError:
-            logger.error(
-                "renderdoc Python module not found. "
-                "Build the native bridge or add RenderDoc Python bindings to PYTHONPATH. "
-                "Typically: export PYTHONPATH=/path/to/renderdoc/lib"
-            )
+        if not self._ensure_renderdoc_module():
             return None, None
 
-        # Validate we got the real RenderDoc replay API, not the source tree
-        if not hasattr(rd, 'OpenCaptureFile'):
-            rd_path = getattr(rd, '__file__', None) or getattr(rd, '__path__', ['?'])[0]
-            logger.error(
-                f"Found a 'renderdoc' module at {rd_path} but it's not the "
-                f"RenderDoc replay API (missing OpenCaptureFile). "
-                f"This is likely the RenderDoc source tree, not the Python bindings. "
-                f"Add the real renderdoc.pyd/.so to PYTHONPATH before the project root."
-            )
-            return None, None
+        import renderdoc as rd
 
         cap = rd.OpenCaptureFile()
         result = cap.OpenFile(str(rdc_path), "", None)
