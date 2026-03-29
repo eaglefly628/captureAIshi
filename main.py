@@ -130,7 +130,6 @@ def create_ui_hider(args):
 def _run_auto_inject(args):
     """Auto-inject captureAIshi bridge DLL into the game process.
 
-    This is an EXPERIMENTAL feature that replaces manual UUU injection.
     Only runs when --auto-inject is passed. Requires Windows.
     """
     import sys
@@ -148,7 +147,7 @@ def _run_auto_inject(args):
         logging.warning(
             f"[INJECT] Bridge DLL not found at {dll_path}. "
             f"Build it from 3rdparty/bridge/src/ or provide --bridge-dll path. "
-            f"Skipping auto-inject (pipeline will try to connect to existing UUU)."
+            f"Skipping auto-inject."
         )
         return
 
@@ -178,7 +177,7 @@ def _run_auto_inject(args):
     except Exception as e:
         logging.warning(
             f"[INJECT] Auto-injection failed: {e}. "
-            f"Pipeline will try to connect to existing UUU/console."
+            f"Pipeline will try to connect anyway."
         )
 
 
@@ -623,10 +622,10 @@ def main():
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
 
-    # Bridge injection (experimental, replaces UUU)
+    # Bridge injection
     parser.add_argument(
         "--auto-inject", action="store_true",
-        help="[EXPERIMENTAL] Auto-inject captureAIshi bridge DLL instead of requiring UUU. "
+        help="Auto-inject captureAIshi bridge DLL into the game process. "
              "Windows only. Requires captureAIshi_bridge.dll in 3rdparty/bridge/.",
     )
     parser.add_argument(

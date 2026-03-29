@@ -1,8 +1,8 @@
 """UE5 console command driver.
 
 Controls the camera in UE5 released games by sending console commands
-over TCP. Requires the game to have console access enabled (e.g., via
-Universal Unreal Engine Unlocker / UUU).
+over TCP. Requires the game to have a TCP console server running
+(via captureAIshi bridge DLL, injected with --auto-inject).
 
 The driver sends commands like:
   - ToggleDebugCamera (to enter free camera mode)
@@ -76,7 +76,7 @@ class UE5ConsoleDriver(CameraDriver):
         except ConnectionRefusedError:
             logger.error(
                 f"[UE5] Connection refused at {self.host}:{self.port}. "
-                f"Is the game running with console enabled (UUU)?"
+                f"Is the game running with bridge DLL injected (--auto-inject)?"
             )
             raise
         except socket.timeout:

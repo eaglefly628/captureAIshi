@@ -25,8 +25,8 @@ UNITY_RESTORE_COMMAND = '{"cmd":"set_ui_visible","visible":true}'
 class ConsoleUIHider(UIHider):
     """Hide UI by sending console commands over TCP.
 
-    Works with UE5 games that have console access via UUU (Universal Unreal
-    Engine Unlocker) or Unity games with the companion BepInEx plugin.
+    Works with UE5 games that have console access via the captureAIshi
+    bridge DLL, or Unity games with the companion BepInEx plugin.
     """
 
     def __init__(

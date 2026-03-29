@@ -333,7 +333,7 @@ _PRESETS = [
         "id": "ue5_quick",
         "name": "UE5 Quick Capture",
         "icon": "gamepad",
-        "desc": "UE5 game via UUU + RenderDoc, small area, fast preview",
+        "desc": "UE5 game via bridge + RenderDoc, small area, fast preview",
         "tags": ["UE5", "RenderDoc"],
         "params": {
             "volume_min": [-10, 0, -10],
