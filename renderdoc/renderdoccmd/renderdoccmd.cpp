@@ -1035,6 +1035,7 @@ private:
   std::string filename;
   std::string outdir;
   std::string format;
+  bool dumpAll;
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1044,6 +1045,7 @@ public:
     parser.add<std::string>("out", 'o', "Output directory for exported images", false, ".");
     parser.add<std::string>("format", 'f', "Image format: png, jpg, exr, hdr, bmp, tga", false,
                             "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
+    parser.add("dump-all", '\0', "Also export all ColorTargets matching viewport resolution");
   }
   virtual const char *Description()
   {
@@ -1067,6 +1069,7 @@ public:
 
     outdir = parser.get<std::string>("out");
     format = parser.get<std::string>("format");
+    dumpAll = parser.exist("dump-all");
     return true;
   }
 
@@ -1184,55 +1187,65 @@ public:
       const TextureDescription &tex = textures[i];
       uint32_t flags = (uint32_t)tex.creationFlags;
 
-      // Export depth buffer (hardware Z-buffer)
+      // Export depth buffer as normalized grayscale PNG
       if(!foundDepth && (flags & (uint32_t)TextureCategory::DepthTarget))
       {
         std::cout << "  [" << i << "] DepthTarget " << tex.width << "x" << tex.height
                   << " fmt=" << (uint32_t)tex.format.type << std::endl;
 
-        std::string depthPath = outdir + sep + "depth.exr";
+        // Compute percentile range from raw data for black/white point mapping
+        float bpVal = 0.0f, wpVal = 1.0f;
+        bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
+        if(!rawData.empty())
+        {
+          size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
+          size_t floatCount = rawData.size() / sizeof(float);
+
+          if(floatCount >= pixelCount)
+          {
+            const float *src = (const float *)rawData.data();
+            std::vector<float> validDepths;
+            validDepths.reserve(pixelCount);
+            for(size_t p = 0; p < pixelCount; p++)
+            {
+              float d = src[p];
+              if(d >= 0.0f && d <= 1.0f)
+                validDepths.push_back(d);
+            }
+            if(!validDepths.empty())
+            {
+              std::sort(validDepths.begin(), validDepths.end());
+              size_t n = validDepths.size();
+              bpVal = validDepths[(size_t)(n * 0.01)];    // 1st percentile
+              wpVal = validDepths[(size_t)(n * 0.99)];    // 99th percentile
+              if(wpVal - bpVal < 1e-10f)
+              {
+                bpVal = 0.0f;
+                wpVal = 1.0f;
+              }
+              std::cout << "  depth range (1-99%%): [" << bpVal << ", " << wpVal << "]" << std::endl;
+            }
+          }
+        }
+
+        // Save depth as grayscale PNG with percentile-based mapping
+        // Swap black/white to invert reversed-Z: near(1.0)→dark, far(0.0)→bright
+        std::string depthPath = outdir + sep + "depth.png";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
         texsave.slice.sliceIndex = 0;
         texsave.alpha = AlphaMapping::Discard;
-        texsave.destType = FileType::EXR;
+        texsave.destType = FileType::PNG;
+        texsave.channelExtract = 0;    // Red channel only (depth)
+        texsave.comp.blackPoint = wpVal;  // Reversed-Z inversion: map far(0)→black
+        texsave.comp.whitePoint = bpVal;  // Reversed-Z inversion: map near(1)→white
 
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
         if(saveRes.OK())
         {
           std::cout << "OK depth " << tex.width << "x" << tex.height << " -> " << depthPath << std::endl;
           foundDepth = true;
-
-          // Write depth range info
-          bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
-          if(!rawData.empty())
-          {
-            size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
-            const float *depthData = (const float *)rawData.data();
-            size_t floatCount = rawData.size() / sizeof(float);
-            if(floatCount >= pixelCount)
-            {
-              float dmin = 1.0f, dmax = 0.0f;
-              for(size_t p = 0; p < pixelCount; p++)
-              {
-                float d = depthData[p];
-                if(d >= 0.0f && d <= 1.0f)
-                {
-                  if(d < dmin) dmin = d;
-                  if(d > dmax) dmax = d;
-                }
-              }
-              std::cout << "  depth range: [" << dmin << ", " << dmax << "]" << std::endl;
-              std::string previewHint = outdir + sep + "depth_range.txt";
-              FILE *fh = fopen(previewHint.c_str(), "w");
-              if(fh)
-              {
-                fprintf(fh, "min=%f\nmax=%f\nreversed_z=1\n", dmin, dmax);
-                fclose(fh);
-              }
-            }
-          }
         }
         else
         {
@@ -1240,26 +1253,19 @@ public:
         }
       }
 
-      // Export all ColorTargets matching SwapBuffer resolution
-      // These contain GBuffer data: SceneDepth, WorldNormal, BaseColor, etc.
-      if((flags & (uint32_t)TextureCategory::ColorTarget) &&
+      // Optional: export all ColorTargets matching SwapBuffer resolution (--dump-all)
+      if(dumpAll &&
+         (flags & (uint32_t)TextureCategory::ColorTarget) &&
          !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
          swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight)
       {
         std::string ctName = "colortarget_" + std::to_string(colorTargetIdx);
-        std::string ctPathEXR = outdir + sep + ctName + ".exr";
         std::string ctPathPNG = outdir + sep + ctName + "." + format;
 
-        // Save as EXR (preserves float data for SceneDepth)
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
         texsave.slice.sliceIndex = 0;
-        texsave.alpha = AlphaMapping::BlendToCheckerboard;
-        texsave.destType = FileType::EXR;
-        controller->SaveTexture(texsave, conv(ctPathEXR));
-
-        // Also save as PNG for preview
         texsave.alpha = AlphaMapping::Discard;
         texsave.destType = type;
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(ctPathPNG));
@@ -1269,7 +1275,6 @@ public:
           std::cout << "OK colortarget_" << colorTargetIdx << " [" << i << "] "
                     << tex.width << "x" << tex.height
                     << " fmt=" << (uint32_t)tex.format.type
-                    << " components=" << tex.format.compCount
                     << " -> " << ctPathPNG << std::endl;
         }
         colorTargetIdx++;

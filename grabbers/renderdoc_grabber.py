@@ -679,7 +679,7 @@ class RenderDocGrabber(FrameGrabber):
         loaded outside of qrenderdoc, so we use our custom `exportframe`
         command compiled into renderdoccmd instead. It saves:
           - rgb.png   (backbuffer, uint8)
-          - depth.exr (depth target, float32)
+          - depth.png (depth target, normalized grayscale)
 
         We then load these files back as numpy arrays.
         """
@@ -737,26 +737,9 @@ class RenderDocGrabber(FrameGrabber):
             logger.error(f"[RDOC] Failed to run exportframe: {e}")
             return None, None
 
-        # Load exported images
+        # Load exported images (both RGB and depth are PNG now)
         rgb = self._load_rgb_image(replay_out)
-        depth = self._load_depth_exr(replay_out)
-
-        # Normalize depth and save preview
-        if depth is not None:
-            depth = self._normalize_depth(depth, replay_out)
-
-        # Copy preview files to session output before cleanup
-        session_out = self.capture_dir.parent
-        for keep_name in ("depth_preview.png", "depth_preview.jpg"):
-            src = replay_out / keep_name
-            if src.exists():
-                dst = session_out / f"{rdc_path.stem}_{keep_name}"
-                try:
-                    import shutil
-                    shutil.copy2(str(src), str(dst))
-                    logger.info(f"[RDOC] Preview saved: {dst}")
-                except Exception as e:
-                    logger.debug(f"[RDOC] Could not copy preview: {e}")
+        depth = self._load_depth_image(replay_out)
 
         # Clean up temp exported files
         for f in replay_out.iterdir():
@@ -800,121 +783,39 @@ class RenderDocGrabber(FrameGrabber):
         logger.debug("[RDOC] No RGB image found in export directory")
         return None
 
-    def _load_depth_exr(self, directory: Path) -> Optional[np.ndarray]:
-        """Load exported depth EXR as float32 numpy array (H, W)."""
-        depth_file = directory / "depth.exr"
+    def _load_depth_image(self, directory: Path) -> Optional[np.ndarray]:
+        """Load exported depth PNG as uint8 grayscale numpy array (H, W).
+
+        The C++ exportframe command already normalizes depth using
+        percentile-based black/white point mapping and reversed-Z inversion,
+        so the PNG is ready to use directly.
+        """
+        depth_file = directory / "depth.png"
         if not depth_file.exists():
-            logger.debug("[RDOC] No depth.exr found in export directory")
+            logger.debug("[RDOC] No depth.png found in export directory")
             return None
 
-        # Try OpenEXR first (most reliable for float data)
         try:
-            import OpenEXR
-            import Imath
-            exr = OpenEXR.InputFile(str(depth_file))
-            header = exr.header()
-            dw = header["dataWindow"]
-            w = dw.max.x - dw.min.x + 1
-            h = dw.max.y - dw.min.y + 1
-            # Read the first channel (R) as float
-            channels = list(header["channels"].keys())
-            ch_name = channels[0] if channels else "R"
-            raw = exr.channel(ch_name, Imath.PixelType(Imath.PixelType.FLOAT))
-            arr = np.frombuffer(raw, dtype=np.float32).reshape(h, w)
-            logger.debug(f"[RDOC] Loaded depth: {w}x{h} from depth.exr (OpenEXR)")
+            from PIL import Image
+            img = Image.open(str(depth_file)).convert("L")
+            arr = np.array(img, dtype=np.uint8)
+            logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.png")
             return arr
         except ImportError:
-            pass
-        except Exception as e:
-            logger.warning(f"[RDOC] OpenEXR failed to load depth: {e}")
-
-        # Try imageio with freeimage backend
-        try:
-            import imageio.v3 as iio
-            arr = iio.imread(str(depth_file))
-            if arr.ndim == 3:
-                arr = arr[:, :, 0]  # Take first channel
-            arr = arr.astype(np.float32)
-            logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.exr (imageio)")
-            return arr
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.warning(f"[RDOC] imageio failed to load depth.exr: {e}")
-
-        # Try cv2
-        try:
-            import cv2
-            arr = cv2.imread(str(depth_file), cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
-            if arr is not None:
+            logger.warning("[RDOC] Pillow not installed — trying imageio for depth")
+            try:
+                import imageio.v3 as iio
+                arr = iio.imread(str(depth_file))
                 if arr.ndim == 3:
                     arr = arr[:, :, 0]
-                arr = arr.astype(np.float32)
-                logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.exr (cv2)")
-                return arr
-        except ImportError:
-            pass
+                logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.png (imageio)")
+                return arr.astype(np.uint8)
+            except ImportError:
+                logger.error("[RDOC] Neither Pillow nor imageio installed — cannot load depth")
+                return None
         except Exception as e:
-            logger.warning(f"[RDOC] cv2 failed to load depth.exr: {e}")
-
-        logger.error(
-            "[RDOC] Cannot load depth.exr — install one of: OpenEXR, imageio[freeimage], opencv-python"
-        )
-        return None
-
-    def _normalize_depth(self, depth: np.ndarray, output_dir: Path) -> np.ndarray:
-        """Normalize raw depth buffer to linear 0-1 range.
-
-        UE5 uses reversed-Z: near=1.0, far=0.0.
-        We invert so that near=0 (dark), far=1 (bright) — standard convention.
-        Also saves a depth_preview.png for visual inspection.
-        """
-        # Read depth_range.txt if available (written by exportframe)
-        reversed_z = True  # Default for UE5
-        range_file = output_dir / "depth_range.txt"
-        if range_file.exists():
-            try:
-                text = range_file.read_text()
-                for line in text.splitlines():
-                    if line.startswith("reversed_z="):
-                        reversed_z = line.split("=")[1].strip() == "1"
-            except Exception:
-                pass
-
-        # Compute percentile-based range to handle outliers
-        # (reversed-Z: most values cluster near 1.0 for near, 0.0 for far)
-        dmin_raw, dmax_raw = float(depth.min()), float(depth.max())
-        logger.info(f"[RDOC] Raw depth range: [{dmin_raw:.6f}, {dmax_raw:.6f}], reversed_z={reversed_z}")
-
-        # Use percentiles for robust normalization (ignore extreme outliers)
-        dmin = float(np.percentile(depth, 1))
-        dmax = float(np.percentile(depth, 99))
-        logger.info(f"[RDOC] Percentile depth range (1-99%): [{dmin:.6f}, {dmax:.6f}]")
-
-        drange = dmax - dmin
-        if drange < 1e-10:
-            logger.warning(f"[RDOC] Depth range too small ({drange}), skipping normalization")
-            return depth
-
-        normalized = np.clip((depth - dmin) / drange, 0, 1).astype(np.float32)
-
-        # Invert for reversed-Z (UE5): so near=dark, far=bright
-        if reversed_z:
-            normalized = 1.0 - normalized
-
-        # Save preview as both PNG and JPG for compatibility
-        try:
-            preview_u8 = (normalized * 255).astype(np.uint8)
-            from PIL import Image
-            preview = Image.fromarray(preview_u8, mode="L")
-            for ext in ("png", "jpg"):
-                preview_path = output_dir / f"depth_preview.{ext}"
-                preview.save(str(preview_path))
-            logger.info(f"[RDOC] Saved depth preview (png+jpg)")
-        except Exception as e:
-            logger.debug(f"[RDOC] Could not save depth preview: {e}")
-
-        return normalized
+            logger.error(f"[RDOC] Failed to load depth from {depth_file}: {e}")
+            return None
 
     def _find_renderdoc_dirs(self):
         """Find renderdoc.pyd and renderdoc.dll directories.
