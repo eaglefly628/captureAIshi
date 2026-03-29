@@ -446,7 +446,7 @@ class RenderDocGrabber(FrameGrabber):
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # Don't pipe stderr: fills buffer and deadlocks on Windows
         )
 
         # Wait for READY signal
@@ -455,8 +455,7 @@ class RenderDocGrabber(FrameGrabber):
         deadline = _time.monotonic() + 30
         while _time.monotonic() < deadline:
             if self._trigger_process.poll() is not None:
-                stderr = self._trigger_process.stderr.read().decode("utf-8", errors="replace")
-                logger.error(f"[CAPTURE] Trigger process exited early: {stderr}")
+                logger.error(f"[CAPTURE] Trigger process exited early (rc={self._trigger_process.returncode})")
                 self._trigger_process = None
                 return False
             line = self._trigger_process.stdout.readline().decode("utf-8", errors="replace").strip()
