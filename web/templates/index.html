@@ -191,12 +191,40 @@ body {
   overflow: hidden;
 }
 
+/* ─── Resizer Handle ─── */
+.resizer {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--border-subtle);
+  transition: background 0.15s;
+}
+.resizer:hover, .resizer.active {
+  background: var(--accent-dim);
+}
+.resizer:hover::after, .resizer.active::after {
+  background: var(--accent);
+}
+
 /* ─── Left Sidebar (Params) ─── */
 .sidebar {
   width: 260px;
+  min-width: 180px;
+  max-width: 500px;
   flex-shrink: 0;
   background: var(--bg-surface);
-  border-right: 1px solid var(--border-subtle);
+  border-right: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -311,7 +339,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  min-width: 0;
+  min-width: 200px;
 }
 .center-header {
   height: 32px;
@@ -353,9 +381,11 @@ body {
 /* ─── Right Panel (Preview) ─── */
 .preview {
   width: 320px;
+  min-width: 180px;
+  max-width: 600px;
   flex-shrink: 0;
   background: var(--bg-surface);
-  border-left: 1px solid var(--border-subtle);
+  border-left: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -611,6 +641,9 @@ body {
     </div>
   </div>
 
+  <!-- Resizer: Sidebar ↔ Center -->
+  <div class="resizer" id="resizerLeft"></div>
+
   <!-- Center: Log -->
   <div class="center">
     <div class="center-header">
@@ -621,6 +654,9 @@ body {
       <div class="log-line log-info">$ captureAIshi ready</div>
     </div>
   </div>
+
+  <!-- Resizer: Center ↔ Preview -->
+  <div class="resizer" id="resizerRight"></div>
 
   <!-- Right: Preview -->
   <div class="preview">
@@ -645,6 +681,44 @@ body {
 </div>
 
 <script>
+// ─── Resizable Panels ───
+(function initResizers() {
+  const sidebar = document.querySelector('.sidebar');
+  const preview = document.querySelector('.preview');
+  const rL = document.getElementById('resizerLeft');
+  const rR = document.getElementById('resizerRight');
+
+  function startDrag(e, resizer, mode) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = mode === 'left' ? sidebar.offsetWidth : preview.offsetWidth;
+    resizer.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(ev) {
+      const dx = ev.clientX - startX;
+      if (mode === 'left') {
+        sidebar.style.width = Math.max(180, Math.min(500, startW + dx)) + 'px';
+      } else {
+        preview.style.width = Math.max(180, Math.min(600, startW - dx)) + 'px';
+      }
+    }
+    function onUp() {
+      resizer.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  rL.addEventListener('mousedown', function(e) { startDrag(e, rL, 'left'); });
+  rR.addEventListener('mousedown', function(e) { startDrag(e, rR, 'right'); });
+})();
+
 // ─── State ───
 let polling = null, presets = [], selectedPresetId = null;
 let knownCaptures = [], activeSession = '', viewSession = '';
