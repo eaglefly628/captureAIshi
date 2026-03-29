@@ -21,8 +21,14 @@ if(MSVC)
     target_compile_options(captureAIshi_bridge PRIVATE /EHa)
 endif()
 
-# Output name without lib prefix
+# Output directly to 3rdparty/bridge/ (no manual copy needed)
 set_target_properties(captureAIshi_bridge PROPERTIES
     PREFIX ""
     OUTPUT_NAME "captureAIshi_bridge"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/.."
 )
