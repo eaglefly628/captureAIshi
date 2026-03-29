@@ -2,11 +2,13 @@
 
 ## Architecture
 
-Three-layer pipeline for capturing RGB + Depth from published games:
+Pipeline for capturing RGB + Depth + Normal from published games:
 
 1. **Core** (`core/`) — Pure Python path generation (waypoints, snake path, cone rotation, tangent smoothing). Engine-agnostic.
 2. **Drivers** (`drivers/`) — Camera control adapters. Each driver connects to a game via its specific protocol (UE5 console TCP, Unity BepInEx socket, Cheat Engine memory, manual).
-3. **Grabbers** (`grabbers/`) — Frame capture. RenderDoc replay API for RGB+Depth, screenshot fallback.
+3. **Grabbers** (`grabbers/`) — Frame capture. RenderDoc replay API for RGB+Depth+Normal, screenshot fallback.
+4. **Web UI** (`web_ui.py` + `web/templates/`) — Flask + pywebview desktop GUI. Capture controls, log viewer, image gallery, 3D waypoint visualizer.
+5. **Utils** (`utils/`) — Shared utilities (coordinate system conversions, etc.).
 
 ## Design Principles
 
@@ -74,7 +76,7 @@ Valid flags:
 
 - Python 3.11+, formatted with Black
 - All paths use `pathlib.Path` internally
-- Coordinates: pipeline uses Z-up right-handed. Convert at driver boundary.
+- Coordinates: pipeline uses Y-up right-handed (meters). Convert at driver boundary.
 - Config files stored in `./configs/`, output in `./output/<session>/`
 - `.gitignore` should exclude: `__pycache__/`, `*.pyc`, `.venv/`, `renderdoc/`, `configs/`, `output/`, `captures/`
 

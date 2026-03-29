@@ -22,39 +22,19 @@ Backend API routes:
 
 ## Tasks from Lead (2026-03-29)
 
-Priority order. Work on the branch `claude/max-traffic-sharing-8hWo3`.
+Priority order. Work on the branch `claude/max-traffic-sharing-8hWo3-1Zpm7`.
 
-### Task 1: Image preview lightbox (P0)
-Clicking a thumbnail should open a full-size overlay with:
-- Full resolution image display
-- Left/right arrow navigation between captures
-- RGB and depth side-by-side view (match rgb_XXXXXX with depth_XXXXXX)
-- Close on Escape or click outside
-- Keep it vanilla JS, no frameworks
+### Task 1: Image preview lightbox (P0) — DONE (dc8316f)
+Clicking a thumbnail opens a full-size overlay with left/right navigation, RGB/depth/normal side-by-side, close on Escape.
 
-### Task 2: Capture progress bar (P0)
-During capture, show:
-- Progress bar: `pose 3/20` with percentage
-- Elapsed time and estimated remaining
-- Current pose info (position, rotation)
-- Parse these from the log lines or add a `/api/progress` endpoint
+### Task 2: Capture progress bar (P0) — DONE (dc8316f)
+Progress bar with pose count, percentage, elapsed/remaining time.
 
-### Task 3: Session gallery page (P1)
-Replace the simple thumbnail list with a proper gallery:
-- Grid layout with adjustable thumbnail size
-- Filter by type (RGB only, Depth only, All)
-- Sort by name or capture time
-- Total count and disk size summary
-- "Open in Explorer" button (shell link to output directory)
+### Task 3: Session gallery page (P1) — DONE (dc8316f)
+Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 
-### Task 4: 3D waypoint visualizer (P2)
-Simple 3D canvas showing:
-- Waypoint positions as dots connected by path lines
-- Camera frustum cones at each waypoint
-- Capture volume bounding box
-- Use vanilla WebGL or lightweight Three.js
-- Interactive: rotate/zoom the view
-- This is aspirational — only if Tasks 1-3 are done
+### Task 4: 3D waypoint visualizer (P2) — DONE (dc8316f)
+3D canvas with waypoints, path lines, camera frustums, rotate/zoom.
 
 ## 2026-03-29 渲染侧更新通知 (from rendering agent)
 

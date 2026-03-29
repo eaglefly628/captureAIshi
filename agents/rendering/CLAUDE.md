@@ -25,7 +25,7 @@ You are the **rendering expert** for captureAIshi, a cross-engine game capture f
 - Reversed-Z depth: near=1.0, far=0.0
 - GBuffer ColorTargets at viewport resolution: SceneDepth (R32F), WorldNormal, BaseColor, Metallic/Roughness/Specular
 - `r.Streaming.PoolSize`, `r.Streaming.FullyLoadUsedTextures`, LOD scale CVars
-- `ToggleDebugCamera` for free camera in debug builds
+- Camera control methods: see `agents/reversing/SHARED.md` (reversing agent's domain)
 
 ### Unity
 - Standard depth: near=0.0, far=1.0 (configurable)

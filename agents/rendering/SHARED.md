@@ -21,7 +21,7 @@ This file is used for inter-agent communication. The rendering agent writes GBuf
 
 ## 2026-03-29 Update: Trajectory Output + Normal Buffer + Camera Intrinsics
 
-### Commit: `claude/max-traffic-sharing-8hWo3`
+### Commit: `claude/max-traffic-sharing-8hWo3-1Zpm7`
 
 ### 1. 新增 trajectory.json 输出格式
 
@@ -36,6 +36,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
     "aspect": 1.7778,
     "captureImg": "20260329143818065_cone0.png",
     "depthImg": "20260329143818065_cone0_d.png",
+    "normalImg": "20260329143818065_cone0_n.png",
     "viewName": "cone0",
     "pointIndex": 0,
     "splineMode": "manual"
@@ -53,6 +54,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 | `aspect` | float | 宽高比，CLI 通过 `--aspect` 设置，默认 16:9 (1.7778) |
 | `captureImg` | string | RGB 图片文件名 |
 | `depthImg` | string | Depth 图片文件名 |
+| `normalImg` | string | Normal 法线图文件名 |
 | `viewName` | string | 视角名称：`center`（无 cone）或 `cone0`, `cone1`... |
 | `pointIndex` | int | 路径点索引（对应 waypoint 编号） |
 | `splineMode` | string | 插值模式：`manual` 或 `catmull-rom` |

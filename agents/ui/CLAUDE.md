@@ -19,7 +19,7 @@ You are the **UI programmer** for captureAIshi, a cross-engine game capture fram
 
 ## Conventions
 
-- All UI code lives in `ui/` (Flask app, templates, static assets)
+- All UI code lives in `web_ui.py` (Flask backend) and `web/templates/` (frontend)
 - API routes return JSON; frontend fetches and renders
 - No heavy JS frameworks — keep it vanilla JS or lightweight (Alpine.js at most)
 - Follow the project's existing Python conventions (Black, pathlib, type hints)
