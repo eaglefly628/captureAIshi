@@ -808,9 +808,9 @@ class RenderDocGrabber(FrameGrabber):
             else:
                 subdir = export_out
 
-            logger.debug(f"[RDOC batch] Loading from {subdir} (exists={subdir.exists()})")
+            logger.info(f"[RDOC batch] Loading from {subdir} (exists={subdir.exists()})")
             if subdir.exists():
-                logger.debug(f"[RDOC batch] Files: {[f.name for f in subdir.iterdir()]}")
+                logger.info(f"[RDOC batch] Files: {[f.name for f in subdir.iterdir()]}")
 
             rgb = self._load_rgb_image(subdir)
             depth = self._load_depth_image(subdir)
