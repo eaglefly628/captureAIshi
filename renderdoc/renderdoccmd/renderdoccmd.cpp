@@ -1047,7 +1047,7 @@ public:
     parser.add<std::string>("format", 'f', "Image format: png, jpg, exr, hdr, bmp, tga", false,
                             "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
     parser.add("dump-all", '\0', "Also export all ColorTargets matching viewport resolution");
-    parser.add("normal", '\0', "Also export the normal buffer (GBufferA)");
+    parser.add("no-normal", '\0', "Skip normal buffer export (on by default)");
   }
   virtual const char *Description()
   {
@@ -1072,7 +1072,7 @@ public:
     outdir = parser.get<std::string>("out");
     format = parser.get<std::string>("format");
     dumpAll = parser.exist("dump-all");
-    exportNormal = parser.exist("normal");
+    exportNormal = !parser.exist("no-normal");
     return true;
   }
 
@@ -1291,18 +1291,22 @@ public:
       }
 
       // Auto-detect and export Normal buffer (GBufferA).
-      // UE5: WorldNormal is typically RGB10A2 or RGBA8 at viewport resolution,
-      // the first 3-component ColorTarget that is NOT the SwapBuffer.
-      // We identify it by: ColorTarget flag, viewport resolution, 3+ components,
-      // and NOT being the swap buffer.
+      //
+      // UE5 GBuffer order at viewport resolution:
+      //   ColorTarget 0: SceneColor (RGBA16F, Float) -- SKIP (HDR, maps to black in PNG)
+      //   ColorTarget 1: GBufferA = WorldNormal (RGB10A2, UNorm)
+      //   ColorTarget 2: GBufferB = Metallic/Specular/Roughness
+      //   ColorTarget 3: GBufferC = BaseColor
+      //
+      // Key filter: skip Float-format textures (SceneColor is RGBA16F).
+      // WorldNormal uses UNorm (RGB10A2) or SNorm, never Float.
       if(exportNormal && !foundNormal &&
          (flags & (uint32_t)TextureCategory::ColorTarget) &&
          !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
          swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight &&
-         tex.format.compCount >= 3)
+         tex.format.compCount >= 3 &&
+         tex.format.compType != CompType::Float)
       {
-        // The first non-swap ColorTarget at viewport res with 3+ components
-        // is very likely the WorldNormal (GBufferA) in UE5/Unity HDRP.
         std::string normalPath = fileOutdir + sep + "normal.png";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
@@ -1316,7 +1320,8 @@ public:
         {
           std::cout << "OK normal [" << i << "] " << tex.width << "x" << tex.height
                     << " fmt=" << (uint32_t)tex.format.type
-                    << " comp=" << tex.format.compCount
+                    << " compType=" << (uint32_t)tex.format.compType
+                    << " compCount=" << (uint32_t)tex.format.compCount
                     << " -> " << normalPath << std::endl;
           foundNormal = true;
         }

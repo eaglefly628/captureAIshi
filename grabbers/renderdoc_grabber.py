@@ -61,7 +61,7 @@ class RenderDocGrabber(FrameGrabber):
         ui_extra_keywords: Optional[list] = None,
         startup_timeout: float = 60.0,
         wait_for_port: Optional[int] = None,
-        export_normal: bool = False,
+        export_normal: bool = True,
     ):
         """
         Args:
@@ -765,8 +765,8 @@ class RenderDocGrabber(FrameGrabber):
             "--out", str(export_out),
             "--format", "png",
         ]
-        if self.export_normal:
-            cmd.append("--normal")
+        if not self.export_normal:
+            cmd.append("--no-normal")
         cmd += [str(p) for p in valid_paths]
 
         logger.info(f"[RDOC] Batch exporting {len(valid_paths)} captures...")
@@ -949,8 +949,8 @@ class RenderDocGrabber(FrameGrabber):
             "--out", str(replay_out),
             "--format", "png",
         ]
-        if self.export_normal:
-            cmd.append("--normal")
+        if not self.export_normal:
+            cmd.append("--no-normal")
         logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
 
         try:
