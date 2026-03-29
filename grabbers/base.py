@@ -53,21 +53,21 @@ class FrameGrabber(ABC):
             logger.debug(f"[SAVE] RGB frame {frame_idx}: skipped (None)")
 
         if depth is not None:
-            # Save as 16-bit PNG (normalized)
-            d_min, d_max = depth.min(), depth.max()
-            if d_max - d_min > 1e-8:
-                depth_norm = (depth - d_min) / (d_max - d_min)
-            else:
-                depth_norm = np.zeros_like(depth)
-            depth_u16 = (depth_norm * 65535).astype(np.uint16)
-            img = Image.fromarray(depth_u16, mode="I;16")
             depth_png_path = output_dir / f"depth_{frame_idx:06d}.png"
+            if depth.dtype == np.uint8:
+                # Already normalized by C++ exportframe — save directly as 8-bit grayscale
+                img = Image.fromarray(depth, mode="L")
+            else:
+                # Raw float depth — normalize to 8-bit for preview
+                d_min, d_max = float(depth.min()), float(depth.max())
+                if d_max - d_min > 1e-8:
+                    depth_norm = (depth - d_min) / (d_max - d_min)
+                else:
+                    depth_norm = np.zeros_like(depth)
+                depth_u8 = (depth_norm * 255).astype(np.uint8)
+                img = Image.fromarray(depth_u8, mode="L")
             img.save(depth_png_path)
-
-            # Also save raw float32
-            depth_npy_path = output_dir / f"depth_{frame_idx:06d}.npy"
-            np.save(depth_npy_path, depth)
-            logger.debug(f"[SAVE] Depth frame {frame_idx}: range=[{d_min:.4f}, {d_max:.4f}], "
+            logger.debug(f"[SAVE] Depth frame {frame_idx}: {depth.dtype}, "
                          f"{depth.shape[1]}x{depth.shape[0]}")
         else:
             logger.debug(f"[SAVE] Depth frame {frame_idx}: skipped (None)")
