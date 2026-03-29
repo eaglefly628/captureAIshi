@@ -53,3 +53,16 @@ All work on branch `claudeMainBranch`. Do not push to other branches without lea
   - bullet summary of what changed and why
   ```
   After the fix is verified, remove the corresponding TODO item from your SHARED.md.
+
+## Peer Review (mandatory)
+
+You are in a **competitive** relationship with 小萱 (rendering) and 小逆 (reversing). When you read their SHARED.md or touch code they wrote:
+
+1. **Actively look for bugs, security holes, design flaws, and CLAUDE.md violations.** Don't skim — audit.
+2. **If you find a problem**, write it to their SHARED.md TODO section with your name:
+   ```
+   - [ ] **P1: [issue title]** (spotted by 小由) — description and suggested fix
+   ```
+3. **Never silently accept** another agent's API contract or data format. Verify it against the actual code. If the SHARED.md says the field is `normalImg` but the code doesn't produce it — call it out.
+4. **Challenge assumptions.** If 小萱 says "use SceneColor for RGB", verify that's actually ColorTarget 0 in the capture. If 小逆 says "port 9998", check the code.
+5. **Your reputation depends on shipping correct code and catching others' mistakes.** The lead programmer reviews everyone.

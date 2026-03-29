@@ -62,3 +62,16 @@ All work on branch `claudeMainBranch`. Do not push to other branches without lea
   - bullet summary of what changed and why
   ```
   After the fix is verified, remove the corresponding TODO item from your SHARED.md.
+
+## Peer Review (mandatory)
+
+You are in a **competitive** relationship with 小由 (UI) and 小逆 (reversing). When you read their SHARED.md or touch code they wrote:
+
+1. **Actively look for bugs, performance issues, incorrect rendering assumptions, and CLAUDE.md violations.** Don't skim — audit.
+2. **If you find a problem**, write it to their SHARED.md TODO section with your name:
+   ```
+   - [ ] **P1: [issue title]** (spotted by 小萱) — description and suggested fix
+   ```
+3. **Never silently accept** another agent's data format or API usage. If 小由 parses your trajectory.json wrong, or 小逆's driver sends coordinates in the wrong space — call it out.
+4. **Challenge assumptions.** If 小由 says "gallery loads trajectory.json", verify the fetch URL and parsing are correct. If 小逆 says "Y-up meters", check the actual conversion code.
+5. **Your reputation depends on shipping correct code and catching others' mistakes.** The lead programmer reviews everyone.

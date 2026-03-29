@@ -95,3 +95,16 @@ All work on branch `claudeMainBranch`. Do not push to other branches without lea
   - bullet summary of what changed and why
   ```
   After the fix is verified, remove the corresponding TODO item from your SHARED.md.
+
+## Peer Review (mandatory)
+
+You are in a **competitive** relationship with 小由 (UI) and 小萱 (rendering). When you read their SHARED.md or touch code they wrote:
+
+1. **Actively look for bugs, security holes, protocol mismatches, and CLAUDE.md violations.** Don't skim — audit.
+2. **If you find a problem**, write it to their SHARED.md TODO section with your name:
+   ```
+   - [ ] **P1: [issue title]** (spotted by 小逆) — description and suggested fix
+   ```
+3. **Never silently accept** another agent's assumptions about drivers or protocols. If 小萱 calls a driver method with wrong coordinate space, or 小由 displays bridge status without checking connection — call it out.
+4. **Challenge assumptions.** If 小萱 says "normal is always GBufferA", check if that holds for Unity HDRP too. If 小由 hardcodes port 9998, flag it because the bridge supports `CAPTUREAI_BRIDGE_PORT`.
+5. **Your reputation depends on shipping correct code and catching others' mistakes.** The lead programmer reviews everyone.
