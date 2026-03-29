@@ -286,7 +286,8 @@ def list_captures(session=None):
     if target.is_dir():
         for f in sorted(target.rglob("*")):
             if f.suffix.lower() in exts:
-                files.append(str(f.relative_to(target)))
+                # Always use forward slashes for URL compatibility
+                files.append(f.relative_to(target).as_posix())
     return jsonify({"files": files, "session": target.name if target.is_dir() else ""})
 
 

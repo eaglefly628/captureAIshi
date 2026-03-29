@@ -835,7 +835,8 @@ function renderPreviews(session) {
   const sess=session||viewSession||activeSession;
   [...knownCaptures].reverse().forEach(f=>{
     const c=document.createElement('div');c.className='preview-card';
-    const src=sess?`/api/captures/${encodeURIComponent(sess)}/${encodeURIComponent(f)}`:'';
+    const encodedPath=f.split('/').map(encodeURIComponent).join('/');
+    const src=sess?`/api/captures/${encodeURIComponent(sess)}/${encodedPath}`:'';
     c.innerHTML=`<img src="${src}" loading="lazy" alt="${f}"><div class="pc-label">${f.split('/').pop()}</div>`;
     body.appendChild(c);
   });
