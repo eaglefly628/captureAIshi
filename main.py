@@ -360,23 +360,6 @@ def run_capture(args):
         f"settle={streaming_settle}s)"
     )
 
-    try:
-        with driver:
-            logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
-    except Exception as e:
-        logging.error(
-            f"[DRIVER] Failed to connect {args.driver} driver to "
-            f"{args.driver_host}:{args.driver_port}: {e}"
-        )
-        if grabber_ctx:
-            grabber_ctx.teardown()
-        raise
-
-    # Re-enter the driver context (the above was just a connection test pattern;
-    # actually we need to keep it open). Let me restructure properly:
-    # The with-statement needs to wrap the whole capture loop.
-
-    # Actually, restructure: use try/finally for proper cleanup ordering
     driver_connected = False
     try:
         try:
