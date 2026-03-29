@@ -11,10 +11,12 @@ Web UI (`web_ui.py` + `web/templates/index.html`) already has:
 - Image preview panel (thumbnails from /api/captures)
 - Config save/load + profiles
 - Session selector dropdown
+- **Resizable panels** — drag handles between sidebar/center/preview columns
+- **Recent configs** limited to last 3 entries
 
 Backend API routes:
 - `/api/start` POST, `/api/stop` POST, `/api/status` GET
-- `/api/config` GET/POST, `/api/config/profiles` CRUD
+- `/api/config` GET/POST, `/api/config/profiles` CRUD, `/api/config/recent` GET
 - `/api/sessions`, `/api/captures/<session>/<path:filename>`
 - `/api/presets`, `/api/defaults`
 
