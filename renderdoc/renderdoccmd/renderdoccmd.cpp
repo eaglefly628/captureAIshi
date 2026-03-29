@@ -1032,7 +1032,7 @@ public:
 struct ExportFrameCommand : public Command
 {
 private:
-  std::string filename;
+  std::vector<std::string> filenames;
   std::string outdir;
   std::string format;
   bool dumpAll;
@@ -1041,7 +1041,7 @@ public:
   ExportFrameCommand() : Command() {}
   virtual void AddOptions(cmdline::parser &parser)
   {
-    parser.set_footer("<capture.rdc>");
+    parser.set_footer("<capture.rdc> [capture2.rdc ...]");
     parser.add<std::string>("out", 'o', "Output directory for exported images", false, ".");
     parser.add<std::string>("format", 'f', "Image format: png, jpg, exr, hdr, bmp, tga", false,
                             "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
@@ -1049,7 +1049,7 @@ public:
   }
   virtual const char *Description()
   {
-    return "Export backbuffer (RGB) and depth buffer from a capture file.";
+    return "Export backbuffer (RGB), depth, and normal from capture file(s).";
   }
   virtual bool IsInternalOnly() { return false; }
   virtual bool IsCaptureCommand() { return false; }
@@ -1058,13 +1058,13 @@ public:
     std::vector<std::string> rest = parser.rest();
     if(rest.empty())
     {
-      std::cerr << "Error: exportframe requires a capture filename." << std::endl
+      std::cerr << "Error: exportframe requires at least one capture filename." << std::endl
                 << std::endl
                 << parser.usage();
       return false;
     }
-    filename = rest[0];
-    rest.erase(rest.begin());
+    filenames = rest;
+    rest.clear();
     parser.set_rest(rest);
 
     outdir = parser.get<std::string>("out");
@@ -1087,11 +1087,15 @@ public:
     else if(format == "tga")
       type = FileType::TGA;
 
+    std::string sep = "/";
+#if defined(_WIN32)
+    sep = "\\";
+#endif
+
     // Ensure output directory exists
     {
       std::string mkdirCmd;
 #if defined(_WIN32)
-      // Normalize forward slashes to backslashes for Windows
       std::string normDir = outdir;
       for(char &c : normDir)
         if(c == '/')
@@ -1104,7 +1108,40 @@ public:
       system(mkdirCmd.c_str());
     }
 
-    std::cout << "Opening capture '" << filename << "'..." << std::endl;
+    std::cout << "Exporting " << filenames.size() << " capture(s)..." << std::endl;
+
+    int totalOK = 0;
+    int totalFailed = 0;
+
+    for(size_t fi = 0; fi < filenames.size(); fi++)
+    {
+      const std::string &filename = filenames[fi];
+
+      // Per-file output subdirectory when batch processing
+      std::string fileOutdir = outdir;
+      if(filenames.size() > 1)
+      {
+        // Extract stem from filename (e.g. "frame_000001" from "path/frame_000001.rdc")
+        std::string stem = filename;
+        size_t lastSlash = stem.find_last_of("/\\");
+        if(lastSlash != std::string::npos)
+          stem = stem.substr(lastSlash + 1);
+        size_t dot = stem.rfind('.');
+        if(dot != std::string::npos)
+          stem = stem.substr(0, dot);
+        fileOutdir = outdir + sep + stem;
+
+        std::string mkdirCmd;
+#if defined(_WIN32)
+        mkdirCmd = "mkdir \"" + fileOutdir + "\" 2>nul";
+#else
+        mkdirCmd = "mkdir -p \"" + fileOutdir + "\"";
+#endif
+        system(mkdirCmd.c_str());
+      }
+
+      std::cout << "[" << (fi + 1) << "/" << filenames.size() << "] Opening '"
+                << filename << "'..." << std::endl;
 
     ICaptureFile *file = RENDERDOC_OpenCaptureFile();
     ResultDetails res = file->OpenFile(conv(filename), "rdc", NULL);
@@ -1112,7 +1149,8 @@ public:
     {
       std::cerr << "Failed to open capture: " << res.Message() << std::endl;
       file->Shutdown();
-      return 1;
+      totalFailed++;
+      continue;
     }
 
     IReplayController *controller = NULL;
@@ -1122,14 +1160,14 @@ public:
     {
       std::cerr << "Failed to open replay: " << result.Message() << std::endl;
       file->Shutdown();
-      return 2;
+      totalFailed++;
+      continue;
     }
 
     // Move to the last action (final present) to get the complete frame
     const rdcarray<ActionDescription> &actions = controller->GetRootActions();
     if(!actions.empty())
     {
-      // Find the last action recursively
       const ActionDescription *last = &actions.back();
       while(!last->children.empty())
         last = &last->children.back();
@@ -1138,11 +1176,6 @@ public:
 
     rdcarray<TextureDescription> textures = controller->GetTextures();
     std::cout << "Found " << textures.size() << " textures in capture" << std::endl;
-
-    std::string sep = "/";
-#if defined(_WIN32)
-    sep = "\\";
-#endif
 
     bool foundRGB = false;
     bool foundDepth = false;
@@ -1160,7 +1193,7 @@ public:
         swapHeight = tex.height;
         std::cout << "  [" << i << "] SwapBuffer " << tex.width << "x" << tex.height << std::endl;
 
-        std::string rgbPath = outdir + sep + "rgb." + format;
+        std::string rgbPath = fileOutdir + sep + "rgb." + format;
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
@@ -1231,7 +1264,7 @@ public:
 
         // Save depth as grayscale PNG with percentile-based mapping
         // Swap black/white to invert reversed-Z: near(1.0)->dark, far(0.0)->bright
-        std::string depthPath = outdir + sep + "depth.png";
+        std::string depthPath = fileOutdir + sep + "depth.png";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
@@ -1267,7 +1300,7 @@ public:
       {
         // The first non-swap ColorTarget at viewport res with 3+ components
         // is very likely the WorldNormal (GBufferA) in UE5/Unity HDRP.
-        std::string normalPath = outdir + sep + "normal.png";
+        std::string normalPath = fileOutdir + sep + "normal.png";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
@@ -1297,7 +1330,7 @@ public:
          swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight)
       {
         std::string ctName = "colortarget_" + std::to_string(colorTargetIdx);
-        std::string ctPathPNG = outdir + sep + ctName + "." + format;
+        std::string ctPathPNG = fileOutdir + sep + ctName + "." + format;
 
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
@@ -1326,7 +1359,17 @@ public:
     controller->Shutdown();
     file->Shutdown();
 
-    return (foundRGB || foundDepth) ? 0 : 3;
+    if(foundRGB || foundDepth)
+      totalOK++;
+    else
+      totalFailed++;
+
+    }  // end for each filename
+
+    std::cout << "Batch complete: " << totalOK << " OK, " << totalFailed << " failed"
+              << " (out of " << filenames.size() << ")" << std::endl;
+
+    return (totalOK > 0) ? 0 : 3;
   }
 };
 

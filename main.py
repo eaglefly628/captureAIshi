@@ -409,6 +409,11 @@ def run_capture(args):
         if not session_prefix:
             session_prefix = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
 
+        batch_export = getattr(args, 'batch_export', False) and grabber_ctx is not None
+        rdc_paths = []  # For batch mode: collect .rdc paths
+        base_names = []  # For batch mode: parallel list of base_names
+
+        # ── Phase 1: Capture loop (trigger only in batch mode) ──
         for i, pose in enumerate(all_poses):
             # Check stop event (from GUI or external signal)
             if stop_event is not None and stop_event.is_set():
@@ -443,68 +448,132 @@ def run_capture(args):
                     f"  pose: pos={pose.position}, rot={pose.rotation}, fov={pose.fov}"
                 )
                 frames_failed += 1
+                if batch_export:
+                    rdc_paths.append(None)
+                    base_names.append("")
                 continue
 
             # Wait for streaming to settle after camera has moved
             if streaming_enabled:
                 driver.wait_for_streaming(streaming_settle)
 
-            # Build filename base: {session_prefix}_{viewName}
+            # Build filename base
             base_name = f"{session_prefix}_p{pose.point_index}_{pose.view_name}"
             rgb_filename = f"{base_name}.png"
             depth_filename = f"{base_name}_d.png"
 
             if grabber_ctx:
-                rgb, depth, normal = None, None, None
-                try:
-                    t_grab = _time.monotonic()
-                    frame_data = grabber_ctx.capture_frame_ex()
-                    rgb = frame_data.rgb
-                    depth = frame_data.depth
-                    normal = frame_data.normal
-                    grab_elapsed = _time.monotonic() - t_grab
+                if batch_export:
+                    # Phase 1 batch: trigger only, defer export
+                    try:
+                        t_grab = _time.monotonic()
+                        rdc_path = grabber_ctx.trigger_only()
+                        grab_elapsed = _time.monotonic() - t_grab
+                        rdc_paths.append(rdc_path)
+                        base_names.append(base_name)
+                        logging.debug(
+                            f"[POSE {i+1}] Trigger took {grab_elapsed:.3f}s -> {rdc_path}"
+                        )
+                    except Exception as e:
+                        logging.error(f"[POSE {i+1}] Trigger failed: {e}")
+                        rdc_paths.append(None)
+                        base_names.append(base_name)
+                        frames_failed += 1
+                else:
+                    # Original mode: capture + export per frame
+                    rgb, depth, normal = None, None, None
+                    try:
+                        t_grab = _time.monotonic()
+                        frame_data = grabber_ctx.capture_frame_ex()
+                        rgb = frame_data.rgb
+                        depth = frame_data.depth
+                        normal = frame_data.normal
+                        grab_elapsed = _time.monotonic() - t_grab
 
-                    rgb_info = f"{rgb.shape[1]}x{rgb.shape[0]}" if rgb is not None else "None"
-                    depth_info = f"{depth.shape[1]}x{depth.shape[0]}" if depth is not None else "None"
-                    logging.debug(
-                        f"[POSE {i+1}] Frame captured in {grab_elapsed:.3f}s — "
-                        f"rgb={rgb_info}, depth={depth_info}"
-                    )
+                        rgb_info = f"{rgb.shape[1]}x{rgb.shape[0]}" if rgb is not None else "None"
+                        depth_info = f"{depth.shape[1]}x{depth.shape[0]}" if depth is not None else "None"
+                        logging.debug(
+                            f"[POSE {i+1}] Frame captured in {grab_elapsed:.3f}s — "
+                            f"rgb={rgb_info}, depth={depth_info}"
+                        )
 
-                    if rgb is None:
-                        frames_no_rgb += 1
-                    if depth is None:
-                        frames_no_depth += 1
-                    if rgb is not None:
-                        frames_ok += 1
-                except Exception as e:
-                    logging.error(f"[POSE {i+1}] Frame capture failed: {e}")
-                    frames_failed += 1
+                        if rgb is None:
+                            frames_no_rgb += 1
+                        if depth is None:
+                            frames_no_depth += 1
+                        if rgb is not None:
+                            frames_ok += 1
+                    except Exception as e:
+                        logging.error(f"[POSE {i+1}] Frame capture failed: {e}")
+                        frames_failed += 1
 
-                try:
-                    t_save = _time.monotonic()
-                    saved = grabber_ctx.save_frame(
-                        rgb, depth, output_dir / "frames", i,
-                        base_name=base_name, normal=normal,
-                    )
-                    # Use actual saved filenames if available
-                    rgb_filename = saved.get("rgb", rgb_filename)
-                    depth_filename = saved.get("depth", depth_filename)
-                    save_elapsed = _time.monotonic() - t_save
-                    logging.debug(f"[POSE {i+1}] Frame saved in {save_elapsed:.3f}s")
-                except Exception as e:
-                    logging.error(f"[POSE {i+1}] Frame save failed: {e}")
+                    try:
+                        t_save = _time.monotonic()
+                        saved = grabber_ctx.save_frame(
+                            rgb, depth, output_dir / "frames", i,
+                            base_name=base_name, normal=normal,
+                        )
+                        rgb_filename = saved.get("rgb", rgb_filename)
+                        depth_filename = saved.get("depth", depth_filename)
+                        save_elapsed = _time.monotonic() - t_save
+                        logging.debug(f"[POSE {i+1}] Frame saved in {save_elapsed:.3f}s")
+                    except Exception as e:
+                        logging.error(f"[POSE {i+1}] Frame save failed: {e}")
 
-            # Append trajectory entry
-            trajectory.append(pose.to_trajectory_dict(
-                rgb_filename=rgb_filename,
-                depth_filename=depth_filename,
-            ))
+            if not batch_export:
+                trajectory.append(pose.to_trajectory_dict(
+                    rgb_filename=rgb_filename,
+                    depth_filename=depth_filename,
+                ))
 
             # Progress logging every 10%
             if len(all_poses) >= 10 and (i + 1) % max(1, len(all_poses) // 10) == 0:
                 pct = (i + 1) / len(all_poses) * 100
                 logging.info(f"Progress: {pct:.0f}% ({i + 1}/{len(all_poses)})")
+
+        # ── Phase 2: Batch export (if enabled) ──
+        if batch_export and rdc_paths:
+            logging.info(f"Phase 2: Batch exporting {len(rdc_paths)} captures...")
+            t_export = _time.monotonic()
+
+            export_results = grabber_ctx.export_batch(
+                rdc_paths, Path(str(grabber_ctx.capture_dir)),
+            )
+
+            for idx, ((rgb, depth, normal), bname, pose) in enumerate(
+                zip(export_results, base_names, all_poses)
+            ):
+                if not bname:
+                    trajectory.append(pose.to_trajectory_dict())
+                    continue
+
+                rgb_filename = f"{bname}.png"
+                depth_filename = f"{bname}_d.png"
+
+                try:
+                    saved = grabber_ctx.save_frame(
+                        rgb, depth, output_dir / "frames", idx,
+                        base_name=bname, normal=normal,
+                    )
+                    rgb_filename = saved.get("rgb", rgb_filename)
+                    depth_filename = saved.get("depth", depth_filename)
+                    if rgb is not None:
+                        frames_ok += 1
+                    else:
+                        frames_no_rgb += 1
+                    if depth is None:
+                        frames_no_depth += 1
+                except Exception as e:
+                    logging.error(f"[BATCH] Frame {idx} save failed: {e}")
+                    frames_failed += 1
+
+                trajectory.append(pose.to_trajectory_dict(
+                    rgb_filename=rgb_filename,
+                    depth_filename=depth_filename,
+                ))
+
+            export_elapsed = _time.monotonic() - t_export
+            logging.info(f"Batch export complete in {export_elapsed:.1f}s")
 
     except Exception as e:
         logging.error(f"[CAPTURE] Unexpected error: {e}\n{traceback.format_exc()}")
@@ -621,6 +690,11 @@ def main():
     # Grabber
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
+    parser.add_argument(
+        "--batch-export", action="store_true",
+        help="Two-phase capture: trigger all frames first, then batch export. "
+             "Much faster for RenderDoc (avoids per-frame process startup).",
+    )
 
     # Bridge injection
     parser.add_argument(

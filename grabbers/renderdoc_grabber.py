@@ -616,6 +616,113 @@ class RenderDocGrabber(FrameGrabber):
             time.sleep(0.2)
         return False
 
+    # ── Two-phase batch capture ─────────────────────────────────────────────
+
+    def trigger_only(self) -> Optional[Path]:
+        """Phase 1: Trigger a capture without replaying. Returns .rdc path.
+
+        Use this in the capture loop for speed, then call export_batch()
+        after all frames have been triggered.
+        """
+        return self.trigger_capture()
+
+    def export_batch(self, rdc_paths: list, output_dir: Path) -> list:
+        """Phase 2: Batch-export a list of .rdc files to PNG.
+
+        Calls renderdoccmd exportframe with all files at once (single process).
+        Returns list of (rgb_path, depth_path, normal_path) tuples per frame,
+        or (None, None, None) for failed exports.
+
+        Args:
+            rdc_paths: List of Path objects pointing to .rdc files.
+            output_dir: Base directory for exported images.
+        """
+        if not rdc_paths:
+            return []
+
+        # Filter to existing files
+        valid_paths = [p for p in rdc_paths if p is not None and p.exists()]
+        if not valid_paths:
+            logger.warning("[RDOC] No valid .rdc files to export")
+            return [(None, None, None)] * len(rdc_paths)
+
+        try:
+            rdoc_cmd = self._resolve_renderdoccmd()
+        except FileNotFoundError as e:
+            logger.error(f"[RDOC] {e}")
+            return [(None, None, None)] * len(rdc_paths)
+
+        export_out = output_dir / "_batch_export"
+        export_out.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            rdoc_cmd, "exportframe",
+            "--out", str(export_out),
+            "--format", "png",
+        ] + [str(p) for p in valid_paths]
+
+        logger.info(f"[RDOC] Batch exporting {len(valid_paths)} captures...")
+        logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=60 * len(valid_paths),  # 60s per file
+            )
+            stdout = result.stdout.decode("utf-8", errors="replace").strip()
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            if stdout:
+                for line in stdout.splitlines():
+                    logger.info(f"[RDOC batch] {line}")
+            if stderr:
+                for line in stderr.splitlines():
+                    logger.warning(f"[RDOC batch err] {line}")
+        except subprocess.TimeoutExpired:
+            logger.error("[RDOC] Batch export timed out")
+            return [(None, None, None)] * len(rdc_paths)
+        except Exception as e:
+            logger.error(f"[RDOC] Batch export failed: {e}")
+            return [(None, None, None)] * len(rdc_paths)
+
+        # Collect results: for multi-file, exportframe creates subdirs named by stem
+        results = []
+        for rdc_path in rdc_paths:
+            if rdc_path is None or not rdc_path.exists():
+                results.append((None, None, None))
+                continue
+
+            if len(valid_paths) > 1:
+                subdir = export_out / rdc_path.stem
+            else:
+                subdir = export_out
+
+            rgb = self._load_rgb_image(subdir)
+            depth = self._load_depth_image(subdir)
+            normal = self._load_normal_image(subdir)
+            results.append((rgb, depth, normal))
+
+            # Clean up per-file export dir
+            if subdir.exists():
+                for f in subdir.iterdir():
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+                try:
+                    subdir.rmdir()
+                except OSError:
+                    pass
+
+        # Clean up batch export root
+        try:
+            export_out.rmdir()
+        except OSError:
+            pass
+
+        logger.info(f"[RDOC] Batch export complete: {len(results)} frames")
+        return results
+
     # ── Frame capture + replay ───────────────────────────────────────────────
 
     def capture_frame(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
