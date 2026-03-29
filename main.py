@@ -75,7 +75,10 @@ def create_grabber(args):
         logging.debug(f"[INIT] RenderDoc grabber: capture_dir={args.output_dir / 'captures'}, "
                        f"target_exe={args.target_exe}, ui_hider={'yes' if rdoc_ui_hider else 'no'}")
         # Pass the driver port so the grabber can detect when the game is ready
+        # Only poll port for drivers that actually use a network connection
         driver_port = getattr(args, 'driver_port', None)
+        if getattr(args, 'driver', 'manual') == 'manual':
+            driver_port = None
         return RenderDocGrabber(
             renderdoc_path=getattr(args, 'renderdoc_path', 'renderdoccmd'),
             capture_dir=str(args.output_dir / "captures"),
