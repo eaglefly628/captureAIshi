@@ -1002,7 +1002,7 @@ async function loadRecent() {
     const el = document.getElementById('recentList');
     if (!recent.length) { el.innerHTML = '<div class="cfg-empty">No recent runs</div>'; return; }
     el.innerHTML = '';
-    recent.forEach(r => {
+    recent.slice(-3).forEach(r => {
       const row = document.createElement('div');
       row.className = 'cfg-row';
       row.onclick = () => { applyParams(r.config); saveConfig(); addLog('Restored recent config', 'info'); };
