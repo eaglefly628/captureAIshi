@@ -298,6 +298,14 @@ def run_capture(args):
         driver_connected = True
         logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
 
+        # Enter debug/free camera mode so SetViewLocation/Rotation works
+        if hasattr(driver, 'enable_debug_camera'):
+            try:
+                driver.enable_debug_camera()
+                logging.info("[DRIVER] Debug camera mode enabled")
+            except Exception as e:
+                logging.warning(f"[DRIVER] Failed to enable debug camera: {e}")
+
         # Attempt to hide UI before capture loop (console-based hiding)
         ui_method = None
         if ui_hider:

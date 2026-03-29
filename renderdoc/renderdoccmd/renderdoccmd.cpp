@@ -1136,28 +1136,26 @@ public:
     rdcarray<TextureDescription> textures = controller->GetTextures();
     std::cout << "Found " << textures.size() << " textures in capture" << std::endl;
 
+    std::string sep = "/";
+#if defined(_WIN32)
+    sep = "\\";
+#endif
+
     bool foundRGB = false;
     bool foundDepth = false;
+    uint32_t swapWidth = 0, swapHeight = 0;
+    int colorTargetIdx = 0;
 
+    // First pass: find SwapBuffer dimensions and export it
     for(size_t i = 0; i < textures.size(); i++)
     {
       const TextureDescription &tex = textures[i];
-      // Log texture info for debugging
-      uint32_t flags = (uint32_t)tex.creationFlags;
-      if(flags & (uint32_t)TextureCategory::SwapBuffer)
-        std::cout << "  [" << i << "] SwapBuffer " << tex.width << "x" << tex.height << std::endl;
-      if(flags & (uint32_t)TextureCategory::DepthTarget)
-        std::cout << "  [" << i << "] DepthTarget " << tex.width << "x" << tex.height
-                  << " fmt=" << (uint32_t)tex.format.type << std::endl;
-      if(flags & (uint32_t)TextureCategory::ColorTarget)
-        std::cout << "  [" << i << "] ColorTarget " << tex.width << "x" << tex.height << std::endl;
-      // Export backbuffer (swap chain)
       if(!foundRGB && (tex.creationFlags & TextureCategory::SwapBuffer))
       {
-        std::string sep = "/";
-#if defined(_WIN32)
-        sep = "\\";
-#endif
+        swapWidth = tex.width;
+        swapHeight = tex.height;
+        std::cout << "  [" << i << "] SwapBuffer " << tex.width << "x" << tex.height << std::endl;
+
         std::string rgbPath = outdir + sep + "rgb." + format;
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
@@ -1169,25 +1167,30 @@ public:
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(rgbPath));
         if(saveRes.OK())
         {
-          std::cout << "OK rgb " << tex.width << "x" << tex.height << " -> " << rgbPath
-                    << std::endl;
+          std::cout << "OK rgb " << tex.width << "x" << tex.height << " -> " << rgbPath << std::endl;
           foundRGB = true;
         }
         else
         {
           std::cerr << "Failed to save RGB: " << saveRes.Message() << std::endl;
         }
+        break;
       }
+    }
 
-      // Export depth buffer
-      if(!foundDepth && (tex.creationFlags & TextureCategory::DepthTarget))
+    // Second pass: export DepthTarget and all ColorTargets matching SwapBuffer resolution
+    for(size_t i = 0; i < textures.size(); i++)
+    {
+      const TextureDescription &tex = textures[i];
+      uint32_t flags = (uint32_t)tex.creationFlags;
+
+      // Export depth buffer (hardware Z-buffer)
+      if(!foundDepth && (flags & (uint32_t)TextureCategory::DepthTarget))
       {
-        // Depth is best saved as EXR (float) or HDR regardless of user format choice
-        std::string dsep = "/";
-#if defined(_WIN32)
-        dsep = "\\";
-#endif
-        std::string depthPath = outdir + dsep + "depth.exr";
+        std::cout << "  [" << i << "] DepthTarget " << tex.width << "x" << tex.height
+                  << " fmt=" << (uint32_t)tex.format.type << std::endl;
+
+        std::string depthPath = outdir + sep + "depth.exr";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
@@ -1198,23 +1201,18 @@ public:
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
         if(saveRes.OK())
         {
-          std::cout << "OK depth " << tex.width << "x" << tex.height << " -> " << depthPath
-                    << std::endl;
+          std::cout << "OK depth " << tex.width << "x" << tex.height << " -> " << depthPath << std::endl;
           foundDepth = true;
 
-          // Also save a normalized depth preview PNG
-          // Get raw texture data to find min/max for normalization
+          // Write depth range info
           bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
-
           if(!rawData.empty())
           {
             size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
-            // Depth textures are typically float32 (R32F) or D32F
             const float *depthData = (const float *)rawData.data();
             size_t floatCount = rawData.size() / sizeof(float);
             if(floatCount >= pixelCount)
             {
-              // Find actual min/max depth values
               float dmin = 1.0f, dmax = 0.0f;
               for(size_t p = 0; p < pixelCount; p++)
               {
@@ -1226,21 +1224,12 @@ public:
                 }
               }
               std::cout << "  depth range: [" << dmin << ", " << dmax << "]" << std::endl;
-
-              // UE5 uses reversed-Z: near=1.0, far=0.0
-              // Normalize and invert so near=dark, far=bright (standard depth convention)
-              float range = dmax - dmin;
-              if(range < 1e-6f) range = 1.0f;
-
-              // Create normalized 8-bit grayscale as RGB PNG via SaveTexture
-              // Since we can't easily write raw pixels, save a hint file for Python
-              std::string previewHint = outdir + dsep + "depth_range.txt";
+              std::string previewHint = outdir + sep + "depth_range.txt";
               FILE *fh = fopen(previewHint.c_str(), "w");
               if(fh)
               {
                 fprintf(fh, "min=%f\nmax=%f\nreversed_z=1\n", dmin, dmax);
                 fclose(fh);
-                std::cout << "  depth_range.txt written for normalization" << std::endl;
               }
             }
           }
@@ -1251,14 +1240,45 @@ public:
         }
       }
 
-      if(foundRGB && foundDepth)
-        break;
+      // Export all ColorTargets matching SwapBuffer resolution
+      // These contain GBuffer data: SceneDepth, WorldNormal, BaseColor, etc.
+      if((flags & (uint32_t)TextureCategory::ColorTarget) &&
+         !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
+         swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight)
+      {
+        std::string ctName = "colortarget_" + std::to_string(colorTargetIdx);
+        std::string ctPathEXR = outdir + sep + ctName + ".exr";
+        std::string ctPathPNG = outdir + sep + ctName + "." + format;
+
+        // Save as EXR (preserves float data for SceneDepth)
+        TextureSave texsave;
+        texsave.resourceId = tex.resourceId;
+        texsave.mip = 0;
+        texsave.slice.sliceIndex = 0;
+        texsave.alpha = AlphaMapping::BlendToCheckerboard;
+        texsave.destType = FileType::EXR;
+        controller->SaveTexture(texsave, conv(ctPathEXR));
+
+        // Also save as PNG for preview
+        texsave.alpha = AlphaMapping::Discard;
+        texsave.destType = type;
+        ResultDetails saveRes = controller->SaveTexture(texsave, conv(ctPathPNG));
+
+        if(saveRes.OK())
+        {
+          std::cout << "OK colortarget_" << colorTargetIdx << " [" << i << "] "
+                    << tex.width << "x" << tex.height
+                    << " fmt=" << (uint32_t)tex.format.type
+                    << " components=" << tex.format.compCount
+                    << " -> " << ctPathPNG << std::endl;
+        }
+        colorTargetIdx++;
+      }
     }
 
-    if(!foundRGB)
-      std::cerr << "WARN: No backbuffer (SwapBuffer) found in capture" << std::endl;
-    if(!foundDepth)
-      std::cerr << "WARN: No depth buffer (DepthTarget) found in capture" << std::endl;
+    std::cout << "Exported: rgb=" << (foundRGB ? "yes" : "no")
+              << " depth=" << (foundDepth ? "yes" : "no")
+              << " colortargets=" << colorTargetIdx << std::endl;
 
     controller->Shutdown();
     file->Shutdown();
