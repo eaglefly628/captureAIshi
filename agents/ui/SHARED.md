@@ -47,6 +47,10 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 4. `FrameData` 现在包含 rgb + depth + normal 三个 buffer
 5. CLI 新增 `--fov` 和 `--aspect` 参数，UI 表单需要加对应输入框
 
+## TODO (from lead review)
+
+- [ ] **P0 安全: session_stats 路径穿越** — `web_ui.py` 的 `/api/session-stats/<session>` 和 `/api/captures/<session>/` 两个路由，`session` 参数直接拼到路径里没做校验。攻击者可以用 `../../etc` 遍历文件系统。修复方法：`resolve()` 后用 `is_relative_to(base)` 验证目标路径在 output base 目录内，否则返回 403。
+
 ## Design Guidelines
 - Keep the existing dark theme and CSS variable system
 - No heavy frameworks (React, Vue, etc.) — vanilla JS or Alpine.js max

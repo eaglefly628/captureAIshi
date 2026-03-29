@@ -42,3 +42,9 @@ All work on branch `claudeMainBranch`. Do not push to other branches without lea
 - Read other agents' SHARED.md for cross-domain context
 - The main programmer (lead session) coordinates all agents
 - **Versioning**: Check `CLAUDE.md` for current project version. When writing to SHARED.md, tag every update section with the version: `## [v0.X.Y] Description`. Reference other agents' updates by version, not by date or commit hash.
+- **Push log**: Every time you push, append a CL entry to your `agents/rendering/SHARED.md` under a `## Changelog` section at the bottom. Format:
+  ```
+  ### [v0.X.Y] <commit-sha-short> — 小萱
+  - bullet summary of what changed and why
+  ```
+  After the fix is verified, remove the corresponding TODO item from your SHARED.md.

@@ -97,6 +97,10 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 | `--fov` | 90.0 | 垂直 FOV（度） |
 | `--aspect` | 1.7778 | 宽高比 |
 
+## TODO (from lead review)
+
+- [ ] **P1: batch export 路径缺 normalImg** — `main.py` Phase 2 batch export 段落里 `to_trajectory_dict()` 只传了 `rgb_filename` 和 `depth_filename`，没传 `normal_filename`。batch export 出来的 trajectory.json 里 normalImg 会是空字符串。修复：batch export 循环里算出 `normal_filename` 并传给 `to_trajectory_dict()`。
+
 ### UI 同学需要注意
 
 1. **trajectory.json 是给 AI 训练用的输出文件**，UI 可以读取它做可视化但不需要修改
