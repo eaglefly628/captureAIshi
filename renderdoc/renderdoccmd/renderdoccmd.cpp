@@ -1460,7 +1460,7 @@ public:
               copyDone = true;
               std::cout << "OK copied capture #" << capturesReceived << " -> " << localPath << std::endl;
             }
-            copyElapsed += pollMs;
+            copyElapsed += 2;
           }
         }
       }
@@ -1470,7 +1470,7 @@ public:
         break;
       }
 
-      elapsedMs += pollMs;
+      elapsedMs += 2;    // ReceiveMessage sleeps ~2ms on Noop
     }
 
     tc->Shutdown();
