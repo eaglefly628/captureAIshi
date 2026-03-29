@@ -1374,25 +1374,38 @@ public:
     std::cout << "Connected to '" << tc->GetTarget().c_str() << "' (pid=" << tc->GetPID()
               << ", api=" << tc->GetAPI().c_str() << ")" << std::endl;
 
-    // Drain any pre-existing messages (old captures from previous triggers)
-    // so we only react to the NEW capture we're about to trigger
+    // Drain any pre-existing capture messages (old captures from previous triggers)
+    // We need multiple rounds of Noop to ensure all buffered messages have arrived,
+    // since the target may still be sending them when we first connect.
     int oldCaptures = 0;
+    uint32_t maxOldCaptureId = 0;
     {
-      int drainMs = 0;
-      while(drainMs < 500)
+      int noopCount = 0;
+      int maxIterations = 200;    // Safety limit (~400ms at 2ms per Noop)
+      for(int iter = 0; iter < maxIterations; iter++)
       {
         TargetControlMessage msg = tc->ReceiveMessage(NULL);
         if(msg.type == TargetControlMessageType::NewCapture)
         {
           oldCaptures++;
+          if(msg.newCapture.captureId >= maxOldCaptureId)
+            maxOldCaptureId = msg.newCapture.captureId + 1;
           std::cout << "  (skipping existing capture id=" << msg.newCapture.captureId
                     << " frame=" << msg.newCapture.frameNumber << ")" << std::endl;
+          noopCount = 0;    // Reset — more messages may follow
         }
         else if(msg.type == TargetControlMessageType::Noop)
         {
-          break;    // No more pending messages
+          noopCount++;
+          if(noopCount >= 10)    // 10 consecutive Noops = no more pending messages
+            break;
         }
-        drainMs += 50;
+        else if(msg.type == TargetControlMessageType::Disconnected)
+        {
+          std::cerr << "Target disconnected during drain" << std::endl;
+          tc->Shutdown();
+          return 2;
+        }
       }
       if(oldCaptures > 0)
         std::cout << "  Drained " << oldCaptures << " pre-existing capture(s)" << std::endl;
@@ -1402,7 +1415,7 @@ public:
 
     tc->TriggerCapture(numFrames);
 
-    // Wait for the NEW capture confirmation
+    // Wait for the NEW capture (must have captureId >= maxOldCaptureId)
     int capturesReceived = 0;
     int timeoutMs = 10000;    // 10 seconds max
     int elapsedMs = 0;
@@ -1414,6 +1427,12 @@ public:
 
       if(msg.type == TargetControlMessageType::NewCapture)
       {
+        // Skip any late-arriving old captures
+        if(msg.newCapture.captureId < maxOldCaptureId)
+        {
+          std::cout << "  (skipping late old capture id=" << msg.newCapture.captureId << ")" << std::endl;
+          continue;
+        }
         capturesReceived++;
         std::cout << "OK capture #" << capturesReceived
                   << " id=" << msg.newCapture.captureId
