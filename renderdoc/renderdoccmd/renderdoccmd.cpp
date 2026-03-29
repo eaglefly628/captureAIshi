@@ -1373,12 +1373,36 @@ public:
 
     std::cout << "Connected to '" << tc->GetTarget().c_str() << "' (pid=" << tc->GetPID()
               << ", api=" << tc->GetAPI().c_str() << ")" << std::endl;
+
+    // Drain any pre-existing messages (old captures from previous triggers)
+    // so we only react to the NEW capture we're about to trigger
+    int oldCaptures = 0;
+    {
+      int drainMs = 0;
+      while(drainMs < 500)
+      {
+        TargetControlMessage msg = tc->ReceiveMessage(NULL);
+        if(msg.type == TargetControlMessageType::NewCapture)
+        {
+          oldCaptures++;
+          std::cout << "  (skipping existing capture id=" << msg.newCapture.captureId
+                    << " frame=" << msg.newCapture.frameNumber << ")" << std::endl;
+        }
+        else if(msg.type == TargetControlMessageType::Noop)
+        {
+          break;    // No more pending messages
+        }
+        drainMs += 50;
+      }
+      if(oldCaptures > 0)
+        std::cout << "  Drained " << oldCaptures << " pre-existing capture(s)" << std::endl;
+    }
+
     std::cout << "Triggering " << numFrames << " frame capture(s)..." << std::endl;
 
     tc->TriggerCapture(numFrames);
 
-    // Pump messages to process the capture
-    // Wait for capture confirmation (NewCapture message)
+    // Wait for the NEW capture confirmation
     int capturesReceived = 0;
     int timeoutMs = 10000;    // 10 seconds max
     int elapsedMs = 0;

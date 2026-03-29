@@ -417,6 +417,17 @@ class RenderDocGrabber(FrameGrabber):
         except FileNotFoundError:
             return False
 
+        # Remove stale capture_1.rdc from previous trigger (if any)
+        stale = self.capture_dir / "capture_1.rdc"
+        if stale.exists():
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+        # Record existing .rdc files so we can detect the new one
+        existing_rdcs = set(self.capture_dir.glob("*.rdc"))
+
         cmd = [
             rdoc_cmd, "triggercapture",
             "--frames", "1",
@@ -441,14 +452,18 @@ class RenderDocGrabber(FrameGrabber):
                     logger.warning(f"[CAPTURE trigger err] {line}")
 
             if result.returncode == 0:
-                # Find the captured file — triggercapture saves as capture_1.rdc
+                # Find the new capture file
                 captured = self.capture_dir / "capture_1.rdc"
                 if captured.exists():
                     captured.rename(rdc_path)
                     logger.info(f"[CAPTURE] Got capture via triggercapture → {rdc_path}")
                     return True
-                # Also scan for any new .rdc
-                if self._wait_for_capture(rdc_path, timeout=3.0):
+                # Detect any new .rdc that wasn't there before
+                new_rdcs = set(self.capture_dir.glob("*.rdc")) - existing_rdcs
+                if new_rdcs:
+                    newest = max(new_rdcs, key=lambda p: p.stat().st_mtime)
+                    newest.rename(rdc_path)
+                    logger.info(f"[CAPTURE] Got new capture {newest.name} → {rdc_path}")
                     return True
             else:
                 logger.debug(f"[CAPTURE] triggercapture returned {result.returncode}")
