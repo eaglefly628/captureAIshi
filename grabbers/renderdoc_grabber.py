@@ -823,6 +823,18 @@ class RenderDocGrabber(FrameGrabber):
             )
             results.append((rgb, depth, normal))
 
+            # Clean up per-file export dir
+            if subdir.exists():
+                for f in subdir.iterdir():
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+                try:
+                    subdir.rmdir()
+                except OSError:
+                    pass
+
         # Clean up batch export root
         try:
             export_out.rmdir()
