@@ -1,19 +1,30 @@
 /*
- * captureAIshi_bridge.dll
+ * captureAIshi_bridge.dll  --  v0.2
  *
- * Minimal TCP console server for UE5 shipped games.
- * Replaces UUU's core functionality: receives console commands over TCP
- * and executes them via UEngine::Exec().
+ * Self-hosted UE5 game control DLL. Replaces UUU for captureAIshi.
+ *
+ * Features (matching UUU v5 / IGCS):
+ *   - Console command execution via GEngine->Exec() auto-scan
+ *   - Free camera (ToggleDebugCamera + SetViewLocation/Rotation)
+ *   - Timestop / pause / slowmo (slomo command)
+ *   - HUD toggle (ShowHUD + ShowFlag)
+ *   - FOV control
+ *   - Camera path with keyframe recording and playback
+ *     (Catmull-Rom position + SLERP rotation + linear FOV)
+ *   - Hotsampling (window resize for high-res capture)
+ *   - Camera smoothing (exponential moving average on input)
+ *   - TCP console server (protocol-compatible with ue5_console.py)
  *
  * Architecture:
- *   DllMain -> spawn TCP listener thread on port 9998
- *   TCP thread -> accept connections, read newline-delimited commands
- *   For each command -> find GEngine, call GEngine->Exec(NULL, cmd)
+ *   DllMain -> startup thread -> find GEngine + start TCP server
+ *   TCP server -> route commands to engine/camera/path systems
+ *   Camera path tick thread -> smooth playback at 60 Hz
  *
- * Build: cl /LD /EHsc /O2 bridge.cpp ws2_32.lib /Fe:captureAIshi_bridge.dll
- *        (or use CMakeLists.txt)
+ * Build:
+ *   cl /LD /EHsc /O2 bridge.cpp ws2_32.lib psapi.lib
+ *   (or cmake --build with CMakeLists.txt)
  *
- * ASCII only in this file (MSVC C4819 compliance).
+ * ASCII only in this file (MSVC C4819 / /W4 /WX compliance).
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -22,25 +33,28 @@
 #include <ws2tcpip.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <chrono>
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "psapi.lib")
 
 /* ── Configuration ─────────────────────────────────────────────────── */
 
 static const int DEFAULT_PORT = 9998;
-static const int MAX_CMD_LEN = 4096;
+static const int MAX_CMD_LEN  = 4096;
 
 /* ── Logging ───────────────────────────────────────────────────────── */
 
-static FILE* g_logfile = nullptr;
+static FILE*      g_logfile = nullptr;
 static std::mutex g_log_mutex;
 
-static void bridge_log(const char* fmt, ...)
+void bridge_log(const char* fmt, ...)
 {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (!g_logfile) return;
@@ -48,7 +62,6 @@ static void bridge_log(const char* fmt, ...)
     va_list args;
     va_start(args, fmt);
 
-    /* Timestamp */
     SYSTEMTIME st;
     GetLocalTime(&st);
     fprintf(g_logfile, "[%02d:%02d:%02d.%03d] ",
@@ -61,221 +74,379 @@ static void bridge_log(const char* fmt, ...)
     va_end(args);
 }
 
-/* ── UE5 Engine Interface ──────────────────────────────────────────── */
+/* ── Include subsystems (order matters: dependencies first) ──────── */
+
+#include "pattern_scan.h"
+#include "ue5_engine.h"
+#include "camera_path.h"
+
+/* ── Camera Smoothing ──────────────────────────────────────────────── */
 
 /*
- * UEngine::Exec signature (UE4/UE5):
- *   bool UEngine::Exec(UWorld* InWorld, const TCHAR* Cmd,
- *                      FOutputDevice& Ar)
+ * Exponential moving average for camera input smoothing.
+ * Factor controls how many frames of history to blend:
+ *   1 = instant (no smoothing)
+ *   10 = smooth over ~10 frames
+ *   100 = very smooth (for video recording)
  *
- * We need to find the GEngine global pointer. In shipped UE5 games,
- * GEngine is typically at a fixed offset from the module base.
- *
- * Pattern scan approach:
- *   Search for the byte pattern that references GEngine in the .text
- *   section. This is more robust across game versions than hardcoded
- *   offsets.
- *
- * Common GEngine access pattern in UE5 (x64):
- *   48 8B 05 XX XX XX XX   ; mov rax, [rip + offset]  -> GEngine
- *   48 85 C0               ; test rax, rax
- *
- * The signature for GEngine assignment/check in UEngineLoop::Init:
- *   48 89 05 ?? ?? ?? ??   ; mov [rip+??], rax   (store GEngine)
- *   followed by engine init code
+ * UUU calls this "movement interpolation factor".
  */
 
-/* Function pointer types matching UE5 internals */
-typedef void* UWorld;
-typedef void* FOutputDevice;
+static float g_smooth_factor = 1.0f;   /* 1 = no smoothing */
+static Vec3  g_smooth_pos = {0, 0, 0};
+static float g_smooth_pitch = 0, g_smooth_yaw = 0, g_smooth_roll = 0;
+static bool  g_smooth_initialized = false;
 
-/* GEngine->Exec virtual function - we call through vtable */
-typedef bool (__thiscall *ExecFn)(void* thisptr, UWorld* world,
-                                   const wchar_t* cmd, FOutputDevice* ar);
-
-static void* g_engine_ptr = nullptr;
-static std::atomic<bool> g_engine_found{false};
-
-/*
- * Pattern scanner: searches a memory region for a byte pattern with
- * wildcard support (0xCC = wildcard).
- *
- * Returns the address of the first match, or nullptr.
- */
-static const uint8_t* pattern_scan(
-    const uint8_t* start, size_t size,
-    const uint8_t* pattern, const char* mask, size_t pattern_len)
+static InterpolatedCamera apply_smoothing(const InterpolatedCamera& raw)
 {
-    for (size_t i = 0; i <= size - pattern_len; i++) {
-        bool found = true;
-        for (size_t j = 0; j < pattern_len; j++) {
-            if (mask[j] == '?' ) continue;
-            if (start[i + j] != pattern[j]) {
-                found = false;
-                break;
+    if (g_smooth_factor <= 1.0f || !g_smooth_initialized) {
+        g_smooth_pos = raw.pos;
+        g_smooth_pitch = raw.pitch;
+        g_smooth_yaw = raw.yaw;
+        g_smooth_roll = raw.roll;
+        g_smooth_initialized = true;
+        return raw;
+    }
+
+    /* EMA: new = old + (raw - old) / factor */
+    float alpha = 1.0f / g_smooth_factor;
+    g_smooth_pos.x += (raw.pos.x - g_smooth_pos.x) * alpha;
+    g_smooth_pos.y += (raw.pos.y - g_smooth_pos.y) * alpha;
+    g_smooth_pos.z += (raw.pos.z - g_smooth_pos.z) * alpha;
+    g_smooth_pitch += (raw.pitch - g_smooth_pitch) * alpha;
+    g_smooth_yaw   += (raw.yaw   - g_smooth_yaw)   * alpha;
+    g_smooth_roll  += (raw.roll  - g_smooth_roll)  * alpha;
+
+    InterpolatedCamera out;
+    out.pos   = g_smooth_pos;
+    out.pitch = g_smooth_pitch;
+    out.yaw   = g_smooth_yaw;
+    out.roll  = g_smooth_roll;
+    out.fov   = raw.fov;  /* don't smooth FOV */
+    return out;
+}
+
+/* ── Camera Path Tick Thread ───────────────────────────────────────── */
+
+static std::atomic<bool> g_tick_running{false};
+static std::thread       g_tick_thread;
+
+/* Tick rate for camera path playback (Hz) */
+static const int TICK_RATE = 60;
+
+static void camera_tick_thread()
+{
+    using clock = std::chrono::steady_clock;
+    auto interval = std::chrono::microseconds(1000000 / TICK_RATE);
+    auto last = clock::now();
+
+    bridge_log("[TICK] Camera tick thread started (%d Hz)", TICK_RATE);
+
+    while (g_tick_running) {
+        auto now = clock::now();
+        float dt = std::chrono::duration<float>(now - last).count();
+        last = now;
+
+        /* Update camera path playback */
+        if (g_camera_path.is_playing()) {
+            InterpolatedCamera cam;
+            bool still_playing = g_camera_path.tick(dt, cam);
+
+            /* Apply smoothing */
+            cam = apply_smoothing(cam);
+
+            /* Send camera position to game */
+            set_camera_location(cam.pos.x, cam.pos.y, cam.pos.z);
+            set_camera_rotation(cam.pitch, cam.yaw, cam.roll);
+            if (cam.fov > 0.0f && cam.fov != g_camera.fov) {
+                set_fov(cam.fov);
+            }
+
+            if (!still_playing) {
+                bridge_log("[TICK] Camera path playback ended");
             }
         }
-        if (found) return &start[i];
-    }
-    return nullptr;
-}
 
-/*
- * Find GEngine by scanning the game's main module for the
- * characteristic mov [rip+offset], rax pattern used when GEngine
- * is first assigned.
- *
- * Alternative approach: scan for "48 8B 05" (mov rax, [rip+X])
- * near known string references like "GEngine" or "EngineLoop".
- */
-static bool find_gengine()
-{
-    HMODULE game_module = GetModuleHandleA(NULL);
-    if (!game_module) {
-        bridge_log("ERROR: GetModuleHandle(NULL) failed");
-        return false;
-    }
-
-    MODULEINFO mod_info = {};
-    /* GetModuleInformation is in psapi.h */
-    HMODULE psapi = LoadLibraryA("psapi.dll");
-    if (!psapi) {
-        bridge_log("ERROR: Failed to load psapi.dll");
-        return false;
-    }
-
-    typedef BOOL (WINAPI *GetModuleInformationFn)(HANDLE, HMODULE, LPMODULEINFO, DWORD);
-    auto pGetModuleInformation = (GetModuleInformationFn)GetProcAddress(
-        psapi, "GetModuleInformation");
-
-    if (!pGetModuleInformation) {
-        bridge_log("ERROR: GetModuleInformation not found");
-        FreeLibrary(psapi);
-        return false;
-    }
-
-    if (!pGetModuleInformation(
-            GetCurrentProcess(), game_module, &mod_info, sizeof(mod_info))) {
-        bridge_log("ERROR: GetModuleInformation failed");
-        FreeLibrary(psapi);
-        return false;
-    }
-    FreeLibrary(psapi);
-
-    const uint8_t* base = (const uint8_t*)mod_info.lpBaseOfDll;
-    size_t mod_size = mod_info.SizeOfImage;
-    bridge_log("Game module: base=0x%p, size=%zu MB",
-               base, mod_size / (1024 * 1024));
-
-    /*
-     * Strategy: Search for the string "GEngine" in the module,
-     * then find cross-references to it. Near those xrefs, there
-     * will be the actual GEngine global pointer access.
-     *
-     * Simpler fallback: search for the pattern used in
-     * FEngineLoop::PreInit where GEngine is first set:
-     *
-     *   48 89 05 ?? ?? ?? ??    mov [rip+??], rax
-     *   (this stores the newly created engine into GEngine)
-     *
-     * We look for this pattern near known UE5 strings.
-     */
-
-    /* For now, use a simpler approach: scan for a known console
-     * variable string "r.Streaming.PoolSize" which is always present
-     * in UE5. The CVar system registration code will reference
-     * GConsoleManager, and from there we can find GEngine.
-     *
-     * PLACEHOLDER: In a real implementation, this would use a
-     * signature database per-engine-version. For the prototype,
-     * we expose a manual offset override via environment variable.
-     */
-
-    /* Check for manual GEngine offset (for testing) */
-    const char* env_offset = getenv("CAPTUREAI_GENGINE_OFFSET");
-    if (env_offset) {
-        uintptr_t offset = strtoull(env_offset, NULL, 16);
-        g_engine_ptr = *(void**)(base + offset);
-        if (g_engine_ptr) {
-            bridge_log("GEngine found via env offset 0x%llX -> 0x%p",
-                       (unsigned long long)offset, g_engine_ptr);
-            g_engine_found = true;
-            return true;
+        /* Sleep until next tick */
+        auto elapsed = clock::now() - now;
+        if (elapsed < interval) {
+            std::this_thread::sleep_for(interval - elapsed);
         }
-        bridge_log("WARNING: Env offset 0x%llX yielded NULL GEngine",
-                   (unsigned long long)offset);
     }
 
-    /*
-     * Auto-scan: look for "48 8B 0D" (mov rcx, [rip+X]) patterns
-     * that load a global pointer, followed by calls to virtual
-     * functions. This is a heuristic and may need tuning per game.
-     *
-     * For the prototype, we skip auto-scan and require either:
-     *   1. CAPTUREAI_GENGINE_OFFSET env var, or
-     *   2. A separate Cheat Engine script to find and set the offset
-     *
-     * Full auto-scan implementation is planned for v2.
-     */
-
-    bridge_log("WARNING: GEngine auto-scan not yet implemented. "
-               "Set CAPTUREAI_GENGINE_OFFSET=<hex> or use CE to find it. "
-               "TCP server will start but Exec() calls will be queued.");
-
-    return false;
+    bridge_log("[TICK] Camera tick thread stopped");
 }
 
-/*
- * Execute a console command via GEngine->Exec().
- *
- * If GEngine is not found yet, the command is logged but not executed.
- * Returns true if the command was sent to the engine.
- */
-static bool exec_console_command(const char* cmd)
-{
-    bridge_log("CMD: %s", cmd);
-
-    if (!g_engine_found || !g_engine_ptr) {
-        bridge_log("  (GEngine not available - command logged only)");
-        return false;
-    }
-
-    /* Convert to wide string for UE5 TCHAR */
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, cmd, -1, NULL, 0);
-    if (wlen <= 0) {
-        bridge_log("  ERROR: UTF-8 to wide conversion failed");
-        return false;
-    }
-
-    std::vector<wchar_t> wcmd(wlen);
-    MultiByteToWideChar(CP_UTF8, 0, cmd, -1, wcmd.data(), wlen);
-
-    /*
-     * Call GEngine->Exec(NULL, cmd, *GLog)
-     *
-     * The Exec function is a virtual method. In UE5, it's typically
-     * at vtable index ~100+ (varies by version). For shipped games,
-     * we need the exact vtable offset.
-     *
-     * PROTOTYPE: For now, we use ProcessEvent-style direct call.
-     * Full implementation would resolve the vtable offset via
-     * pattern scanning the Exec() function body.
-     */
-
-    /* TODO: Implement actual Exec() call via vtable
-     * For prototype, commands are logged for verification.
-     * The actual execution will be implemented once we have
-     * the vtable offset scanning working.
-     */
-
-    bridge_log("  (Exec call placeholder - vtable resolution pending)");
-    return false;
-}
-
-/* ── TCP Server ────────────────────────────────────────────────────── */
+/* ── TCP Command Router ────────────────────────────────────────────── */
 
 static std::atomic<bool> g_server_running{false};
 static SOCKET g_listen_socket = INVALID_SOCKET;
+
+/* Helper: send response string to client */
+static void reply(SOCKET sock, const char* msg)
+{
+    send(sock, msg, (int)strlen(msg), 0);
+}
+
+static void reply(SOCKET sock, const std::string& msg)
+{
+    send(sock, msg.c_str(), (int)msg.size(), 0);
+}
+
+/* Helper: parse floats from a command string after a prefix */
+static int parse_floats(const char* str, float* out, int max_count)
+{
+    int count = 0;
+    const char* p = str;
+    while (count < max_count && *p) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        char* end = nullptr;
+        float v = strtof(p, &end);
+        if (end == p) break;
+        out[count++] = v;
+        p = end;
+    }
+    return count;
+}
+
+/*
+ * Route a single command line to the appropriate handler.
+ * Returns true if the command was recognized (even if execution failed).
+ */
+static bool route_command(SOCKET client, const std::string& cmd)
+{
+    /* ── Bridge internal commands ── */
+
+    if (cmd == "__bridge_ping") {
+        reply(client, "pong\n");
+        return true;
+    }
+
+    if (cmd == "__bridge_status") {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+                 "engine_found=%d engine_ptr=0x%p exec_fn=0x%p "
+                 "camera_active=%d paused=%d hud=%d "
+                 "path_keyframes=%zu path_playing=%d "
+                 "smooth_factor=%.1f\n",
+                 (int)g_engine_found.load(), g_engine_ptr, (void*)g_exec_fn,
+                 (int)g_debug_camera_active, (int)g_paused.load(),
+                 (int)g_hud_visible,
+                 g_camera_path.count(), (int)g_camera_path.is_active(),
+                 g_smooth_factor);
+        reply(client, buf);
+        return true;
+    }
+
+    if (cmd.rfind("__bridge_set_offset ", 0) == 0) {
+        uintptr_t offset = strtoull(cmd.c_str() + 20, NULL, 16);
+        if (find_gengine_via_offset(offset))
+            reply(client, "ok\n");
+        else
+            reply(client, "null\n");
+        return true;
+    }
+
+    if (cmd == "__bridge_rescan") {
+        g_engine_found = false;
+        g_engine_ptr = nullptr;
+        g_exec_fn = nullptr;
+        if (find_gengine())
+            reply(client, "ok\n");
+        else
+            reply(client, "not_found\n");
+        return true;
+    }
+
+    /* ── Camera control shortcuts ── */
+
+    if (cmd == "__cam_toggle") {
+        toggle_debug_camera();
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__cam_pause" || cmd == "__timestop") {
+        toggle_pause();
+        char buf[64];
+        snprintf(buf, sizeof(buf), "paused=%d speed=%.4f\n",
+                 (int)g_paused.load(), g_game_speed);
+        reply(client, buf);
+        return true;
+    }
+
+    if (cmd.rfind("__cam_speed ", 0) == 0) {
+        float speed = strtof(cmd.c_str() + 12, NULL);
+        set_game_speed(speed);
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__hud_toggle") {
+        toggle_hud();
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd.rfind("__hotsample ", 0) == 0) {
+        int w = 0, h = 0;
+        sscanf(cmd.c_str() + 12, "%d %d", &w, &h);
+        if (w > 0 && h > 0) {
+            hotsample(w, h);
+            reply(client, "ok\n");
+        } else {
+            reply(client, "error: usage __hotsample WIDTH HEIGHT\n");
+        }
+        return true;
+    }
+
+    if (cmd.rfind("__smooth ", 0) == 0) {
+        g_smooth_factor = strtof(cmd.c_str() + 9, NULL);
+        if (g_smooth_factor < 1.0f) g_smooth_factor = 1.0f;
+        g_smooth_initialized = false;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", g_smooth_factor);
+        reply(client, buf);
+        return true;
+    }
+
+    /* ── Camera path commands ── */
+
+    if (cmd == "__path_add") {
+        /* Add current camera state as keyframe */
+        CameraKeyframe kf;
+        kf.pos = { g_camera.x, g_camera.y, g_camera.z };
+        kf.pitch = g_camera.pitch;
+        kf.yaw = g_camera.yaw;
+        kf.roll = g_camera.roll;
+        kf.fov = g_camera.fov;
+        kf.duration = 2.0f;  /* default 2 seconds per segment */
+        g_camera_path.add_keyframe(kf);
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd.rfind("__path_add ", 0) == 0) {
+        /* __path_add X Y Z Pitch Yaw Roll FOV [Duration] */
+        float vals[8] = {0, 0, 0, 0, 0, 0, 90.0f, 2.0f};
+        int n = parse_floats(cmd.c_str() + 11, vals, 8);
+        if (n >= 6) {
+            CameraKeyframe kf;
+            kf.pos = { vals[0], vals[1], vals[2] };
+            kf.pitch = vals[3];
+            kf.yaw = vals[4];
+            kf.roll = vals[5];
+            kf.fov = (n >= 7) ? vals[6] : 90.0f;
+            kf.duration = (n >= 8) ? vals[7] : 2.0f;
+            g_camera_path.add_keyframe(kf);
+            reply(client, "ok\n");
+        } else {
+            reply(client, "error: need at least 6 values (X Y Z P Y R)\n");
+        }
+        return true;
+    }
+
+    if (cmd == "__path_clear") {
+        g_camera_path.clear();
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd.rfind("__path_delete ", 0) == 0) {
+        size_t idx = (size_t)atoi(cmd.c_str() + 14);
+        if (g_camera_path.delete_keyframe(idx))
+            reply(client, "ok\n");
+        else
+            reply(client, "error: invalid index\n");
+        return true;
+    }
+
+    if (cmd == "__path_list") {
+        reply(client, g_camera_path.list_keyframes());
+        return true;
+    }
+
+    if (cmd == "__path_play" || cmd.rfind("__path_play ", 0) == 0) {
+        float speed = 1.0f;
+        if (cmd.size() > 12)
+            speed = strtof(cmd.c_str() + 12, NULL);
+        if (speed <= 0.0f) speed = 1.0f;
+        g_camera_path.play(speed);
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__path_stop") {
+        g_camera_path.stop();
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__path_pause") {
+        g_camera_path.toggle_pause();
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd.rfind("__path_loop ", 0) == 0) {
+        bool loop = (cmd[12] == '1');
+        g_camera_path.set_loop(loop);
+        reply(client, loop ? "loop=on\n" : "loop=off\n");
+        return true;
+    }
+
+    if (cmd == "__path_loop") {
+        g_camera_path.set_loop(!g_camera_path.is_active());
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__path_visualize") {
+        auto points = g_camera_path.visualize(20);
+        std::string result;
+        char buf[128];
+        for (size_t i = 0; i < points.size(); i++) {
+            const auto& p = points[i];
+            snprintf(buf, sizeof(buf),
+                     "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n",
+                     p.pos.x, p.pos.y, p.pos.z,
+                     p.pitch, p.yaw, p.roll, p.fov);
+            result += buf;
+        }
+        if (result.empty()) result = "(no path)\n";
+        reply(client, result);
+        return true;
+    }
+
+    if (cmd == "__path_info") {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "keyframes=%zu total_duration=%.2fs playing=%d "
+                 "loop=%d\n",
+                 g_camera_path.count(),
+                 g_camera_path.total_duration(),
+                 (int)g_camera_path.is_active(),
+                 0 /* TODO: expose loop state */);
+        reply(client, buf);
+        return true;
+    }
+
+    /* ── Regular UE5 console commands (pass-through to Exec) ── */
+
+    /* Any command not starting with __ is a regular console command */
+    if (cmd.rfind("__", 0) != 0) {
+        exec_console_command(cmd.c_str());
+        return true;
+    }
+
+    /* Unknown __ command */
+    bridge_log("Unknown bridge command: %s", cmd.c_str());
+    reply(client, "error: unknown command\n");
+    return false;
+}
+
+/* ── TCP Client Handler ────────────────────────────────────────────── */
 
 static void handle_client(SOCKET client_sock)
 {
@@ -287,13 +458,12 @@ static void handle_client(SOCKET client_sock)
     while (g_server_running) {
         int received = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
         if (received <= 0) {
-            if (received == 0) {
+            if (received == 0)
                 bridge_log("Client disconnected gracefully");
-            } else {
+            else {
                 int err = WSAGetLastError();
-                if (err != WSAECONNRESET && err != WSAEINTR) {
+                if (err != WSAECONNRESET && err != WSAEINTR)
                     bridge_log("recv error: %d", err);
-                }
             }
             break;
         }
@@ -301,67 +471,27 @@ static void handle_client(SOCKET client_sock)
         buffer[received] = '\0';
         line_buffer.append(buffer);
 
-        /* Process complete lines (newline-delimited, same as UUU protocol) */
+        /* Process complete lines (newline-delimited) */
         size_t pos;
         while ((pos = line_buffer.find('\n')) != std::string::npos) {
             std::string cmd = line_buffer.substr(0, pos);
             line_buffer.erase(0, pos + 1);
 
-            /* Trim \r if present */
-            if (!cmd.empty() && cmd.back() == '\r') {
+            /* Trim \r */
+            if (!cmd.empty() && cmd.back() == '\r')
                 cmd.pop_back();
-            }
 
             if (cmd.empty()) continue;
 
-            /* Special bridge commands (prefixed with __bridge_) */
-            if (cmd == "__bridge_ping") {
-                const char* pong = "pong\n";
-                send(client_sock, pong, (int)strlen(pong), 0);
-                continue;
-            }
-            if (cmd == "__bridge_status") {
-                char status[256];
-                snprintf(status, sizeof(status),
-                         "engine_found=%d engine_ptr=0x%p\n",
-                         (int)g_engine_found.load(),
-                         g_engine_ptr);
-                send(client_sock, status, (int)strlen(status), 0);
-                continue;
-            }
-            if (cmd.rfind("__bridge_set_offset ", 0) == 0) {
-                /* Runtime GEngine offset override:
-                 *   __bridge_set_offset 0x12345678
-                 */
-                const char* hex = cmd.c_str() + 20;
-                uintptr_t offset = strtoull(hex, NULL, 16);
-                HMODULE game_mod = GetModuleHandleA(NULL);
-                const uint8_t* base = (const uint8_t*)game_mod;
-                void* ptr = *(void**)(base + offset);
-                if (ptr) {
-                    g_engine_ptr = ptr;
-                    g_engine_found = true;
-                    bridge_log("GEngine set via runtime offset 0x%llX -> 0x%p",
-                               (unsigned long long)offset, ptr);
-                    const char* ok = "ok\n";
-                    send(client_sock, ok, (int)strlen(ok), 0);
-                } else {
-                    bridge_log("WARNING: Offset 0x%llX yielded NULL",
-                               (unsigned long long)offset);
-                    const char* fail = "null\n";
-                    send(client_sock, fail, (int)strlen(fail), 0);
-                }
-                continue;
-            }
-
-            /* Regular console command */
-            exec_console_command(cmd.c_str());
+            route_command(client_sock, cmd);
         }
     }
 
     closesocket(client_sock);
     bridge_log("Client handler exited");
 }
+
+/* ── TCP Server Thread ─────────────────────────────────────────────── */
 
 static void tcp_server_thread(int port)
 {
@@ -378,25 +508,26 @@ static void tcp_server_thread(int port)
         return;
     }
 
-    /* Allow port reuse (in case of quick restart) */
     int opt = 1;
     setsockopt(g_listen_socket, SOL_SOCKET, SO_REUSEADDR,
                (const char*)&opt, sizeof(opt));
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");  /* localhost only */
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     addr.sin_port = htons((u_short)port);
 
-    if (bind(g_listen_socket, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        bridge_log("ERROR: bind() failed on port %d: %d", port, WSAGetLastError());
+    if (bind(g_listen_socket, (struct sockaddr*)&addr, sizeof(addr))
+            == SOCKET_ERROR) {
+        bridge_log("ERROR: bind() on port %d failed: %d",
+                   port, WSAGetLastError());
         closesocket(g_listen_socket);
         g_listen_socket = INVALID_SOCKET;
         WSACleanup();
         return;
     }
 
-    if (listen(g_listen_socket, 2) == SOCKET_ERROR) {
+    if (listen(g_listen_socket, 4) == SOCKET_ERROR) {
         bridge_log("ERROR: listen() failed: %d", WSAGetLastError());
         closesocket(g_listen_socket);
         g_listen_socket = INVALID_SOCKET;
@@ -405,24 +536,19 @@ static void tcp_server_thread(int port)
     }
 
     g_server_running = true;
-    bridge_log("TCP console server listening on 127.0.0.1:%d", port);
+    bridge_log("TCP console server on 127.0.0.1:%d", port);
 
     while (g_server_running) {
-        /* Accept with timeout so we can check g_server_running */
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(g_listen_socket, &read_fds);
 
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-
+        struct timeval tv = { 1, 0 };
         int sel = select(0, &read_fds, NULL, NULL, &tv);
         if (sel > 0) {
             SOCKET client = accept(g_listen_socket, NULL, NULL);
-            if (client != INVALID_SOCKET) {
+            if (client != INVALID_SOCKET)
                 std::thread(handle_client, client).detach();
-            }
         }
     }
 
@@ -432,41 +558,46 @@ static void tcp_server_thread(int port)
     bridge_log("TCP server stopped");
 }
 
-/* ── DLL Entry Point ───────────────────────────────────────────────── */
+/* ── DLL Startup / Shutdown ────────────────────────────────────────── */
 
 static std::thread g_server_thread;
 
 static void startup()
 {
-    /* Open log file next to the DLL */
+    /* Open log file next to DLL */
     char dll_path[MAX_PATH];
     HMODULE h_self = NULL;
     GetModuleHandleExA(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+        | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         (LPCSTR)&startup, &h_self);
     GetModuleFileNameA(h_self, dll_path, MAX_PATH);
 
     std::string log_path(dll_path);
     size_t last_dot = log_path.rfind('.');
-    if (last_dot != std::string::npos) {
+    if (last_dot != std::string::npos)
         log_path = log_path.substr(0, last_dot);
-    }
     log_path += ".log";
 
     g_logfile = fopen(log_path.c_str(), "w");
-    bridge_log("captureAIshi bridge v0.1 starting...");
-    bridge_log("Log file: %s", log_path.c_str());
+    bridge_log("=== captureAIshi bridge v0.2 ===");
+    bridge_log("DLL: %s", dll_path);
+    bridge_log("Log: %s", log_path.c_str());
 
-    /* Try to find GEngine */
+    /* Find GEngine (tries env var first, then auto-scan) */
     find_gengine();
 
-    /* Read port from environment (default 9998) */
+    /* Read port from env (default 9998) */
     int port = DEFAULT_PORT;
     const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
     if (env_port) {
         port = atoi(env_port);
         if (port <= 0 || port > 65535) port = DEFAULT_PORT;
     }
+
+    /* Start camera tick thread */
+    g_tick_running = true;
+    g_tick_thread = std::thread(camera_tick_thread);
 
     /* Start TCP server */
     g_server_thread = std::thread(tcp_server_thread, port);
@@ -475,16 +606,18 @@ static void startup()
 static void shutdown()
 {
     bridge_log("Bridge shutting down...");
+
+    /* Stop tick thread */
+    g_tick_running = false;
+    if (g_tick_thread.joinable())
+        g_tick_thread.join();
+
+    /* Stop TCP server */
     g_server_running = false;
-
-    /* Close listen socket to unblock accept() */
-    if (g_listen_socket != INVALID_SOCKET) {
+    if (g_listen_socket != INVALID_SOCKET)
         closesocket(g_listen_socket);
-    }
-
-    if (g_server_thread.joinable()) {
+    if (g_server_thread.joinable())
         g_server_thread.join();
-    }
 
     if (g_logfile) {
         bridge_log("Bridge shutdown complete");
@@ -498,7 +631,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
     switch (reason) {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hModule);
-        /* Defer startup to a new thread to avoid DllMain deadlocks */
+        /* Defer to new thread to avoid DllMain loader lock */
         std::thread(startup).detach();
         break;
     case DLL_PROCESS_DETACH:
