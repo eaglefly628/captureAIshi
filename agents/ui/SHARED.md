@@ -22,7 +22,7 @@ Backend API routes:
 
 ## [v0.2.0] Tasks from Lead
 
-Priority order. Work on the branch `claude/max-traffic-sharing-8hWo3-1Zpm7`.
+Priority order. Work on the branch `claudeMainBranch`.
 
 ### Task 1: Image preview lightbox (P0) — DONE (dc8316f)
 Clicking a thumbnail opens a full-size overlay with left/right navigation, RGB/depth/normal side-by-side, close on Escape.
