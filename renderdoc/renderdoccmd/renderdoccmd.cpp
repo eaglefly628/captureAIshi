@@ -1456,14 +1456,14 @@ public:
   // highestSeenId tracks the max captureId across calls so we can distinguish
   // old (pre-existing) captures from newly triggered ones.
   bool WaitForCapture(ITargetControl *tc, uint32_t &captureId,
-                      rdcstr &capturePath, uint32_t &highestSeenId)
+                      rdcstr &capturePath, uint32_t &highestSeenId,
+                      int timeoutSeconds = 10)
   {
     int noopsSinceLastCapture = 0;
     bool gotNew = false;
 
-    // Use real wall-clock time for timeout (ReceiveMessage blocks)
     auto startTime = std::chrono::steady_clock::now();
-    auto deadline = startTime + std::chrono::seconds(10);
+    auto deadline = startTime + std::chrono::seconds(timeoutSeconds);
 
     while(std::chrono::steady_clock::now() < deadline)
     {
@@ -1611,7 +1611,7 @@ public:
       {
         uint32_t warmupId = 0;
         rdcstr warmupPath;
-        if(WaitForCapture(tc, warmupId, warmupPath, highestSeenId))
+        if(WaitForCapture(tc, warmupId, warmupPath, highestSeenId, 3))
           std::cout << "Warm-up OK (id=" << warmupId << ")" << std::endl;
         else
           std::cout << "Warm-up missed (non-fatal)" << std::endl;

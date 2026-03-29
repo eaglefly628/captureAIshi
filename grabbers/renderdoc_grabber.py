@@ -760,8 +760,9 @@ class RenderDocGrabber(FrameGrabber):
             logger.error(f"[RDOC] {e}")
             return [(None, None, None)] * len(rdc_paths)
 
-        export_out = output_dir / "_batch_export"
-        export_out.mkdir(parents=True, exist_ok=True)
+        import tempfile
+        export_out = Path(tempfile.mkdtemp(prefix="captureai_export_"))
+        logger.info(f"[RDOC] Batch export temp dir: {export_out}")
 
         cmd = [
             rdoc_cmd, "exportframe",
@@ -835,9 +836,10 @@ class RenderDocGrabber(FrameGrabber):
                 except OSError:
                     pass
 
-        # Clean up batch export root
+        # Clean up temp export root
+        import shutil
         try:
-            export_out.rmdir()
+            shutil.rmtree(str(export_out), ignore_errors=True)
         except OSError:
             pass
 
