@@ -32,6 +32,20 @@ You are the **rendering expert** for captureAIshi, a cross-engine game capture f
 - URP/HDRP have different GBuffer layouts
 - Camera.depthTextureMode for depth access
 
+## C++ Rules (renderdoccmd)
+
+- **ASCII only** — No Unicode in `.cpp`/`.h`. MSVC `/W4 /WX` + code page 936 triggers C4819. Use `->` not `→`, `--` not `—`. (see root CLAUDE.md)
+- **Build**: CMake via `renderdoc/` build tree. Test compile before pushing any C++ change.
+- **Memory**: renderdoccmd replays run in a separate process. Avoid unbounded allocations in export loops — textures can be 4K+. Release replay controller resources promptly.
+- **Error output**: Use `std::cout` for structured output (parsed by Python), `std::cerr` for errors. Format: `OK <type> [<index>] <WxH> fmt=<N> -> <path>`.
+
+## Image & Depth Knowledge
+
+- **Depth normalization**: Percentile-based (1st-99th) is the project standard. Never use min/max — outliers (sky pixels at 0.0 in reversed-Z) destroy contrast.
+- **PNG bit depth**: RGB exports as 8-bit sRGB. Depth exports as 8-bit grayscale (normalized). If higher precision needed later, use 16-bit PNG not EXR (keep toolchain simple).
+- **Normal maps**: World-space normals stored as RGB where (128,128,255) = pointing up. Range [0,255] maps to [-1,1]. No tangent-space conversion needed.
+- **Texture formats quick ref**: R32F = depth, RGB10A2 = normals, RGBA16F = HDR scene color, R8G8B8A8 = base color/UI.
+
 ## Branch
 
 All work on branch `claudeMainBranch`. Do not push to other branches without lead programmer approval.

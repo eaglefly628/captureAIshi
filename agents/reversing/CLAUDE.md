@@ -38,6 +38,47 @@ For each game, document:
 - Respect game EULA where applicable
 - Document all findings transparently
 
+## Bridge DLL TCP Protocol
+
+Port 9998 (override via `CAPTUREAI_BRIDGE_PORT` env). Newline-delimited commands, compatible with `ue5_console.py`.
+
+**Internal commands** (prefixed `__`):
+| Command | Response | Description |
+|---------|----------|-------------|
+| `__bridge_ping` | `pong` | Health check |
+| `__bridge_status` | key=value pairs | Engine/camera/path state |
+| `__bridge_rescan` | `ok`/`not_found` | Re-scan for GEngine |
+| `__cam_toggle` | `ok` | Toggle debug camera |
+| `__timestop` | `paused=N speed=F` | Toggle time stop |
+| `__cam_speed F` | `ok` | Set game speed |
+| `__hud_toggle` | `ok` | Toggle HUD |
+| `__hotsample W H` | `ok` | Change render resolution |
+| `__smooth F` | `smooth_factor=F` | Camera smoothing factor |
+| `__path_add [X Y Z P Y R FOV Dur]` | `ok` | Add camera path keyframe |
+| `__path_clear` | `ok` | Clear all keyframes |
+| `__path_play [speed]` | `ok` | Play camera path |
+| `__path_stop` | `ok` | Stop playback |
+| `__path_list` | keyframe data | List keyframes |
+
+**Pass-through**: Any command NOT starting with `__` is sent directly to UE5 `GEngine->Exec()`.
+
+## Driver Interface Contract
+
+All drivers extend `drivers/base.py::CameraDriver`. Required methods:
+- `connect()` / `disconnect()` — lifecycle
+- `set_pose(CameraPose)` — move camera. **Coordinates arrive in pipeline space (Y-up, meters)**. Convert to engine space at this boundary using `utils/coords.py`.
+
+Optional overrides:
+- `wait_for_streaming(timeout)` — wait for LOD/texture settle
+- `update_streaming(pose)` — force engine streaming center
+
+## UE5 Memory Layout (for CE/memory drivers)
+
+- `GEngine` (global) -> `GameViewport` -> `World` -> `PersistentLevel`
+- Camera: `APlayerController` -> `PlayerCameraManager` -> ViewTarget (Location + Rotation)
+- String xref method: find UTF-16 `L"ToggleDebugCamera"` in memory, trace xrefs to locate GEngine
+- All UE5 coordinates: Z-up, left-handed, centimeters
+
 ## Branch
 
 All work on branch `claudeMainBranch`. Do not push to other branches without lead programmer approval.
