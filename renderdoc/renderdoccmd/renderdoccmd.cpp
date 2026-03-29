@@ -1157,9 +1157,13 @@ public:
       continue;
     }
 
+    ReplayOptions replayOpts;
+    replayOpts.apiValidation = false;
+    replayOpts.optimisation = ReplayOptimisationLevel::Fastest;
+
     IReplayController *controller = NULL;
     ResultDetails result = {};
-    rdctie(result, controller) = file->OpenCapture(ReplayOptions(), NULL);
+    rdctie(result, controller) = file->OpenCapture(replayOpts, NULL);
     if(result.code != ResultCode::Succeeded || controller == NULL)
     {
       std::cerr << "Failed to open replay: " << result.Message() << std::endl;
@@ -1598,6 +1602,20 @@ public:
         }
       }
       std::cout << "Drained pre-existing captures (highest id=" << highestSeenId << ")" << std::endl;
+
+      // Warm-up: trigger one capture and discard it. The game needs to render
+      // at least one frame after TargetControl connects before TriggerCapture
+      // works reliably. Without this, the first trigger always times out.
+      std::cout << "Warm-up trigger..." << std::endl;
+      tc->TriggerCapture(1);
+      {
+        uint32_t warmupId = 0;
+        rdcstr warmupPath;
+        if(WaitForCapture(tc, warmupId, warmupPath, highestSeenId))
+          std::cout << "Warm-up OK (id=" << warmupId << ")" << std::endl;
+        else
+          std::cout << "Warm-up missed (non-fatal)" << std::endl;
+      }
     }
 
     if(!interactive)
