@@ -553,6 +553,13 @@ def run_capture(args):
                 depth_filename = f"{bname}_d.png"
                 normal_filename = f"{bname}_n.png" if normal is not None else ""
 
+                logging.debug(
+                    f"[BATCH] Frame {idx}: rgb={'ok' if rgb is not None else 'None'}, "
+                    f"depth={'ok' if depth is not None else 'None'}, "
+                    f"normal={'ok' if normal is not None else 'None'}, "
+                    f"bname={bname}"
+                )
+
                 try:
                     saved = grabber_ctx.save_frame(
                         rgb, depth, output_dir / "frames", idx,
@@ -567,6 +574,7 @@ def run_capture(args):
                         frames_no_rgb += 1
                     if depth is None:
                         frames_no_depth += 1
+                    logging.debug(f"[BATCH] Frame {idx} saved: {saved}")
                 except Exception as e:
                     logging.error(f"[BATCH] Frame {idx} save failed: {e}")
                     frames_failed += 1

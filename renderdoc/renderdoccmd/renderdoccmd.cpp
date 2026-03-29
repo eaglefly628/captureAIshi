@@ -1328,20 +1328,17 @@ public:
 
       // Auto-detect and export Normal buffer (GBufferA).
       //
-      // UE5 GBuffer order at viewport resolution:
-      //   ColorTarget 0: SceneColor (RGBA16F, Float) -- SKIP (HDR, maps to black in PNG)
-      //   ColorTarget 1: GBufferA = WorldNormal (RGB10A2, UNorm)
-      //   ColorTarget 2: GBufferB = Metallic/Specular/Roughness
-      //   ColorTarget 3: GBufferC = BaseColor
+      // From GBuffer scan, UE5 WorldNormal is R10G10B10A2 (packed format):
+      //   fmtType=12 (ResourceFormatType::R10G10B10A2)
+      //   compType=SNorm, compCount=4, compByteWidth=0 (packed, not per-component)
       //
-      // Key filter: skip Float-format textures (SceneColor is RGBA16F).
-      // WorldNormal uses UNorm (RGB10A2) or SNorm, never Float.
+      // The first non-SwapBuffer ColorTarget matching fmtType=12 is WorldNormal.
+      // This skips RGBA16_SNorm (compByteWidth=2) which is a different buffer.
       if(exportNormal && !foundNormal &&
          (flags & (uint32_t)TextureCategory::ColorTarget) &&
          !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
          swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight &&
-         tex.format.compCount >= 3 &&
-         tex.format.compType != CompType::Float)
+         (uint32_t)tex.format.type == 12)
       {
         std::string normalPath = fileOutdir + sep + "normal.png";
         TextureSave texsave;

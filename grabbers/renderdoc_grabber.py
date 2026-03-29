@@ -808,22 +808,20 @@ class RenderDocGrabber(FrameGrabber):
             else:
                 subdir = export_out
 
+            logger.debug(f"[RDOC batch] Loading from {subdir} (exists={subdir.exists()})")
+            if subdir.exists():
+                logger.debug(f"[RDOC batch] Files: {[f.name for f in subdir.iterdir()]}")
+
             rgb = self._load_rgb_image(subdir)
             depth = self._load_depth_image(subdir)
             normal = self._load_normal_image(subdir)
-            results.append((rgb, depth, normal))
 
-            # Clean up per-file export dir
-            if subdir.exists():
-                for f in subdir.iterdir():
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
-                try:
-                    subdir.rmdir()
-                except OSError:
-                    pass
+            logger.debug(
+                f"[RDOC batch] Loaded: rgb={'ok' if rgb is not None else 'None'}, "
+                f"depth={'ok' if depth is not None else 'None'}, "
+                f"normal={'ok' if normal is not None else 'None'}"
+            )
+            results.append((rgb, depth, normal))
 
         # Clean up batch export root
         try:
