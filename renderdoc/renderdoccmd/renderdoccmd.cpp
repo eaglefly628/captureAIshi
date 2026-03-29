@@ -1028,7 +1028,7 @@ public:
   }
 };
 
-// ── captureAIshi: export backbuffer + depth from a capture file ──────────────
+// -- captureAIshi: export backbuffer + depth from a capture file --------------
 struct ExportFrameCommand : public Command
 {
 private:
@@ -1229,7 +1229,7 @@ public:
         }
 
         // Save depth as grayscale PNG with percentile-based mapping
-        // Swap black/white to invert reversed-Z: near(1.0)→dark, far(0.0)→bright
+        // Swap black/white to invert reversed-Z: near(1.0)->dark, far(0.0)->bright
         std::string depthPath = outdir + sep + "depth.png";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
@@ -1238,8 +1238,8 @@ public:
         texsave.alpha = AlphaMapping::Discard;
         texsave.destType = FileType::PNG;
         texsave.channelExtract = 0;    // Red channel only (depth)
-        texsave.comp.blackPoint = wpVal;  // Reversed-Z inversion: map far(0)→black
-        texsave.comp.whitePoint = bpVal;  // Reversed-Z inversion: map near(1)→white
+        texsave.comp.blackPoint = wpVal;  // Reversed-Z inversion: map far(0)->black
+        texsave.comp.whitePoint = bpVal;  // Reversed-Z inversion: map near(1)->white
 
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
         if(saveRes.OK())
@@ -1292,7 +1292,7 @@ public:
   }
 };
 
-// ── captureAIshi: trigger capture on a running RenderDoc-injected game ────────
+// -- captureAIshi: trigger capture on a running RenderDoc-injected game --------
 struct TriggerCaptureCommand : public Command
 {
 private:
@@ -1391,7 +1391,7 @@ public:
     // So: count total NewCapture messages received. Once we've received
     // more than what existed at connect time, the extras are ours.
     // We detect "all old sent" when we see a Noop after NewCapture messages
-    // stop arriving — but that's broken because old captures have Noops
+    // stop arriving -- but that's broken because old captures have Noops
     // between them too.
     //
     // ACTUAL simplest approach: just accept the LAST NewCapture before
@@ -1405,7 +1405,7 @@ public:
     // Receive all NewCapture messages. The last one is our triggered capture
     // (it has the highest captureId since IDs are monotonically assigned).
     // We detect "done" when ReceiveMessage returns Noop and we haven't seen
-    // a NewCapture for a while — but since old captures also have Noops
+    // a NewCapture for a while -- but since old captures also have Noops
     // between them, we need to wait long enough for the game to actually
     // render the triggered frame.
     //
@@ -1447,7 +1447,7 @@ public:
         // After TriggerCapture, the game needs to render a frame before the
         // capture appears. Old captures arrive immediately (one per tick).
         // If we've seen captures AND had many consecutive Noops, all captures
-        // (old + new) have been delivered. 50 Noops ≈ 100ms of no new data.
+        // (old + new) have been delivered. 50 Noops ~ 100ms of no new data.
         if(hasCapture && noopsSinceLastCapture >= 50)
           break;
       }
