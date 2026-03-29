@@ -1492,7 +1492,6 @@ public:
         std::cerr << "Target disconnected" << std::endl;
         return false;
       }
-      elapsedMs += 2;
     }
 
     return gotNew;
