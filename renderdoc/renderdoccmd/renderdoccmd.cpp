@@ -1379,14 +1379,18 @@ struct TriggerCaptureCommand : public Command
 private:
   uint32_t numFrames;
   std::string outdir;
+  bool interactive;
 
 public:
   TriggerCaptureCommand() : Command() {}
   virtual void AddOptions(cmdline::parser &parser)
   {
     parser.set_footer("");
-    parser.add<uint32_t>("frames", 'n', "Number of frames to capture", false, 1);
-    parser.add<std::string>("out", 'o', "Directory for capture files (passed to game at launch)", false, ".");
+    parser.add<uint32_t>("frames", 'n', "Number of frames to capture per trigger", false, 1);
+    parser.add<std::string>("out", 'o', "Directory for capture files", false, ".");
+    parser.add("interactive", 'i',
+               "Stay connected and read trigger commands from stdin. "
+               "Send 'trigger' to capture, 'quit' to exit.");
   }
   virtual const char *Description()
   {
@@ -1398,7 +1402,76 @@ public:
   {
     numFrames = parser.get<uint32_t>("frames");
     outdir = parser.get<std::string>("out");
+    interactive = parser.exist("interactive");
     return true;
+  }
+
+  // Wait for the triggered capture to arrive via TargetControl messages.
+  // Returns true if a new capture was received, populating captureId/path.
+  // highestSeenId tracks the max captureId across calls so we can distinguish
+  // old (pre-existing) captures from newly triggered ones.
+  bool WaitForCapture(ITargetControl *tc, uint32_t &captureId,
+                      rdcstr &capturePath, uint32_t &highestSeenId)
+  {
+    int noopsSinceLastCapture = 0;
+    int timeoutMs = 10000;
+    int elapsedMs = 0;
+    bool gotNew = false;
+
+    while(elapsedMs < timeoutMs)
+    {
+      TargetControlMessage msg = tc->ReceiveMessage(NULL);
+
+      if(msg.type == TargetControlMessageType::NewCapture)
+      {
+        noopsSinceLastCapture = 0;
+        if(msg.newCapture.captureId > highestSeenId)
+        {
+          highestSeenId = msg.newCapture.captureId;
+          captureId = msg.newCapture.captureId;
+          capturePath = msg.newCapture.path;
+          gotNew = true;
+          std::cout << "  capture id=" << msg.newCapture.captureId
+                    << " frame=" << msg.newCapture.frameNumber << std::endl;
+        }
+      }
+      else if(msg.type == TargetControlMessageType::Noop)
+      {
+        noopsSinceLastCapture++;
+        if(gotNew && noopsSinceLastCapture >= 50)
+          break;
+      }
+      else if(msg.type == TargetControlMessageType::Disconnected)
+      {
+        std::cerr << "Target disconnected" << std::endl;
+        return false;
+      }
+      elapsedMs += 2;
+    }
+
+    return gotNew;
+  }
+
+  // Copy a capture from the game process to a local file.
+  bool CopyCaptureTo(ITargetControl *tc, uint32_t captureId, const std::string &localPath)
+  {
+    std::cout << "Copying capture to " << localPath << "..." << std::endl;
+    tc->CopyCapture(captureId, conv(localPath));
+
+    int copyTimeout = 30000;
+    int copyElapsed = 0;
+    while(copyElapsed < copyTimeout)
+    {
+      TargetControlMessage cmsg = tc->ReceiveMessage(NULL);
+      if(cmsg.type == TargetControlMessageType::CaptureCopied)
+      {
+        std::cout << "OK copied -> " << localPath << std::endl;
+        return true;
+      }
+      copyElapsed += 2;
+    }
+    std::cerr << "Warning: capture copy timed out" << std::endl;
+    return false;
   }
 
   virtual int Execute(const CaptureOptions &)
@@ -1410,7 +1483,6 @@ public:
     uint32_t foundIdent = 0;
     int targetCount = 0;
 
-    // Scan all active targets
     while(true)
     {
       uint32_t next = RENDERDOC_EnumerateRemoteTargets("", ident);
@@ -1420,14 +1492,13 @@ public:
       targetCount++;
       foundIdent = next;
 
-      // Try to connect to get info
-      ITargetControl *tc = RENDERDOC_CreateTargetControl("", next, "captureAIshi", false);
-      if(tc)
+      ITargetControl *info = RENDERDOC_CreateTargetControl("", next, "captureAIshi", false);
+      if(info)
       {
-        std::cout << "  Target ident=" << next << " pid=" << tc->GetPID()
-                  << " target='" << tc->GetTarget().c_str() << "'"
-                  << " api='" << tc->GetAPI().c_str() << "'" << std::endl;
-        tc->Shutdown();
+        std::cout << "  Target ident=" << next << " pid=" << info->GetPID()
+                  << " target='" << info->GetTarget().c_str() << "'"
+                  << " api='" << info->GetAPI().c_str() << "'" << std::endl;
+        info->Shutdown();
       }
       else
       {
@@ -1443,7 +1514,7 @@ public:
       return 1;
     }
 
-    // Connect to the (last) found target and trigger capture
+    // Connect to the (last) found target
     std::cout << "Connecting to target ident=" << foundIdent << "..." << std::endl;
     ITargetControl *tc = RENDERDOC_CreateTargetControl("", foundIdent, "captureAIshi", true);
     if(!tc)
@@ -1455,140 +1526,136 @@ public:
     std::cout << "Connected to '" << tc->GetTarget().c_str() << "' (pid=" << tc->GetPID()
               << ", api=" << tc->GetAPI().c_str() << ")" << std::endl;
 
-    // RenderDoc target sends pre-existing captures one per tick (with Noops
-    // in between), using the same mechanism for both old and new captures.
-    // There is no protocol-level distinction between old and new.
-    //
-    // Deterministic approach: we know the target assigns captureId = index
-    // in its internal captures array. Pre-existing captures get IDs 0..N-1.
-    // Our triggered capture gets ID N. We don't know N, but we can figure
-    // it out: pump messages, collecting ALL NewCapture IDs. After trigger,
-    // the target queues our capture. We keep pumping until we see a NewCapture
-    // followed by a Noop where captureId > all previously seen IDs, AND
-    // enough messages have arrived that all old captures have been sent.
-    //
-    // Simplest correct approach: TriggerCapture queues a capture for the
-    // NEXT rendered frame. Pre-existing captures are already in the array.
-    // So: count total NewCapture messages received. Once we've received
-    // more than what existed at connect time, the extras are ours.
-    // We detect "all old sent" when we see a Noop after NewCapture messages
-    // stop arriving -- but that's broken because old captures have Noops
-    // between them too.
-    //
-    // ACTUAL simplest approach: just accept the LAST NewCapture before
-    // timeout/Noop-streak. TriggerCapture ensures at least one new capture
-    // will arrive, and it will be the last one (highest captureId).
-
-    std::cout << "Triggering " << numFrames << " frame capture(s)..." << std::endl;
-
-    tc->TriggerCapture(numFrames);
-
-    // Receive all NewCapture messages. The last one is our triggered capture
-    // (it has the highest captureId since IDs are monotonically assigned).
-    // We detect "done" when ReceiveMessage returns Noop and we haven't seen
-    // a NewCapture for a while -- but since old captures also have Noops
-    // between them, we need to wait long enough for the game to actually
-    // render the triggered frame.
-    //
-    // Strategy: keep receiving until we see a NewCapture whose captureId
-    // is HIGHER than the previous one AND is followed by consecutive Noops.
-    // Track the highest-ID capture we've seen. Use that as our result.
-
-    struct CaptureInfo {
-      uint32_t captureId;
-      uint32_t frameNumber;
-      rdcstr path;
-    };
-
-    CaptureInfo lastCapture = {};
-    bool hasCapture = false;
-    int totalNewCaptures = 0;
-    int noopsSinceLastCapture = 0;
-    int timeoutMs = 10000;
-    int elapsedMs = 0;
-
-    while(elapsedMs < timeoutMs)
-    {
-      TargetControlMessage msg = tc->ReceiveMessage(NULL);
-
-      if(msg.type == TargetControlMessageType::NewCapture)
-      {
-        totalNewCaptures++;
-        noopsSinceLastCapture = 0;
-        lastCapture.captureId = msg.newCapture.captureId;
-        lastCapture.frameNumber = msg.newCapture.frameNumber;
-        lastCapture.path = msg.newCapture.path;
-        hasCapture = true;
-        std::cout << "  capture id=" << msg.newCapture.captureId
-                  << " frame=" << msg.newCapture.frameNumber << std::endl;
-      }
-      else if(msg.type == TargetControlMessageType::Noop)
-      {
-        noopsSinceLastCapture++;
-        // After TriggerCapture, the game needs to render a frame before the
-        // capture appears. Old captures arrive immediately (one per tick).
-        // If we've seen captures AND had many consecutive Noops, all captures
-        // (old + new) have been delivered. 50 Noops ~ 100ms of no new data.
-        if(hasCapture && noopsSinceLastCapture >= 50)
-          break;
-      }
-      else if(msg.type == TargetControlMessageType::Disconnected)
-      {
-        std::cerr << "Target disconnected" << std::endl;
-        tc->Shutdown();
-        return 2;
-      }
-      elapsedMs += 2;
-    }
-
-    if(!hasCapture)
-    {
-      std::cerr << "No captures received within timeout" << std::endl;
-      tc->Shutdown();
-      return 3;
-    }
-
-    // The last capture (highest captureId) is our triggered one
-    std::cout << "OK capture id=" << lastCapture.captureId
-              << " frame=" << lastCapture.frameNumber
-              << " path='" << lastCapture.path.c_str() << "'"
-              << " (total seen: " << totalNewCaptures << ")" << std::endl;
-
-    // Copy the capture to output directory
-    int capturesReceived = 1;
-    if(outdir != ".")
-    {
-      std::string localPath = outdir;
+    std::string sep = "/";
 #if defined(_WIN32)
-      localPath += "\\";
-#else
-      localPath += "/";
+    sep = "\\";
 #endif
-      localPath += "capture_1.rdc";
-      std::cout << "Copying capture to " << localPath << "..." << std::endl;
-      tc->CopyCapture(lastCapture.captureId, conv(localPath));
 
-      // Wait for copy completion (deterministic: CaptureCopied message)
-      bool copyDone = false;
-      int copyTimeout = 30000;
-      int copyElapsed = 0;
-      while(!copyDone && copyElapsed < copyTimeout)
+    // Drain pre-existing captures to learn the highest captureId
+    uint32_t highestSeenId = 0;
+    {
+      int drainNoops = 0;
+      while(drainNoops < 50)
       {
-        TargetControlMessage cmsg = tc->ReceiveMessage(NULL);
-        if(cmsg.type == TargetControlMessageType::CaptureCopied)
+        TargetControlMessage msg = tc->ReceiveMessage(NULL);
+        if(msg.type == TargetControlMessageType::NewCapture)
         {
-          copyDone = true;
-          std::cout << "OK copied capture -> " << localPath << std::endl;
+          if(msg.newCapture.captureId > highestSeenId)
+            highestSeenId = msg.newCapture.captureId;
+          drainNoops = 0;
         }
-        copyElapsed += 2;
+        else if(msg.type == TargetControlMessageType::Noop)
+        {
+          drainNoops++;
+        }
+        else if(msg.type == TargetControlMessageType::Disconnected)
+        {
+          std::cerr << "Target disconnected during drain" << std::endl;
+          tc->Shutdown();
+          return 2;
+        }
       }
-      if(!copyDone)
-        std::cerr << "Warning: capture copy timed out" << std::endl;
+      std::cout << "Drained pre-existing captures (highest id=" << highestSeenId << ")" << std::endl;
+    }
+
+    if(!interactive)
+    {
+      // Single-shot mode (original behavior)
+      std::cout << "Triggering " << numFrames << " frame capture(s)..." << std::endl;
+      tc->TriggerCapture(numFrames);
+
+      uint32_t captureId = 0;
+      rdcstr capturePath;
+      if(!WaitForCapture(tc, captureId, capturePath, highestSeenId))
+      {
+        std::cerr << "No captures received within timeout" << std::endl;
+        tc->Shutdown();
+        return 3;
+      }
+
+      std::cout << "OK capture id=" << captureId
+                << " path='" << capturePath.c_str() << "'" << std::endl;
+
+      if(outdir != ".")
+      {
+        std::string localPath = outdir + sep + "capture_1.rdc";
+        CopyCaptureTo(tc, captureId, localPath);
+      }
+
+      tc->Shutdown();
+      std::cout << "Done: 1 capture(s)" << std::endl;
+      return 0;
+    }
+
+    // ── Interactive mode: persistent connection, read commands from stdin ──
+    std::cout << "READY (interactive mode). Commands: trigger [outfile], quit" << std::endl;
+    std::cout << std::flush;
+
+    int totalCaptures = 0;
+    std::string line;
+    while(std::getline(std::cin, line))
+    {
+      // Trim whitespace
+      size_t start = line.find_first_not_of(" \t\r\n");
+      if(start == std::string::npos)
+        continue;
+      line = line.substr(start);
+      size_t end = line.find_last_not_of(" \t\r\n");
+      if(end != std::string::npos)
+        line = line.substr(0, end + 1);
+
+      if(line == "quit" || line == "exit")
+        break;
+
+      if(line.substr(0, 7) == "trigger")
+      {
+        // Parse optional output path: "trigger path/to/output.rdc"
+        std::string outputPath;
+        if(line.size() > 8)
+          outputPath = line.substr(8);
+
+        // Check connection
+        if(!tc->Connected())
+        {
+          std::cerr << "ERR disconnected" << std::endl;
+          break;
+        }
+
+        tc->TriggerCapture(numFrames);
+
+        uint32_t captureId = 0;
+        rdcstr capturePath;
+        if(!WaitForCapture(tc, captureId, capturePath, highestSeenId))
+        {
+          std::cout << "ERR no capture received" << std::endl;
+          std::cout << std::flush;
+          continue;
+        }
+
+        totalCaptures++;
+
+        if(!outputPath.empty())
+        {
+          CopyCaptureTo(tc, captureId, outputPath);
+        }
+        else if(outdir != ".")
+        {
+          std::string localPath = outdir + sep + "capture_" + std::to_string(totalCaptures) + ".rdc";
+          CopyCaptureTo(tc, captureId, localPath);
+        }
+
+        std::cout << "OK id=" << captureId << " total=" << totalCaptures << std::endl;
+        std::cout << std::flush;
+      }
+      else
+      {
+        std::cerr << "Unknown command: " << line << std::endl;
+        std::cout << std::flush;
+      }
     }
 
     tc->Shutdown();
-
-    std::cout << "Done: " << capturesReceived << " capture(s)" << std::endl;
+    std::cout << "Done: " << totalCaptures << " capture(s)" << std::endl;
     return 0;
   }
 };

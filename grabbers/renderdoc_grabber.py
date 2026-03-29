@@ -91,6 +91,7 @@ class RenderDocGrabber(FrameGrabber):
         self._capture_count = 0
         self._use_native = _HAS_NATIVE_BRIDGE
         self._replay_session = None  # Persistent native ReplaySession
+        self._trigger_process = None  # Persistent triggercapture process (interactive mode)
 
     def setup(self) -> None:
         self.capture_dir.mkdir(parents=True, exist_ok=True)
@@ -317,6 +318,19 @@ class RenderDocGrabber(FrameGrabber):
             )
 
     def teardown(self) -> None:
+        # Shut down persistent trigger process
+        if self._trigger_process is not None:
+            try:
+                self._trigger_process.stdin.write(b"quit\n")
+                self._trigger_process.stdin.flush()
+                self._trigger_process.wait(timeout=5)
+            except Exception:
+                try:
+                    self._trigger_process.kill()
+                except Exception:
+                    pass
+            self._trigger_process = None
+
         if self._replay_session is not None:
             try:
                 self._replay_session.close()
@@ -406,26 +420,126 @@ class RenderDocGrabber(FrameGrabber):
         )
         return rdc_path  # Return expected path; caller checks existence
 
-    def _trigger_via_renderdoccmd(self, rdc_path: Path) -> bool:
-        """Trigger capture via renderdoccmd triggercapture command.
+    def _ensure_trigger_process(self) -> bool:
+        """Start or verify the persistent triggercapture process (interactive mode)."""
+        if self._trigger_process is not None:
+            if self._trigger_process.poll() is None:
+                return True  # Still alive
+            logger.warning("[CAPTURE] Persistent trigger process died, restarting")
+            self._trigger_process = None
 
-        Uses RenderDoc's TargetControl API to connect to the injected game
-        and trigger a capture programmatically — no keypress simulation needed.
-        """
         try:
             rdoc_cmd = self._resolve_renderdoccmd()
         except FileNotFoundError:
             return False
 
-        # Remove stale capture_1.rdc from previous trigger (if any)
-        stale = self.capture_dir / "capture_1.rdc"
-        if stale.exists():
-            try:
-                stale.unlink()
-            except OSError:
-                pass
+        cmd = [
+            rdoc_cmd, "triggercapture",
+            "--interactive",
+            "--frames", "1",
+            "--out", str(self.capture_dir),
+        ]
+        logger.info(f"[CAPTURE] Starting persistent trigger process: {' '.join(cmd)}")
 
-        # Record existing .rdc files so we can detect the new one
+        self._trigger_process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Wait for READY signal
+        import select
+        import time as _time
+        deadline = _time.monotonic() + 30
+        while _time.monotonic() < deadline:
+            if self._trigger_process.poll() is not None:
+                stderr = self._trigger_process.stderr.read().decode("utf-8", errors="replace")
+                logger.error(f"[CAPTURE] Trigger process exited early: {stderr}")
+                self._trigger_process = None
+                return False
+            line = self._trigger_process.stdout.readline().decode("utf-8", errors="replace").strip()
+            if line:
+                logger.info(f"[CAPTURE trigger] {line}")
+            if "READY" in line:
+                logger.info("[CAPTURE] Persistent trigger process ready")
+                return True
+
+        logger.error("[CAPTURE] Trigger process did not become ready in 30s")
+        self._trigger_process.kill()
+        self._trigger_process = None
+        return False
+
+    def _trigger_via_renderdoccmd(self, rdc_path: Path) -> bool:
+        """Trigger capture via persistent renderdoccmd triggercapture process.
+
+        Uses interactive mode: keeps a single process alive with a persistent
+        TargetControl connection, sending 'trigger' commands via stdin.
+        Falls back to one-shot mode if interactive startup fails.
+        """
+        # Try interactive (persistent) mode first
+        if self._ensure_trigger_process():
+            return self._trigger_interactive(rdc_path)
+
+        # Fallback: one-shot mode
+        return self._trigger_oneshot(rdc_path)
+
+    def _trigger_interactive(self, rdc_path: Path) -> bool:
+        """Send a trigger command to the persistent process via stdin."""
+        proc = self._trigger_process
+        if proc is None or proc.poll() is not None:
+            return False
+
+        try:
+            cmd_line = f"trigger {rdc_path}\n"
+            proc.stdin.write(cmd_line.encode("utf-8"))
+            proc.stdin.flush()
+
+            # Read lines until we see OK or ERR
+            import time as _time
+            deadline = _time.monotonic() + 15
+            while _time.monotonic() < deadline:
+                line = proc.stdout.readline().decode("utf-8", errors="replace").strip()
+                if not line:
+                    if proc.poll() is not None:
+                        logger.error("[CAPTURE] Trigger process died during capture")
+                        self._trigger_process = None
+                        return False
+                    continue
+                logger.info(f"[CAPTURE trigger] {line}")
+                if line.startswith("OK"):
+                    if rdc_path.exists():
+                        return True
+                    # File might be at a different path, check capture dir
+                    latest = self._find_latest_rdc()
+                    if latest and latest != rdc_path:
+                        latest.rename(rdc_path)
+                        return True
+                    return rdc_path.exists()
+                if line.startswith("ERR"):
+                    return False
+
+            logger.warning("[CAPTURE] Interactive trigger timed out")
+            return False
+        except (BrokenPipeError, OSError) as e:
+            logger.warning(f"[CAPTURE] Interactive trigger pipe error: {e}")
+            self._trigger_process = None
+            return False
+
+    def _find_latest_rdc(self) -> Optional[Path]:
+        """Find the most recently modified .rdc file in capture_dir."""
+        rdcs = list(self.capture_dir.glob("*.rdc"))
+        if not rdcs:
+            return None
+        return max(rdcs, key=lambda p: p.stat().st_mtime)
+
+    def _trigger_oneshot(self, rdc_path: Path) -> bool:
+        """Fallback: trigger via one-shot renderdoccmd process."""
+        try:
+            rdoc_cmd = self._resolve_renderdoccmd()
+        except FileNotFoundError:
+            return False
+
         existing_rdcs = set(self.capture_dir.glob("*.rdc"))
 
         cmd = [
@@ -433,14 +547,10 @@ class RenderDocGrabber(FrameGrabber):
             "--frames", "1",
             "--out", str(self.capture_dir),
         ]
-        logger.debug(f"[CAPTURE] triggercapture command: {' '.join(cmd)}")
+        logger.debug(f"[CAPTURE] triggercapture oneshot: {' '.join(cmd)}")
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=15,
-            )
+            result = subprocess.run(cmd, capture_output=True, timeout=15)
             stdout = result.stdout.decode("utf-8", errors="replace").strip()
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
 
@@ -452,25 +562,19 @@ class RenderDocGrabber(FrameGrabber):
                     logger.warning(f"[CAPTURE trigger err] {line}")
 
             if result.returncode == 0:
-                # Find the new capture file
                 captured = self.capture_dir / "capture_1.rdc"
                 if captured.exists():
                     captured.rename(rdc_path)
-                    logger.info(f"[CAPTURE] Got capture via triggercapture → {rdc_path}")
                     return True
-                # Detect any new .rdc that wasn't there before
                 new_rdcs = set(self.capture_dir.glob("*.rdc")) - existing_rdcs
                 if new_rdcs:
                     newest = max(new_rdcs, key=lambda p: p.stat().st_mtime)
                     newest.rename(rdc_path)
-                    logger.info(f"[CAPTURE] Got new capture {newest.name} → {rdc_path}")
                     return True
-            else:
-                logger.debug(f"[CAPTURE] triggercapture returned {result.returncode}")
         except subprocess.TimeoutExpired:
-            logger.debug("[CAPTURE] triggercapture timed out")
+            logger.debug("[CAPTURE] triggercapture oneshot timed out")
         except Exception as e:
-            logger.debug(f"[CAPTURE] triggercapture failed: {e}")
+            logger.debug(f"[CAPTURE] triggercapture oneshot failed: {e}")
 
         return False
 
