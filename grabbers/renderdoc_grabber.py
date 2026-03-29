@@ -26,7 +26,7 @@ from typing import Optional, Set, Tuple
 
 import numpy as np
 
-from grabbers.base import FrameGrabber
+from grabbers.base import FrameData, FrameGrabber
 
 logger = logging.getLogger(__name__)
 
@@ -624,35 +624,43 @@ class RenderDocGrabber(FrameGrabber):
         Triggers a capture and replays it to extract RGB + depth.
         Prefers native bridge for replay, falls back to Python API.
         """
+        fd = self.capture_frame_ex()
+        return fd.rgb, fd.depth
+
+    def capture_frame_ex(self) -> FrameData:
+        """Capture all available buffers (RGB, depth, normal) via RenderDoc."""
         import time as _time
         t0 = _time.monotonic()
 
         rdc_path = self.trigger_capture()
         trigger_elapsed = _time.monotonic() - t0
-        logger.debug(f"[RDOC] Capture trigger took {trigger_elapsed:.3f}s → {rdc_path}")
+        logger.debug(f"[RDOC] Capture trigger took {trigger_elapsed:.3f}s -> {rdc_path}")
         if rdc_path is None:
             logger.warning("[RDOC] Capture trigger returned None")
-            return None, None
+            return FrameData()
 
         # Try native bridge replay first
         if self._use_native:
             try:
                 rgb, depth = self._replay_native(rdc_path)
                 if rgb is not None or depth is not None:
-                    return rgb, depth
+                    return FrameData(rgb=rgb, depth=depth)
             except Exception as e:
                 logger.warning(f"Native bridge replay failed: {e}")
 
-        # Fall back to Python API replay
-        logger.debug("[RDOC] Trying Python API replay fallback")
+        # Fall back to renderdoccmd exportframe (also exports normal.png)
+        logger.debug("[RDOC] Trying exportframe replay fallback")
         try:
-            rgb, depth = self._replay_python(rdc_path)
-            logger.debug(f"[RDOC] Python replay result: rgb={'ok' if rgb is not None else 'None'}, "
-                         f"depth={'ok' if depth is not None else 'None'}")
-            return rgb, depth
+            rgb, depth, normal = self._replay_python_ex(rdc_path)
+            logger.debug(
+                f"[RDOC] Export result: rgb={'ok' if rgb is not None else 'None'}, "
+                f"depth={'ok' if depth is not None else 'None'}, "
+                f"normal={'ok' if normal is not None else 'None'}"
+            )
+            return FrameData(rgb=rgb, depth=depth, normal=normal)
         except Exception as e:
             logger.warning(f"RenderDoc replay failed: {e}")
-            return None, None
+            return FrameData()
 
     def _replay_native(self, rdc_path: Path):
         """Replay using the native C++ bridge. Returns (rgb, depth)."""
@@ -688,26 +696,33 @@ class RenderDocGrabber(FrameGrabber):
             session.close()
 
     def _replay_python(self, rdc_path: Path):
+        """Replay using renderdoccmd exportframe. Returns (rgb, depth)."""
+        rgb, depth, _ = self._replay_python_ex(rdc_path)
+        return rgb, depth
+
+    def _replay_python_ex(self, rdc_path: Path):
         """Replay using renderdoccmd exportframe (custom C++ command).
 
         The renderdoc.pyd Python module crashes with ACCESS_VIOLATION when
         loaded outside of qrenderdoc, so we use our custom `exportframe`
         command compiled into renderdoccmd instead. It saves:
-          - rgb.png   (backbuffer, uint8)
-          - depth.png (depth target, normalized grayscale)
+          - rgb.png    (backbuffer, uint8)
+          - depth.png  (depth target, normalized grayscale)
+          - normal.png (world-space normals, auto-detected GBufferA)
 
         We then load these files back as numpy arrays.
+        Returns (rgb, depth, normal).
         """
         if not rdc_path.exists():
             logger.warning(f"[RDOC] Capture file does not exist: {rdc_path}")
-            return None, None
+            return None, None, None
 
         # Resolve renderdoccmd (same logic as setup)
         try:
             rdoc_cmd = self._resolve_renderdoccmd()
         except FileNotFoundError as e:
             logger.error(f"[RDOC] {e}")
-            return None, None
+            return None, None, None
 
         # Output directory for exported frames
         replay_out = self.capture_dir / f"_replay_{rdc_path.stem}"
@@ -743,18 +758,19 @@ class RenderDocGrabber(FrameGrabber):
                     logger.warning("[RDOC] exportframe found neither RGB nor depth in capture")
                 else:
                     logger.error(f"[RDOC] exportframe exited with code {result.returncode}")
-                    return None, None
+                    return None, None, None
 
         except subprocess.TimeoutExpired:
             logger.error("[RDOC] exportframe timed out (60s)")
-            return None, None
+            return None, None, None
         except Exception as e:
             logger.error(f"[RDOC] Failed to run exportframe: {e}")
-            return None, None
+            return None, None, None
 
-        # Load exported images (both RGB and depth are PNG now)
+        # Load exported images
         rgb = self._load_rgb_image(replay_out)
         depth = self._load_depth_image(replay_out)
+        normal = self._load_normal_image(replay_out)
 
         # Clean up temp exported files
         for f in replay_out.iterdir():
@@ -767,7 +783,7 @@ class RenderDocGrabber(FrameGrabber):
         except OSError:
             pass
 
-        return rgb, depth
+        return rgb, depth, normal
 
     def _load_rgb_image(self, directory: Path) -> Optional[np.ndarray]:
         """Load exported RGB image (png/jpg/bmp) as uint8 numpy array (H, W, 3)."""
@@ -830,6 +846,34 @@ class RenderDocGrabber(FrameGrabber):
                 return None
         except Exception as e:
             logger.error(f"[RDOC] Failed to load depth from {depth_file}: {e}")
+            return None
+
+    def _load_normal_image(self, directory: Path) -> Optional[np.ndarray]:
+        """Load exported normal map PNG as uint8 numpy array (H, W, 3)."""
+        normal_file = directory / "normal.png"
+        if not normal_file.exists():
+            logger.debug("[RDOC] No normal.png found in export directory")
+            return None
+
+        try:
+            from PIL import Image
+            img = Image.open(str(normal_file)).convert("RGB")
+            arr = np.array(img, dtype=np.uint8)
+            logger.debug(f"[RDOC] Loaded normal: {arr.shape[1]}x{arr.shape[0]} from normal.png")
+            return arr
+        except ImportError:
+            try:
+                import imageio.v3 as iio
+                arr = iio.imread(str(normal_file))
+                if arr.ndim == 3 and arr.shape[2] == 4:
+                    arr = arr[:, :, :3]
+                logger.debug(f"[RDOC] Loaded normal: {arr.shape[1]}x{arr.shape[0]} (imageio)")
+                return arr.astype(np.uint8)
+            except ImportError:
+                logger.error("[RDOC] Neither Pillow nor imageio installed")
+                return None
+        except Exception as e:
+            logger.error(f"[RDOC] Failed to load normal from {normal_file}: {e}")
             return None
 
     def _find_renderdoc_dirs(self):

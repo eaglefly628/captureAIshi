@@ -199,6 +199,8 @@ class TestFullPipeline:
 
     def test_capture_with_mock_driver_and_grabber(self, tmp_path):
         """Full pipeline should call driver.set_pose and grabber.capture_frame."""
+        from grabbers.base import FrameData
+
         args = Namespace(
             volume_min=[0, 0, 0],
             volume_max=[2, 0, 0],
@@ -208,6 +210,8 @@ class TestFullPipeline:
             cone_angle=0,
             cone_samples=8,
             cone_rings=2,
+            fov=90.0,
+            aspect=16.0 / 9.0,
             driver="manual",
             driver_host="127.0.0.1",
             driver_port=9999,
@@ -220,10 +224,11 @@ class TestFullPipeline:
         )
 
         mock_grabber = MagicMock()
-        mock_grabber.capture_frame.return_value = (
-            np.zeros((4, 4, 3), dtype=np.uint8),
-            np.zeros((4, 4), dtype=np.float32),
+        mock_grabber.capture_frame_ex.return_value = FrameData(
+            rgb=np.zeros((4, 4, 3), dtype=np.uint8),
+            depth=np.zeros((4, 4), dtype=np.float32),
         )
+        mock_grabber.save_frame.return_value = {"rgb": "test.png", "depth": "test_d.png"}
 
         # Mock create_driver to return auto_confirm manual driver
         from drivers.manual import ManualDriver
@@ -235,12 +240,13 @@ class TestFullPipeline:
 
         # Grabber should have been set up and frames captured
         mock_grabber.setup.assert_called_once()
-        assert mock_grabber.capture_frame.call_count > 0
+        assert mock_grabber.capture_frame_ex.call_count > 0
         mock_grabber.teardown.assert_called_once()
 
     def test_stop_event_halts_capture(self, tmp_path):
         """Setting stop_event should halt the capture loop early."""
         import threading
+        from grabbers.base import FrameData
 
         args = Namespace(
             volume_min=[-5, 0, -5],
@@ -251,6 +257,8 @@ class TestFullPipeline:
             cone_angle=0,
             cone_samples=8,
             cone_rings=2,
+            fov=90.0,
+            aspect=16.0 / 9.0,
             driver="manual",
             driver_host="127.0.0.1",
             driver_port=9999,
@@ -264,15 +272,16 @@ class TestFullPipeline:
         )
 
         call_count = 0
-        def mock_capture():
+        def mock_capture_ex():
             nonlocal call_count
             call_count += 1
             if call_count >= 3:
                 args._stop_event.set()
-            return (None, None)
+            return FrameData()
 
         mock_grabber = MagicMock()
-        mock_grabber.capture_frame.side_effect = mock_capture
+        mock_grabber.capture_frame_ex.side_effect = mock_capture_ex
+        mock_grabber.save_frame.return_value = {}
 
         from drivers.manual import ManualDriver
         mock_driver = ManualDriver(auto_confirm=True)
@@ -285,4 +294,4 @@ class TestFullPipeline:
         total_poses = json.loads(
             (tmp_path / "output" / "poses.json").read_text()
         )
-        assert mock_grabber.capture_frame.call_count < len(total_poses)
+        assert mock_grabber.capture_frame_ex.call_count < len(total_poses)

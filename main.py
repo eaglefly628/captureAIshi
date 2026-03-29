@@ -12,6 +12,7 @@ import json
 import logging
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -174,9 +175,13 @@ def run_capture(args):
                        f"waypoint_count={len(waypoints)})")
 
     # ── Step 3: Generate all camera poses (with cone rotation) ──
+    spline_mode = "catmull-rom" if args.smooth else "manual"
+    fov_v = getattr(args, 'fov', 90.0)
+    aspect = getattr(args, 'aspect', 16.0 / 9.0)
+
     t0 = _time.monotonic()
     all_poses = []
-    for wp in waypoints:
+    for wp_idx, wp in enumerate(waypoints):
         if args.cone_angle > 0:
             poses = generate_cone_poses(
                 wp,
@@ -184,12 +189,22 @@ def run_capture(args):
                 num_ring_samples=args.cone_samples,
                 num_rings=args.cone_rings,
             )
+            for ci, pose in enumerate(poses):
+                pose.fov = fov_v
+                pose.aspect = aspect
+                pose.point_index = wp_idx
+                pose.spline_mode = spline_mode
+                pose.view_name = f"cone{ci}"
             all_poses.extend(poses)
         else:
             all_poses.append(CameraPose(
                 position=wp.position,
                 rotation=np.array([0.0, 0.0, 0.0]),
-                fov=wp.fov,
+                fov=fov_v,
+                aspect=aspect,
+                view_name="center",
+                point_index=wp_idx,
+                spline_mode=spline_mode,
             ))
     elapsed = _time.monotonic() - t0
 
@@ -338,6 +353,12 @@ def run_capture(args):
         frames_no_rgb = 0
         frames_no_depth = 0
         frames_failed = 0
+        trajectory = []  # Trajectory entries matching user's JSON schema
+
+        # Session prefix for filenames: project_timestamp
+        session_prefix = getattr(args, 'session_prefix', '')
+        if not session_prefix:
+            session_prefix = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
 
         for i, pose in enumerate(all_poses):
             # Check stop event (from GUI or external signal)
@@ -379,10 +400,19 @@ def run_capture(args):
             if streaming_enabled:
                 driver.wait_for_streaming(streaming_settle)
 
+            # Build filename base: {session_prefix}_{viewName}
+            base_name = f"{session_prefix}_{pose.view_name}"
+            rgb_filename = f"{base_name}.png"
+            depth_filename = f"{base_name}_d.png"
+
             if grabber_ctx:
+                rgb, depth, normal = None, None, None
                 try:
                     t_grab = _time.monotonic()
-                    rgb, depth = grabber_ctx.capture_frame()
+                    frame_data = grabber_ctx.capture_frame_ex()
+                    rgb = frame_data.rgb
+                    depth = frame_data.depth
+                    normal = frame_data.normal
                     grab_elapsed = _time.monotonic() - t_grab
 
                     rgb_info = f"{rgb.shape[1]}x{rgb.shape[0]}" if rgb is not None else "None"
@@ -401,15 +431,26 @@ def run_capture(args):
                 except Exception as e:
                     logging.error(f"[POSE {i+1}] Frame capture failed: {e}")
                     frames_failed += 1
-                    rgb, depth = None, None
 
                 try:
                     t_save = _time.monotonic()
-                    grabber_ctx.save_frame(rgb, depth, output_dir / "frames", i)
+                    saved = grabber_ctx.save_frame(
+                        rgb, depth, output_dir / "frames", i,
+                        base_name=base_name, normal=normal,
+                    )
+                    # Use actual saved filenames if available
+                    rgb_filename = saved.get("rgb", rgb_filename)
+                    depth_filename = saved.get("depth", depth_filename)
                     save_elapsed = _time.monotonic() - t_save
                     logging.debug(f"[POSE {i+1}] Frame saved in {save_elapsed:.3f}s")
                 except Exception as e:
                     logging.error(f"[POSE {i+1}] Frame save failed: {e}")
+
+            # Append trajectory entry
+            trajectory.append(pose.to_trajectory_dict(
+                rgb_filename=rgb_filename,
+                depth_filename=depth_filename,
+            ))
 
             # Progress logging every 10%
             if len(all_poses) >= 10 and (i + 1) % max(1, len(all_poses) // 10) == 0:
@@ -455,6 +496,14 @@ def run_capture(args):
     except OSError as e:
         logging.warning(f"[IO] Failed to update poses.json: {e}")
 
+    # Write trajectory JSON in the user-specified camera parameter format
+    trajectory_file = output_dir / "trajectory.json"
+    try:
+        trajectory_file.write_text(json.dumps(trajectory, indent=2))
+        logging.info(f"Trajectory saved to {trajectory_file} ({len(trajectory)} entries)")
+    except OSError as e:
+        logging.warning(f"[IO] Failed to write trajectory.json: {e}")
+
     elapsed_total = _time.monotonic() - t_start
     logging.info(
         f"Capture complete! {len(all_poses)} poses in {elapsed_total:.1f}s "
@@ -490,6 +539,10 @@ def main():
     parser.add_argument("--cone-angle", type=float, default=0, help="Cone half-angle in degrees (0=disabled)")
     parser.add_argument("--cone-samples", type=int, default=8, help="Samples per cone ring")
     parser.add_argument("--cone-rings", type=int, default=2, help="Number of cone rings")
+
+    # Camera intrinsics
+    parser.add_argument("--fov", type=float, default=90.0, help="Vertical FOV in degrees")
+    parser.add_argument("--aspect", type=float, default=16.0/9.0, help="Aspect ratio (width/height)")
 
     # Driver
     parser.add_argument("--driver", choices=["manual", "ue5", "unity", "cheatengine"], default="manual")

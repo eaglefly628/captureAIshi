@@ -1146,6 +1146,7 @@ public:
 
     bool foundRGB = false;
     bool foundDepth = false;
+    bool foundNormal = false;
     uint32_t swapWidth = 0, swapHeight = 0;
     int colorTargetIdx = 0;
 
@@ -1253,6 +1254,42 @@ public:
         }
       }
 
+      // Auto-detect and export Normal buffer (GBufferA).
+      // UE5: WorldNormal is typically RGB10A2 or RGBA8 at viewport resolution,
+      // the first 3-component ColorTarget that is NOT the SwapBuffer.
+      // We identify it by: ColorTarget flag, viewport resolution, 3+ components,
+      // and NOT being the swap buffer.
+      if(!foundNormal &&
+         (flags & (uint32_t)TextureCategory::ColorTarget) &&
+         !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
+         swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight &&
+         tex.format.compCount >= 3)
+      {
+        // The first non-swap ColorTarget at viewport res with 3+ components
+        // is very likely the WorldNormal (GBufferA) in UE5/Unity HDRP.
+        std::string normalPath = outdir + sep + "normal.png";
+        TextureSave texsave;
+        texsave.resourceId = tex.resourceId;
+        texsave.mip = 0;
+        texsave.slice.sliceIndex = 0;
+        texsave.alpha = AlphaMapping::Discard;
+        texsave.destType = FileType::PNG;
+
+        ResultDetails saveRes = controller->SaveTexture(texsave, conv(normalPath));
+        if(saveRes.OK())
+        {
+          std::cout << "OK normal [" << i << "] " << tex.width << "x" << tex.height
+                    << " fmt=" << (uint32_t)tex.format.type
+                    << " comp=" << tex.format.compCount
+                    << " -> " << normalPath << std::endl;
+          foundNormal = true;
+        }
+        else
+        {
+          std::cerr << "Failed to save normal: " << saveRes.Message() << std::endl;
+        }
+      }
+
       // Optional: export all ColorTargets matching SwapBuffer resolution (--dump-all)
       if(dumpAll &&
          (flags & (uint32_t)TextureCategory::ColorTarget) &&
@@ -1283,6 +1320,7 @@ public:
 
     std::cout << "Exported: rgb=" << (foundRGB ? "yes" : "no")
               << " depth=" << (foundDepth ? "yes" : "no")
+              << " normal=" << (foundNormal ? "yes" : "no")
               << " colortargets=" << colorTargetIdx << std::endl;
 
     controller->Shutdown();
