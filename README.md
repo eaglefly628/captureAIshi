@@ -29,9 +29,10 @@ python main.py --driver unity --grabber renderdoc --unity-host 127.0.0.1 --unity
 
 | Driver | Engine | Method |
 |--------|--------|--------|
-| `ue5` | UE5 | Console command injection via TCP (requires UUU) |
+| `ue5` | UE5 | Console command injection via TCP (bridge DLL, use --auto-inject) |
 | `unity` | Unity | BepInEx plugin TCP socket |
 | `cheatengine` | Any | Memory write via Cheat Engine |
+| `memory` | Any | External process memory read/write (anti-cheat safe) |
 | `manual` | Any | Print pose, wait for user |
 
 ## Unity Companion Plugin
