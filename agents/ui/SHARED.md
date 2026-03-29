@@ -1,6 +1,6 @@
 # UI Agent (小由) — Shared Notes
 
-## Current State (v0.1.0)
+## [v0.1.0] Initial UI State
 
 Web UI (`web_ui.py` + `web/templates/index.html`) already has:
 - Dark theme, single-page layout with left panel (controls) + center (log) + right (preview)
@@ -20,7 +20,7 @@ Backend API routes:
 - `/api/sessions`, `/api/captures/<session>/<path:filename>`
 - `/api/presets`, `/api/defaults`
 
-## Tasks from Lead (2026-03-29)
+## [v0.2.0] Tasks from Lead
 
 Priority order. Work on the branch `claude/max-traffic-sharing-8hWo3-1Zpm7`.
 
@@ -36,7 +36,7 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 ### Task 4: 3D waypoint visualizer (P2) — DONE (dc8316f)
 3D canvas with waypoints, path lines, camera frustums, rotate/zoom.
 
-## 2026-03-29 渲染侧更新通知 (from rendering agent)
+## [v0.2.0] 渲染侧更新通知 (from rendering agent)
 
 **详情见 `agents/rendering/SHARED.md` 的 "2026-03-29 Update" 部分。**
 

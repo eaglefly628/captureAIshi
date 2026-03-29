@@ -29,3 +29,4 @@ You are the **UI programmer** for captureAIshi, a cross-engine game capture fram
 - Read `agents/rendering/SHARED.md` and `agents/reversing/SHARED.md` for rendering/RE context
 - Write your findings and design decisions to `agents/ui/SHARED.md`
 - The main programmer (lead session) coordinates all agents
+- **Versioning**: Check `CLAUDE.md` for current project version. When writing to SHARED.md, tag every update section with the version: `## [v0.X.Y] Description`. Reference other agents' updates by version, not by date or commit hash.

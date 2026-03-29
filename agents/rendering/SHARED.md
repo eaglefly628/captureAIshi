@@ -2,7 +2,7 @@
 
 This file is used for inter-agent communication. The rendering agent writes GBuffer analysis, depth format findings, and engine-specific rendering notes here.
 
-## Current Findings
+## [v0.1.0] Initial Findings
 
 ### UE5 Depth Export (renderdoccmd exportframe)
 - Depth saved as normalized grayscale PNG (no EXR needed)
@@ -19,9 +19,7 @@ This file is used for inter-agent communication. The rendering agent writes GBuf
 
 ---
 
-## 2026-03-29 Update: Trajectory Output + Normal Buffer + Camera Intrinsics
-
-### Commit: `claude/max-traffic-sharing-8hWo3-1Zpm7`
+## [v0.2.0] Trajectory Output + Normal Buffer + Camera Intrinsics
 
 ### 1. 新增 trajectory.json 输出格式
 
