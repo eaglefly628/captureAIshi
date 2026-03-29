@@ -1,0 +1,25 @@
+{
+  "_comment": "Camera memory offsets template for ExternalMemoryDriver. Use Cheat Engine to find these per-game.",
+  "_howto": [
+    "1. Open Cheat Engine, attach to game process",
+    "2. Find camera X coordinate (float scan: changed/unchanged)",
+    "3. Y and Z are typically at +0x4 and +0x8 from X",
+    "4. Find pitch/yaw/roll similarly (rotate camera, scan for changed float)",
+    "5. FOV is usually near the rotation struct",
+    "6. Calculate offset = address - module_base_address",
+    "7. Fill in the offsets below as hex strings"
+  ],
+  "process_name": "MyGame-Win64-Shipping.exe",
+  "base_module": "MyGame-Win64-Shipping.exe",
+  "coord_system": "ue5",
+  "camera": {
+    "x": "0x04F3A120",
+    "y": "+0x4",
+    "z": "+0x8",
+    "pitch": "0x04F3A130",
+    "yaw": "+0x4",
+    "roll": "+0x8",
+    "fov": "0x04F3A140"
+  },
+  "game_speed": "0x04F3B000"
+}

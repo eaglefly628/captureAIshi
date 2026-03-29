@@ -61,6 +61,12 @@ def create_driver(args):
             host=args.driver_host,
             port=args.driver_port,
         )
+    elif args.driver == "memory":
+        from drivers.external_memory import ExternalMemoryDriver
+        logging.debug(f"[INIT] ExternalMemory offsets={args.memory_offsets}")
+        return ExternalMemoryDriver(
+            offsets_file=args.memory_offsets,
+        )
     else:
         raise ValueError(f"Unknown driver: {args.driver}")
 
@@ -606,10 +612,19 @@ def main():
     parser.add_argument("--aspect", type=float, default=16.0/9.0, help="Aspect ratio (width/height)")
 
     # Driver
-    parser.add_argument("--driver", choices=["manual", "ue5", "unity", "cheatengine"], default="manual")
+    parser.add_argument(
+        "--driver",
+        choices=["manual", "ue5", "unity", "cheatengine", "memory"],
+        default="manual",
+    )
     parser.add_argument("--driver-host", default="127.0.0.1")
     parser.add_argument("--driver-port", type=int, default=9999)
     parser.add_argument("--ce-mode", choices=["socket", "file"], default="file")
+    parser.add_argument(
+        "--memory-offsets", type=str, default="",
+        help="JSON file with camera memory offsets (for --driver memory). "
+             "Use Cheat Engine to find offsets per game.",
+    )
 
     # Rendering quality (UE5)
     parser.add_argument(
