@@ -450,7 +450,7 @@ def run_capture(args):
                 driver.wait_for_streaming(streaming_settle)
 
             # Build filename base: {session_prefix}_{viewName}
-            base_name = f"{session_prefix}_{pose.view_name}"
+            base_name = f"{session_prefix}_p{pose.point_index}_{pose.view_name}"
             rgb_filename = f"{base_name}.png"
             depth_filename = f"{base_name}_d.png"
 
