@@ -26,6 +26,7 @@
 #include "renderdoccmd.h"
 #include <app/renderdoc_app.h>
 #include <replay/version.h>
+#include <chrono>
 #include <string>
 
 rdcstr conv(const std::string &s)
@@ -1218,6 +1219,41 @@ public:
       }
     }
 
+    // Diagnostic: list all ColorTargets at viewport resolution
+    if(swapWidth > 0)
+    {
+      std::cout << "GBuffer scan (ColorTargets at " << swapWidth << "x" << swapHeight << "):" << std::endl;
+      for(size_t i = 0; i < textures.size(); i++)
+      {
+        const TextureDescription &tex = textures[i];
+        uint32_t flags = (uint32_t)tex.creationFlags;
+        if(tex.width == swapWidth && tex.height == swapHeight &&
+           (flags & ((uint32_t)TextureCategory::ColorTarget | (uint32_t)TextureCategory::DepthTarget)))
+        {
+          const char *catName = "ColorTarget";
+          if(flags & (uint32_t)TextureCategory::DepthTarget)
+            catName = "DepthTarget";
+          if(flags & (uint32_t)TextureCategory::SwapBuffer)
+            catName = "SwapBuffer";
+
+          // CompType names for readability
+          const char *compNames[] = {
+            "Typeless", "UNorm", "SNorm", "UInt", "SInt",
+            "Float", "UNormSRGB", "Depth"
+          };
+          uint32_t ctIdx = (uint32_t)tex.format.compType;
+          const char *compName = (ctIdx < 8) ? compNames[ctIdx] : "?";
+
+          std::cout << "  [" << i << "] " << catName
+                    << " compType=" << compName
+                    << " compCount=" << (uint32_t)tex.format.compCount
+                    << " compByteWidth=" << (uint32_t)tex.format.compByteWidth
+                    << " fmtType=" << (uint32_t)tex.format.type
+                    << std::endl;
+        }
+      }
+    }
+
     // Second pass: export DepthTarget and all ColorTargets matching SwapBuffer resolution
     for(size_t i = 0; i < textures.size(); i++)
     {
@@ -1422,11 +1458,13 @@ public:
                       rdcstr &capturePath, uint32_t &highestSeenId)
   {
     int noopsSinceLastCapture = 0;
-    int timeoutMs = 10000;
-    int elapsedMs = 0;
     bool gotNew = false;
 
-    while(elapsedMs < timeoutMs)
+    // Use real wall-clock time for timeout (ReceiveMessage blocks)
+    auto startTime = std::chrono::steady_clock::now();
+    auto deadline = startTime + std::chrono::seconds(10);
+
+    while(std::chrono::steady_clock::now() < deadline)
     {
       TargetControlMessage msg = tc->ReceiveMessage(NULL);
 
