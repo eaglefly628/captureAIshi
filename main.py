@@ -44,6 +44,8 @@ def create_driver(args):
         return UE5ConsoleDriver(
             host=args.driver_host,
             port=args.driver_port,
+            capture_resolution=getattr(args, 'capture_resolution', None),
+            disable_upscaler=not getattr(args, 'no_disable_upscaler', False),
         )
     elif args.driver == "unity":
         from drivers.unity_socket import UnitySocketDriver
@@ -549,6 +551,16 @@ def main():
     parser.add_argument("--driver-host", default="127.0.0.1")
     parser.add_argument("--driver-port", type=int, default=9999)
     parser.add_argument("--ce-mode", choices=["socket", "file"], default="file")
+
+    # Rendering quality (UE5)
+    parser.add_argument(
+        "--capture-resolution", type=str, default=None,
+        help="Force game render resolution (e.g. '3840x2160' for 4K). UE5 only.",
+    )
+    parser.add_argument(
+        "--no-disable-upscaler", action="store_true",
+        help="Keep DLSS/FSR/TSR enabled (default: disabled for pixel-aligned buffers)",
+    )
 
     # Grabber
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")

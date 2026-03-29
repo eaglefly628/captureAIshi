@@ -51,6 +51,8 @@ class UE5ConsoleDriver(CameraDriver):
         streaming_pool_mb: int = 4096,
         teleport_player: bool = True,
         force_texture_streaming: bool = True,
+        capture_resolution: Optional[str] = None,
+        disable_upscaler: bool = True,
     ):
         self.host = host
         self.port = port
@@ -59,6 +61,8 @@ class UE5ConsoleDriver(CameraDriver):
         self.streaming_pool_mb = streaming_pool_mb
         self.teleport_player = teleport_player
         self.force_texture_streaming = force_texture_streaming
+        self.capture_resolution = capture_resolution  # e.g. "3840x2160"
+        self.disable_upscaler = disable_upscaler
         self._socket: Optional[socket.socket] = None
         self._streaming_initialized = False
         self._last_streaming_pos = None
@@ -91,6 +95,8 @@ class UE5ConsoleDriver(CameraDriver):
             # Restore default streaming settings
             if self._streaming_initialized:
                 self._restore_streaming_defaults()
+            # Restore rendering/upscaler settings
+            self._restore_rendering_defaults()
             try:
                 self._socket.close()
             except OSError as e:
@@ -224,6 +230,77 @@ class UE5ConsoleDriver(CameraDriver):
                 logger.warning(f"[STREAMING] Failed to restore '{cmd}': {e}")
 
     def enable_debug_camera(self) -> None:
-        """Toggle the debug camera mode."""
+        """Toggle the debug camera mode and configure rendering for capture."""
         self.send_command("ToggleDebugCamera")
         time.sleep(0.5)
+        self._configure_rendering_for_capture()
+
+    def _configure_rendering_for_capture(self) -> None:
+        """Disable DLSS/FSR/TSR and set resolution for pixel-aligned buffer output.
+
+        AI training data requires all buffers (RGB, Depth, Normal) at the same
+        resolution with pixel-perfect alignment. Upscalers like DLSS/FSR render
+        GBuffers at a lower internal resolution and only upscale the final RGB,
+        breaking buffer alignment. This method disables all upscaling so every
+        buffer is rendered at the full output resolution.
+        """
+        if not self.disable_upscaler:
+            return
+
+        logger.info("[RENDER] Configuring rendering for capture (disabling upscalers)")
+
+        cmds = [
+            # DLSS (NVIDIA NGX)
+            ("r.NGX.Enable 0", "disable NGX framework"),
+            ("r.NGX.DLSS.Enable 0", "disable DLSS"),
+            ("r.NGX.DLSS.Quality.Mode -1", "disable DLSS quality mode"),
+
+            # FSR (AMD FidelityFX)
+            ("r.FidelityFX.FSR3.Enabled 0", "disable FSR3"),
+            ("r.FidelityFX.FSR2.Enabled 0", "disable FSR2"),
+
+            # UE5 Temporal Super Resolution (TSR)
+            ("r.TemporalAA.Upscaler 0", "disable TSR, fall back to native TAA"),
+            ("r.AntiAliasingMethod 2", "use TAA (method 2)"),
+
+            # Force native resolution rendering (no internal downscale)
+            ("r.ScreenPercentage 100", "render at 100% of output resolution"),
+
+            # Disable dynamic resolution scaling
+            ("r.DynamicRes.OperationMode 0", "disable dynamic resolution"),
+        ]
+
+        for cmd, desc in cmds:
+            try:
+                self.send_command(cmd)
+            except Exception as e:
+                logger.debug(f"[RENDER] {desc} skipped: {e}")
+
+        # Set capture resolution if specified
+        if self.capture_resolution:
+            try:
+                self.send_command(f"r.SetRes {self.capture_resolution}w")
+                logger.info(f"[RENDER] Resolution set to {self.capture_resolution} (windowed)")
+            except Exception as e:
+                logger.warning(f"[RENDER] Failed to set resolution: {e}")
+
+        logger.info("[RENDER] Upscaler disabled, native resolution rendering active")
+
+    def _restore_rendering_defaults(self) -> None:
+        """Restore default rendering/upscaler settings."""
+        if not self.disable_upscaler:
+            return
+
+        logger.info("[RENDER] Restoring default rendering settings")
+        restore_cmds = [
+            "r.NGX.Enable 1",
+            "r.NGX.DLSS.Enable 1",
+            "r.TemporalAA.Upscaler 1",
+            "r.ScreenPercentage 100",
+            "r.DynamicRes.OperationMode 2",
+        ]
+        for cmd in restore_cmds:
+            try:
+                self.send_command(cmd)
+            except Exception as e:
+                logger.debug(f"[RENDER] Restore '{cmd}' skipped: {e}")
