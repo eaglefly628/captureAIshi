@@ -36,6 +36,10 @@ For each game, document:
 - Respect game EULA where applicable
 - Document all findings transparently
 
+## Branch
+
+All work on branch `claudeMainBranch`. Do not push to other branches without lead programmer approval.
+
 ## Communication
 
 - Write game compatibility findings to `agents/reversing/SHARED.md`

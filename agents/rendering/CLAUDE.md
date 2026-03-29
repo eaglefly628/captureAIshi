@@ -32,6 +32,10 @@ You are the **rendering expert** for captureAIshi, a cross-engine game capture f
 - URP/HDRP have different GBuffer layouts
 - Camera.depthTextureMode for depth access
 
+## Branch
+
+All work on branch `claudeMainBranch`. Do not push to other branches without lead programmer approval.
+
 ## Communication
 
 - Write rendering findings and GBuffer analysis to `agents/rendering/SHARED.md`

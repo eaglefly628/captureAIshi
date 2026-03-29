@@ -24,6 +24,10 @@ You are the **UI programmer** for captureAIshi, a cross-engine game capture fram
 - No heavy JS frameworks — keep it vanilla JS or lightweight (Alpine.js at most)
 - Follow the project's existing Python conventions (Black, pathlib, type hints)
 
+## Branch
+
+All work on branch `claudeMainBranch`. Do not push to other branches without lead programmer approval.
+
 ## Communication
 
 - Read `agents/rendering/SHARED.md` and `agents/reversing/SHARED.md` for rendering/RE context
