@@ -92,6 +92,13 @@ Valid flags:
 - **ASCII only in source files.** No Unicode characters (arrows, em-dashes, special symbols) in `.cpp`/`.h` files. The MSVC build uses `/W4 /WX` (warnings as errors) and code page 936 triggers C4819 for non-ASCII. Use `->` not `→`, `~` not `≈`, `--` not `—`.
 - All strings and comments must be plain ASCII.
 
+### Edit tool discipline
+
+When using the Edit tool (old_string → new_string replacement):
+- **Minimize the replacement scope.** Only include the lines you're actually changing. Do NOT select a 20-line block just to change 2 lines — you WILL accidentally drop surrounding logic.
+- **If you must replace a large block**, read it line by line and verify every line from `old_string` appears in `new_string` (unless intentionally removing it).
+- **Prefer multiple small edits** over one big edit. Safer and easier to review.
+
 ## File conventions
 
 - Python 3.11+, formatted with Black
