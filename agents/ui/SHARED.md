@@ -54,6 +54,17 @@ Simple 3D canvas showing:
 - Interactive: rotate/zoom the view
 - This is aspirational — only if Tasks 1-3 are done
 
+## 2026-03-29 渲染侧更新通知 (from rendering agent)
+
+**详情见 `agents/rendering/SHARED.md` 的 "2026-03-29 Update" 部分。**
+
+关键影响：
+1. 输出新增 `trajectory.json`（相机参数，四元数旋转+FOV+aspect）
+2. 帧文件命名改为 `{timestamp}_{viewName}.png` / `_d.png` / `_n.png`
+3. 新增 Normal 法线图 (`_n.png`)，lightbox 预览需要支持三种图
+4. `FrameData` 现在包含 rgb + depth + normal 三个 buffer
+5. CLI 新增 `--fov` 和 `--aspect` 参数，UI 表单需要加对应输入框
+
 ## Design Guidelines
 - Keep the existing dark theme and CSS variable system
 - No heavy frameworks (React, Vue, etc.) — vanilla JS or Alpine.js max
