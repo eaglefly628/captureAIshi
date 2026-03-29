@@ -219,6 +219,7 @@ class TestFullPipeline:
             grabber="screenshot",
             target_exe=None,
             no_hide_ui=True,
+            no_batch_export=True,
             output_dir=tmp_path / "output",
             dry_run=False,
         )
@@ -266,6 +267,7 @@ class TestFullPipeline:
             grabber="screenshot",
             target_exe=None,
             no_hide_ui=True,
+            no_batch_export=True,
             output_dir=tmp_path / "output",
             dry_run=False,
             _stop_event=threading.Event(),

@@ -409,7 +409,7 @@ def run_capture(args):
         if not session_prefix:
             session_prefix = datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
 
-        batch_export = getattr(args, 'batch_export', False) and grabber_ctx is not None
+        batch_export = not getattr(args, 'no_batch_export', False) and grabber_ctx is not None
         rdc_paths = []  # For batch mode: collect .rdc paths
         base_names = []  # For batch mode: parallel list of base_names
 
@@ -691,9 +691,9 @@ def main():
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
     parser.add_argument(
-        "--batch-export", action="store_true",
-        help="Two-phase capture: trigger all frames first, then batch export. "
-             "Much faster for RenderDoc (avoids per-frame process startup).",
+        "--no-batch-export", action="store_true",
+        help="Disable batch export: export each frame immediately after capture. "
+             "Slower but allows inspecting frames during capture.",
     )
 
     # Bridge injection

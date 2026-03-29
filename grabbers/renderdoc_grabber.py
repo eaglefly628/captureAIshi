@@ -496,7 +496,10 @@ class RenderDocGrabber(FrameGrabber):
             proc.stdin.write(cmd_line.encode("utf-8"))
             proc.stdin.flush()
 
-            # Read lines until we see OK or ERR
+            # Read lines until we see the final "OK id=..." or "ERR ..."
+            # IMPORTANT: match "OK id=" specifically, NOT just "OK".
+            # The C++ process also prints "OK copied -> ..." and "OK rgb ..."
+            # which would cause premature return and desync the stdin/stdout.
             import time as _time
             deadline = _time.monotonic() + 15
             while _time.monotonic() < deadline:
@@ -507,17 +510,18 @@ class RenderDocGrabber(FrameGrabber):
                         self._trigger_process = None
                         return False
                     continue
-                logger.info(f"[CAPTURE trigger] {line}")
-                if line.startswith("OK"):
+                logger.debug(f"[CAPTURE trigger] {line}")
+                if line.startswith("OK id="):
+                    logger.info(f"[CAPTURE] {line}")
                     if rdc_path.exists():
                         return True
-                    # File might be at a different path, check capture dir
                     latest = self._find_latest_rdc()
                     if latest and latest != rdc_path:
                         latest.rename(rdc_path)
                         return True
                     return rdc_path.exists()
                 if line.startswith("ERR"):
+                    logger.warning(f"[CAPTURE] {line}")
                     return False
 
             logger.warning("[CAPTURE] Interactive trigger timed out")
