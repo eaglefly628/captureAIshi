@@ -1036,6 +1036,7 @@ private:
   std::string outdir;
   std::string format;
   bool dumpAll;
+  bool exportNormal;
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1046,6 +1047,7 @@ public:
     parser.add<std::string>("format", 'f', "Image format: png, jpg, exr, hdr, bmp, tga", false,
                             "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
     parser.add("dump-all", '\0', "Also export all ColorTargets matching viewport resolution");
+    parser.add("normal", '\0', "Also export the normal buffer (GBufferA)");
   }
   virtual const char *Description()
   {
@@ -1070,6 +1072,7 @@ public:
     outdir = parser.get<std::string>("out");
     format = parser.get<std::string>("format");
     dumpAll = parser.exist("dump-all");
+    exportNormal = parser.exist("normal");
     return true;
   }
 
@@ -1292,7 +1295,7 @@ public:
       // the first 3-component ColorTarget that is NOT the SwapBuffer.
       // We identify it by: ColorTarget flag, viewport resolution, 3+ components,
       // and NOT being the swap buffer.
-      if(!foundNormal &&
+      if(exportNormal && !foundNormal &&
          (flags & (uint32_t)TextureCategory::ColorTarget) &&
          !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
          swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight &&

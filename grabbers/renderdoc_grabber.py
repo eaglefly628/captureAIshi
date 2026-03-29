@@ -61,6 +61,7 @@ class RenderDocGrabber(FrameGrabber):
         ui_extra_keywords: Optional[list] = None,
         startup_timeout: float = 60.0,
         wait_for_port: Optional[int] = None,
+        export_normal: bool = False,
     ):
         """
         Args:
@@ -89,6 +90,7 @@ class RenderDocGrabber(FrameGrabber):
         self.wait_for_port = wait_for_port
         self._process = None
         self._capture_count = 0
+        self.export_normal = export_normal
         self._use_native = _HAS_NATIVE_BRIDGE
         self._replay_session = None  # Persistent native ReplaySession
         self._trigger_process = None  # Persistent triggercapture process (interactive mode)
@@ -126,7 +128,6 @@ class RenderDocGrabber(FrameGrabber):
             cmd = [
                 rdoc_cmd, "capture",
                 "--opt-hook-children",
-                "--opt-ref-all-resources",
                 "--capture-file", str(self.capture_dir / "frame"),
                 "--wait-for-exit",
                 self.target_exe,
@@ -763,7 +764,10 @@ class RenderDocGrabber(FrameGrabber):
             rdoc_cmd, "exportframe",
             "--out", str(export_out),
             "--format", "png",
-        ] + [str(p) for p in valid_paths]
+        ]
+        if self.export_normal:
+            cmd.append("--normal")
+        cmd += [str(p) for p in valid_paths]
 
         logger.info(f"[RDOC] Batch exporting {len(valid_paths)} captures...")
         logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
@@ -945,6 +949,8 @@ class RenderDocGrabber(FrameGrabber):
             "--out", str(replay_out),
             "--format", "png",
         ]
+        if self.export_normal:
+            cmd.append("--normal")
         logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
 
         try:
