@@ -297,9 +297,22 @@ def run_capture(args):
     # Actually, restructure: use try/finally for proper cleanup ordering
     driver_connected = False
     try:
-        driver.connect()
-        driver_connected = True
-        logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
+        try:
+            driver.connect()
+            driver_connected = True
+            logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
+        except (ConnectionRefusedError, ConnectionError, OSError) as e:
+            if args.driver != "manual":
+                logging.warning(
+                    f"[DRIVER] Could not connect {args.driver} driver ({e}). "
+                    f"Falling back to manual mode — capture will proceed without camera control."
+                )
+                from drivers.manual import ManualDriver
+                driver = ManualDriver(auto_confirm=True)
+                driver.connect()
+                driver_connected = True
+            else:
+                raise
 
         # Enter debug/free camera mode so SetViewLocation/Rotation works
         if hasattr(driver, 'enable_debug_camera'):
@@ -403,15 +416,6 @@ def run_capture(args):
                 pct = (i + 1) / len(all_poses) * 100
                 logging.info(f"Progress: {pct:.0f}% ({i + 1}/{len(all_poses)})")
 
-    except ConnectionRefusedError:
-        logging.error(
-            f"[DRIVER] Connection refused to {args.driver_host}:{args.driver_port}. "
-            f"Is the game running and the control port open?"
-        )
-        raise
-    except ConnectionError as e:
-        logging.error(f"[DRIVER] Connection error during capture: {e}")
-        raise
     except Exception as e:
         logging.error(f"[CAPTURE] Unexpected error: {e}\n{traceback.format_exc()}")
         raise
