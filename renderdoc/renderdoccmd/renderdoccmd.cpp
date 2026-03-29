@@ -1191,35 +1191,87 @@ public:
     uint32_t swapWidth = 0, swapHeight = 0;
     int colorTargetIdx = 0;
 
-    // First pass: find SwapBuffer dimensions and export it
+    // First pass: find SwapBuffer to get viewport dimensions
     for(size_t i = 0; i < textures.size(); i++)
     {
       const TextureDescription &tex = textures[i];
-      if(!foundRGB && (tex.creationFlags & TextureCategory::SwapBuffer))
+      if((tex.creationFlags & TextureCategory::SwapBuffer))
       {
         swapWidth = tex.width;
         swapHeight = tex.height;
-        std::cout << "  [" << i << "] SwapBuffer " << tex.width << "x" << tex.height << std::endl;
-
-        std::string rgbPath = fileOutdir + sep + "rgb." + format;
-        TextureSave texsave;
-        texsave.resourceId = tex.resourceId;
-        texsave.mip = 0;
-        texsave.slice.sliceIndex = 0;
-        texsave.alpha = AlphaMapping::Discard;
-        texsave.destType = type;
-
-        ResultDetails saveRes = controller->SaveTexture(texsave, conv(rgbPath));
-        if(saveRes.OK())
-        {
-          std::cout << "OK rgb " << tex.width << "x" << tex.height << " -> " << rgbPath << std::endl;
-          foundRGB = true;
-        }
-        else
-        {
-          std::cerr << "Failed to save RGB: " << saveRes.Message() << std::endl;
-        }
+        std::cout << "  [" << i << "] SwapBuffer " << tex.width << "x" << tex.height
+                  << " (viewport reference only)" << std::endl;
         break;
+      }
+    }
+
+    // Second pass: find SceneColor (first Float ColorTarget at viewport res) for RGB.
+    // We use SceneColor instead of SwapBuffer because SwapBuffer includes UE5 UI
+    // overlays ("Game is running, Press Esc") that contaminate the RGB output.
+    // SceneColor is the HDR render result before UI compositing.
+    // For non-UE5 games without HDR ColorTargets, fall back to SwapBuffer.
+    ResourceId rgbTextureId;
+    bool useSceneColor = false;
+    if(swapWidth > 0)
+    {
+      for(size_t i = 0; i < textures.size(); i++)
+      {
+        const TextureDescription &tex = textures[i];
+        uint32_t flags = (uint32_t)tex.creationFlags;
+        if((flags & (uint32_t)TextureCategory::ColorTarget) &&
+           !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
+           tex.width == swapWidth && tex.height == swapHeight &&
+           tex.format.compType == CompType::Float &&
+           tex.format.compCount >= 3)
+        {
+          rgbTextureId = tex.resourceId;
+          useSceneColor = true;
+          std::cout << "  [" << i << "] SceneColor (Float "
+                    << (uint32_t)tex.format.compCount << "ch "
+                    << (uint32_t)tex.format.compByteWidth << "B) "
+                    << tex.width << "x" << tex.height << std::endl;
+          break;
+        }
+      }
+    }
+
+    // Fallback to SwapBuffer if no SceneColor found
+    if(!useSceneColor)
+    {
+      for(size_t i = 0; i < textures.size(); i++)
+      {
+        const TextureDescription &tex = textures[i];
+        if(tex.creationFlags & TextureCategory::SwapBuffer)
+        {
+          rgbTextureId = tex.resourceId;
+          std::cout << "  No SceneColor found, using SwapBuffer for RGB" << std::endl;
+          break;
+        }
+      }
+    }
+
+    // Export RGB
+    if(swapWidth > 0)
+    {
+      std::string rgbPath = fileOutdir + sep + "rgb." + format;
+      TextureSave texsave;
+      texsave.resourceId = rgbTextureId;
+      texsave.mip = 0;
+      texsave.slice.sliceIndex = 0;
+      texsave.alpha = AlphaMapping::Discard;
+      texsave.destType = type;
+
+      ResultDetails saveRes = controller->SaveTexture(texsave, conv(rgbPath));
+      if(saveRes.OK())
+      {
+        std::cout << "OK rgb " << swapWidth << "x" << swapHeight
+                  << (useSceneColor ? " (SceneColor)" : " (SwapBuffer)")
+                  << " -> " << rgbPath << std::endl;
+        foundRGB = true;
+      }
+      else
+      {
+        std::cerr << "Failed to save RGB: " << saveRes.Message() << std::endl;
       }
     }
 

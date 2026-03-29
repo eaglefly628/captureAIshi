@@ -99,8 +99,8 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (from lead review)
 
-- [ ] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — `renderdoccmd exportframe` 用 SwapBuffer 作为 RGB 输出（line ~1198），SwapBuffer 包含 UE5 UI 覆盖层（"Game is running, Press Esc"），导致 RGB 图不干净。Depth 和 Normal 是对的因为它们来自 GBuffer ColorTarget。修复方向：用 SceneColor（ColorTarget 0, RGBA16F）代替 SwapBuffer 作为 RGB 源。SwapBuffer 仅用于获取 viewport 分辨率。参考 GBuffer layout: ColorTarget 0 = SceneColor (RGBA16F)。
-- [ ] **P1: batch export 路径缺 normalImg** — `main.py` Phase 2 batch export 段落里 `to_trajectory_dict()` 只传了 `rgb_filename` 和 `depth_filename`，没传 `normal_filename`。batch export 出来的 trajectory.json 里 normalImg 会是空字符串。修复：batch export 循环里算出 `normal_filename` 并传给 `to_trajectory_dict()`。
+- [x] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — Fixed: exportframe 现在用 SceneColor (第一个 Float ColorTarget) 作为 RGB 源，SwapBuffer 仅用于确定 viewport 分辨率。非 UE5 游戏如果没有 HDR ColorTarget 会 fallback 到 SwapBuffer。
+- [x] **P1: batch export 路径缺 normalImg** — Fixed: `to_trajectory_dict()` 新增 `normal_filename` 参数，per-frame 和 batch 两条路径都填充 `normalImg`。
 
 ### UI 同学需要注意
 
@@ -110,3 +110,16 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 4. **lightbox 预览** 需要支持三种图片类型：RGB / Depth (`_d.png`) / Normal (`_n.png`)
 5. **进度面板** 可以从 trajectory.json 读取 viewName 和 pointIndex 显示当前拍摄位置
 6. **3D 可视化器** 可以直接用 trajectory.json 里的 Position + Rotation 画相机锥体
+
+## Changelog
+
+### [v0.2.0] b542e7e — 小萱萱
+- trajectory.json 输出格式，四元数旋转，camera intrinsics (FOV/aspect)
+- Normal buffer 自动导出 (R10G10B10A2, fmtType=12)
+- 两阶段批量截帧/导出 (batch-export 默认开启)
+- DLSS/FSR/TSR 自动关闭 (UE5 driver)
+- Interactive trigger 持久连接 + warm-up
+- exportframe 支持多文件批量处理
+- RGB 改用 SceneColor 代替 SwapBuffer (去掉 UI overlay)
+- exportframe 加 ReplayOptimisationLevel::Fastest
+- 临时文件移到系统 temp 目录，不再污染 captures/
