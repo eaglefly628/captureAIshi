@@ -99,6 +99,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (from lead review)
 
+- [ ] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — `renderdoccmd exportframe` 用 SwapBuffer 作为 RGB 输出（line ~1198），SwapBuffer 包含 UE5 UI 覆盖层（"Game is running, Press Esc"），导致 RGB 图不干净。Depth 和 Normal 是对的因为它们来自 GBuffer ColorTarget。修复方向：用 SceneColor（ColorTarget 0, RGBA16F）代替 SwapBuffer 作为 RGB 源。SwapBuffer 仅用于获取 viewport 分辨率。参考 GBuffer layout: ColorTarget 0 = SceneColor (RGBA16F)。
 - [ ] **P1: batch export 路径缺 normalImg** — `main.py` Phase 2 batch export 段落里 `to_trajectory_dict()` 只传了 `rgb_filename` 和 `depth_filename`，没传 `normal_filename`。batch export 出来的 trajectory.json 里 normalImg 会是空字符串。修复：batch export 循环里算出 `normal_filename` 并传给 `to_trajectory_dict()`。
 
 ### UI 同学需要注意
