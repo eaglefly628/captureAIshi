@@ -356,6 +356,18 @@ body {
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
+.center-tab {
+  cursor: pointer;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 0;
+  border-bottom: 2px solid transparent;
+}
+.center-tab:hover { color: var(--text-secondary); }
+.center-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 .log-body {
   flex: 1;
   overflow-y: auto;
@@ -434,6 +446,37 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.gallery-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.gallery-controls .sel { height: 22px; font-size: 10px; padding: 0 4px; }
+.gallery-controls .thumb-size {
+  width: 48px;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: var(--border-default);
+  border-radius: 2px;
+  outline: none;
+}
+.gallery-controls .thumb-size::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.gallery-stats {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
 .preview-empty {
   grid-column: 1 / -1;
   text-align: center;
@@ -441,6 +484,131 @@ body {
   color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* ─── Progress Bar ─── */
+.progress-wrap {
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  display: none;
+}
+.progress-wrap.visible { display: block; }
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.progress-info .pose-label { color: var(--text-primary); font-weight: 500; }
+.progress-track {
+  height: 4px;
+  background: var(--bg-base);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s;
+}
+
+/* ─── Lightbox ─── */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0,0,0,0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s, visibility 0.12s;
+}
+.lightbox.open { opacity: 1; visibility: visible; }
+.lightbox-top {
+  position: absolute;
+  top: 12px;
+  display: flex;
+  gap: 4px;
+  z-index: 102;
+}
+.lightbox-tab {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.lightbox-tab:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.lightbox-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  font-size: 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  z-index: 102;
+  line-height: 1;
+}
+.lightbox-close:hover { color: var(--text-primary); }
+.lightbox-img-wrap {
+  position: relative;
+  max-width: 90vw;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lightbox-img-wrap img {
+  max-width: 90vw;
+  max-height: calc(100vh - 80px);
+  object-fit: contain;
+  border-radius: var(--radius-md);
+}
+.lightbox-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 24px;
+  color: var(--text-secondary);
+  background: rgba(0,0,0,0.5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 102;
+}
+.lightbox-arrow:hover { color: var(--text-primary); background: rgba(0,0,0,0.7); }
+.lightbox-arrow.left { left: 16px; }
+.lightbox-arrow.right { right: 16px; }
+.lightbox-label {
+  position: absolute;
+  bottom: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: rgba(0,0,0,0.6);
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  z-index: 102;
 }
 
 /* ─── Status Bar ─── */
@@ -585,6 +753,17 @@ body {
         </div>
       </div>
 
+      <!-- Camera -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Camera</button>
+        <div class="sec-body">
+          <div class="row">
+            <div class="f"><label>FOV (vertical)</label><input type="number" id="fov" value="90" step="1" min="10" max="180"></div>
+            <div class="f"><label>Aspect Ratio</label><input type="number" id="aspect" value="1.7778" step="0.0001" min="0.1"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Connection -->
       <div class="sec">
         <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Connection</button>
@@ -647,12 +826,23 @@ body {
   <!-- Center: Log -->
   <div class="center">
     <div class="center-header">
-      <span>Output</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="center-tab active" id="tabLog" onclick="switchCenterTab('log')">Output</span>
+        <span class="center-tab" id="tab3d" onclick="switchCenterTab('3d')">3D View</span>
+      </div>
       <span id="logCount" style="font-weight:400;text-transform:none;letter-spacing:0">0 lines</span>
+    </div>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-info">
+        <span><span class="pose-label" id="progressPose">0 / 0</span></span>
+        <span id="progressTime"></span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
     </div>
     <div class="log-body" id="logBody">
       <div class="log-line log-info">$ captureAIshi ready</div>
     </div>
+    <canvas id="view3d" style="display:none;width:100%;height:100%;background:var(--bg-base);cursor:grab;"></canvas>
   </div>
 
   <!-- Resizer: Center ↔ Preview -->
@@ -666,11 +856,36 @@ body {
       </select>
       <span id="captureCount" style="font-size:10px;color:var(--text-tertiary)">0</span>
     </div>
+    <div class="gallery-controls">
+      <select class="sel" id="galleryFilter" onchange="renderPreviews()">
+        <option value="all">All</option>
+        <option value="rgb">RGB</option>
+        <option value="depth">Depth</option>
+        <option value="normal">Normal</option>
+      </select>
+      <select class="sel" id="gallerySort" onchange="renderPreviews()">
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="name">Name</option>
+      </select>
+      <input type="range" class="thumb-size" id="thumbSize" min="1" max="4" value="2" onchange="applyThumbSize()" oninput="applyThumbSize()">
+      <span class="gallery-stats" id="galleryStats"></span>
+    </div>
     <div class="preview-body" id="previewBody">
       <div class="preview-empty">No captures yet</div>
     </div>
   </div>
 
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="lbClickBg(event)">
+  <div class="lightbox-top" id="lbTabs"></div>
+  <button class="lightbox-close" onclick="lbClose()">&times;</button>
+  <div class="lightbox-arrow left" onclick="lbNav(-1)">&lsaquo;</div>
+  <div class="lightbox-img-wrap"><img id="lbImg" src="" alt="preview"></div>
+  <div class="lightbox-arrow right" onclick="lbNav(1)">&rsaquo;</div>
+  <div class="lightbox-label" id="lbLabel"></div>
 </div>
 
 <!-- Status Bar -->
@@ -779,6 +994,8 @@ function applyParams(p) {
   document.getElementById('target_exe').value=p.target_exe||''; document.getElementById('renderdoc_path').value=p.renderdoc_path||''; document.getElementById('no_hide_ui').checked=p.no_hide_ui;
   document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run;
   document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
+  if(p.fov!=null) document.getElementById('fov').value=p.fov;
+  if(p.aspect!=null) document.getElementById('aspect').value=p.aspect;
   updateVisibility();
 }
 
@@ -798,6 +1015,7 @@ function getFormData() {
     grabber:val('grabber'), target_exe:val('target_exe'), renderdoc_path:val('renderdoc_path'), no_hide_ui:cb('no_hide_ui'),
     output_dir:val('output_dir'), dry_run:cb('dry_run'), clean_start:cb('clean_start'),
     streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
+    fov:pf('fov'), aspect:pf('aspect'),
   };
 }
 
@@ -862,12 +1080,14 @@ function addLog(text, force) {
   body.appendChild(d);
   body.scrollTop=body.scrollHeight;
   document.getElementById('logCount').textContent=body.children.length+' lines';
+  parseProgress(text);
 }
 function clearLogs(){ document.getElementById('logBody').innerHTML=''; document.getElementById('logCount').textContent='0 lines'; }
 function setBadge(s) {
   const b=document.getElementById('statusBadge'), t=document.getElementById('statusText');
   b.className='badge badge-'+s;
   t.textContent=s.charAt(0).toUpperCase()+s.slice(1);
+  if (s === 'idle' || s === 'error') resetProgress();
 }
 
 // ─── Visibility ───
@@ -903,21 +1123,365 @@ async function pollCaptures() {
 }
 function renderPreviews(session) {
   const body=document.getElementById('previewBody');
-  document.getElementById('captureCount').textContent=knownCaptures.length;
-  if(!knownCaptures.length){body.innerHTML='<div class="preview-empty">No captures yet</div>';return;}
+  if(!knownCaptures.length){body.innerHTML='<div class="preview-empty">No captures yet</div>';document.getElementById('captureCount').textContent='0';return;}
   body.innerHTML='';
   const sess=session||viewSession||activeSession;
-  [...knownCaptures].reverse().forEach(f=>{
+  const filter = val('galleryFilter') || 'all';
+  const sort = val('gallerySort') || 'newest';
+
+  // Filter
+  let files = [...knownCaptures];
+  if (filter === 'rgb') files = files.filter(f => !/_d\.png$/i.test(f) && !/_n\.png$/i.test(f));
+  else if (filter === 'depth') files = files.filter(f => /_d\.png$/i.test(f));
+  else if (filter === 'normal') files = files.filter(f => /_n\.png$/i.test(f));
+
+  // Sort
+  if (sort === 'newest') files.reverse();
+  else if (sort === 'name') files.sort((a,b) => a.localeCompare(b));
+  // 'oldest' is default order from server
+
+  document.getElementById('captureCount').textContent = files.length;
+
+  // RGB-only list for lightbox indexing
+  const rgbAll = knownCaptures.filter(f => !/_d\.png$/i.test(f) && !/_n\.png$/i.test(f));
+
+  files.forEach(f => {
     const c=document.createElement('div');c.className='preview-card';
     const encodedPath=f.split('/').map(encodeURIComponent).join('/');
     const src=sess?`/api/captures/${encodeURIComponent(sess)}/${encodedPath}`:'';
     c.innerHTML=`<img src="${src}" loading="lazy" alt="${f}"><div class="pc-label">${f.split('/').pop()}</div>`;
+    // Lightbox: find the corresponding RGB file
+    const baseName = f.replace(/(_d|_n)\.png$/i, '.png');
+    const rgbIdx = rgbAll.indexOf(baseName);
+    if (rgbIdx >= 0) c.onclick = () => lbOpen(rgbIdx);
     body.appendChild(c);
   });
+
+  // Stats
+  fetchGalleryStats(sess);
 }
 
+function applyThumbSize() {
+  const cols = parseInt(document.getElementById('thumbSize').value);
+  const colMap = {1: '1fr', 2: '1fr 1fr', 3: '1fr 1fr 1fr', 4: 'repeat(4, 1fr)'};
+  document.getElementById('previewBody').style.gridTemplateColumns = colMap[cols] || '1fr 1fr';
+}
+
+async function fetchGalleryStats(sess) {
+  try {
+    const url = sess ? `/api/session-stats/${encodeURIComponent(sess)}` : '/api/session-stats';
+    const d = await (await fetch(url)).json();
+    const sizeStr = d.size_bytes < 1048576
+      ? (d.size_bytes / 1024).toFixed(0) + ' KB'
+      : (d.size_bytes / 1048576).toFixed(1) + ' MB';
+    document.getElementById('galleryStats').textContent = `${d.count} files · ${sizeStr}`;
+  } catch(_) {}
+}
+
+// ─── Progress ───
+let progTotal = 0, progCurrent = 0, progStartTime = 0;
+
+function parseProgress(text) {
+  // "Total camera poses: 120"
+  let m = text.match(/Total camera poses:\s*(\d+)/i);
+  if (m) { progTotal = parseInt(m[1]); progCurrent = 0; progStartTime = Date.now(); updateProgress(); return; }
+  // "Capturing pose 3/20" or "Progress: 15% (3/20)"
+  m = text.match(/(?:pose|progress[^\d]*)\s*(\d+)\s*\/\s*(\d+)/i);
+  if (m) { progCurrent = parseInt(m[1]); progTotal = parseInt(m[2]); if (!progStartTime) progStartTime = Date.now(); updateProgress(); }
+}
+
+function updateProgress() {
+  const wrap = document.getElementById('progressWrap');
+  if (progTotal <= 0) { wrap.classList.remove('visible'); return; }
+  wrap.classList.add('visible');
+  const pct = Math.min(100, (progCurrent / progTotal) * 100);
+  document.getElementById('progressFill').style.width = pct.toFixed(1) + '%';
+  document.getElementById('progressPose').textContent = `${progCurrent} / ${progTotal}  (${pct.toFixed(0)}%)`;
+  // Time
+  if (progCurrent > 0 && progStartTime) {
+    const elapsed = (Date.now() - progStartTime) / 1000;
+    const eta = (elapsed / progCurrent) * (progTotal - progCurrent);
+    document.getElementById('progressTime').textContent = `${fmtTime(elapsed)} elapsed · ~${fmtTime(eta)} left`;
+  } else {
+    document.getElementById('progressTime').textContent = '';
+  }
+}
+
+function fmtTime(s) {
+  s = Math.round(s);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
+}
+
+function resetProgress() {
+  progTotal = 0; progCurrent = 0; progStartTime = 0;
+  document.getElementById('progressWrap').classList.remove('visible');
+}
+
+// ─── Lightbox ───
+let lbIndex = 0, lbFiles = [], lbSession = '', lbTab = 'rgb';
+
+function lbFileGroup(filename) {
+  // Group RGB/Depth/Normal by stripping _d.png / _n.png suffixes
+  const base = filename.replace(/(_d|_n)\.png$/i, '.png');
+  const group = { rgb: base };
+  const depthName = base.replace(/\.png$/i, '_d.png');
+  const normalName = base.replace(/\.png$/i, '_n.png');
+  if (lbFiles.includes(depthName)) group.depth = depthName;
+  if (lbFiles.includes(normalName)) group.normal = normalName;
+  return group;
+}
+
+function lbRgbFiles() {
+  // Return only RGB files (exclude _d.png and _n.png)
+  return lbFiles.filter(f => !/_d\.png$/i.test(f) && !/_n\.png$/i.test(f));
+}
+
+function lbOpen(index) {
+  lbSession = viewSession || activeSession;
+  lbFiles = [...knownCaptures];
+  const rgbList = lbRgbFiles();
+  if (!rgbList.length) return;
+  lbIndex = Math.max(0, Math.min(index, rgbList.length - 1));
+  lbTab = 'rgb';
+  lbRender();
+  document.getElementById('lightbox').classList.add('open');
+}
+
+function lbClose() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+
+function lbClickBg(e) {
+  if (e.target === document.getElementById('lightbox')) lbClose();
+}
+
+function lbNav(dir) {
+  const rgbList = lbRgbFiles();
+  lbIndex = (lbIndex + dir + rgbList.length) % rgbList.length;
+  lbRender();
+}
+
+function lbSwitchTab(tab) {
+  lbTab = tab;
+  lbRender();
+}
+
+function lbRender() {
+  const rgbList = lbRgbFiles();
+  const rgbFile = rgbList[lbIndex];
+  const group = lbFileGroup(rgbFile);
+
+  // Tabs
+  const tabsEl = document.getElementById('lbTabs');
+  const tabs = [['rgb', 'RGB']];
+  if (group.depth) tabs.push(['depth', 'Depth']);
+  if (group.normal) tabs.push(['normal', 'Normal']);
+  tabsEl.innerHTML = tabs.map(([k, label]) =>
+    `<button class="lightbox-tab${lbTab === k ? ' active' : ''}" onclick="lbSwitchTab('${k}')">${label}</button>`
+  ).join('');
+
+  // If current tab not available, fall back to rgb
+  if (!group[lbTab]) lbTab = 'rgb';
+
+  // Image
+  const file = group[lbTab] || rgbFile;
+  const encodedPath = file.split('/').map(encodeURIComponent).join('/');
+  const src = lbSession ? `/api/captures/${encodeURIComponent(lbSession)}/${encodedPath}` : '';
+  document.getElementById('lbImg').src = src;
+
+  // Label
+  const name = file.split('/').pop();
+  document.getElementById('lbLabel').textContent = `${lbIndex + 1} / ${rgbList.length}  —  ${name}`;
+}
+
+// ─── 3D Viewer ───
+let view3dActive = false;
+const cam3d = { rotX: -0.5, rotY: 0.6, dist: 20, cx: 0, cy: 1.5, cz: 0 };
+let trajData = null;
+
+function switchCenterTab(tab) {
+  const logEl = document.getElementById('logBody');
+  const progEl = document.getElementById('progressWrap');
+  const canvas = document.getElementById('view3d');
+  document.getElementById('tabLog').classList.toggle('active', tab === 'log');
+  document.getElementById('tab3d').classList.toggle('active', tab === '3d');
+  if (tab === '3d') {
+    logEl.style.display = 'none';
+    progEl.style.display = 'none';
+    canvas.style.display = 'block';
+    view3dActive = true;
+    resizeCanvas3d();
+    loadTrajectory();
+    draw3d();
+  } else {
+    logEl.style.display = '';
+    progEl.style.display = '';
+    canvas.style.display = 'none';
+    view3dActive = false;
+  }
+}
+
+function resizeCanvas3d() {
+  const c = document.getElementById('view3d');
+  c.width = c.clientWidth * devicePixelRatio;
+  c.height = c.clientHeight * devicePixelRatio;
+}
+
+async function loadTrajectory() {
+  const sess = viewSession || activeSession;
+  if (!sess) { trajData = null; return; }
+  try {
+    const r = await fetch(`/api/captures/${encodeURIComponent(sess)}/trajectory.json`);
+    if (r.ok) trajData = await r.json();
+    else trajData = null;
+  } catch(_) { trajData = null; }
+}
+
+function project3d(x, y, z, w, h) {
+  // Orbit camera projection
+  const cosX = Math.cos(cam3d.rotX), sinX = Math.sin(cam3d.rotX);
+  const cosY = Math.cos(cam3d.rotY), sinY = Math.sin(cam3d.rotY);
+  let dx = x - cam3d.cx, dy = y - cam3d.cy, dz = z - cam3d.cz;
+  // Rotate Y
+  let rx = dx * cosY + dz * sinY, rz = -dx * sinY + dz * cosY;
+  // Rotate X
+  let ry = dy * cosX - rz * sinX;
+  rz = dy * sinX + rz * cosX;
+  rz -= cam3d.dist;
+  if (rz > -0.1) return null;
+  const fov = 800;
+  const sx = w / 2 + (rx / -rz) * fov;
+  const sy = h / 2 - (ry / -rz) * fov;
+  return { x: sx, y: sy, z: rz };
+}
+
+function draw3d() {
+  if (!view3dActive) return;
+  const c = document.getElementById('view3d');
+  const ctx = c.getContext('2d');
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+
+  // Bounding box from form
+  const bmin = [pf('vol_min_x'), pf('vol_min_y'), pf('vol_min_z')];
+  const bmax = [pf('vol_max_x'), pf('vol_max_y'), pf('vol_max_z')];
+
+  // Draw bounding box edges
+  const corners = [];
+  for (let i = 0; i < 8; i++) {
+    corners.push([
+      i & 1 ? bmax[0] : bmin[0],
+      i & 2 ? bmax[1] : bmin[1],
+      i & 4 ? bmax[2] : bmin[2],
+    ]);
+  }
+  const edges = [[0,1],[2,3],[4,5],[6,7],[0,2],[1,3],[4,6],[5,7],[0,4],[1,5],[2,6],[3,7]];
+  ctx.strokeStyle = 'rgba(91,138,240,0.3)';
+  ctx.lineWidth = devicePixelRatio;
+  edges.forEach(([a, b]) => {
+    const pa = project3d(...corners[a], w, h);
+    const pb = project3d(...corners[b], w, h);
+    if (pa && pb) { ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke(); }
+  });
+
+  // Draw grid on Y=bmin[1] plane
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  const step = pf('spacing') || 2;
+  for (let x = bmin[0]; x <= bmax[0]; x += step) {
+    const a = project3d(x, bmin[1], bmin[2], w, h);
+    const b = project3d(x, bmin[1], bmax[2], w, h);
+    if (a && b) { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+  }
+  for (let z = bmin[2]; z <= bmax[2]; z += step) {
+    const a = project3d(bmin[0], bmin[1], z, w, h);
+    const b = project3d(bmax[0], bmin[1], z, w, h);
+    if (a && b) { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+  }
+
+  // Waypoints from trajectory
+  const points = trajData || [];
+  if (points.length) {
+    // Path lines
+    ctx.strokeStyle = 'rgba(62,207,142,0.5)';
+    ctx.lineWidth = 1.5 * devicePixelRatio;
+    ctx.beginPath();
+    let started = false;
+    points.forEach(p => {
+      const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
+      if (pp) { if (!started) { ctx.moveTo(pp.x, pp.y); started = true; } else ctx.lineTo(pp.x, pp.y); }
+    });
+    ctx.stroke();
+
+    // Dots
+    points.forEach((p, i) => {
+      const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
+      if (!pp) return;
+      const r = 3 * devicePixelRatio;
+      ctx.fillStyle = p.viewName === 'center' ? '#3ecf8e' : '#5b8af0';
+      ctx.beginPath(); ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  // Axes indicator (bottom-left)
+  const axLen = 30 * devicePixelRatio;
+  const ox = 40 * devicePixelRatio, oy = h - 40 * devicePixelRatio;
+  [['X','#f03e3e',1,0,0],['Y','#3ecf8e',0,1,0],['Z','#5b8af0',0,0,1]].forEach(([label,color,ax,ay,az]) => {
+    const p = project3d(cam3d.cx + ax * 2, cam3d.cy + ay * 2, cam3d.cz + az * 2, w, h);
+    const o = project3d(cam3d.cx, cam3d.cy, cam3d.cz, w, h);
+    if (!p || !o) return;
+    const dx = p.x - o.x, dy = p.y - o.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ex = ox + (dx/len) * axLen, ey = oy + (dy/len) * axLen;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+    ctx.fillText(label, ex + 4, ey + 4);
+  });
+
+  ctx.restore();
+}
+
+// Orbit controls
+(function init3dControls() {
+  const c = document.getElementById('view3d');
+  let dragging = false, lastX, lastY, button;
+  c.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; button = e.button; c.style.cursor = 'grabbing'; });
+  window.addEventListener('mousemove', e => {
+    if (!dragging || !view3dActive) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    if (button === 0) { cam3d.rotY += dx * 0.008; cam3d.rotX += dy * 0.008; cam3d.rotX = Math.max(-1.5, Math.min(1.5, cam3d.rotX)); }
+    if (button === 2) {
+      const cosY = Math.cos(cam3d.rotY), sinY = Math.sin(cam3d.rotY);
+      cam3d.cx -= (dx * cosY) * 0.02; cam3d.cz -= (-dx * sinY) * 0.02; cam3d.cy += dy * 0.02;
+    }
+    draw3d();
+  });
+  window.addEventListener('mouseup', () => { dragging = false; c.style.cursor = 'grab'; });
+  c.addEventListener('wheel', e => { e.preventDefault(); cam3d.dist = Math.max(2, Math.min(100, cam3d.dist + e.deltaY * 0.02)); draw3d(); }, { passive: false });
+  c.addEventListener('contextmenu', e => e.preventDefault());
+  window.addEventListener('resize', () => { if (view3dActive) { resizeCanvas3d(); draw3d(); } });
+})();
+
 // ─── Keyboard ───
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') clearLogs(); });
+document.addEventListener('keydown', e => {
+  const lb = document.getElementById('lightbox');
+  if (lb.classList.contains('open')) {
+    if (e.key === 'Escape') lbClose();
+    else if (e.key === 'ArrowLeft') lbNav(-1);
+    else if (e.key === 'ArrowRight') lbNav(1);
+    else if (e.key === '1') lbSwitchTab('rgb');
+    else if (e.key === '2') lbSwitchTab('depth');
+    else if (e.key === '3') lbSwitchTab('normal');
+    return;
+  }
+  if (e.key === 'Escape') clearLogs();
+});
 
 // ─── Config Save/Load ───
 async function loadSavedConfig() {

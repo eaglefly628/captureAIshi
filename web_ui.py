@@ -250,6 +250,8 @@ def defaults():
         "dry_run": False,
         "streaming": True,
         "streaming_settle": 0.5,
+        "fov": 90.0,
+        "aspect": 1.7778,
     })
 
 
@@ -299,6 +301,25 @@ def serve_capture(session, filename):
     base = Path(output_dir).parent
     target = (base / session).resolve()
     return send_from_directory(str(target), filename)
+
+
+@app.route("/api/session-stats")
+@app.route("/api/session-stats/<session>")
+def session_stats(session=None):
+    """Return file count and total size for a session directory."""
+    with _lock:
+        output_dir = _capture_state.get("output_dir", "./output")
+    base = Path(output_dir).parent
+    target = (base / session) if session else Path(output_dir)
+    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".exr"}
+    total_size = 0
+    count = 0
+    if target.is_dir():
+        for f in target.rglob("*"):
+            if f.suffix.lower() in exts:
+                count += 1
+                total_size += f.stat().st_size
+    return jsonify({"count": count, "size_bytes": total_size})
 
 
 @app.route("/api/presets")
@@ -543,6 +564,10 @@ def _build_args(data: dict) -> Namespace:
     # Streaming / LOD management
     args.streaming = bool(data.get("streaming", True))
     args.streaming_settle = max(0.0, min(10.0, float(data.get("streaming_settle", 0.5))))
+
+    # Camera intrinsics
+    args.fov = max(1.0, min(180.0, float(data.get("fov", 90.0))))
+    args.aspect = max(0.1, float(data.get("aspect", 1.7778)))
 
     # Build output dir: base_dir / <session_name>
     base_dir = Path(str(data.get("output_dir", "./output")))
