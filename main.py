@@ -121,6 +121,61 @@ def create_ui_hider(args):
     )
 
 
+def _run_auto_inject(args):
+    """Auto-inject captureAIshi bridge DLL into the game process.
+
+    This is an EXPERIMENTAL feature that replaces manual UUU injection.
+    Only runs when --auto-inject is passed. Requires Windows.
+    """
+    import sys
+    if sys.platform != "win32":
+        logging.warning("[INJECT] --auto-inject is Windows-only, skipping")
+        return
+
+    # Resolve DLL path
+    if args.bridge_dll:
+        dll_path = Path(args.bridge_dll)
+    else:
+        dll_path = Path(__file__).parent / "3rdparty" / "bridge" / "captureAIshi_bridge.dll"
+
+    if not dll_path.is_file():
+        logging.warning(
+            f"[INJECT] Bridge DLL not found at {dll_path}. "
+            f"Build it from 3rdparty/bridge/src/ or provide --bridge-dll path. "
+            f"Skipping auto-inject (pipeline will try to connect to existing UUU)."
+        )
+        return
+
+    # Determine process name to inject into
+    process_name = args.inject_process
+    if not process_name and args.target_exe:
+        process_name = Path(args.target_exe).name
+    if not process_name:
+        logging.warning(
+            "[INJECT] Cannot determine game process name. "
+            "Provide --inject-process or --target-exe. Skipping."
+        )
+        return
+
+    try:
+        from importlib.util import spec_from_file_location, module_from_spec
+        injector_path = Path(__file__).parent / "3rdparty" / "bridge" / "injector.py"
+        spec = spec_from_file_location("injector", str(injector_path))
+        injector = module_from_spec(spec)
+        spec.loader.exec_module(injector)
+
+        pid = injector.inject_by_name(str(process_name), str(dll_path))
+        logging.info(f"[INJECT] Bridge DLL injected into {process_name} (PID {pid})")
+        logging.info("[INJECT] Waiting 2s for TCP server to start...")
+        import time
+        time.sleep(2)
+    except Exception as e:
+        logging.warning(
+            f"[INJECT] Auto-injection failed: {e}. "
+            f"Pipeline will try to connect to existing UUU/console."
+        )
+
+
 def run_capture(args):
     """Main capture loop."""
     import time as _time
@@ -285,6 +340,10 @@ def run_capture(args):
         except Exception as e:
             logging.error(f"[GRABBER] Grabber setup failed: {e}")
             raise
+
+    # ── Step 6.5: Auto-inject bridge DLL (if enabled) ──
+    if getattr(args, 'auto_inject', False) and not args.dry_run:
+        _run_auto_inject(args)
 
     # ── Step 7: Execute capture loop ──
     streaming_enabled = getattr(args, 'streaming', True)
@@ -565,6 +624,22 @@ def main():
     # Grabber
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
+
+    # Bridge injection (experimental, replaces UUU)
+    parser.add_argument(
+        "--auto-inject", action="store_true",
+        help="[EXPERIMENTAL] Auto-inject captureAIshi bridge DLL instead of requiring UUU. "
+             "Windows only. Requires captureAIshi_bridge.dll in 3rdparty/bridge/.",
+    )
+    parser.add_argument(
+        "--bridge-dll", type=str, default=None,
+        help="Path to captureAIshi_bridge.dll (auto-detected if not set)",
+    )
+    parser.add_argument(
+        "--inject-process", type=str, default=None,
+        help="Game process name to inject into (e.g. 'MyGame-Win64-Shipping.exe'). "
+             "Auto-detected from --target-exe if not set.",
+    )
 
     # UI hiding
     parser.add_argument(
