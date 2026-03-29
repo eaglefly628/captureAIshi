@@ -46,7 +46,12 @@ class CameraPose:
             "fov": self.fov,
         }
 
-    def to_trajectory_dict(self, rgb_filename: str = "", depth_filename: str = "") -> dict:
+    def to_trajectory_dict(
+        self,
+        rgb_filename: str = "",
+        depth_filename: str = "",
+        normal_filename: str = "",
+    ) -> dict:
         """Export in the captureAIshi trajectory JSON format."""
         quat = euler_to_quaternion(
             self.rotation[0], self.rotation[1], self.rotation[2]
@@ -67,6 +72,7 @@ class CameraPose:
             "aspect": round(float(self.aspect), 4),
             "captureImg": rgb_filename,
             "depthImg": depth_filename,
+            "normalImg": normal_filename,
             "viewName": self.view_name,
             "pointIndex": self.point_index,
             "splineMode": self.spline_mode,

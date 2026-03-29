@@ -515,6 +515,7 @@ def run_capture(args):
                         )
                         rgb_filename = saved.get("rgb", rgb_filename)
                         depth_filename = saved.get("depth", depth_filename)
+                        normal_filename = saved.get("normal", f"{base_name}_n.png") if normal is not None else ""
                         save_elapsed = _time.monotonic() - t_save
                         logging.debug(f"[POSE {i+1}] Frame saved in {save_elapsed:.3f}s")
                     except Exception as e:
@@ -524,6 +525,7 @@ def run_capture(args):
                 trajectory.append(pose.to_trajectory_dict(
                     rgb_filename=rgb_filename,
                     depth_filename=depth_filename,
+                    normal_filename=locals().get("normal_filename", ""),
                 ))
 
             # Progress logging every 10%
@@ -549,6 +551,7 @@ def run_capture(args):
 
                 rgb_filename = f"{bname}.png"
                 depth_filename = f"{bname}_d.png"
+                normal_filename = f"{bname}_n.png" if normal is not None else ""
 
                 try:
                     saved = grabber_ctx.save_frame(
@@ -557,6 +560,7 @@ def run_capture(args):
                     )
                     rgb_filename = saved.get("rgb", rgb_filename)
                     depth_filename = saved.get("depth", depth_filename)
+                    normal_filename = saved.get("normal", normal_filename)
                     if rgb is not None:
                         frames_ok += 1
                     else:
@@ -570,6 +574,7 @@ def run_capture(args):
                 trajectory.append(pose.to_trajectory_dict(
                     rgb_filename=rgb_filename,
                     depth_filename=depth_filename,
+                    normal_filename=normal_filename,
                 ))
 
             export_elapsed = _time.monotonic() - t_export
