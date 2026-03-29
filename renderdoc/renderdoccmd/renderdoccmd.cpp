@@ -1374,52 +1374,53 @@ public:
     std::cout << "Connected to '" << tc->GetTarget().c_str() << "' (pid=" << tc->GetPID()
               << ", api=" << tc->GetAPI().c_str() << ")" << std::endl;
 
-    // Drain any pre-existing capture messages (old captures from previous triggers)
-    // We need multiple rounds of Noop to ensure all buffered messages have arrived,
-    // since the target may still be sending them when we first connect.
-    int oldCaptures = 0;
-    uint32_t maxOldCaptureId = 0;
-    {
-      int noopCount = 0;
-      int maxIterations = 200;    // Safety limit (~400ms at 2ms per Noop)
-      for(int iter = 0; iter < maxIterations; iter++)
-      {
-        TargetControlMessage msg = tc->ReceiveMessage(NULL);
-        if(msg.type == TargetControlMessageType::NewCapture)
-        {
-          oldCaptures++;
-          if(msg.newCapture.captureId >= maxOldCaptureId)
-            maxOldCaptureId = msg.newCapture.captureId + 1;
-          std::cout << "  (skipping existing capture id=" << msg.newCapture.captureId
-                    << " frame=" << msg.newCapture.frameNumber << ")" << std::endl;
-          noopCount = 0;    // Reset — more messages may follow
-        }
-        else if(msg.type == TargetControlMessageType::Noop)
-        {
-          noopCount++;
-          if(noopCount >= 10)    // 10 consecutive Noops = no more pending messages
-            break;
-        }
-        else if(msg.type == TargetControlMessageType::Disconnected)
-        {
-          std::cerr << "Target disconnected during drain" << std::endl;
-          tc->Shutdown();
-          return 2;
-        }
-      }
-      if(oldCaptures > 0)
-        std::cout << "  Drained " << oldCaptures << " pre-existing capture(s)" << std::endl;
-    }
+    // RenderDoc replays all pre-existing captures as NewCapture messages
+    // right after connection. We call TriggerCapture, then in the receive
+    // loop we use a deterministic signal to tell old from new:
+    //
+    //   Once we see a Noop AFTER having seen at least one NewCapture (or
+    //   immediately if there are no pre-existing captures), the backlog is
+    //   flushed. Any NewCapture arriving after that point is ours.
+    //
+    // Sequence:  [old NewCapture...] [Noop] ... [new NewCapture] [Noop...]
+    //            ^--- backlog flush --^          ^--- our capture
 
     std::cout << "Triggering " << numFrames << " frame capture(s)..." << std::endl;
 
     tc->TriggerCapture(numFrames);
 
-    // Wait for the NEW capture (must have captureId >= maxOldCaptureId)
-    int capturesReceived = 0;
-    int timeoutMs = 10000;    // 10 seconds max
+    // Phase 1: skip pre-existing captures until backlog is flushed (first Noop)
+    bool backlogFlushed = false;
+    int oldCaptures = 0;
+    int timeoutMs = 10000;
     int elapsedMs = 0;
-    int pollMs = 100;
+
+    while(!backlogFlushed && elapsedMs < timeoutMs)
+    {
+      TargetControlMessage msg = tc->ReceiveMessage(NULL);
+      if(msg.type == TargetControlMessageType::NewCapture)
+      {
+        oldCaptures++;
+        std::cout << "  (pre-existing capture id=" << msg.newCapture.captureId
+                  << " frame=" << msg.newCapture.frameNumber << ", skipping)" << std::endl;
+      }
+      else if(msg.type == TargetControlMessageType::Noop)
+      {
+        backlogFlushed = true;
+      }
+      else if(msg.type == TargetControlMessageType::Disconnected)
+      {
+        std::cerr << "Target disconnected" << std::endl;
+        tc->Shutdown();
+        return 2;
+      }
+      elapsedMs += 2;    // ReceiveMessage sleeps ~2ms on Noop
+    }
+    if(oldCaptures > 0)
+      std::cout << "  Skipped " << oldCaptures << " pre-existing capture(s)" << std::endl;
+
+    // Phase 2: wait for our triggered capture
+    int capturesReceived = 0;
 
     while(elapsedMs < timeoutMs && capturesReceived < (int)numFrames)
     {
@@ -1427,12 +1428,6 @@ public:
 
       if(msg.type == TargetControlMessageType::NewCapture)
       {
-        // Skip any late-arriving old captures
-        if(msg.newCapture.captureId < maxOldCaptureId)
-        {
-          std::cout << "  (skipping late old capture id=" << msg.newCapture.captureId << ")" << std::endl;
-          continue;
-        }
         capturesReceived++;
         std::cout << "OK capture #" << capturesReceived
                   << " id=" << msg.newCapture.captureId
