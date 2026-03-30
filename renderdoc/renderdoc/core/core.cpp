@@ -40,6 +40,7 @@
 #include "strings/string_utils.h"
 #include "superluminal/superluminal.h"
 #include "crash_handler.h"
+#include "bridge/console_server.h"
 
 #include "api/replay/renderdoc_tostr.inl"
 
@@ -683,6 +684,9 @@ void RenderDoc::Initialise()
     {
       RDCWARN("Couldn't open socket for target control");
     }
+
+    // captureAIshi: start embedded console server for camera control
+    ConsoleServer_Start();
   }
 
   // set default capture log - useful for when hooks aren't setup
@@ -779,6 +783,9 @@ RenderDoc::~RenderDoc()
   }
 
   RDCSTOPLOGGING();
+
+  // captureAIshi: stop embedded console server
+  ConsoleServer_Stop();
 
   if(m_RemoteThread)
   {

@@ -1,0 +1,450 @@
+/*
+ * console_server.h -- captureAIshi console server for renderdoc
+ *
+ * Embedded into renderdoc.dll, starts automatically when RenderDoc
+ * injects into a game process. No separate DLL injection needed.
+ *
+ * Provides:
+ *   - TCP console server on port 9998 (configurable via env)
+ *   - GEngine auto-scan for UE5 console command execution
+ *   - Camera path playback (Catmull-Rom + SLERP)
+ *   - Timestop, HUD toggle, hotsampling, camera smoothing
+ *
+ * Protocol: newline-delimited text commands, same as ue5_console.py
+ * expects. All __bridge_* and __path_* commands are handled here;
+ * anything else is passed to GEngine->Exec().
+ *
+ * Usage from core.cpp:
+ *   #include "bridge/console_server.h"
+ *   // In RenderDoc::Initialise(), after TargetControl setup:
+ *   ConsoleServer_Start();
+ *   // In RenderDoc::Shutdown():
+ *   ConsoleServer_Stop();
+ *
+ * ASCII only (MSVC C4819 compliance).
+ */
+
+#ifndef CAPTUREAI_CONSOLE_SERVER_H
+#define CAPTUREAI_CONSOLE_SERVER_H
+
+#ifdef _WIN32
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <chrono>
+
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "psapi.lib")
+
+/* ── Logging (uses RenderDoc's RDCLOG if available) ────────────── */
+
+#ifdef RDCLOG
+#define BRIDGE_LOG(fmt, ...) RDCLOG("[BRIDGE] " fmt, ##__VA_ARGS__)
+#else
+static void bridge_log(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "[BRIDGE] ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+#define BRIDGE_LOG(fmt, ...) bridge_log(fmt, ##__VA_ARGS__)
+#endif
+
+/* Provide bridge_log function for headers that depend on it */
+static inline void bridge_log_adapter(const char* fmt, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    BRIDGE_LOG("%s", buf);
+}
+
+/* The headers use bridge_log() */
+#define bridge_log bridge_log_adapter
+
+#include "pattern_scan.h"
+#include "ue5_engine.h"
+#include "camera_path.h"
+
+#undef bridge_log
+
+/* ── Configuration ─────────────────────────────────────────────── */
+
+static const int CONSOLE_DEFAULT_PORT = 9998;
+static const int CONSOLE_MAX_CMD_LEN  = 4096;
+
+/* ── Camera Smoothing ──────────────────────────────────────────── */
+
+static float cs_smooth_factor = 1.0f;
+static Vec3  cs_smooth_pos = {0, 0, 0};
+static float cs_smooth_pitch = 0, cs_smooth_yaw = 0, cs_smooth_roll = 0;
+static bool  cs_smooth_initialized = false;
+
+static InterpolatedCamera cs_apply_smoothing(const InterpolatedCamera& raw)
+{
+    if (cs_smooth_factor <= 1.0f || !cs_smooth_initialized) {
+        cs_smooth_pos = raw.pos;
+        cs_smooth_pitch = raw.pitch;
+        cs_smooth_yaw = raw.yaw;
+        cs_smooth_roll = raw.roll;
+        cs_smooth_initialized = true;
+        return raw;
+    }
+    float alpha = 1.0f / cs_smooth_factor;
+    cs_smooth_pos.x += (raw.pos.x - cs_smooth_pos.x) * alpha;
+    cs_smooth_pos.y += (raw.pos.y - cs_smooth_pos.y) * alpha;
+    cs_smooth_pos.z += (raw.pos.z - cs_smooth_pos.z) * alpha;
+    cs_smooth_pitch += (raw.pitch - cs_smooth_pitch) * alpha;
+    cs_smooth_yaw   += (raw.yaw   - cs_smooth_yaw)   * alpha;
+    cs_smooth_roll  += (raw.roll  - cs_smooth_roll)  * alpha;
+
+    InterpolatedCamera out;
+    out.pos   = cs_smooth_pos;
+    out.pitch = cs_smooth_pitch;
+    out.yaw   = cs_smooth_yaw;
+    out.roll  = cs_smooth_roll;
+    out.fov   = raw.fov;
+    return out;
+}
+
+/* ── Camera Path Tick ──────────────────────────────────────────── */
+
+static std::atomic<bool> cs_tick_running{false};
+static std::thread       cs_tick_thread;
+
+static void cs_camera_tick()
+{
+    using clock = std::chrono::steady_clock;
+    auto interval = std::chrono::microseconds(1000000 / 60);  /* 60 Hz */
+    auto last = clock::now();
+
+    BRIDGE_LOG("Camera tick thread started (60 Hz)");
+
+    while (cs_tick_running) {
+        auto now = clock::now();
+        float dt = std::chrono::duration<float>(now - last).count();
+        last = now;
+
+        if (g_camera_path.is_playing()) {
+            InterpolatedCamera cam;
+            bool still = g_camera_path.tick(dt, cam);
+            cam = cs_apply_smoothing(cam);
+            set_camera_location(cam.pos.x, cam.pos.y, cam.pos.z);
+            set_camera_rotation(cam.pitch, cam.yaw, cam.roll);
+            if (cam.fov > 0.0f && cam.fov != g_camera.fov)
+                set_fov(cam.fov);
+            if (!still)
+                BRIDGE_LOG("Camera path playback ended");
+        }
+
+        auto elapsed = clock::now() - now;
+        if (elapsed < interval)
+            std::this_thread::sleep_for(interval - elapsed);
+    }
+    BRIDGE_LOG("Camera tick thread stopped");
+}
+
+/* ── TCP helpers ───────────────────────────────────────────────── */
+
+static void cs_reply(SOCKET sock, const char* msg) {
+    send(sock, msg, (int)strlen(msg), 0);
+}
+static void cs_reply(SOCKET sock, const std::string& msg) {
+    send(sock, msg.c_str(), (int)msg.size(), 0);
+}
+
+static int cs_parse_floats(const char* str, float* out, int max_count) {
+    int count = 0;
+    const char* p = str;
+    while (count < max_count && *p) {
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+        char* end = nullptr;
+        float v = strtof(p, &end);
+        if (end == p) break;
+        out[count++] = v;
+        p = end;
+    }
+    return count;
+}
+
+/* ── Command Router ────────────────────────────────────────────── */
+
+static bool cs_route_command(SOCKET client, const std::string& cmd)
+{
+    if (cmd == "__bridge_ping") { cs_reply(client, "pong\n"); return true; }
+
+    if (cmd == "__bridge_status") {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "engine_found=%d engine_ptr=0x%p exec_fn=0x%p "
+            "camera_active=%d paused=%d hud=%d "
+            "path_keyframes=%zu path_playing=%d "
+            "smooth_factor=%.1f embedded=1\n",
+            (int)g_engine_found.load(), g_engine_ptr, (void*)g_exec_fn,
+            (int)g_debug_camera_active, (int)g_paused.load(),
+            (int)g_hud_visible,
+            g_camera_path.count(), (int)g_camera_path.is_active(),
+            cs_smooth_factor);
+        cs_reply(client, buf);
+        return true;
+    }
+
+    if (cmd.rfind("__bridge_set_offset ", 0) == 0) {
+        uintptr_t offset = strtoull(cmd.c_str() + 20, NULL, 16);
+        cs_reply(client, find_gengine_via_offset(offset) ? "ok\n" : "null\n");
+        return true;
+    }
+
+    if (cmd == "__bridge_rescan") {
+        g_engine_found = false; g_engine_ptr = nullptr; g_exec_fn = nullptr;
+        cs_reply(client, find_gengine() ? "ok\n" : "not_found\n");
+        return true;
+    }
+
+    if (cmd == "__cam_toggle") { toggle_debug_camera(); cs_reply(client, "ok\n"); return true; }
+
+    if (cmd == "__cam_pause" || cmd == "__timestop") {
+        toggle_pause();
+        char buf[64];
+        snprintf(buf, sizeof(buf), "paused=%d speed=%.4f\n", (int)g_paused.load(), g_game_speed);
+        cs_reply(client, buf);
+        return true;
+    }
+
+    if (cmd.rfind("__cam_speed ", 0) == 0) {
+        set_game_speed(strtof(cmd.c_str() + 12, NULL));
+        cs_reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__hud_toggle") { toggle_hud(); cs_reply(client, "ok\n"); return true; }
+
+    if (cmd.rfind("__hotsample ", 0) == 0) {
+        int w = 0, h = 0;
+        sscanf(cmd.c_str() + 12, "%d %d", &w, &h);
+        if (w > 0 && h > 0) { hotsample(w, h); cs_reply(client, "ok\n"); }
+        else cs_reply(client, "error: usage __hotsample W H\n");
+        return true;
+    }
+
+    if (cmd.rfind("__smooth ", 0) == 0) {
+        cs_smooth_factor = strtof(cmd.c_str() + 9, NULL);
+        if (cs_smooth_factor < 1.0f) cs_smooth_factor = 1.0f;
+        cs_smooth_initialized = false;
+        char buf[64]; snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", cs_smooth_factor);
+        cs_reply(client, buf);
+        return true;
+    }
+
+    /* Camera path commands */
+    if (cmd == "__path_add") {
+        CameraKeyframe kf;
+        kf.pos = { g_camera.x, g_camera.y, g_camera.z };
+        kf.pitch = g_camera.pitch; kf.yaw = g_camera.yaw; kf.roll = g_camera.roll;
+        kf.fov = g_camera.fov; kf.duration = 2.0f;
+        g_camera_path.add_keyframe(kf);
+        cs_reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd.rfind("__path_add ", 0) == 0) {
+        float vals[8] = {0,0,0,0,0,0,90.0f,2.0f};
+        int n = cs_parse_floats(cmd.c_str() + 11, vals, 8);
+        if (n >= 6) {
+            CameraKeyframe kf;
+            kf.pos = {vals[0],vals[1],vals[2]};
+            kf.pitch = vals[3]; kf.yaw = vals[4]; kf.roll = vals[5];
+            kf.fov = (n>=7)?vals[6]:90.0f; kf.duration = (n>=8)?vals[7]:2.0f;
+            g_camera_path.add_keyframe(kf);
+            cs_reply(client, "ok\n");
+        } else cs_reply(client, "error: need 6+ values\n");
+        return true;
+    }
+
+    if (cmd == "__path_clear") { g_camera_path.clear(); cs_reply(client, "ok\n"); return true; }
+    if (cmd.rfind("__path_delete ",0)==0) {
+        cs_reply(client, g_camera_path.delete_keyframe(atoi(cmd.c_str()+14)) ? "ok\n":"error\n");
+        return true;
+    }
+    if (cmd == "__path_list") { cs_reply(client, g_camera_path.list_keyframes()); return true; }
+    if (cmd == "__path_play" || cmd.rfind("__path_play ",0)==0) {
+        float spd = cmd.size()>12 ? strtof(cmd.c_str()+12,NULL) : 1.0f;
+        if (spd <= 0) spd = 1.0f;
+        g_camera_path.play(spd); cs_reply(client, "ok\n");
+        return true;
+    }
+    if (cmd == "__path_stop") { g_camera_path.stop(); cs_reply(client, "ok\n"); return true; }
+    if (cmd == "__path_pause") { g_camera_path.toggle_pause(); cs_reply(client, "ok\n"); return true; }
+    if (cmd.rfind("__path_loop ",0)==0) {
+        bool l = cmd[12]=='1'; g_camera_path.set_loop(l);
+        cs_reply(client, l?"loop=on\n":"loop=off\n"); return true;
+    }
+    if (cmd == "__path_visualize") {
+        auto pts = g_camera_path.visualize(20);
+        std::string r; char buf[128];
+        for (auto& p : pts) {
+            snprintf(buf,sizeof(buf),"%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n",
+                p.pos.x,p.pos.y,p.pos.z,p.pitch,p.yaw,p.roll,p.fov);
+            r += buf;
+        }
+        cs_reply(client, r.empty() ? "(no path)\n" : r); return true;
+    }
+    if (cmd == "__path_info") {
+        char buf[256];
+        snprintf(buf,sizeof(buf),"keyframes=%zu total_duration=%.2fs playing=%d\n",
+            g_camera_path.count(), g_camera_path.total_duration(),
+            (int)g_camera_path.is_active());
+        cs_reply(client, buf); return true;
+    }
+
+    /* Regular UE5 console command (pass-through) */
+    if (cmd.rfind("__",0) != 0) { exec_console_command(cmd.c_str()); return true; }
+
+    BRIDGE_LOG("Unknown command: %s", cmd.c_str());
+    cs_reply(client, "error: unknown command\n");
+    return false;
+}
+
+/* ── TCP Server ────────────────────────────────────────────────── */
+
+static std::atomic<bool> cs_server_running{false};
+static SOCKET cs_listen_socket = INVALID_SOCKET;
+static std::thread cs_server_thread;
+
+static void cs_handle_client(SOCKET client)
+{
+    BRIDGE_LOG("Client connected");
+    char buffer[CONSOLE_MAX_CMD_LEN];
+    std::string line_buf;
+
+    while (cs_server_running) {
+        int n = recv(client, buffer, sizeof(buffer)-1, 0);
+        if (n <= 0) break;
+        buffer[n] = '\0';
+        line_buf.append(buffer);
+
+        size_t pos;
+        while ((pos = line_buf.find('\n')) != std::string::npos) {
+            std::string cmd = line_buf.substr(0, pos);
+            line_buf.erase(0, pos+1);
+            if (!cmd.empty() && cmd.back()=='\r') cmd.pop_back();
+            if (!cmd.empty()) cs_route_command(client, cmd);
+        }
+    }
+    closesocket(client);
+    BRIDGE_LOG("Client disconnected");
+}
+
+static void cs_server_main(int port)
+{
+    /* WSAStartup should already be done by RenderDoc's Network::Init() */
+
+    cs_listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (cs_listen_socket == INVALID_SOCKET) {
+        BRIDGE_LOG("socket() failed: %d", WSAGetLastError());
+        return;
+    }
+
+    int opt = 1;
+    setsockopt(cs_listen_socket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_port = htons((u_short)port);
+
+    if (bind(cs_listen_socket, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        BRIDGE_LOG("bind() port %d failed: %d", port, WSAGetLastError());
+        closesocket(cs_listen_socket);
+        cs_listen_socket = INVALID_SOCKET;
+        return;
+    }
+
+    if (listen(cs_listen_socket, 4) == SOCKET_ERROR) {
+        BRIDGE_LOG("listen() failed: %d", WSAGetLastError());
+        closesocket(cs_listen_socket);
+        cs_listen_socket = INVALID_SOCKET;
+        return;
+    }
+
+    cs_server_running = true;
+    BRIDGE_LOG("Console server on 127.0.0.1:%d", port);
+
+    while (cs_server_running) {
+        fd_set fds; FD_ZERO(&fds); FD_SET(cs_listen_socket, &fds);
+        struct timeval tv = {1, 0};
+        if (select(0, &fds, NULL, NULL, &tv) > 0) {
+            SOCKET c = accept(cs_listen_socket, NULL, NULL);
+            if (c != INVALID_SOCKET)
+                std::thread(cs_handle_client, c).detach();
+        }
+    }
+
+    closesocket(cs_listen_socket);
+    cs_listen_socket = INVALID_SOCKET;
+    BRIDGE_LOG("Console server stopped");
+}
+
+/* ── Public API (called from core.cpp) ─────────────────────────── */
+
+static inline void ConsoleServer_Start()
+{
+    /* Delay GEngine scan slightly -- engine may not be fully initialized
+     * at the time RenderDoc's Initialise() runs. Spawn a thread that
+     * waits a few seconds then scans. */
+    std::thread([]() {
+        Sleep(5000);  /* Wait for engine to finish init */
+        BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
+        find_gengine();
+
+        int port = CONSOLE_DEFAULT_PORT;
+        const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
+        if (env_port) {
+            port = atoi(env_port);
+            if (port <= 0 || port > 65535) port = CONSOLE_DEFAULT_PORT;
+        }
+
+        cs_tick_running = true;
+        cs_tick_thread = std::thread(cs_camera_tick);
+
+        cs_server_main(port);
+    }).detach();
+}
+
+static inline void ConsoleServer_Stop()
+{
+    cs_server_running = false;
+    cs_tick_running = false;
+
+    if (cs_listen_socket != INVALID_SOCKET)
+        closesocket(cs_listen_socket);
+    if (cs_tick_thread.joinable())
+        cs_tick_thread.join();
+    if (cs_server_thread.joinable())
+        cs_server_thread.join();
+
+    BRIDGE_LOG("Console server shutdown complete");
+}
+
+#else  /* non-Windows */
+
+static inline void ConsoleServer_Start() {}
+static inline void ConsoleServer_Stop() {}
+
+#endif /* _WIN32 */
+
+#endif /* CAPTUREAI_CONSOLE_SERVER_H */
