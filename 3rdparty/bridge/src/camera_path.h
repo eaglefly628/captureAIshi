@@ -59,7 +59,8 @@ struct Quat {
     static Quat identity() { return {1, 0, 0, 0}; }
 
     /* Euler angles (degrees) to quaternion.
-     * Order: Yaw(Z) -> Pitch(Y) -> Roll(X) (UE5 convention) */
+     * Order: Yaw(Y) -> Pitch(X) -> Roll(Z)  (YXZ intrinsic)
+     * Matches Python euler_to_quaternion() in core/waypoint.py. */
     static Quat from_euler(float pitch_deg, float yaw_deg, float roll_deg)
     {
         float hp = deg2rad(pitch_deg) * 0.5f;
@@ -70,33 +71,35 @@ struct Quat {
         float sy = sinf(hy), cy = cosf(hy);
         float sr = sinf(hr), cr = cosf(hr);
 
+        /* YXZ rotation order (same as Python waypoint.py) */
         Quat q;
-        q.w = cr * cp * cy + sr * sp * sy;
-        q.x = sr * cp * cy - cr * sp * sy;
-        q.y = cr * sp * cy + sr * cp * sy;
-        q.z = cr * cp * sy - sr * sp * cy;
+        q.w = cp * cy * cr + sp * sy * sr;
+        q.x = sp * cy * cr + cp * sy * sr;
+        q.y = cp * sy * cr - sp * cy * sr;
+        q.z = cp * cy * sr - sp * sy * cr;
         return q;
     }
 
-    /* Quaternion to Euler angles (degrees) */
+    /* Quaternion to Euler angles (degrees), YXZ convention.
+     * Inverse of from_euler above. */
     void to_euler(float& pitch, float& yaw, float& roll) const
     {
-        /* Roll (X) */
-        float sinr = 2.0f * (w * x + y * z);
-        float cosr = 1.0f - 2.0f * (x * x + y * y);
-        roll = rad2deg(atan2f(sinr, cosr));
-
-        /* Pitch (Y) */
-        float sinp = 2.0f * (w * y - z * x);
+        /* Pitch (X) = asin(2(wy - xz)) -- note: YXZ has different sign */
+        float sinp = 2.0f * (w * x - z * y);
         if (fabsf(sinp) >= 1.0f)
             pitch = rad2deg(copysignf((float)(M_PI / 2.0), sinp));
         else
             pitch = rad2deg(asinf(sinp));
 
-        /* Yaw (Z) */
-        float siny = 2.0f * (w * z + x * y);
-        float cosy = 1.0f - 2.0f * (y * y + z * z);
-        yaw = rad2deg(atan2f(siny, cosy));
+        /* Yaw (Y) = atan2(2(wy + xz), 1 - 2(x^2 + y^2)) */
+        yaw = rad2deg(atan2f(
+            2.0f * (w * y + x * z),
+            1.0f - 2.0f * (x * x + y * y)));
+
+        /* Roll (Z) = atan2(2(wz + xy), 1 - 2(x^2 + z^2)) */
+        roll = rad2deg(atan2f(
+            2.0f * (w * z + x * y),
+            1.0f - 2.0f * (x * x + z * z)));
     }
 
     float dot(const Quat& o) const {

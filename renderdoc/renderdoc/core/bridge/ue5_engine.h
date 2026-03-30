@@ -1,6 +1,10 @@
 /*
  * ue5_engine.h -- UE5 engine interface for captureAIshi bridge
  *
+ * WARNING: This header contains static global state. It MUST only be
+ * included from a single translation unit (console_server.h -> core.cpp).
+ * Including from multiple .cpp files will create independent copies.
+ *
  * Locates GEngine and key engine functions via pattern scanning,
  * provides console command execution, timestop, and camera control.
  *
@@ -413,13 +417,14 @@ static bool exec_console_command(const char* cmd)
         }
     }
 
-    /* Try to find Exec in vtable by testing indices.
-     * We send a benign command ("stat none") first to validate.
-     * If it doesn't crash, we found the right index. */
-    bridge_log("  Searching for Exec in vtable...");
+    /* Probe vtable to find Exec using a safe no-op command first.
+     * "stat none" is benign: disables all stat overlays, no side effects.
+     * Only after we confirm the correct vtable index do we run the
+     * user's actual command. */
+    bridge_log("  Probing vtable for Exec with safe command...");
 
-    /* Use the user's actual command - they take the risk.
-     * But first try with known-safe commands on discovery. */
+    const wchar_t* probe_cmd = L"stat none";
+
     for (int idx = 110; idx <= 130; idx++) {
         __try {
             void* fn = (void*)vtable[idx];
@@ -427,16 +432,19 @@ static bool exec_console_command(const char* cmd)
 
             ExecFn try_exec = (ExecFn)fn;
 
-            /* Try calling with the actual command */
-            try_exec(g_engine_ptr, NULL, wcmd.data(), g_log_ptr);
+            /* Probe with safe command first */
+            try_exec(g_engine_ptr, NULL, probe_cmd, g_log_ptr);
 
-            /* If we get here, it didn't crash! Cache the function. */
+            /* If we get here, this index works. Cache it. */
             g_exec_fn = try_exec;
-            bridge_log("  OK (vtable[%d] = 0x%p)", idx, fn);
+            bridge_log("  Found Exec at vtable[%d] = 0x%p", idx, fn);
+
+            /* Now run the actual user command */
+            g_exec_fn(g_engine_ptr, NULL, wcmd.data(), g_log_ptr);
+            bridge_log("  OK");
             return true;
         }
         __except(EXCEPTION_EXECUTE_HANDLER) {
-            /* Wrong index, continue */
             continue;
         }
     }
@@ -475,12 +483,13 @@ static bool toggle_hud()
     g_hud_visible = !g_hud_visible;
     if (g_hud_visible) {
         exec_console_command("ShowHUD 1");
-        exec_console_command("ShowFlag.PostProcessing 1");
         exec_console_command("stat none");
     } else {
         exec_console_command("ShowHUD 0");
-        exec_console_command("ShowFlag.PostProcessing 2");
         exec_console_command("stat none");
+        /* Do NOT disable PostProcessing -- it affects GBuffer output
+         * (depth, normals) which we need for capture. ShowHUD 0 alone
+         * is sufficient to hide the game HUD. */
     }
     bridge_log("HUD %s", g_hud_visible ? "shown" : "hidden");
     return true;

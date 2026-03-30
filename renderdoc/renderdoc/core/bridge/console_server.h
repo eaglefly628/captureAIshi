@@ -277,7 +277,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 
     if (cmd == "__path_clear") { g_camera_path.clear(); cs_reply(client, "ok\n"); return true; }
     if (cmd.rfind("__path_delete ",0)==0) {
-        cs_reply(client, g_camera_path.delete_keyframe(atoi(cmd.c_str()+14)) ? "ok\n":"error\n");
+        int val = atoi(cmd.c_str()+14);
+        if (val < 0) { cs_reply(client, "error: negative index\n"); return true; }
+        cs_reply(client, g_camera_path.delete_keyframe((size_t)val) ? "ok\n":"error\n");
         return true;
     }
     if (cmd == "__path_list") { cs_reply(client, g_camera_path.list_keyframes()); return true; }
@@ -324,6 +326,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 static std::atomic<bool> cs_server_running{false};
 static SOCKET cs_listen_socket = INVALID_SOCKET;
 static std::thread cs_server_thread;
+static std::vector<std::thread> cs_client_threads;
+static std::mutex cs_client_threads_mutex;
 
 static void cs_handle_client(SOCKET client)
 {
@@ -389,8 +393,10 @@ static void cs_server_main(int port)
         struct timeval tv = {1, 0};
         if (select(0, &fds, NULL, NULL, &tv) > 0) {
             SOCKET c = accept(cs_listen_socket, NULL, NULL);
-            if (c != INVALID_SOCKET)
-                std::thread(cs_handle_client, c).detach();
+            if (c != INVALID_SOCKET) {
+                std::lock_guard<std::mutex> lock(cs_client_threads_mutex);
+                cs_client_threads.emplace_back(cs_handle_client, c);
+            }
         }
     }
 
@@ -403,13 +409,21 @@ static void cs_server_main(int port)
 
 static inline void ConsoleServer_Start()
 {
-    /* Delay GEngine scan slightly -- engine may not be fully initialized
-     * at the time RenderDoc's Initialise() runs. Spawn a thread that
-     * waits a few seconds then scans. */
     std::thread([]() {
-        Sleep(5000);  /* Wait for engine to finish init */
         BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
-        find_gengine();
+
+        /* Poll for GEngine until found or timeout (no Sleep for readiness). */
+        const int poll_interval_ms = 500;
+        const int timeout_ms = 60000;
+        int elapsed = 0;
+        while (!find_gengine() && elapsed < timeout_ms) {
+            Sleep(poll_interval_ms);
+            elapsed += poll_interval_ms;
+            if (elapsed % 5000 == 0)
+                BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
+        }
+        if (!g_engine_found)
+            BRIDGE_LOG("WARNING: GEngine not found after %ds, console commands won't work", timeout_ms / 1000);
 
         int port = CONSOLE_DEFAULT_PORT;
         const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
@@ -436,6 +450,16 @@ static inline void ConsoleServer_Stop()
         cs_tick_thread.join();
     if (cs_server_thread.joinable())
         cs_server_thread.join();
+
+    /* Wait for all client handler threads to finish */
+    {
+        std::lock_guard<std::mutex> lock(cs_client_threads_mutex);
+        for (auto& t : cs_client_threads) {
+            if (t.joinable())
+                t.join();
+        }
+        cs_client_threads.clear();
+    }
 
     BRIDGE_LOG("Console server shutdown complete");
 }

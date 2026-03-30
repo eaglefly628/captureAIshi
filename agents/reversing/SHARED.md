@@ -36,14 +36,14 @@ Anti-cheat research: see `docs/anti_cheat_research.md`
 
 ## TODO (from lead review of 7f06986)
 
-- [ ] **P0: ConsoleServer_Start 用了 Sleep(5000)** (spotted by lead) — 直接违反 CLAUDE.md "no sleep for readiness"。GEngine 初始化时间不固定，应改为轮询 `find_gengine()` 直到成功或超时，不是盲等 5 秒。参考：`console_server.h:410`
-- [ ] **P0: detached client threads 没有清理** (spotted by lead) — `cs_handle_client` 线程是 `.detach()` 的，`ConsoleServer_Stop` 不等它们。进程退出时 handler 可能还在执行 `exec_console_command`，写已释放内存。应改为 tracked thread list + join。参考：`console_server.h:393`
-- [ ] **P1: static 全局变量在 header 里** (spotted by lead) — `g_engine_ptr`/`g_exec_fn`/`g_camera_path` 等都是 `static`，如果第二个 `.cpp` include 这些 header 会得到独立副本。应改为 `extern` 声明 + 单一定义。
-- [ ] **P1: vtable 暴力搜索用用户实际命令** (spotted by lead) — `exec_console_command` 用 110-130 遍历 vtable，拿用户命令试调用。如果错误 index 指向签名兼容但功能不同的函数不会崩但会误操作。应先用无害命令 `stat none` 验证。参考：`ue5_engine.h:423-442`
-- [ ] **P1: __path_delete atoi 负数溢出** (spotted by lead) — `atoi` 返回负值转 `size_t` 变巨大正数，越界访问。参考：`console_server.h:280`
-- [ ] **P2: toggle_hud ShowFlag.PostProcessing 值错误** (spotted by lead) — 值 `2` 不是 UE5 合法 ShowFlag 值（只有 0/1）。且隐藏 HUD 时关 PostProcessing 会影响 GBuffer 输出。参考：`ue5_engine.h:482`
-- [ ] **P2: Quat 旋转顺序与 Python 端不一致** (spotted by lead) — C++ `from_euler` 用 ZYX 顺序，Python `euler_to_quaternion` 用 YXZ。camera path 数据互传时旋转会错。
-- [ ] **P2: 缺 Changelog 条目** — CLAUDE.md 规则要求每次 push 写 CL，此次提交没写。
+- [x] **P0: ConsoleServer_Start 用了 Sleep(5000)** — Fixed: 改为轮询 `find_gengine()` 每 500ms 一次，最长 60 秒超时。
+- [x] **P0: detached client threads 没有清理** — Fixed: 改为 tracked `cs_client_threads` vector + `ConsoleServer_Stop()` 中 join 所有线程。
+- [x] **P1: static 全局变量在 header 里** — Acknowledged: 加了注释说明只能从单一 TU include。当前只有 core.cpp 使用。
+- [x] **P1: vtable 暴力搜索用用户实际命令** — Fixed: 改为先用 `stat none` 探测，确认 vtable index 后再执行用户命令。
+- [x] **P1: __path_delete atoi 负数溢出** — Fixed: 加了 `val < 0` 检查，负数直接返回 error。
+- [x] **P2: toggle_hud ShowFlag.PostProcessing 值错误** — Fixed: 移除 ShowFlag.PostProcessing 操作，只用 ShowHUD 0/1。加注释说明不能关 PP 因为影响 GBuffer。
+- [x] **P2: Quat 旋转顺序与 Python 端不一致** — Fixed: C++ `from_euler`/`to_euler` 改为 YXZ 顺序，与 Python `euler_to_quaternion` 完全一致（已数值验证）。
+- [x] **P2: 缺 Changelog 条目** — Fixed: CLAUDE.md changelog 已补充。
 
 ## [v0.1.0] Tested Games
 - EagleWalkLJB (UE5 demo): RenderDoc injection OK, console OK, ToggleDebugCamera OK
