@@ -777,22 +777,41 @@ class RenderDocGrabber(FrameGrabber):
         logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
 
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
-                timeout=60 * len(valid_paths),  # 60s per file
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-            stdout = result.stdout.decode("utf-8", errors="replace").strip()
-            stderr = result.stderr.decode("utf-8", errors="replace").strip()
-            if stdout:
-                for line in stdout.splitlines():
-                    logger.debug(f"[RDOC batch] {line}")
+            timeout_s = 60 * len(valid_paths)
+            import time as _btime
+            t_start = _btime.monotonic()
+            export_count = 0
+
+            # Stream stdout in real time for progress visibility
+            for raw_line in iter(proc.stdout.readline, b""):
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                # Count exported frames from exportframe output
+                if "Exporting" in line or "exported" in line.lower() or "processing" in line.lower():
+                    export_count += 1
+                    logger.info(
+                        f"[RDOC] Export {export_count}/{len(valid_paths)}: {line}"
+                    )
+                else:
+                    logger.info(f"[RDOC export] {line}")
+                if _btime.monotonic() - t_start > timeout_s:
+                    proc.kill()
+                    logger.error("[RDOC] Batch export timed out")
+                    return [(None, None, None)] * len(rdc_paths)
+
+            proc.wait()
+            stderr = proc.stderr.read().decode("utf-8", errors="replace").strip()
             if stderr:
                 for line in stderr.splitlines():
                     logger.warning(f"[RDOC batch err] {line}")
-        except subprocess.TimeoutExpired:
-            logger.error("[RDOC] Batch export timed out")
-            return [(None, None, None)] * len(rdc_paths)
+            if proc.returncode != 0:
+                logger.error(f"[RDOC] Batch export exited with code {proc.returncode}")
         except Exception as e:
             logger.error(f"[RDOC] Batch export failed: {e}")
             return [(None, None, None)] * len(rdc_paths)

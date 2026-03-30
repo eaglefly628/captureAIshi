@@ -1179,15 +1179,21 @@ async function fetchGalleryStats(sess) {
 }
 
 // ─── Progress ───
-let progTotal = 0, progCurrent = 0, progStartTime = 0;
+let progTotal = 0, progCurrent = 0, progStartTime = 0, progPhase = 'capture';
 
 function parseProgress(text) {
   // "Total camera poses: 120"
   let m = text.match(/Total camera poses:\s*(\d+)/i);
-  if (m) { progTotal = parseInt(m[1]); progCurrent = 0; progStartTime = Date.now(); updateProgress(); return; }
+  if (m) { progTotal = parseInt(m[1]); progCurrent = 0; progPhase = 'capture'; progStartTime = Date.now(); updateProgress(); return; }
   // "Capturing pose 3/20" or "Progress: 15% (3/20)"
   m = text.match(/(?:pose|progress[^\d]*)\s*(\d+)\s*\/\s*(\d+)/i);
-  if (m) { progCurrent = parseInt(m[1]); progTotal = parseInt(m[2]); if (!progStartTime) progStartTime = Date.now(); updateProgress(); }
+  if (m) { progCurrent = parseInt(m[1]); progTotal = parseInt(m[2]); progPhase = 'capture'; if (!progStartTime) progStartTime = Date.now(); updateProgress(); return; }
+  // Phase 2: "Phase 2: Batch exporting N captures..."
+  m = text.match(/Phase 2.*?(\d+)\s*captures/i);
+  if (m) { progTotal = parseInt(m[1]); progCurrent = 0; progPhase = 'export'; progStartTime = Date.now(); updateProgress(); return; }
+  // "Export 3/20:" or "Saving frame 3/20:"
+  m = text.match(/(?:Export|Saving frame)\s*(\d+)\s*\/\s*(\d+)/i);
+  if (m) { progCurrent = parseInt(m[1]); progTotal = parseInt(m[2]); progPhase = 'export'; if (!progStartTime) progStartTime = Date.now(); updateProgress(); return; }
 }
 
 function updateProgress() {
@@ -1196,7 +1202,8 @@ function updateProgress() {
   wrap.classList.add('visible');
   const pct = Math.min(100, (progCurrent / progTotal) * 100);
   document.getElementById('progressFill').style.width = pct.toFixed(1) + '%';
-  document.getElementById('progressPose').textContent = `${progCurrent} / ${progTotal}  (${pct.toFixed(0)}%)`;
+  const phaseLabel = progPhase === 'export' ? 'Export' : 'Capture';
+  document.getElementById('progressPose').textContent = `${phaseLabel}  ${progCurrent} / ${progTotal}  (${pct.toFixed(0)}%)`;
   // Time
   if (progCurrent > 0 && progStartTime) {
     const elapsed = (Date.now() - progStartTime) / 1000;
@@ -1215,7 +1222,7 @@ function fmtTime(s) {
 }
 
 function resetProgress() {
-  progTotal = 0; progCurrent = 0; progStartTime = 0;
+  progTotal = 0; progCurrent = 0; progStartTime = 0; progPhase = 'capture';
   document.getElementById('progressWrap').classList.remove('visible');
 }
 

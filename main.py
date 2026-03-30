@@ -487,6 +487,7 @@ def run_capture(args):
                 rdc_paths, Path(str(grabber_ctx.capture_dir)),
             )
 
+            total_export = len(export_results)
             for idx, ((rgb, depth, normal), bname, pose) in enumerate(
                 zip(export_results, base_names, all_poses)
             ):
@@ -498,11 +499,11 @@ def run_capture(args):
                 depth_filename = f"{bname}_d.png"
                 normal_filename = f"{bname}_n.png" if normal is not None else ""
 
-                logging.debug(
-                    f"[BATCH] Frame {idx}: rgb={'ok' if rgb is not None else 'None'}, "
-                    f"depth={'ok' if depth is not None else 'None'}, "
-                    f"normal={'ok' if normal is not None else 'None'}, "
-                    f"bname={bname}"
+                logging.info(
+                    f"Saving frame {idx + 1}/{total_export}: "
+                    f"rgb={'ok' if rgb is not None else 'skip'} "
+                    f"depth={'ok' if depth is not None else 'skip'} "
+                    f"normal={'ok' if normal is not None else 'skip'}"
                 )
 
                 try:
