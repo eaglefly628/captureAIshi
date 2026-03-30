@@ -1,25 +1,8 @@
 /*
  * console_server.h -- captureAIshi console server for renderdoc
  *
- * Embedded into renderdoc.dll, starts automatically when RenderDoc
- * injects into a game process. No separate DLL injection needed.
- *
- * Provides:
- *   - TCP console server on port 9998 (configurable via env)
- *   - GEngine auto-scan for UE5 console command execution
- *   - Camera path playback (Catmull-Rom + SLERP)
- *   - Timestop, HUD toggle, hotsampling, camera smoothing
- *
- * Protocol: newline-delimited text commands, same as ue5_console.py
- * expects. All __bridge_* and __path_* commands are handled here;
- * anything else is passed to GEngine->Exec().
- *
- * Usage from core.cpp:
- *   #include "bridge/console_server.h"
- *   // In RenderDoc::Initialise(), after TargetControl setup:
- *   ConsoleServer_Start();
- *   // In RenderDoc::Shutdown():
- *   ConsoleServer_Stop();
+ * Embedded into renderdoc.dll. Uses only Win32 threads (no std::thread)
+ * to avoid C++14 compatibility issues with renderdoc's build system.
  *
  * ASCII only (MSVC C4819 compliance).
  */
@@ -38,20 +21,22 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include <thread>
 #include <atomic>
 #include <mutex>
-#include <chrono>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "psapi.lib")
 
-/* ── Logging (uses RenderDoc's RDCLOG if available) ────────────── */
+/* Suppress deprecation warnings for getenv/sscanf/inet_addr */
+#pragma warning(push)
+#pragma warning(disable: 4996)
+
+/* ── Logging ───────────────────────────────────────────────────── */
 
 #ifdef RDCLOG
 #define BRIDGE_LOG(fmt, ...) RDCLOG("[BRIDGE] " fmt, ##__VA_ARGS__)
 #else
-static void bridge_log(const char* fmt, ...) {
+static void bridge_log_fallback(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     fprintf(stderr, "[BRIDGE] ");
@@ -59,10 +44,9 @@ static void bridge_log(const char* fmt, ...) {
     fprintf(stderr, "\n");
     va_end(args);
 }
-#define BRIDGE_LOG(fmt, ...) bridge_log(fmt, ##__VA_ARGS__)
+#define BRIDGE_LOG(fmt, ...) bridge_log_fallback(fmt, ##__VA_ARGS__)
 #endif
 
-/* Provide bridge_log function for headers that depend on it */
 static inline void bridge_log_adapter(const char* fmt, ...) {
     char buf[1024];
     va_list args;
@@ -72,7 +56,6 @@ static inline void bridge_log_adapter(const char* fmt, ...) {
     BRIDGE_LOG("%s", buf);
 }
 
-/* The headers use bridge_log() */
 #define bridge_log bridge_log_adapter
 
 #include "pattern_scan.h"
@@ -120,22 +103,22 @@ static InterpolatedCamera cs_apply_smoothing(const InterpolatedCamera& raw)
     return out;
 }
 
-/* ── Camera Path Tick ──────────────────────────────────────────── */
+/* ── Camera Tick Thread ────────────────────────────────────────── */
 
-static std::atomic<bool> cs_tick_running{false};
-static std::thread       cs_tick_thread;
+static volatile LONG cs_tick_running = 0;
+static HANDLE cs_tick_handle = NULL;
 
-static void cs_camera_tick()
+static DWORD WINAPI cs_camera_tick(LPVOID)
 {
-    using clock = std::chrono::steady_clock;
-    auto interval = std::chrono::microseconds(1000000 / 60);  /* 60 Hz */
-    auto last = clock::now();
+    LARGE_INTEGER freq, last, now;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&last);
 
     BRIDGE_LOG("Camera tick thread started (60 Hz)");
 
-    while (cs_tick_running) {
-        auto now = clock::now();
-        float dt = std::chrono::duration<float>(now - last).count();
+    while (InterlockedCompareExchange(&cs_tick_running, 1, 1) == 1) {
+        QueryPerformanceCounter(&now);
+        float dt = (float)(now.QuadPart - last.QuadPart) / (float)freq.QuadPart;
         last = now;
 
         if (g_camera_path.is_playing()) {
@@ -150,11 +133,10 @@ static void cs_camera_tick()
                 BRIDGE_LOG("Camera path playback ended");
         }
 
-        auto elapsed = clock::now() - now;
-        if (elapsed < interval)
-            std::this_thread::sleep_for(interval - elapsed);
+        Sleep(16);  /* ~60 Hz */
     }
     BRIDGE_LOG("Camera tick thread stopped");
+    return 0;
 }
 
 /* ── TCP helpers ───────────────────────────────────────────────── */
@@ -172,7 +154,7 @@ static int cs_parse_floats(const char* str, float* out, int max_count) {
     while (count < max_count && *p) {
         while (*p == ' ' || *p == ',') p++;
         if (!*p) break;
-        char* end = nullptr;
+        char* end = NULL;
         float v = strtof(p, &end);
         if (end == p) break;
         out[count++] = v;
@@ -210,7 +192,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd == "__bridge_rescan") {
-        g_engine_found = false; g_engine_ptr = nullptr; g_exec_fn = nullptr;
+        g_engine_found = false; g_engine_ptr = NULL; g_exec_fn = NULL;
         cs_reply(client, find_gengine() ? "ok\n" : "not_found\n");
         return true;
     }
@@ -253,7 +235,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     /* Camera path commands */
     if (cmd == "__path_add") {
         CameraKeyframe kf;
-        kf.pos = { g_camera.x, g_camera.y, g_camera.z };
+        kf.pos.x = g_camera.x; kf.pos.y = g_camera.y; kf.pos.z = g_camera.z;
         kf.pitch = g_camera.pitch; kf.yaw = g_camera.yaw; kf.roll = g_camera.roll;
         kf.fov = g_camera.fov; kf.duration = 2.0f;
         g_camera_path.add_keyframe(kf);
@@ -266,7 +248,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         int n = cs_parse_floats(cmd.c_str() + 11, vals, 8);
         if (n >= 6) {
             CameraKeyframe kf;
-            kf.pos = {vals[0],vals[1],vals[2]};
+            kf.pos.x = vals[0]; kf.pos.y = vals[1]; kf.pos.z = vals[2];
             kf.pitch = vals[3]; kf.yaw = vals[4]; kf.roll = vals[5];
             kf.fov = (n>=7)?vals[6]:90.0f; kf.duration = (n>=8)?vals[7]:2.0f;
             g_camera_path.add_keyframe(kf);
@@ -296,9 +278,10 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         cs_reply(client, l?"loop=on\n":"loop=off\n"); return true;
     }
     if (cmd == "__path_visualize") {
-        auto pts = g_camera_path.visualize(20);
+        std::vector<InterpolatedCamera> pts = g_camera_path.visualize(20);
         std::string r; char buf[128];
-        for (auto& p : pts) {
+        for (size_t i = 0; i < pts.size(); i++) {
+            const InterpolatedCamera& p = pts[i];
             snprintf(buf,sizeof(buf),"%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n",
                 p.pos.x,p.pos.y,p.pos.z,p.pitch,p.yaw,p.roll,p.fov);
             r += buf;
@@ -323,19 +306,27 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 
 /* ── TCP Server ────────────────────────────────────────────────── */
 
-static std::atomic<bool> cs_server_running{false};
+static volatile LONG cs_server_running = 0;
 static SOCKET cs_listen_socket = INVALID_SOCKET;
-static std::thread cs_server_thread;
-static std::vector<std::thread> cs_client_threads;
-static std::mutex cs_client_threads_mutex;
 
-static void cs_handle_client(SOCKET client)
+/* Client thread tracking */
+static HANDLE cs_client_handles[32];
+static int cs_client_count = 0;
+static CRITICAL_SECTION cs_client_cs;
+
+struct ClientArg { SOCKET sock; };
+
+static DWORD WINAPI cs_handle_client_thread(LPVOID arg)
 {
+    ClientArg* ca = (ClientArg*)arg;
+    SOCKET client = ca->sock;
+    delete ca;
+
     BRIDGE_LOG("Client connected");
     char buffer[CONSOLE_MAX_CMD_LEN];
     std::string line_buf;
 
-    while (cs_server_running) {
+    while (InterlockedCompareExchange(&cs_server_running, 1, 1) == 1) {
         int n = recv(client, buffer, sizeof(buffer)-1, 0);
         if (n <= 0) break;
         buffer[n] = '\0';
@@ -351,12 +342,11 @@ static void cs_handle_client(SOCKET client)
     }
     closesocket(client);
     BRIDGE_LOG("Client disconnected");
+    return 0;
 }
 
 static void cs_server_main(int port)
 {
-    /* WSAStartup should already be done by RenderDoc's Network::Init() */
-
     cs_listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (cs_listen_socket == INVALID_SOCKET) {
         BRIDGE_LOG("socket() failed: %d", WSAGetLastError());
@@ -366,7 +356,8 @@ static void cs_server_main(int port)
     int opt = 1;
     setsockopt(cs_listen_socket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
-    struct sockaddr_in addr = {};
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     addr.sin_port = htons((u_short)port);
@@ -385,17 +376,31 @@ static void cs_server_main(int port)
         return;
     }
 
-    cs_server_running = true;
+    InterlockedExchange(&cs_server_running, 1);
     BRIDGE_LOG("Console server on 127.0.0.1:%d", port);
 
-    while (cs_server_running) {
-        fd_set fds; FD_ZERO(&fds); FD_SET(cs_listen_socket, &fds);
-        struct timeval tv = {1, 0};
+    while (InterlockedCompareExchange(&cs_server_running, 1, 1) == 1) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(cs_listen_socket, &fds);
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
         if (select(0, &fds, NULL, NULL, &tv) > 0) {
             SOCKET c = accept(cs_listen_socket, NULL, NULL);
             if (c != INVALID_SOCKET) {
-                std::lock_guard<std::mutex> lock(cs_client_threads_mutex);
-                cs_client_threads.emplace_back(cs_handle_client, c);
+                ClientArg* arg = new ClientArg;
+                arg->sock = c;
+                HANDLE h = CreateThread(NULL, 0, cs_handle_client_thread, arg, 0, NULL);
+                if (h) {
+                    EnterCriticalSection(&cs_client_cs);
+                    if (cs_client_count < 32)
+                        cs_client_handles[cs_client_count++] = h;
+                    else
+                        CloseHandle(h);
+                    LeaveCriticalSection(&cs_client_cs);
+                }
             }
         }
     }
@@ -405,64 +410,87 @@ static void cs_server_main(int port)
     BRIDGE_LOG("Console server stopped");
 }
 
-/* ── Public API (called from core.cpp) ─────────────────────────── */
+/* ── Startup Thread ────────────────────────────────────────────── */
+
+static HANDLE cs_main_thread = NULL;
+
+static DWORD WINAPI cs_startup_thread(LPVOID)
+{
+    BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
+
+    /* Poll for GEngine until found or timeout. */
+    const int poll_interval_ms = 500;
+    const int timeout_ms = 60000;
+    int elapsed = 0;
+    while (!find_gengine() && elapsed < timeout_ms) {
+        Sleep(poll_interval_ms);
+        elapsed += poll_interval_ms;
+        if (elapsed % 5000 == 0)
+            BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
+    }
+    if (!g_engine_found)
+        BRIDGE_LOG("WARNING: GEngine not found after %ds", timeout_ms / 1000);
+
+    int port = CONSOLE_DEFAULT_PORT;
+    const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
+    if (env_port) {
+        port = atoi(env_port);
+        if (port <= 0 || port > 65535) port = CONSOLE_DEFAULT_PORT;
+    }
+
+    /* Start camera tick thread */
+    InterlockedExchange(&cs_tick_running, 1);
+    cs_tick_handle = CreateThread(NULL, 0, cs_camera_tick, NULL, 0, NULL);
+
+    /* Run TCP server (blocks until shutdown) */
+    cs_server_main(port);
+    return 0;
+}
+
+/* ── Public API ────────────────────────────────────────────────── */
 
 static inline void ConsoleServer_Start()
 {
-    std::thread([]() {
-        BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
-
-        /* Poll for GEngine until found or timeout (no Sleep for readiness). */
-        const int poll_interval_ms = 500;
-        const int timeout_ms = 60000;
-        int elapsed = 0;
-        while (!find_gengine() && elapsed < timeout_ms) {
-            Sleep(poll_interval_ms);
-            elapsed += poll_interval_ms;
-            if (elapsed % 5000 == 0)
-                BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
-        }
-        if (!g_engine_found)
-            BRIDGE_LOG("WARNING: GEngine not found after %ds, console commands won't work", timeout_ms / 1000);
-
-        int port = CONSOLE_DEFAULT_PORT;
-        const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
-        if (env_port) {
-            port = atoi(env_port);
-            if (port <= 0 || port > 65535) port = CONSOLE_DEFAULT_PORT;
-        }
-
-        cs_tick_running = true;
-        cs_tick_thread = std::thread(cs_camera_tick);
-
-        cs_server_main(port);
-    }).detach();
+    InitializeCriticalSection(&cs_client_cs);
+    cs_main_thread = CreateThread(NULL, 0, cs_startup_thread, NULL, 0, NULL);
 }
 
 static inline void ConsoleServer_Stop()
 {
-    cs_server_running = false;
-    cs_tick_running = false;
+    InterlockedExchange(&cs_server_running, 0);
+    InterlockedExchange(&cs_tick_running, 0);
 
     if (cs_listen_socket != INVALID_SOCKET)
         closesocket(cs_listen_socket);
-    if (cs_tick_thread.joinable())
-        cs_tick_thread.join();
-    if (cs_server_thread.joinable())
-        cs_server_thread.join();
 
-    /* Wait for all client handler threads to finish */
-    {
-        std::lock_guard<std::mutex> lock(cs_client_threads_mutex);
-        for (auto& t : cs_client_threads) {
-            if (t.joinable())
-                t.join();
-        }
-        cs_client_threads.clear();
+    /* Wait for main server thread */
+    if (cs_main_thread) {
+        WaitForSingleObject(cs_main_thread, 3000);
+        CloseHandle(cs_main_thread);
+        cs_main_thread = NULL;
     }
+
+    /* Wait for tick thread */
+    if (cs_tick_handle) {
+        WaitForSingleObject(cs_tick_handle, 1000);
+        CloseHandle(cs_tick_handle);
+        cs_tick_handle = NULL;
+    }
+
+    /* Wait for client threads */
+    EnterCriticalSection(&cs_client_cs);
+    for (int i = 0; i < cs_client_count; i++) {
+        WaitForSingleObject(cs_client_handles[i], 1000);
+        CloseHandle(cs_client_handles[i]);
+    }
+    cs_client_count = 0;
+    LeaveCriticalSection(&cs_client_cs);
+    DeleteCriticalSection(&cs_client_cs);
 
     BRIDGE_LOG("Console server shutdown complete");
 }
+
+#pragma warning(pop)  /* restore 4996 */
 
 #else  /* non-Windows */
 

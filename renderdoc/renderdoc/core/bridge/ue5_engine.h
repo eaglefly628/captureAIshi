@@ -100,6 +100,58 @@ typedef bool (__fastcall *ExecFn)(
 
 static ExecFn g_exec_fn = nullptr;
 
+/* ── SEH-safe helpers ────────────────────────────────────────────── */
+
+/*
+ * MSVC __try/__except cannot coexist with C++ objects that have
+ * destructors in the same function (error C2712). These tiny
+ * wrapper functions isolate SEH blocks from C++ code.
+ */
+
+/* Safely read a pointer value; returns 0 on access violation. */
+#pragma warning(push)
+#pragma warning(disable: 4733)  /* inline asm / SEH */
+static uintptr_t seh_read_ptr(const void* addr)
+{
+    __try {
+        return *(const uintptr_t*)addr;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+/* Safely validate a function pointer by reading its first byte. */
+static bool seh_validate_function(void* fn)
+{
+    if (!fn || (uintptr_t)fn < 0x10000) return false;
+    __try {
+        uint8_t b0 = *(uint8_t*)fn;
+        /* Common x64 function prologues */
+        return (b0 == 0x40 || b0 == 0x48 || b0 == 0x4C ||
+                b0 == 0x41 || b0 == 0x55 || b0 == 0x53 ||
+                b0 == 0x56 || b0 == 0x57 || b0 == 0xE9 ||
+                b0 == 0xCC);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+/* Safely call ExecFn; returns true if it didn't crash. */
+static bool seh_call_exec(ExecFn fn, void* engine,
+                           void* world, const wchar_t* cmd, void* ar)
+{
+    __try {
+        fn(engine, world, cmd, ar);
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+#pragma warning(pop)
+
 /* ── GLog (default output device) ────────────────────────────────── */
 
 /* GLog is UE5's global log output device, needed for Exec() calls.
@@ -225,30 +277,23 @@ static bool find_gengine_via_string_xref()
 
                 /* Check if the pointed-to object has a vtable
                  * (first 8 bytes should be a valid pointer too) */
-                __try {
-                    uintptr_t vtable = *(uintptr_t*)candidate;
-                    if (vtable < 0x10000) continue;
+                uintptr_t vtable = seh_read_ptr(candidate);
+                if (vtable < 0x10000) continue;
 
-                    /* This looks like a valid engine pointer!
-                     * Store it and verify by trying a benign read. */
-                    g_engine_global_addr = resolved;
-                    g_engine_ptr = (UEngine*)candidate;
-                    g_engine_found = true;
+                /* This looks like a valid engine pointer! */
+                g_engine_global_addr = resolved;
+                g_engine_ptr = (UEngine*)candidate;
+                g_engine_found = true;
 
-                    bridge_log("GEngine FOUND via '%ls' xref!",
-                               search_str);
-                    bridge_log("  Global addr: 0x%llX (offset 0x%llX)",
-                               (unsigned long long)resolved,
-                               (unsigned long long)(resolved - (uintptr_t)rgn.base));
-                    bridge_log("  Pointer value: 0x%p", candidate);
-                    bridge_log("  VTable: 0x%llX", (unsigned long long)vtable);
+                bridge_log("GEngine FOUND via '%ls' xref!",
+                           search_str);
+                bridge_log("  Global addr: 0x%llX (offset 0x%llX)",
+                           (unsigned long long)resolved,
+                           (unsigned long long)(resolved - (uintptr_t)rgn.base));
+                bridge_log("  Pointer value: 0x%p", candidate);
+                bridge_log("  VTable: 0x%llX", (unsigned long long)vtable);
 
-                    return true;
-                }
-                __except(EXCEPTION_EXECUTE_HANDLER) {
-                    /* Access violation - not a valid pointer */
-                    continue;
-                }
+                return true;
             }
         }
     }
@@ -330,35 +375,11 @@ static bool find_gengine()
  * starts with a valid prologue (push rbp / sub rsp / mov).
  */
 
-/* Validate a function pointer looks like a real function */
+/* Validate a function pointer looks like a real function.
+ * Uses seh_validate_function() to safely read memory. */
 static bool validate_function_ptr(void* fn)
 {
-    if (!fn || (uintptr_t)fn < 0x10000) return false;
-
-    __try {
-        uint8_t* bytes = (uint8_t*)fn;
-        /* Check for common x64 function prologues:
-         * 40 55        push rbp
-         * 48 89 5C     mov [rsp+...], rbx
-         * 48 83 EC     sub rsp, N
-         * 48 8B C1     mov rax, rcx
-         * 4C 89 44     mov [rsp+...], r8
-         * 41 56        push r14
-         * 55           push rbp
-         * 53           push rbx
-         */
-        uint8_t b0 = bytes[0];
-        if (b0 == 0x40 || b0 == 0x48 || b0 == 0x4C ||
-            b0 == 0x41 || b0 == 0x55 || b0 == 0x53 ||
-            b0 == 0x56 || b0 == 0x57 || b0 == 0xE9 ||
-            b0 == 0xCC) {
-            return true;
-        }
-        return false;
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return seh_validate_function(fn);
 }
 
 static bool exec_console_command(const char* cmd)
@@ -405,16 +426,13 @@ static bool exec_console_command(const char* cmd)
 
     /* If we already found the Exec function, call it directly */
     if (g_exec_fn) {
-        __try {
-            g_exec_fn(g_engine_ptr, NULL, wcmd.data(), g_log_ptr);
+        if (seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), g_log_ptr)) {
             bridge_log("  OK (direct call)");
             return true;
         }
-        __except(EXCEPTION_EXECUTE_HANDLER) {
-            bridge_log("  ERROR: Exec call crashed, clearing cached fn");
-            g_exec_fn = nullptr;
-            return false;
-        }
+        bridge_log("  ERROR: Exec call crashed, clearing cached fn");
+        g_exec_fn = nullptr;
+        return false;
     }
 
     /* Probe vtable to find Exec using a safe no-op command first.
@@ -426,27 +444,23 @@ static bool exec_console_command(const char* cmd)
     const wchar_t* probe_cmd = L"stat none";
 
     for (int idx = 110; idx <= 130; idx++) {
-        __try {
-            void* fn = (void*)vtable[idx];
-            if (!validate_function_ptr(fn)) continue;
+        void* fn = (void*)vtable[idx];
+        if (!validate_function_ptr(fn)) continue;
 
-            ExecFn try_exec = (ExecFn)fn;
+        ExecFn try_exec = (ExecFn)fn;
 
-            /* Probe with safe command first */
-            try_exec(g_engine_ptr, NULL, probe_cmd, g_log_ptr);
-
-            /* If we get here, this index works. Cache it. */
-            g_exec_fn = try_exec;
-            bridge_log("  Found Exec at vtable[%d] = 0x%p", idx, fn);
-
-            /* Now run the actual user command */
-            g_exec_fn(g_engine_ptr, NULL, wcmd.data(), g_log_ptr);
-            bridge_log("  OK");
-            return true;
-        }
-        __except(EXCEPTION_EXECUTE_HANDLER) {
+        /* Probe with safe command first (SEH-safe) */
+        if (!seh_call_exec(try_exec, g_engine_ptr, NULL, probe_cmd, g_log_ptr))
             continue;
-        }
+
+        /* If we get here, this index works. Cache it. */
+        g_exec_fn = try_exec;
+        bridge_log("  Found Exec at vtable[%d] = 0x%p", idx, fn);
+
+        /* Now run the actual user command */
+        seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), g_log_ptr);
+        bridge_log("  OK");
+        return true;
     }
 
     bridge_log("  FAILED: Could not find Exec in vtable[110..130]");
