@@ -19,6 +19,7 @@
 - **All SHARED.md updates MUST include a version tag** in the section header, e.g. `## [v0.2.0] Feature Name`. This is how agents reference specific changes.
 - When an agent needs to tell another agent about a change, reference the version: "see rendering SHARED.md [v0.2.0]" — not dates or commit hashes.
 - Agents reading SHARED.md should check the version tag to know if they've already consumed that update.
+- **Every push MUST include a changelog entry** in the agent's own SHARED.md. A push without a corresponding CL entry is an incomplete submission. Format: `### [v0.X.Y] <sha> — <agent name>` with bullet summary. No exceptions.
 
 ### Agent Names (canonical)
 
