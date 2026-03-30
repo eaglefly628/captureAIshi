@@ -1,5 +1,15 @@
 # captureAIshi — Development Guidelines
 
+## Context Awareness
+
+After each response, append a one-line context estimate at the end:
+
+```
+📊 Context: ~XX%
+```
+
+Estimate based on: how many files you've read, how much code you've generated, how many turns have passed. This is a rough self-assessment, not exact. When approaching ~70%, proactively warn the lead programmer that a fresh session may be needed soon. At ~85%, wrap up current work, push, write CL, and suggest starting a new session.
+
 ## Version
 
 **Current: v0.2.0**
