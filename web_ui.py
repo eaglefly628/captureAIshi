@@ -618,6 +618,9 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
+    # Suppress noisy Werkzeug request logs for polling endpoints
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
     port = 5000
     print(f"captureAIshi Web UI: http://127.0.0.1:{port}")
     webbrowser.open(f"http://127.0.0.1:{port}")
