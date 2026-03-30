@@ -33,21 +33,22 @@
 
 /* ── Logging ───────────────────────────────────────────────────── */
 
-#ifdef RDCLOG
-#define BRIDGE_LOG(fmt, ...) RDCLOG("[BRIDGE] " fmt, ##__VA_ARGS__)
-#else
-static void bridge_log_fallback(const char* fmt, ...) {
+/* Use OutputDebugStringA for logging -- visible in debugger and
+ * RenderDoc's own log. Avoids any macro conflicts with RDCLOG. */
+static void BRIDGE_LOG(const char* fmt, ...)
+{
+    char buf[1024];
     va_list args;
     va_start(args, fmt);
-    fprintf(stderr, "[BRIDGE] ");
-    vfprintf(stderr, fmt, args);
-    fprintf(stderr, "\n");
+    int n = vsnprintf(buf, sizeof(buf) - 2, fmt, args);
     va_end(args);
+    if (n > 0 && buf[n-1] != '\n') { buf[n] = '\n'; buf[n+1] = '\0'; }
+    OutputDebugStringA("[BRIDGE] ");
+    OutputDebugStringA(buf);
 }
-#define BRIDGE_LOG(fmt, ...) bridge_log_fallback(fmt, ##__VA_ARGS__)
-#endif
 
-static inline void bridge_log_adapter(const char* fmt, ...) {
+static void bridge_log_adapter(const char* fmt, ...)
+{
     char buf[1024];
     va_list args;
     va_start(args, fmt);
