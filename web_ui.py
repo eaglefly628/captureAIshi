@@ -272,6 +272,14 @@ def list_sessions():
     return jsonify({"sessions": sessions, "active": active})
 
 
+def _safe_session_path(session: str, base: Path) -> Path:
+    """Resolve a session name to a path, rejecting traversal attempts."""
+    target = (base / session).resolve()
+    if not target.is_relative_to(base.resolve()):
+        return None
+    return target
+
+
 @app.route("/api/captures")
 @app.route("/api/captures/<session>")
 def list_captures(session=None):
@@ -280,7 +288,9 @@ def list_captures(session=None):
         output_dir = _capture_state.get("output_dir", "./output")
     base = Path(output_dir).parent
     if session:
-        target = base / session
+        target = _safe_session_path(session, base)
+        if target is None:
+            return jsonify({"error": "Invalid session path"}), 403
     else:
         target = Path(output_dir)
     exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".exr"}
@@ -299,7 +309,9 @@ def serve_capture(session, filename):
     with _lock:
         output_dir = _capture_state.get("output_dir", "./output")
     base = Path(output_dir).parent
-    target = (base / session).resolve()
+    target = _safe_session_path(session, base)
+    if target is None:
+        return jsonify({"error": "Invalid session path"}), 403
     return send_from_directory(str(target), filename)
 
 
@@ -310,7 +322,12 @@ def session_stats(session=None):
     with _lock:
         output_dir = _capture_state.get("output_dir", "./output")
     base = Path(output_dir).parent
-    target = (base / session) if session else Path(output_dir)
+    if session:
+        target = _safe_session_path(session, base)
+        if target is None:
+            return jsonify({"error": "Invalid session path"}), 403
+    else:
+        target = Path(output_dir)
     exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".exr"}
     total_size = 0
     count = 0

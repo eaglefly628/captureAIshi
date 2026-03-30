@@ -49,7 +49,7 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 
 ## TODO (from lead review)
 
-- [ ] **P0 安全: session_stats 路径穿越** — `web_ui.py` 的 `/api/session-stats/<session>` 和 `/api/captures/<session>/` 两个路由，`session` 参数直接拼到路径里没做校验。攻击者可以用 `../../etc` 遍历文件系统。修复方法：`resolve()` 后用 `is_relative_to(base)` 验证目标路径在 output base 目录内，否则返回 403。
+- [x] **P0 安全: session_stats 路径穿越** — Fixed: 新增 `_safe_session_path()` 辅助函数，所有 session 路由 (`list_captures`, `serve_capture`, `session_stats`) 都用 `resolve()` + `is_relative_to(base)` 校验，穿越尝试返回 403。
 
 ## Design Guidelines
 - Keep the existing dark theme and CSS variable system
@@ -57,3 +57,18 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 - Mobile-responsive is NOT required (desktop tool)
 - All new API endpoints go in `web_ui.py`
 - Test by running `python web_ui.py` and opening http://localhost:5000
+
+## Changelog
+
+### [v0.2.0] dc8316f — 小由
+- Lightbox 预览: 点击缩略图弹全屏大图，RGB/Depth/Normal 切换 (1/2/3 键)，左右箭头翻页
+- 进度条: 解析日志 `pose N/M`，显示百分比 + 已用/剩余时间
+- Gallery 增强: 类型过滤、排序、缩略图列数调节、文件统计 + 新增 `/api/session-stats`
+- 3D Viewer: Canvas 绘制包围盒/网格/轨迹路径，左键旋转/右键平移/滚轮缩放
+- Camera 输入: 新增 FOV + Aspect Ratio 字段，前后端打通
+- 面板拖拽: 三栏布局可拖拽调整宽度
+- Recent 限制: 历史配置只显示最近 3 条
+- Werkzeug 静音: 轮询日志不再刷屏
+
+### [v0.2.0] (pending) — 小由
+- P0 安全修复: `_safe_session_path()` 防路径穿越，session 路由返回 403
