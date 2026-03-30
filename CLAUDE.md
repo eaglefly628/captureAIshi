@@ -2,11 +2,13 @@
 
 ## Context Awareness
 
-After each response, append a one-line context estimate at the end:
+After each response, do two things:
 
-```
-📊 Context: ~XX%
-```
+1. Append a one-line context estimate at the end of your response:
+   ```
+   📊 Context: ~XX%
+   ```
+2. Update your row in `agents/STATUS.md` with your current percentage and timestamp. This file is the shared dashboard the lead programmer reads.
 
 Estimate based on: how many files you've read, how much code you've generated, how many turns have passed. This is a rough self-assessment, not exact. When approaching ~70%, proactively warn the lead programmer that a fresh session may be needed soon. At ~85%, wrap up current work, push, write CL, and suggest starting a new session.
 
