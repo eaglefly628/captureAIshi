@@ -16,6 +16,9 @@ ce_streaming_pos.json
 venv/
 env/
 
+# Embedded Python (created by bootstrap.bat)
+python/
+
 # IDE
 .vscode/
 .idea/
