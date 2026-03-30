@@ -19,8 +19,8 @@ env/
 # Embedded Python (created by bootstrap.bat)
 python/
 
-# IDE
-.vscode/
+# IDE (user-specific files only)
+.vscode/*.log
 .idea/
 *.swp
 .DS_Store

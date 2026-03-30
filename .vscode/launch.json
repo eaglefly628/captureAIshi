@@ -1,0 +1,24 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Desktop GUI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/desktop_app.py",
+            "python": "${workspaceFolder}/python/python.exe",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "CLI Dry Run",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "python": "${workspaceFolder}/python/python.exe",
+            "args": ["--driver", "manual", "--dry-run"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        }
+    ]
+}
