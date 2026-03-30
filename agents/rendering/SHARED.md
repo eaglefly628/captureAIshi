@@ -113,7 +113,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## Changelog
 
-### [v0.2.0] b542e7e — 小萱萱
+### [v0.2.0] b542e7e — 小萱
 - trajectory.json 输出格式，四元数旋转，camera intrinsics (FOV/aspect)
 - Normal buffer 自动导出 (R10G10B10A2, fmtType=12)
 - 两阶段批量截帧/导出 (batch-export 默认开启)

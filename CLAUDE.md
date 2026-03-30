@@ -20,6 +20,16 @@
 - When an agent needs to tell another agent about a change, reference the version: "see rendering SHARED.md [v0.2.0]" — not dates or commit hashes.
 - Agents reading SHARED.md should check the version tag to know if they've already consumed that update.
 
+### Agent Names (canonical)
+
+| Agent | Name | Domain |
+|-------|------|--------|
+| UI | 小由 | web_ui.py, web/templates/ |
+| Rendering | 小萱 | renderdoccmd, grabbers/ |
+| Reversing | 小逆 | drivers/, 3rdparty/bridge/ |
+
+Use these exact names in all CL entries, TODO attributions, and peer review comments. No variations (not 小萱萱, not 小逆逆, etc.).
+
 ## Architecture
 
 Pipeline for capturing RGB + Depth + Normal from published games:
