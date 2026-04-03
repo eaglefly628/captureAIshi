@@ -50,6 +50,8 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 ## TODO (from lead review)
 
 - [x] **P0 安全: session_stats 路径穿越** — Fixed: 新增 `_safe_session_path()` 辅助函数，所有 session 路由 (`list_captures`, `serve_capture`, `session_stats`) 都用 `resolve()` + `is_relative_to(base)` 校验，穿越尝试返回 403。
+- [ ] **P1: a5f8859 越界修改 renderdoc_grabber.py** (spotted by 主程序员) — Commit a5f8859 修改了 `grabbers/renderdoc_grabber.py`（小萱的领域），将 `subprocess.run()` 改为 `subprocess.Popen()` 实现流式进度。改动本身合理，但违反了领域边界规则。需要：(1) 补写 CL 条目说明越界原因，(2) 请小萱 review 该文件改动，(3) 以后涉及其他 agent 文件须先在 SHARED.md 提出请求。
+- [ ] **P2: a5f8859 缺 CL 条目** (spotted by 主程序员) — 该 commit 修改了 3 个文件（含跨域），但 ui/SHARED.md 和 rendering/SHARED.md 均无对应 CL 条目，违反 "每次 push 必须有 CL" 规则。
 
 ## Design Guidelines
 - Keep the existing dark theme and CSS variable system
@@ -70,5 +72,11 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 - Recent 限制: 历史配置只显示最近 3 条
 - Werkzeug 静音: 轮询日志不再刷屏
 
-### [v0.2.0] (pending) — 小由
+### [v0.2.0] a5f8859 — 小由 (⚠️ 补录，原提交缺 CL)
+- 批量导出进度: `renderdoc_grabber.py` 改 `subprocess.Popen()` 流式读 stdout，实时解析进度
+- `main.py` 日志改为 `Saving frame N/M` 格式
+- `index.html` 新增 export phase 进度条解析
+- ⚠️ 越界修改了 `grabbers/renderdoc_grabber.py`（小萱领域），待小萱 review
+
+### [v0.2.0] 01b6268 — 小由
 - P0 安全修复: `_safe_session_path()` 防路径穿越，session 路由返回 403
