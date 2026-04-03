@@ -90,8 +90,11 @@ Anti-cheat research: see `docs/anti_cheat_research.md`
 
 ## Changelog
 
-### [v0.2.0] 1dde07f — xiaoni
-- `scripts/test_bridge_connection.py`: standalone 6-step diagnostic (TCP → ping → status → GEngine → Exec → camera path), exit codes for CI
-- `drivers/ue5_console.py`: auto-fallback bridge:9998 → UUU:1985, `_detect_bridge()` via `__bridge_ping`, `_is_bridge` flag
-- `renderdoc/renderdoc/core/bridge/ue5_engine.h`: GEngine scan failure now dumps full stats (strings/xrefs/MOV candidates/rejection counts) + actionable HINTs
-- `renderdoc/renderdoc/core/bridge/console_server.h`: `__bridge_status` now includes `gengine_global` address
+### [v0.2.0] d32d2aa — xiaoni
+- TCP server 立即启动，GEngine scan 后台并行（修复 port 9998 等待超时）
+- UE5 launcher 秒退检测 + 自动搜索 *-Shipping.exe
+- GEngine scanner 扩展到 8 个锚点（5 wide + 3 ASCII，含 UEVR 验证的 CALIBRATEMOTION 等）
+- bridge 诊断脚本 `scripts/test_bridge_connection.py`
+- UE5 driver 自动 fallback bridge:9998 → UUU:1985
+- GEngine scan 失败输出完整统计 + actionable HINTs
+- `__bridge_status` 新增 `gengine_global` 地址
