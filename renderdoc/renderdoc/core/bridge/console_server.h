@@ -176,12 +176,14 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "engine_found=%d engine_ptr=0x%p exec_fn=0x%p "
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
-            "smooth_factor=%.1f embedded=1\n",
+            "smooth_factor=%.1f embedded=1 "
+            "gengine_global=0x%llX\n",
             (int)g_engine_found.load(), g_engine_ptr, (void*)g_exec_fn,
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
-            cs_smooth_factor);
+            cs_smooth_factor,
+            (unsigned long long)g_engine_global_addr);
         cs_reply(client, buf);
         return true;
     }

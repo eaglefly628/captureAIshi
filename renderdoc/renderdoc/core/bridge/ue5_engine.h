@@ -214,26 +214,42 @@ static bool find_gengine_via_string_xref()
         L"SetViewLocation",
     };
 
+    int total_strings_found = 0;
+    int total_xrefs_found = 0;
+    int total_mov_candidates = 0;
+    int rejected_out_of_bounds = 0;
+    int rejected_null_ptr = 0;
+    int rejected_low_addr = 0;
+    int rejected_bad_vtable = 0;
+
     for (const wchar_t* search_str : search_strings) {
         const uint8_t* str_addr = find_wstring_in_module(
             rgn.base, rgn.size, search_str);
 
         if (!str_addr) {
-            bridge_log("String L\"%ls\" not found, trying next...",
+            bridge_log("  [SCAN] L\"%ls\" -- string not found in module",
                        search_str);
             continue;
         }
 
-        bridge_log("Found L\"%ls\" at offset 0x%llX",
+        total_strings_found++;
+        bridge_log("  [SCAN] L\"%ls\" at offset +0x%llX",
                    search_str,
                    (unsigned long long)(str_addr - rgn.base));
 
         /* Find all code references to this string */
         auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
-        bridge_log("  Found %zu cross-references", xrefs.size());
+        total_xrefs_found += (int)xrefs.size();
+        bridge_log("  [SCAN]   %zu cross-references found", xrefs.size());
+
+        if (xrefs.empty()) {
+            bridge_log("  [SCAN]   No xrefs -- string exists but is "
+                       "unreferenced (stripped code?)");
+            continue;
+        }
 
         for (const uint8_t* xref : xrefs) {
-            bridge_log("  Xref at offset 0x%llX",
+            bridge_log("  [SCAN]   Xref at +0x%llX, scanning [-256,+512]...",
                        (unsigned long long)(xref - rgn.base));
 
             /*
@@ -252,33 +268,47 @@ static bool find_gengine_via_string_xref()
             if (search_end > rgn.base + rgn.size - 7)
                 search_end = rgn.base + rgn.size - 7;
 
+            int local_candidates = 0;
             for (const uint8_t* p = search_start; p < search_end; p++) {
                 if (p[0] != 0x48 || p[1] != 0x8B) continue;
                 /* ModRM: mod=00, rm=101 means [rip+disp32] */
                 if ((p[2] & 0xC7) != 0x05) continue;
 
+                total_mov_candidates++;
+                local_candidates++;
                 uintptr_t resolved = resolve_rip_relative(p, 3, 7);
 
                 /* Validate: the resolved address should be in the
                  * module's data section (.data or .bss), which is
                  * typically in the upper portion of the image. */
                 if (resolved < (uintptr_t)rgn.base ||
-                    resolved >= (uintptr_t)(rgn.base + rgn.size))
+                    resolved >= (uintptr_t)(rgn.base + rgn.size)) {
+                    rejected_out_of_bounds++;
                     continue;
+                }
 
                 /* Read the pointer value at that address */
                 void* candidate = *(void**)resolved;
-                if (!candidate) continue;
+                if (!candidate) {
+                    rejected_null_ptr++;
+                    continue;
+                }
 
                 /* Basic validation: the pointer should point to
                  * a valid-looking object (not stack, not too low).
                  * UE5 objects are heap-allocated, typically >0x10000. */
-                if ((uintptr_t)candidate < 0x10000) continue;
+                if ((uintptr_t)candidate < 0x10000) {
+                    rejected_low_addr++;
+                    continue;
+                }
 
                 /* Check if the pointed-to object has a vtable
                  * (first 8 bytes should be a valid pointer too) */
                 uintptr_t vtable = seh_read_ptr(candidate);
-                if (vtable < 0x10000) continue;
+                if (vtable < 0x10000) {
+                    rejected_bad_vtable++;
+                    continue;
+                }
 
                 /* This looks like a valid engine pointer! */
                 g_engine_global_addr = resolved;
@@ -287,15 +317,51 @@ static bool find_gengine_via_string_xref()
 
                 bridge_log("GEngine FOUND via '%ls' xref!",
                            search_str);
-                bridge_log("  Global addr: 0x%llX (offset 0x%llX)",
+                bridge_log("  Global addr: 0x%llX (offset +0x%llX)",
                            (unsigned long long)resolved,
                            (unsigned long long)(resolved - (uintptr_t)rgn.base));
                 bridge_log("  Pointer value: 0x%p", candidate);
                 bridge_log("  VTable: 0x%llX", (unsigned long long)vtable);
+                bridge_log("  Scan stats: %d strings, %d xrefs, "
+                           "%d MOV candidates tested",
+                           total_strings_found, total_xrefs_found,
+                           total_mov_candidates);
 
                 return true;
             }
+
+            if (local_candidates == 0) {
+                bridge_log("  [SCAN]   No MOV [rip+X] instructions "
+                           "in search window");
+            }
         }
+    }
+
+    /* All methods exhausted -- dump diagnostic summary */
+    bridge_log("GEngine scan FAILED. Diagnostic summary:");
+    bridge_log("  Strings found:    %d / %d",
+               total_strings_found,
+               (int)(sizeof(search_strings) / sizeof(search_strings[0])));
+    bridge_log("  Total xrefs:      %d", total_xrefs_found);
+    bridge_log("  MOV candidates:   %d", total_mov_candidates);
+    bridge_log("  Rejected reasons:");
+    bridge_log("    out-of-bounds:  %d", rejected_out_of_bounds);
+    bridge_log("    null pointer:   %d", rejected_null_ptr);
+    bridge_log("    low address:    %d", rejected_low_addr);
+    bridge_log("    bad vtable:     %d", rejected_bad_vtable);
+    if (total_strings_found == 0) {
+        bridge_log("  HINT: No search strings found. Game may have "
+                   "stripped string data. Try manual offset.");
+    } else if (total_xrefs_found == 0) {
+        bridge_log("  HINT: Strings exist but no code references them. "
+                   "Game may use obfuscated string loading.");
+    } else if (total_mov_candidates == 0) {
+        bridge_log("  HINT: Xrefs found but no MOV [rip+X] nearby. "
+                   "GEngine access may use a different pattern.");
+    } else {
+        bridge_log("  HINT: Candidates found but none passed validation. "
+                   "GEngine may not be initialized yet (try later) "
+                   "or pointer layout differs from expected.");
     }
 
     return false;

@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 class UE5ConsoleDriver(CameraDriver):
     """Control UE5 camera via console commands over TCP.
 
+    Connection strategy:
+      Tries the bridge port (default 9998) first, then falls back to
+      UUU legacy port (1985). Set fallback_ports=[] to disable fallback.
+
     Streaming strategy (applied in order of reliability):
       1. Teleport player pawn to camera position — moves the engine's
          primary streaming source so level streaming and texture mips
@@ -41,6 +45,10 @@ class UE5ConsoleDriver(CameraDriver):
       3. Configurable settle time to allow assets to stream in before
          the frame is captured.
     """
+
+    # Well-known ports for UE5 console servers
+    BRIDGE_PORT = 9998
+    UUU_PORT = 1985
 
     def __init__(
         self,
@@ -53,6 +61,7 @@ class UE5ConsoleDriver(CameraDriver):
         force_texture_streaming: bool = True,
         capture_resolution: Optional[str] = None,
         disable_upscaler: bool = True,
+        fallback_ports: Optional[list] = None,
     ):
         self.host = host
         self.port = port
@@ -66,29 +75,64 @@ class UE5ConsoleDriver(CameraDriver):
         self._socket: Optional[socket.socket] = None
         self._streaming_initialized = False
         self._last_streaming_pos = None
+        self._is_bridge = False  # True if connected to bridge (vs UUU)
+
+        # Build the ordered list of ports to try
+        if fallback_ports is not None:
+            self._try_ports = [port] + [p for p in fallback_ports if p != port]
+        elif port == self.BRIDGE_PORT:
+            self._try_ports = [self.BRIDGE_PORT, self.UUU_PORT]
+        elif port == self.UUU_PORT:
+            self._try_ports = [self.UUU_PORT, self.BRIDGE_PORT]
+        else:
+            self._try_ports = [port, self.BRIDGE_PORT, self.UUU_PORT]
 
     def connect(self) -> None:
-        logger.info(f"[UE5] Connecting to {self.host}:{self.port}...")
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.settimeout(5.0)
+        last_error = None
+
+        for try_port in self._try_ports:
+            logger.info(f"[UE5] Trying {self.host}:{try_port}...")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            try:
+                sock.connect((self.host, try_port))
+            except (ConnectionRefusedError, socket.timeout, OSError) as e:
+                last_error = e
+                logger.debug(f"[UE5] Port {try_port} failed: {e}")
+                sock.close()
+                continue
+
+            # Connected — detect if this is bridge or UUU
+            self._socket = sock
+            self.port = try_port
+            self._is_bridge = self._detect_bridge()
+
+            server_type = "bridge" if self._is_bridge else "UUU/other"
+            logger.info(
+                f"[UE5] Connected to {server_type} at {self.host}:{try_port}"
+            )
+            return
+
+        # All ports failed
+        ports_str = ", ".join(str(p) for p in self._try_ports)
+        logger.error(
+            f"[UE5] Connection failed on all ports ({ports_str}). "
+            f"Last error: {last_error}. "
+            f"Is the game running with bridge or UUU?"
+        )
+        raise ConnectionRefusedError(
+            f"No UE5 console server found on {self.host} ports {ports_str}"
+        )
+
+    def _detect_bridge(self) -> bool:
+        """Ping to detect if we're connected to our bridge (vs UUU)."""
         try:
-            self._socket.connect((self.host, self.port))
-        except ConnectionRefusedError:
-            logger.error(
-                f"[UE5] Connection refused at {self.host}:{self.port}. "
-                f"Is the game running with bridge DLL injected (--auto-inject)?"
-            )
-            raise
-        except socket.timeout:
-            logger.error(
-                f"[UE5] Connection timed out to {self.host}:{self.port}. "
-                f"Check firewall and that the game's TCP console is active."
-            )
-            raise
-        except OSError as e:
-            logger.error(f"[UE5] Socket error connecting to {self.host}:{self.port}: {e}")
-            raise
-        logger.info(f"[UE5] Connected to UE5 console at {self.host}:{self.port}")
+            self._socket.sendall(b"__bridge_ping\n")
+            self._socket.settimeout(2.0)
+            data = self._socket.recv(256)
+            return data.strip() == b"pong"
+        except (socket.timeout, OSError):
+            return False
 
     def disconnect(self) -> None:
         if self._socket:
