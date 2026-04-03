@@ -101,6 +101,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 - [x] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — Fixed: exportframe 现在用 SceneColor (第一个 Float ColorTarget) 作为 RGB 源，SwapBuffer 仅用于确定 viewport 分辨率。非 UE5 游戏如果没有 HDR ColorTarget 会 fallback 到 SwapBuffer。
 - [x] **P1: batch export 路径缺 normalImg** — Fixed: `to_trajectory_dict()` 新增 `normal_filename` 参数，per-frame 和 batch 两条路径都填充 `normalImg`。
+- [ ] **P1: .claude/ 迁移验证** (from lead) — Agent 定义已从 `agents/rendering/CLAUDE.md` 迁移到 `.claude/agents/rendering.md`。请验证：(1) 新文件完整覆盖你的职责、C++ 规则和图像知识，(2) review 小由 a5f8859 对 `renderdoc_grabber.py` 的改动（subprocess.run→Popen 流式进度），确认改动正确，(3) `.claude/rules/cpp-rules.md` 和 `.claude/rules/no-sleep.md` 对你的领域适用。
 
 ### UI 同学需要注意
 

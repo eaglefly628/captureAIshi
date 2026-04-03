@@ -38,6 +38,7 @@ Anti-cheat research: see `docs/anti_cheat_research.md`
 
 - [x] **P0: ConsoleServer_Start 用了 Sleep(5000)** — Fixed: 改为轮询 `find_gengine()` 每 500ms 一次，最长 60 秒超时。
 - [x] **P0: detached client threads 没有清理** — Fixed: 改为 tracked `cs_client_threads` vector + `ConsoleServer_Stop()` 中 join 所有线程。
+- [ ] **P1: .claude/ 迁移验证** (from lead) — Agent 定义已从 `agents/reversing/CLAUDE.md` 迁移到 `.claude/agents/reversing.md`。请验证：(1) 新文件完整覆盖你的职责、TCP 协议表和内存布局，(2) 所有 SHARED.md 内的路径引用仍然正确，(3) `.claude/rules/` 里的规则对你适用。如有缺失，在此 TODO 下补充。
 - [x] **P1: static 全局变量在 header 里** — Acknowledged: 加了注释说明只能从单一 TU include。当前只有 core.cpp 使用。
 - [x] **P1: vtable 暴力搜索用用户实际命令** — Fixed: 改为先用 `stat none` 探测，确认 vtable index 后再执行用户命令。
 - [x] **P1: __path_delete atoi 负数溢出** — Fixed: 加了 `val < 0` 检查，负数直接返回 error。

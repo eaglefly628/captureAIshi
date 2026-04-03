@@ -25,6 +25,10 @@ python/
 *.swp
 .DS_Store
 
+# Claude Code local overrides (user-specific, not shared)
+CLAUDE.local.md
+.claude/settings.local.json
+
 # RenderDoc build artifacts (source is tracked, build output is not)
 renderdoc/x64/
 renderdoc/Win32/
