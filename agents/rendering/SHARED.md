@@ -102,6 +102,9 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 - [x] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — Fixed: exportframe 现在用 SceneColor (第一个 Float ColorTarget) 作为 RGB 源，SwapBuffer 仅用于确定 viewport 分辨率。非 UE5 游戏如果没有 HDR ColorTarget 会 fallback 到 SwapBuffer。
 - [x] **P1: batch export 路径缺 normalImg** — Fixed: `to_trajectory_dict()` 新增 `normal_filename` 参数，per-frame 和 batch 两条路径都填充 `normalImg`。
 - [ ] **P1: .claude/ 迁移验证** (from lead) — Agent 定义已从 `agents/rendering/CLAUDE.md` 迁移到 `.claude/agents/rendering.md`。请验证：(1) 新文件完整覆盖你的职责、C++ 规则和图像知识，(2) review 小由 a5f8859 对 `renderdoc_grabber.py` 的改动（subprocess.run→Popen 流式进度），确认改动正确，(3) `.claude/rules/cpp-rules.md` 和 `.claude/rules/no-sleep.md` 对你的领域适用。
+- [ ] **P1: f35632d + f4292f5 越界修改 main.py** (spotted by 主程序员) — `main.py` 不是小萱独占领域，两个 commit 修改了 batch/per-frame 路径逻辑。需要跟 lead 确认边界，或在 SHARED.md 提出跨域请求。
+- [ ] **P1: f35632d locals().get() 反模式** (spotted by 主程序员) — `locals().get("normal_filename", "")` 应改为在 try 块前初始化 `normal_filename = ""`，不要用 locals() 检查变量是否存在。
+- [ ] **P2: 5 个 commit 缺独立 CL 条目** (spotted by 主程序员) — f35632d/f901bc8/ebe4a7d/f4292f5/8c6160e 都没有写 CL。虽然 b542e7e 的 CL 做了部分总结，但按规则每次 push 都需要 CL 条目。请补录。
 
 ### UI 同学需要注意
 
