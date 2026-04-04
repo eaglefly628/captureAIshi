@@ -39,14 +39,6 @@ grabber.teardown()       # 6. Cleanup
 
 The grabber MUST launch and confirm the game is running BEFORE the driver attempts to connect. Enforced in `main.py` Step 6/7.
 
-### renderdoccmd CLI reference
-
-Syntax: `renderdoccmd capture [options] <executable> [game args]`
-
-**All `--opt-*` flags MUST come before the executable path.** Game arguments go after.
-
-Valid flags: `--opt-disallow-vsync`, `--opt-disallow-fullscreen`, `--opt-api-validation`, `--opt-api-validation-unmute`, `--opt-collect-callstacks`, `--opt-collect-callstacks-only-actions`, `--opt-ref-all-resources`, `--opt-save-all-initials`, `--opt-capture-all-cmd-lists`, `--opt-hook-children` (required for UE5 packaged games), `--opt-debug-output-mute`, `--opt-soft-memory-limit <MB>`, `--capture-file <path>`, `--wait-for-exit`.
-
 ### Error handling
 
 - Validate at system boundaries (user config, external tool output, network responses).

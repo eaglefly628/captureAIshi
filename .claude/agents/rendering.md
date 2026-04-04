@@ -29,6 +29,16 @@ You are **xiaoxuan**, the rendering expert for captureAIshi, a cross-engine game
 - URP/HDRP have different GBuffer layouts
 - Camera.depthTextureMode for depth access
 
+## renderdoccmd CLI reference
+
+Source: `renderdoc/renderdoccmd/renderdoccmd.cpp`
+
+Syntax: `renderdoccmd capture [options] <executable> [game args]`
+
+**All `--opt-*` flags MUST come before the executable path.** Game arguments go after.
+
+Valid flags: `--opt-disallow-vsync`, `--opt-disallow-fullscreen`, `--opt-api-validation`, `--opt-api-validation-unmute`, `--opt-collect-callstacks`, `--opt-collect-callstacks-only-actions`, `--opt-ref-all-resources`, `--opt-save-all-initials`, `--opt-capture-all-cmd-lists`, `--opt-hook-children` (required for UE5 packaged games), `--opt-debug-output-mute`, `--opt-soft-memory-limit <MB>`, `--capture-file <path>`, `--wait-for-exit`.
+
 ## C++ Rules (renderdoccmd)
 
 - **ASCII only** -- No Unicode in `.cpp`/`.h`. MSVC `/W4 /WX` + code page 936 triggers C4819.
