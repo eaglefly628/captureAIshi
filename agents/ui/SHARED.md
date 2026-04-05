@@ -57,11 +57,14 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 
 新增"游戏库"面板，替换当前右栏的主要功能：
 
-1. **从 UUU 拉取游戏清单**
-   - 数据源：Universal Unreal Unlocker (UUU) 的支持游戏列表
+1. **游戏清单数据源**
+   - UUU 是闭源的，不能直接拉取。改用以下数据源：
+     - **PCGamingWiki** — 有 UE 引擎版本和 DRM/反作弊标记
+     - **RE-UE4SS 兼容列表** — GitHub 开源，标注了哪些游戏可注入
+     - **IGCS 支持列表** — GitHub 开源 (FransBouma/InjectableGenericCameraSystem)，26+ 游戏
+     - **用户自建** — 手动添加游戏 + exe 路径
    - 后端 API: `GET /api/games` — 返回游戏列表（名称、引擎版本、兼容状态）
-   - 首次启动时从 UUU GitHub/网站拉取，本地缓存到 `configs/game_library.json`
-   - 支持手动刷新（按钮触发重新拉取）
+   - 本地缓存到 `configs/game_library.json`，支持手动刷新
 
 2. **游戏列表 UI**
    - 左侧（或右栏内）显示游戏列表
