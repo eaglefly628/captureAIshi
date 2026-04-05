@@ -51,10 +51,36 @@ Anti-cheat research: see `docs/anti_cheat_research.md`
 - [ ] **P1: AC 预检脚本** — 启动前检测 EasyAntiCheat.dll / BEService.exe，提示用户禁用或切 driver
 - [ ] **P2: 增强 Pause 机制** — 当前只有 slomo 0.0001，加 UWorld::IsPaused 内存写入 fallback
 - [ ] **P3: Per-game profile 系统** — JSON 配置：GEngine offset、vtable index、特殊 CVar、已知问题
-- [ ] **P3: 多游戏 AOB 数据库调研** — 研究 UUU/IGCS 的 offset 来源，评估自建 vs 复用可行性
+- [x] **P3: 多游戏 AOB 数据库调研** — 完成。结论：UUU 没有 per-game 数据库，用的是引擎通用 pattern（和我们一样）。已加 UEVR 验证的额外锚点字符串。详见下方调研结果。
 
 ## [v0.1.0] Tested Games
 - EagleWalkLJB (UE5 demo): RenderDoc injection OK, console OK, ToggleDebugCamera OK
+
+## [v0.2.0] AOB Database Research
+
+**结论：不需要 per-game 数据库。** UUU 用的就是引擎通用 pattern，和我们一样。
+
+### UUU 的真实做法
+- AOB pattern **内嵌在 DLL 里**，无外部数据库
+- 少量引擎通用 pattern 覆盖 300+ 游戏（因为 UE 引擎代码稳定）
+- 当 pattern 不兼容时，内置引擎版本变体
+
+### 可复用的开源资源
+| 项目 | 用途 |
+|------|------|
+| **patternsleuth** (Rust) | UE 通用 scanner，UE4SS v3 在用 |
+| **UEVR** (praydog) | 用 ASCII 字符串锚点定位 GEngine，UE4-5.4 验证 |
+| **UE4SS** | Lua AOB 框架 + 社区 per-game fallback |
+| **IGCS** | 32 个游戏的手工 AOB（不通用，仅参考） |
+
+### 我们的改进
+已将 UEVR 验证的锚点加入 bridge scanner：
+- `"CALIBRATEMOTION"` (ASCII) — UE4-5.4 全覆盖
+- `"SeamlessTravel FlushLevelStreaming"` (ASCII) — GWorld 附近
+- `"StaticConstructObject_Internal"` (ASCII) — 引擎核心函数
+- `L"r.HLOD"` (wide) — CVar 注册代码附近
+
+加上原有 4 个 wide 字符串，现在共 8 个锚点，大幅提高命中率。
 
 ## Changelog
 

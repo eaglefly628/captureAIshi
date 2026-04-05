@@ -202,17 +202,32 @@ static bool find_gengine_via_string_xref()
                rgn.base, rgn.size / (1024 * 1024));
 
     /*
-     * Strategy 1: Find L"ToggleDebugCamera" wide string.
-     * This string is always present in shipped UE5 games and is
-     * processed by code that accesses GEngine->GameViewport or
-     * the player controller. Nearby code loads GEngine.
+     * We search for both wide (UTF-16) and ASCII strings.
+     * Wide strings are UE5's native TCHAR format (most reliable).
+     * ASCII strings cover engine code that uses char* literals
+     * (e.g. CALIBRATEMOTION in input processing, present UE4-5.4).
+     *
+     * Order: most reliable / most unique first.
      */
-    const wchar_t* search_strings[] = {
-        L"ToggleDebugCamera",
-        L"r.Streaming.PoolSize",
-        L"GEngine",
-        L"SetViewLocation",
+    struct SearchEntry {
+        const wchar_t* wstr;   /* wide string (NULL if ASCII) */
+        const char*    astr;   /* ASCII string (NULL if wide) */
+        const char*    label;  /* display name for logging */
     };
+
+    const SearchEntry search_entries[] = {
+        /* Wide strings (UE5 TCHAR) -- primary */
+        {L"ToggleDebugCamera",      NULL, "L\"ToggleDebugCamera\""},
+        {L"r.Streaming.PoolSize",   NULL, "L\"r.Streaming.PoolSize\""},
+        {L"r.HLOD",                 NULL, "L\"r.HLOD\""},
+        {L"GEngine",                NULL, "L\"GEngine\""},
+        {L"SetViewLocation",        NULL, "L\"SetViewLocation\""},
+        /* ASCII strings (char*) -- UEVR-proven anchors */
+        {NULL, "CALIBRATEMOTION",                     "\"CALIBRATEMOTION\""},
+        {NULL, "SeamlessTravel FlushLevelStreaming",   "\"SeamlessTravel FlushLevel...\""},
+        {NULL, "StaticConstructObject_Internal",       "\"StaticConstructObject_Internal\""},
+    };
+    const int num_entries = sizeof(search_entries) / sizeof(search_entries[0]);
 
     int total_strings_found = 0;
     int total_xrefs_found = 0;
@@ -222,19 +237,23 @@ static bool find_gengine_via_string_xref()
     int rejected_low_addr = 0;
     int rejected_bad_vtable = 0;
 
-    for (const wchar_t* search_str : search_strings) {
-        const uint8_t* str_addr = find_wstring_in_module(
-            rgn.base, rgn.size, search_str);
+    for (int si = 0; si < num_entries; si++) {
+        const SearchEntry& se = search_entries[si];
+        const uint8_t* str_addr = NULL;
+
+        if (se.wstr)
+            str_addr = find_wstring_in_module(rgn.base, rgn.size, se.wstr);
+        else
+            str_addr = find_string_in_module(rgn.base, rgn.size, se.astr);
 
         if (!str_addr) {
-            bridge_log("  [SCAN] L\"%ls\" -- string not found in module",
-                       search_str);
+            bridge_log("  [SCAN] %s -- not found in module", se.label);
             continue;
         }
 
         total_strings_found++;
-        bridge_log("  [SCAN] L\"%ls\" at offset +0x%llX",
-                   search_str,
+        bridge_log("  [SCAN] %s at offset +0x%llX",
+                   se.label,
                    (unsigned long long)(str_addr - rgn.base));
 
         /* Find all code references to this string */
@@ -315,8 +334,8 @@ static bool find_gengine_via_string_xref()
                 g_engine_ptr = (UEngine*)candidate;
                 g_engine_found = true;
 
-                bridge_log("GEngine FOUND via '%ls' xref!",
-                           search_str);
+                bridge_log("GEngine FOUND via %s xref!",
+                           se.label);
                 bridge_log("  Global addr: 0x%llX (offset +0x%llX)",
                            (unsigned long long)resolved,
                            (unsigned long long)(resolved - (uintptr_t)rgn.base));
@@ -341,7 +360,7 @@ static bool find_gengine_via_string_xref()
     bridge_log("GEngine scan FAILED. Diagnostic summary:");
     bridge_log("  Strings found:    %d / %d",
                total_strings_found,
-               (int)(sizeof(search_strings) / sizeof(search_strings[0])));
+               num_entries);
     bridge_log("  Total xrefs:      %d", total_xrefs_found);
     bridge_log("  MOV candidates:   %d", total_mov_candidates);
     bridge_log("  Rejected reasons:");
