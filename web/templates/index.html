@@ -664,6 +664,88 @@ body {
 .cfg-empty { padding: 8px; font-size: 11px; color: var(--text-tertiary); text-align: center; }
 
 .hidden { display: none !important; }
+
+/* ── Path Editor ── */
+.path-controls {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  display: none;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.path-controls.visible { display: block; }
+.path-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+.path-toolbar .sel { height: 24px; font-size: 11px; }
+.path-toolbar .btn { height: 24px; font-size: 11px; padding: 0 8px; }
+.node-list {
+  display: flex;
+  gap: 3px;
+  padding: 6px 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.node-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  user-select: none;
+}
+.node-chip:hover { background: var(--bg-overlay); border-color: var(--border-strong); }
+.node-chip.selected { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.node-editor {
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.node-editor .row { margin-bottom: 4px; }
+.node-editor label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  display: block;
+  margin-bottom: 2px;
+}
+.node-editor input {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+  height: 24px;
+}
+.node-editor input:focus { outline: none; border-color: var(--accent); }
+.path-playback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+.path-playback .btn { height: 22px; font-size: 11px; padding: 0 6px; }
+.path-info {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
 </style>
 </head>
 <body>
@@ -704,10 +786,34 @@ body {
     <div class="sidebar-header">Parameters</div>
     <div class="sidebar-body">
 
+      <!-- Game Library -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Game Library</button>
+        <div class="sec-body open">
+          <div style="display:flex;gap:4px;margin-bottom:6px">
+            <input type="text" id="gameSearch" placeholder="Search games..." oninput="searchGames()" style="flex:1;font-size:12px;height:26px;padding:3px 8px;background:var(--bg-base);border:1px solid var(--border-default);border-radius:var(--radius);color:var(--text-primary);font-family:var(--font)">
+            <select class="sel" id="engineFilter" onchange="searchGames()" style="height:26px;font-size:10px;width:60px;padding-left:4px">
+              <option value="">All</option>
+              <option value="ue4">UE4</option>
+              <option value="ue5">UE5</option>
+            </select>
+          </div>
+          <div id="gameList" style="max-height:200px;overflow-y:auto"></div>
+          <div id="gameInfo" style="display:none;padding:6px 0;border-top:1px solid var(--border-subtle);margin-top:6px">
+            <div style="font-size:12px;font-weight:600;color:var(--text-primary)" id="gameInfoName"></div>
+            <div style="font-size:10px;color:var(--text-tertiary);margin-top:2px" id="gameInfoMeta"></div>
+            <div style="display:flex;gap:4px;margin-top:4px">
+              <button class="btn" onclick="loadGameConfig()" style="flex:1;font-size:10px;height:22px;justify-content:center">Load Config</button>
+              <button class="btn" onclick="saveGameConfig()" style="flex:1;font-size:10px;height:22px;justify-content:center">Save Config</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Presets -->
       <div class="sec">
-        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Presets</button>
-        <div class="sec-body open"><div class="preset-list" id="presetList"></div></div>
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Presets</button>
+        <div class="sec-body"><div class="preset-list" id="presetList"></div></div>
       </div>
 
       <!-- Volume -->
@@ -842,7 +948,49 @@ body {
     <div class="log-body" id="logBody">
       <div class="log-line log-info">$ captureAIshi ready</div>
     </div>
-    <canvas id="view3d" style="display:none;width:100%;height:100%;background:var(--bg-base);cursor:grab;"></canvas>
+    <canvas id="view3d" style="display:none;width:100%;flex:1;background:var(--bg-base);cursor:grab;"></canvas>
+    <div class="path-controls" id="pathControls">
+      <div class="path-toolbar">
+        <select class="sel" id="pathSelect" onchange="switchPath(this.value)">
+          <option value="">-- No Path --</option>
+        </select>
+        <button class="btn" onclick="createPath()">+ New</button>
+        <button class="btn" onclick="renamePath()">Rename</button>
+        <button class="btn btn-danger" onclick="deleteCurrentPath()">Del</button>
+        <label class="tog" style="margin-left:6px"><input type="checkbox" id="pathLoop" onchange="togglePathLoop()"><div class="track"></div>Loop</label>
+        <button class="btn" onclick="addNodeAtOrigin()">+ Node</button>
+      </div>
+      <div class="node-list" id="nodeList"></div>
+      <div class="node-editor" id="nodeEditor" style="display:none">
+        <div class="row">
+          <label>Position (X, Y, Z)</label>
+          <div style="display:flex;gap:4px">
+            <input type="number" id="nePosX" step="0.1" onchange="updateSelectedNode()">
+            <input type="number" id="nePosY" step="0.1" onchange="updateSelectedNode()">
+            <input type="number" id="nePosZ" step="0.1" onchange="updateSelectedNode()">
+          </div>
+        </div>
+        <div class="row">
+          <label>Rotation (Pitch, Yaw, Roll)</label>
+          <div style="display:flex;gap:4px">
+            <input type="number" id="neRotP" step="1" onchange="updateSelectedNode()">
+            <input type="number" id="neRotY" step="1" onchange="updateSelectedNode()">
+            <input type="number" id="neRotR" step="1" onchange="updateSelectedNode()">
+          </div>
+        </div>
+        <div class="row">
+          <label>FOV / Duration (s)</label>
+          <div style="display:flex;gap:4px">
+            <input type="number" id="neFov" step="1" min="10" max="180" onchange="updateSelectedNode()">
+            <input type="number" id="neDur" step="0.1" min="0.1" onchange="updateSelectedNode()">
+            <button class="btn btn-danger" onclick="deleteSelectedNode()" style="flex-shrink:0;height:24px;font-size:10px;padding:0 6px">Del Node</button>
+          </div>
+        </div>
+      </div>
+      <div class="path-playback">
+        <span class="path-info" id="pathInfo">0 nodes</span>
+      </div>
+    </div>
   </div>
 
   <!-- Resizer: Center ↔ Preview -->
@@ -1312,20 +1460,24 @@ function switchCenterTab(tab) {
   const logEl = document.getElementById('logBody');
   const progEl = document.getElementById('progressWrap');
   const canvas = document.getElementById('view3d');
+  const pathCtl = document.getElementById('pathControls');
   document.getElementById('tabLog').classList.toggle('active', tab === 'log');
   document.getElementById('tab3d').classList.toggle('active', tab === '3d');
   if (tab === '3d') {
     logEl.style.display = 'none';
     progEl.style.display = 'none';
     canvas.style.display = 'block';
+    pathCtl.classList.add('visible');
     view3dActive = true;
     resizeCanvas3d();
     loadTrajectory();
+    loadPathList();
     draw3d();
   } else {
     logEl.style.display = '';
     progEl.style.display = '';
     canvas.style.display = 'none';
+    pathCtl.classList.remove('visible');
     view3dActive = false;
   }
 }
@@ -1432,6 +1584,58 @@ function draw3d() {
     });
   }
 
+  // ── Path Editor overlay ──
+  if (currentPath && currentPath.nodes.length > 0) {
+    // Draw interpolated curve
+    if (interpSamples.length > 1) {
+      ctx.strokeStyle = '#f5a623';
+      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.beginPath();
+      let curveStarted = false;
+      interpSamples.forEach(s => {
+        const pp = project3d(s.position[0], s.position[1], s.position[2], w, h);
+        if (pp) { if (!curveStarted) { ctx.moveTo(pp.x, pp.y); curveStarted = true; } else ctx.lineTo(pp.x, pp.y); }
+      });
+      ctx.stroke();
+    }
+
+    // Draw path lines between nodes (straight segments)
+    if (currentPath.nodes.length > 1 && interpSamples.length < 2) {
+      ctx.strokeStyle = 'rgba(245,166,35,0.5)';
+      ctx.lineWidth = 1.5 * devicePixelRatio;
+      ctx.setLineDash([4 * devicePixelRatio, 4 * devicePixelRatio]);
+      ctx.beginPath();
+      let segStarted = false;
+      currentPath.nodes.forEach(n => {
+        const pp = project3d(n.position[0], n.position[1], n.position[2], w, h);
+        if (pp) { if (!segStarted) { ctx.moveTo(pp.x, pp.y); segStarted = true; } else ctx.lineTo(pp.x, pp.y); }
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Draw node markers
+    currentPath.nodes.forEach((n, i) => {
+      const pp = project3d(n.position[0], n.position[1], n.position[2], w, h);
+      if (!pp) return;
+      const r = (i === selectedNodeIdx ? 6 : 4) * devicePixelRatio;
+      ctx.fillStyle = i === selectedNodeIdx ? '#f5a623' : '#f0c060';
+      ctx.beginPath(); ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2); ctx.fill();
+
+      // Border for selected
+      if (i === selectedNodeIdx) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5 * devicePixelRatio;
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, r + 2 * devicePixelRatio, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      // Label
+      ctx.fillStyle = '#fff';
+      ctx.font = `${9 * devicePixelRatio}px sans-serif`;
+      ctx.fillText(`${i}`, pp.x + r + 3 * devicePixelRatio, pp.y - 2 * devicePixelRatio);
+    });
+  }
+
   // Axes indicator (bottom-left)
   const axLen = 30 * devicePixelRatio;
   const ox = 40 * devicePixelRatio, oy = h - 40 * devicePixelRatio;
@@ -1453,13 +1657,42 @@ function draw3d() {
   ctx.restore();
 }
 
-// Orbit controls
+// Orbit controls + node dragging
 (function init3dControls() {
   const c = document.getElementById('view3d');
-  let dragging = false, lastX, lastY, button;
-  c.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; button = e.button; c.style.cursor = 'grabbing'; });
+  let orbiting = false, lastX, lastY, button;
+
+  c.addEventListener('mousedown', e => {
+    // Try node drag first (left click only)
+    if (e.button === 0 && currentPath && currentPath.nodes.length > 0) {
+      const rect = c.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) * devicePixelRatio;
+      const my = (e.clientY - rect.top) * devicePixelRatio;
+      let bestDist = 15 * devicePixelRatio, bestIdx = -1;
+      currentPath.nodes.forEach((n, i) => {
+        const pp = project3d(n.position[0], n.position[1], n.position[2], c.width, c.height);
+        if (!pp) return;
+        const dx = pp.x - mx, dy = pp.y - my;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      });
+      if (bestIdx >= 0) {
+        draggingNode = bestIdx;
+        dragStartMouse = {x: e.clientX, y: e.clientY};
+        dragStartPos = [...currentPath.nodes[bestIdx].position];
+        selectNode(bestIdx);
+        c.style.cursor = 'move';
+        return; // Don't start orbit
+      }
+    }
+    orbiting = true; lastX = e.clientX; lastY = e.clientY; button = e.button; c.style.cursor = 'grabbing';
+  });
+
   window.addEventListener('mousemove', e => {
-    if (!dragging || !view3dActive) return;
+    if (!view3dActive) return;
+    // Node dragging
+    if (draggingNode >= 0) { canvas3dMouseMove(e); return; }
+    if (!orbiting) return;
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     if (button === 0) { cam3d.rotY += dx * 0.008; cam3d.rotX += dy * 0.008; cam3d.rotX = Math.max(-1.5, Math.min(1.5, cam3d.rotX)); }
@@ -1469,7 +1702,12 @@ function draw3d() {
     }
     draw3d();
   });
-  window.addEventListener('mouseup', () => { dragging = false; c.style.cursor = 'grab'; });
+
+  window.addEventListener('mouseup', e => {
+    if (draggingNode >= 0) { canvas3dMouseUp(e); c.style.cursor = 'grab'; return; }
+    orbiting = false; c.style.cursor = 'grab';
+  });
+
   c.addEventListener('wheel', e => { e.preventDefault(); cam3d.dist = Math.max(2, Math.min(100, cam3d.dist + e.deltaY * 0.02)); draw3d(); }, { passive: false });
   c.addEventListener('contextmenu', e => e.preventDefault());
   window.addEventListener('resize', () => { if (view3dActive) { resizeCanvas3d(); draw3d(); } });
@@ -1489,6 +1727,393 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape') clearLogs();
 });
+
+// ─── Camera Path Editor ───
+let pathList = [], currentPathId = '', currentPath = null, selectedNodeIdx = -1;
+let interpSamples = [];
+
+async function loadPathList() {
+  try {
+    const r = await (await fetch('/api/paths')).json();
+    pathList = r;
+    const sel = document.getElementById('pathSelect');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- No Path --</option>';
+    r.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = `${p.name} (${p.node_count}n)`;
+      sel.appendChild(o);
+    });
+    if (prev && r.find(p => p.id === prev)) sel.value = prev;
+    else if (currentPathId) sel.value = currentPathId;
+  } catch(_) {}
+}
+
+async function switchPath(id) {
+  currentPathId = id;
+  selectedNodeIdx = -1;
+  if (!id) { currentPath = null; interpSamples = []; renderNodeList(); draw3d(); return; }
+  try {
+    currentPath = await (await fetch(`/api/path/${id}`)).json();
+    document.getElementById('pathLoop').checked = currentPath.loop || false;
+    await loadInterpolation();
+    renderNodeList();
+    draw3d();
+  } catch(_) { currentPath = null; }
+}
+
+async function loadInterpolation() {
+  if (!currentPathId || !currentPath || currentPath.nodes.length < 2) { interpSamples = []; return; }
+  try {
+    const r = await (await fetch(`/api/path/${currentPathId}/interpolate?samples=30`)).json();
+    interpSamples = r.samples || [];
+  } catch(_) { interpSamples = []; }
+}
+
+async function createPath() {
+  const name = prompt('Path name:', 'Path ' + (pathList.length + 1));
+  if (!name) return;
+  try {
+    const r = await (await fetch('/api/path', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: name.trim()})
+    })).json();
+    currentPathId = r.id;
+    await loadPathList();
+    document.getElementById('pathSelect').value = r.id;
+    await switchPath(r.id);
+  } catch(_) {}
+}
+
+async function renamePath() {
+  if (!currentPathId || !currentPath) return;
+  const name = prompt('New name:', currentPath.name);
+  if (!name) return;
+  await fetch(`/api/path/${currentPathId}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name: name.trim()})
+  });
+  await loadPathList();
+  await switchPath(currentPathId);
+}
+
+async function deleteCurrentPath() {
+  if (!currentPathId) return;
+  if (!confirm('Delete this path?')) return;
+  await fetch(`/api/path/${currentPathId}`, {method: 'DELETE'});
+  currentPathId = '';
+  currentPath = null;
+  interpSamples = [];
+  selectedNodeIdx = -1;
+  await loadPathList();
+  renderNodeList();
+  draw3d();
+}
+
+async function togglePathLoop() {
+  if (!currentPathId) return;
+  await fetch(`/api/path/${currentPathId}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({loop: document.getElementById('pathLoop').checked})
+  });
+}
+
+async function addNodeAtOrigin() {
+  if (!currentPathId) { alert('Create or select a path first.'); return; }
+  const pos = [0, 1.5, 0];
+  // If there are existing nodes, place near the last one
+  if (currentPath && currentPath.nodes.length > 0) {
+    const last = currentPath.nodes[currentPath.nodes.length - 1];
+    pos[0] = last.position[0] + 2;
+    pos[1] = last.position[1];
+    pos[2] = last.position[2];
+  }
+  try {
+    const r = await (await fetch(`/api/path/${currentPathId}/node`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({position: pos, rotation: [0, 0, 0], fov: 90, duration: 2.0})
+    })).json();
+    currentPath = r;
+    selectedNodeIdx = currentPath.nodes.length - 1;
+    await loadInterpolation();
+    renderNodeList();
+    loadPathList();
+    draw3d();
+  } catch(_) {}
+}
+
+function renderNodeList() {
+  const list = document.getElementById('nodeList');
+  const editor = document.getElementById('nodeEditor');
+  const info = document.getElementById('pathInfo');
+
+  if (!currentPath || !currentPath.nodes.length) {
+    list.innerHTML = '<span style="font-size:11px;color:var(--text-tertiary)">No nodes. Click "+ Node" to add.</span>';
+    editor.style.display = 'none';
+    info.textContent = '0 nodes';
+    return;
+  }
+
+  list.innerHTML = '';
+  currentPath.nodes.forEach((n, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'node-chip' + (i === selectedNodeIdx ? ' selected' : '');
+    chip.textContent = `#${i}`;
+    chip.title = `[${n.position.map(v=>v.toFixed(1)).join(', ')}]`;
+    chip.onclick = () => selectNode(i);
+    list.appendChild(chip);
+  });
+
+  const dur = currentPath.nodes.slice(0, -1).reduce((s, n) => s + (n.duration || 2), 0);
+  info.textContent = `${currentPath.nodes.length} nodes | ${dur.toFixed(1)}s`;
+
+  if (selectedNodeIdx >= 0 && selectedNodeIdx < currentPath.nodes.length) {
+    showNodeEditor(currentPath.nodes[selectedNodeIdx]);
+  } else {
+    editor.style.display = 'none';
+  }
+}
+
+function selectNode(idx) {
+  selectedNodeIdx = idx;
+  renderNodeList();
+  draw3d();
+}
+
+function showNodeEditor(node) {
+  const editor = document.getElementById('nodeEditor');
+  editor.style.display = 'block';
+  document.getElementById('nePosX').value = node.position[0];
+  document.getElementById('nePosY').value = node.position[1];
+  document.getElementById('nePosZ').value = node.position[2];
+  document.getElementById('neRotP').value = node.rotation[0];
+  document.getElementById('neRotY').value = node.rotation[1];
+  document.getElementById('neRotR').value = node.rotation[2];
+  document.getElementById('neFov').value = node.fov;
+  document.getElementById('neDur').value = node.duration;
+}
+
+async function updateSelectedNode() {
+  if (!currentPathId || selectedNodeIdx < 0) return;
+  const data = {
+    position: [parseFloat(document.getElementById('nePosX').value)||0, parseFloat(document.getElementById('nePosY').value)||0, parseFloat(document.getElementById('nePosZ').value)||0],
+    rotation: [parseFloat(document.getElementById('neRotP').value)||0, parseFloat(document.getElementById('neRotY').value)||0, parseFloat(document.getElementById('neRotR').value)||0],
+    fov: parseFloat(document.getElementById('neFov').value) || 90,
+    duration: parseFloat(document.getElementById('neDur').value) || 2.0,
+  };
+  try {
+    const r = await (await fetch(`/api/path/${currentPathId}/node/${selectedNodeIdx}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    })).json();
+    currentPath = r;
+    await loadInterpolation();
+    renderNodeList();
+    loadPathList();
+    draw3d();
+  } catch(_) {}
+}
+
+async function deleteSelectedNode() {
+  if (!currentPathId || selectedNodeIdx < 0) return;
+  try {
+    const r = await (await fetch(`/api/path/${currentPathId}/node/${selectedNodeIdx}`, {method: 'DELETE'})).json();
+    currentPath = r;
+    selectedNodeIdx = Math.min(selectedNodeIdx, currentPath.nodes.length - 1);
+    await loadInterpolation();
+    renderNodeList();
+    loadPathList();
+    draw3d();
+  } catch(_) {}
+}
+
+// ─── 3D Node Interaction (click to select/add) ───
+function canvas3dClick(e) {
+  if (!currentPath || !view3dActive) return;
+  const c = document.getElementById('view3d');
+  const rect = c.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * devicePixelRatio;
+  const my = (e.clientY - rect.top) * devicePixelRatio;
+
+  // Hit test against node positions
+  let bestDist = 15 * devicePixelRatio;
+  let bestIdx = -1;
+  currentPath.nodes.forEach((n, i) => {
+    const pp = project3d(n.position[0], n.position[1], n.position[2], c.width, c.height);
+    if (!pp) return;
+    const dx = pp.x - mx, dy = pp.y - my;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  });
+
+  if (bestIdx >= 0) {
+    selectNode(bestIdx);
+  }
+}
+
+// ─── 3D Node Dragging ───
+let draggingNode = -1, dragStartMouse = null, dragStartPos = null;
+
+function canvas3dMouseDown(e) {
+  if (!currentPath || !view3dActive || e.button !== 0) return;
+  const c = document.getElementById('view3d');
+  const rect = c.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * devicePixelRatio;
+  const my = (e.clientY - rect.top) * devicePixelRatio;
+
+  // Check if clicking on a node
+  let bestDist = 15 * devicePixelRatio;
+  let bestIdx = -1;
+  currentPath.nodes.forEach((n, i) => {
+    const pp = project3d(n.position[0], n.position[1], n.position[2], c.width, c.height);
+    if (!pp) return;
+    const dx = pp.x - mx, dy = pp.y - my;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  });
+
+  if (bestIdx >= 0) {
+    e.stopPropagation();
+    draggingNode = bestIdx;
+    dragStartMouse = {x: e.clientX, y: e.clientY};
+    dragStartPos = [...currentPath.nodes[bestIdx].position];
+    selectNode(bestIdx);
+  }
+}
+
+function canvas3dMouseMove(e) {
+  if (draggingNode < 0 || !currentPath) return;
+  e.preventDefault();
+
+  const dx = e.clientX - dragStartMouse.x;
+  const dy = e.clientY - dragStartMouse.y;
+
+  // Map screen delta to world XZ (approximate)
+  const scale = cam3d.dist * 0.003;
+  const cosY = Math.cos(cam3d.rotY), sinY = Math.sin(cam3d.rotY);
+  const worldDx = (dx * cosY) * scale;
+  const worldDz = (-dx * sinY) * scale;
+  const worldDy = -dy * scale;
+
+  const node = currentPath.nodes[draggingNode];
+  node.position = [
+    dragStartPos[0] + worldDx,
+    dragStartPos[1] + worldDy,
+    dragStartPos[2] + worldDz,
+  ];
+
+  showNodeEditor(node);
+  draw3d();
+}
+
+async function canvas3dMouseUp(e) {
+  if (draggingNode < 0) return;
+  // Persist the drag
+  await updateSelectedNode();
+  draggingNode = -1;
+  dragStartMouse = null;
+  dragStartPos = null;
+}
+
+// ─── Game Library ───
+let allGames = [], selectedGame = null;
+
+async function searchGames() {
+  const q = document.getElementById('gameSearch').value.trim();
+  const engine = document.getElementById('engineFilter').value;
+  try {
+    let url = '/api/games?';
+    if (q) url += `q=${encodeURIComponent(q)}&`;
+    if (engine) url += `engine=${encodeURIComponent(engine)}&`;
+    const r = await (await fetch(url)).json();
+    allGames = r.games || [];
+    renderGameList();
+  } catch(_) {}
+}
+
+function renderGameList() {
+  const list = document.getElementById('gameList');
+  if (!allGames.length) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary);padding:8px;text-align:center">No games found</div>';
+    return;
+  }
+  // Virtual scroll: show first 50
+  const visible = allGames.slice(0, 50);
+  list.innerHTML = '';
+  visible.forEach(g => {
+    const row = document.createElement('div');
+    row.className = 'cfg-row';
+    row.style.padding = '4px 6px';
+    if (selectedGame && selectedGame.slug === g.slug) row.style.background = 'var(--accent-dim)';
+    row.onclick = () => selectGame(g);
+    const engineBadge = g.engine === 'UE5' ? 'color:var(--accent)' : 'color:var(--text-tertiary)';
+    const configDot = g.has_config ? '<span style="color:var(--success);margin-right:3px" title="Has config">*</span>' : '';
+    row.innerHTML = `${configDot}<span class="cfg-name" style="font-size:11px">${g.name}</span><span class="cfg-meta" style="${engineBadge}">${g.engine||'?'}</span>`;
+    list.appendChild(row);
+  });
+  if (allGames.length > 50) {
+    const more = document.createElement('div');
+    more.style.cssText = 'font-size:10px;color:var(--text-tertiary);padding:4px;text-align:center';
+    more.textContent = `+ ${allGames.length - 50} more (use search to narrow)`;
+    list.appendChild(more);
+  }
+}
+
+function selectGame(g) {
+  selectedGame = g;
+  renderGameList();
+  const info = document.getElementById('gameInfo');
+  info.style.display = 'block';
+  document.getElementById('gameInfoName').textContent = g.name;
+  const meta = [g.engine, g.uuu ? `UUU ${g.uuu}` : null, g.notes].filter(Boolean).join(' | ');
+  document.getElementById('gameInfoMeta').textContent = meta;
+}
+
+async function loadGameConfig() {
+  if (!selectedGame) return;
+  try {
+    const r = await (await fetch(`/api/games/${encodeURIComponent(selectedGame.slug)}/config`)).json();
+    if (r.error) { addLog('Failed to load game config: ' + r.error, 'error'); return; }
+    // Apply config to form (only fields that exist)
+    const mapping = {
+      volume_min: v => { if(v) { document.getElementById('vol_min_x').value=v[0]; document.getElementById('vol_min_y').value=v[1]; document.getElementById('vol_min_z').value=v[2]; }},
+      volume_max: v => { if(v) { document.getElementById('vol_max_x').value=v[0]; document.getElementById('vol_max_y').value=v[1]; document.getElementById('vol_max_z').value=v[2]; }},
+      spacing: v => document.getElementById('spacing').value=v,
+      smooth: v => document.getElementById('smooth').checked=v,
+      smooth_points: v => document.getElementById('smooth_points').value=v,
+      cone_angle: v => document.getElementById('cone_angle').value=v,
+      cone_samples: v => document.getElementById('cone_samples').value=v,
+      cone_rings: v => document.getElementById('cone_rings').value=v,
+      fov: v => document.getElementById('fov').value=v,
+      aspect: v => document.getElementById('aspect').value=v,
+      driver: v => document.getElementById('driver').value=v,
+      driver_host: v => document.getElementById('driver_host').value=v,
+      driver_port: v => document.getElementById('driver_port').value=v,
+      grabber: v => document.getElementById('grabber').value=v,
+    };
+    for (const [k, fn] of Object.entries(mapping)) {
+      if (r[k] != null) fn(r[k]);
+    }
+    updateVisibility();
+    saveConfig();
+    addLog(`Loaded config for: ${selectedGame.name}`, 'success');
+    document.getElementById('configSummary').textContent = selectedGame.name;
+  } catch(e) { addLog('Error: ' + e.message, 'error'); }
+}
+
+async function saveGameConfig() {
+  if (!selectedGame) return;
+  const data = getFormData();
+  try {
+    await fetch(`/api/games/${encodeURIComponent(selectedGame.slug)}/config`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    addLog(`Saved config for: ${selectedGame.name}`, 'success');
+    searchGames(); // Refresh has_config flag
+  } catch(e) { addLog('Error: ' + e.message, 'error'); }
+}
 
 // ─── Config Save/Load ───
 async function loadSavedConfig() {
@@ -1589,6 +2214,7 @@ updateVisibility();
 loadPresets();
 loadProfiles();
 loadRecent();
+searchGames();
 setInterval(()=>{pollSessions();pollCaptures();},2000);
 pollSessions();pollCaptures();
 </script>

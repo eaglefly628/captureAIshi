@@ -134,3 +134,12 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 
 ### [v0.2.0] 01b6268 — 小由
 - P0 安全修复: `_safe_session_path()` 防路径穿越，session 路由返回 403
+
+### [v0.3.0] — 小由
+- **Camera Path Editor**: 新增 `core/path_player.py` 路径数据模型 + Catmull-Rom/SLERP 插值引擎
+- **Path CRUD API**: `/api/paths` 列表、`/api/path` 增删改查、`/api/path/<id>/node` 节点管理、`/api/path/<id>/interpolate` 插值预览
+- **3D 路径编辑器**: 3D Viewer 内交互式节点添加/选择/拖拽/编辑/删除，Catmull-Rom 曲线实时预览
+- **Path Controls UI**: 路径选择器 + 节点列表 + 属性编辑器 (位置/旋转/FOV/Duration)
+- **Game Library UI**: 游戏库搜索/过滤 (UE4/UE5)，per-game profile 保存/加载 (`configs/games/<slug>.json`)
+- **Per-Game Profile API**: `/api/games` 游戏列表 + 搜索，`/api/games/<slug>/config` GET/POST 独立配置
+- 存储: `configs/camera_paths.json` (路径数据)，`configs/games/<slug>.json` (游戏配置)

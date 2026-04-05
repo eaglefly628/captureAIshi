@@ -16,9 +16,11 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
+from core.path_player import PathStore, interpolate_path
 from main import run_capture
 
 app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
+_path_store = PathStore()
 
 # Shared state for capture progress
 _capture_state = {
@@ -515,6 +517,194 @@ _PRESETS = [
         },
     },
 ]
+
+
+# ── Camera Path API ──
+
+
+@app.route("/api/paths")
+def list_paths():
+    """List all saved camera paths."""
+    return jsonify(_path_store.list_all())
+
+
+@app.route("/api/path", methods=["POST"])
+def create_path():
+    """Create a new camera path."""
+    data = request.json or {}
+    name = str(data.get("name", "Untitled")).strip() or "Untitled"
+    cp = _path_store.create(name=name)
+    return jsonify(cp.to_dict()), 201
+
+
+@app.route("/api/path/<path_id>")
+def get_path(path_id):
+    """Get a camera path by ID."""
+    cp = _path_store.get(path_id)
+    if not cp:
+        return jsonify({"error": "Path not found"}), 404
+    return jsonify(cp.to_dict())
+
+
+@app.route("/api/path/<path_id>", methods=["PUT"])
+def update_path(path_id):
+    """Update path properties (name, loop, nodes)."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+    cp = _path_store.update(path_id, data)
+    if not cp:
+        return jsonify({"error": "Path not found"}), 404
+    return jsonify(cp.to_dict())
+
+
+@app.route("/api/path/<path_id>", methods=["DELETE"])
+def delete_path(path_id):
+    """Delete a camera path."""
+    if _path_store.delete(path_id):
+        return jsonify({"ok": True})
+    return jsonify({"error": "Path not found"}), 404
+
+
+@app.route("/api/path/<path_id>/node", methods=["POST"])
+def add_path_node(path_id):
+    """Add a node to a camera path."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+    index = data.pop("index", -1)
+    cp = _path_store.add_node(path_id, data, index=index)
+    if not cp:
+        return jsonify({"error": "Path not found"}), 404
+    return jsonify(cp.to_dict())
+
+
+@app.route("/api/path/<path_id>/node/<int:node_idx>", methods=["PUT"])
+def update_path_node(path_id, node_idx):
+    """Update a specific node in a camera path."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+    cp = _path_store.update_node(path_id, node_idx, data)
+    if not cp:
+        return jsonify({"error": "Path or node not found"}), 404
+    return jsonify(cp.to_dict())
+
+
+@app.route("/api/path/<path_id>/node/<int:node_idx>", methods=["DELETE"])
+def delete_path_node(path_id, node_idx):
+    """Delete a specific node from a camera path."""
+    cp = _path_store.delete_node(path_id, node_idx)
+    if not cp:
+        return jsonify({"error": "Path or node not found"}), 404
+    return jsonify(cp.to_dict())
+
+
+@app.route("/api/path/<path_id>/interpolate")
+def interpolate_path_route(path_id):
+    """Get interpolated path samples for 3D visualization."""
+    cp = _path_store.get(path_id)
+    if not cp:
+        return jsonify({"error": "Path not found"}), 404
+    samples_str = request.args.get("samples", "20")
+    try:
+        samples_per_seg = max(2, min(100, int(samples_str)))
+    except ValueError:
+        samples_per_seg = 20
+    samples = interpolate_path(cp, samples_per_segment=samples_per_seg)
+    return jsonify({"samples": samples, "total_duration": cp.total_duration})
+
+
+# ── Game Library & Per-Game Profiles ──
+
+_GAME_LIBRARY_FILE = Path("configs/game_library.json")
+_GAME_CONFIGS_DIR = Path("configs/games")
+
+_DEFAULT_GAME_CONFIG = {
+    "volume_min": [-10, 0, -10],
+    "volume_max": [10, 5, 10],
+    "spacing": 3.0,
+    "smooth": True,
+    "smooth_points": 5,
+    "cone_angle": 0,
+    "cone_samples": 8,
+    "cone_rings": 2,
+    "fov": 90.0,
+    "aspect": 1.7778,
+    "driver": "ue5",
+    "driver_host": "127.0.0.1",
+    "driver_port": 9998,
+    "grabber": "renderdoc",
+    "notes": "",
+}
+
+
+def _game_slug(name: str) -> str:
+    """Convert a game name to a filesystem-safe slug."""
+    import re
+    slug = name.lower().strip()
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    slug = slug.strip("_")
+    return slug[:80]
+
+
+@app.route("/api/games")
+def list_games():
+    """Return the game library with search/filter support."""
+    if not _GAME_LIBRARY_FILE.exists():
+        return jsonify({"games": []})
+    try:
+        data = json.loads(_GAME_LIBRARY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return jsonify({"games": []})
+
+    games = data.get("games", [])
+    q = request.args.get("q", "").strip().lower()
+    engine = request.args.get("engine", "").strip().lower()
+
+    if q:
+        games = [g for g in games if q in g["name"].lower()]
+    if engine:
+        games = [g for g in games if g.get("engine", "").lower() == engine]
+
+    # Add slug and has_config flag
+    for g in games:
+        slug = _game_slug(g["name"])
+        g["slug"] = slug
+        g["has_config"] = (_GAME_CONFIGS_DIR / f"{slug}.json").exists()
+
+    return jsonify({"games": games, "total": len(games)})
+
+
+@app.route("/api/games/<slug>/config", methods=["GET"])
+def get_game_config(slug):
+    """Load per-game capture config. Returns defaults if none saved."""
+    path = _GAME_CONFIGS_DIR / f"{slug}.json"
+    if not path.exists():
+        config = dict(_DEFAULT_GAME_CONFIG)
+        config["_slug"] = slug
+        return jsonify(config)
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+        config["_slug"] = slug
+        return jsonify(config)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/games/<slug>/config", methods=["POST"])
+def save_game_config(slug):
+    """Save per-game capture config."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+    _GAME_CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    # Strip internal fields
+    data.pop("_slug", None)
+    data.pop("_profile_name", None)
+    path = _GAME_CONFIGS_DIR / f"{slug}.json"
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return jsonify({"ok": True})
 
 
 _VALID_DRIVERS = {"manual", "ue5", "unity", "cheatengine"}
