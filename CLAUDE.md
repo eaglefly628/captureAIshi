@@ -68,3 +68,14 @@ The grabber MUST launch and confirm the game is running BEFORE the driver attemp
 ```
 
 Inter-agent communication stays in `agents/*/SHARED.md`. Context dashboard at `agents/STATUS.md`.
+
+## Branch Policy
+
+**All work MUST be committed and pushed directly to `claudeMainBranch`.** Do NOT create feature branches, do NOT push to `claude/xxx` auto-generated branches. If the platform assigns you a different branch, switch to `claudeMainBranch` before doing any work:
+
+```bash
+git checkout claudeMainBranch
+git pull origin claudeMainBranch
+```
+
+GitHub default branch must be set to `claudeMainBranch` (Settings -> General -> Default branch).

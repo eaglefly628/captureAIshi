@@ -55,7 +55,11 @@ Valid flags: `--opt-disallow-vsync`, `--opt-disallow-fullscreen`, `--opt-api-val
 
 ## Branch
 
-All work on branch `claudeMainBranch`. Do not push to other branches without lead programmer approval.
+**ALL work on `claudeMainBranch` only.** If the platform assigns you a different branch (e.g. `claude/xxx`), switch immediately:
+```bash
+git checkout claudeMainBranch && git pull origin claudeMainBranch
+```
+Do NOT create or push to any other branch.
 
 ## Communication
 
