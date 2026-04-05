@@ -858,11 +858,12 @@ body {
           </div>
           <div id="gameList" style="max-height:200px;overflow-y:auto"></div>
           <div id="gameInfo" style="display:none;padding:6px 0;border-top:1px solid var(--border-subtle);margin-top:6px">
-            <div style="font-size:12px;font-weight:600;color:var(--text-primary)" id="gameInfoName"></div>
-            <div style="font-size:10px;color:var(--text-tertiary);margin-top:2px" id="gameInfoMeta"></div>
-            <div style="display:flex;gap:4px;margin-top:4px">
-              <button class="btn" onclick="loadGameConfig()" style="flex:1;font-size:10px;height:22px;justify-content:center">Load Config</button>
-              <button class="btn" onclick="saveGameConfig()" style="flex:1;font-size:10px;height:22px;justify-content:center">Save Config</button>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="gameInfoName"></div>
+                <div style="font-size:10px;color:var(--text-tertiary);margin-top:1px" id="gameInfoMeta"></div>
+              </div>
+              <button class="btn" onclick="openGameSettings()" style="font-size:10px;height:22px;padding:0 8px;flex-shrink:0">Settings</button>
             </div>
           </div>
         </div>
@@ -1000,7 +1001,7 @@ body {
 <div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)toggleSettings()">
   <div class="settings-panel">
     <div class="settings-head">
-      <span>Capture Settings</span>
+      <span id="settingsTitle">Capture Settings</span>
       <button class="settings-close" onclick="toggleSettings()">&times;</button>
     </div>
     <div class="settings-body">
@@ -2102,7 +2103,12 @@ async function canvas3dMouseUp(e) {
 
 // ─── Settings Panel ───
 function toggleSettings() {
-  document.getElementById('settingsOverlay').classList.toggle('open');
+  const overlay = document.getElementById('settingsOverlay');
+  overlay.classList.toggle('open');
+  // If opening without a game selected, show generic title
+  if (overlay.classList.contains('open') && !selectedGame) {
+    document.getElementById('settingsTitle').textContent = 'Capture Settings';
+  }
 }
 
 function toggleAllEngines() {
@@ -2177,51 +2183,59 @@ function selectGame(g) {
   document.getElementById('gameInfoName').textContent = g.name;
   const meta = [g.engine, g.uuu ? `UUU ${g.uuu}` : null, g.notes].filter(Boolean).join(' | ');
   document.getElementById('gameInfoMeta').textContent = meta;
+  // Auto-load config and open settings
+  openGameSettings();
 }
 
-async function loadGameConfig() {
+async function openGameSettings() {
   if (!selectedGame) return;
+  // Update settings panel title
+  document.getElementById('settingsTitle').textContent = selectedGame.name + ' Settings';
+  document.getElementById('configSummary').textContent = selectedGame.name;
+  // Load game config into form
   try {
     const r = await (await fetch(`/api/games/${encodeURIComponent(selectedGame.slug)}/config`)).json();
-    if (r.error) { addLog('Failed to load game config: ' + r.error, 'error'); return; }
-    // Apply config to form (only fields that exist)
-    const mapping = {
-      volume_min: v => { if(v) { document.getElementById('vol_min_x').value=v[0]; document.getElementById('vol_min_y').value=v[1]; document.getElementById('vol_min_z').value=v[2]; }},
-      volume_max: v => { if(v) { document.getElementById('vol_max_x').value=v[0]; document.getElementById('vol_max_y').value=v[1]; document.getElementById('vol_max_z').value=v[2]; }},
-      spacing: v => document.getElementById('spacing').value=v,
-      smooth: v => document.getElementById('smooth').checked=v,
-      smooth_points: v => document.getElementById('smooth_points').value=v,
-      cone_angle: v => document.getElementById('cone_angle').value=v,
-      cone_samples: v => document.getElementById('cone_samples').value=v,
-      cone_rings: v => document.getElementById('cone_rings').value=v,
-      fov: v => document.getElementById('fov').value=v,
-      aspect: v => document.getElementById('aspect').value=v,
-      driver: v => document.getElementById('driver').value=v,
-      driver_host: v => document.getElementById('driver_host').value=v,
-      driver_port: v => document.getElementById('driver_port').value=v,
-      grabber: v => document.getElementById('grabber').value=v,
-    };
-    for (const [k, fn] of Object.entries(mapping)) {
-      if (r[k] != null) fn(r[k]);
+    if (!r.error) {
+      _applyGameConfig(r);
+      addLog(`Loaded config: ${selectedGame.name}`, 'info');
     }
-    updateVisibility();
-    saveConfig();
-    addLog(`Loaded config for: ${selectedGame.name}`, 'success');
-    document.getElementById('configSummary').textContent = selectedGame.name;
-  } catch(e) { addLog('Error: ' + e.message, 'error'); }
+  } catch(_) {}
+  // Open settings panel
+  const overlay = document.getElementById('settingsOverlay');
+  if (!overlay.classList.contains('open')) overlay.classList.add('open');
 }
 
-async function saveGameConfig() {
+function _applyGameConfig(r) {
+  const mapping = {
+    volume_min: v => { if(v) { document.getElementById('vol_min_x').value=v[0]; document.getElementById('vol_min_y').value=v[1]; document.getElementById('vol_min_z').value=v[2]; }},
+    volume_max: v => { if(v) { document.getElementById('vol_max_x').value=v[0]; document.getElementById('vol_max_y').value=v[1]; document.getElementById('vol_max_z').value=v[2]; }},
+    spacing: v => document.getElementById('spacing').value=v,
+    smooth: v => document.getElementById('smooth').checked=v,
+    smooth_points: v => document.getElementById('smooth_points').value=v,
+    cone_angle: v => document.getElementById('cone_angle').value=v,
+    cone_samples: v => document.getElementById('cone_samples').value=v,
+    cone_rings: v => document.getElementById('cone_rings').value=v,
+    fov: v => document.getElementById('fov').value=v,
+    aspect: v => document.getElementById('aspect').value=v,
+    driver: v => document.getElementById('driver').value=v,
+    driver_host: v => document.getElementById('driver_host').value=v,
+    driver_port: v => document.getElementById('driver_port').value=v,
+    grabber: v => document.getElementById('grabber').value=v,
+  };
+  for (const [k, fn] of Object.entries(mapping)) {
+    if (r[k] != null) fn(r[k]);
+  }
+  updateVisibility();
+}
+
+// Auto-save settings to selected game on any form change
+function _autoSaveGameConfig() {
   if (!selectedGame) return;
   const data = getFormData();
-  try {
-    await fetch(`/api/games/${encodeURIComponent(selectedGame.slug)}/config`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(data)
-    });
-    addLog(`Saved config for: ${selectedGame.name}`, 'success');
-    searchGames(); // Refresh has_config flag
-  } catch(e) { addLog('Error: ' + e.message, 'error'); }
+  fetch(`/api/games/${encodeURIComponent(selectedGame.slug)}/config`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  }).catch(()=>{});
 }
 
 // ─── Config Save/Load ───
@@ -2243,9 +2257,9 @@ function saveConfig() {
   }).catch(()=>{});
 }
 
-// Auto-save on any form change
+// Auto-save on any form change (global + per-game)
 document.querySelectorAll('input, select').forEach(el => {
-  el.addEventListener('change', saveConfig);
+  el.addEventListener('change', () => { saveConfig(); _autoSaveGameConfig(); });
 });
 
 // ─── Profiles ───
