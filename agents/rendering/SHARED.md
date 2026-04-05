@@ -127,3 +127,18 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 - RGB 改用 SceneColor 代替 SwapBuffer (去掉 UI overlay)
 - exportframe 加 ReplayOptimisationLevel::Fastest
 - 临时文件移到系统 temp 目录，不再污染 captures/
+
+## Backlog (v0.3.0+, 等破解流程跑通后)
+
+| 优先级 | 功能 | 说明 |
+|--------|------|------|
+| P0 | Depth 精度升级 | 8-bit PNG → 16-bit PNG 或 EXR float32，NeRF/3DGS 需要 |
+| P0 | Motion Vector 导出 | UE5 Velocity buffer (RGBA16F)，光流真值 |
+| P1 | Semantic Stencil 导出 | CustomDepth/Stencil，物体级分割 mask |
+| P1 | 多分辨率支持 | 同路径截 1080p + 4K，超分训练对 |
+| P1 | HDR SceneColor EXR | RGBA16F → EXR，tone mapping 训练 |
+| P2 | 材质分解导出 | BaseColor + Metallic + Roughness 分别命名 |
+| P2 | 天空 Mask | 从 depth far plane 推 sky mask |
+| P2 | 多帧时序捕获 | 连续 N 帧同位置，视频去噪训练 |
+| P3 | Cubemap 全景 | 6 面 90° FOV，360° 场景理解 |
+| P3 | 光照变体 | 同场景切时间/天气，relighting 训练 |
