@@ -150,4 +150,6 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 - **Toolbar Settings 按钮**: 点击打开/关闭设置面板，Escape 关闭
 - **隐藏 Unity/CE 选项**: Driver 下拉只显示 Manual + UE5，Unity/CE 代码保留
 - **Show All Engines 开关**: Settings > Advanced 里的 toggle，启用后恢复 Unity + CE 选项
-- 设置面板分组: Capture Area / Path / Cone Rotation / Rendering / Connection / Streaming / Output / Advanced
+- **三级联动菜单**: 侧栏游戏列表 (Lv1) → 选中后向右弹出设置分类列表 (Lv2, 180px) → 点击分类再向右弹出详细表单 (Lv3, 240px)
+- 每级独立面板，CSS width transition 动画展开，Escape 逐级收起
+- 分类: Capture Area / Path / Rendering / Cone Rotation / Connection / Streaming / Output / Advanced
