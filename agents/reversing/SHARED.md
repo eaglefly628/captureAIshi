@@ -45,6 +45,14 @@ Anti-cheat research: see `docs/anti_cheat_research.md`
 - [x] **P2: Quat 旋转顺序与 Python 端不一致** — Fixed: C++ `from_euler`/`to_euler` 改为 YXZ 顺序，与 Python `euler_to_quaternion` 完全一致（已数值验证）。
 - [x] **P2: 缺 Changelog 条目** — Fixed: CLAUDE.md changelog 已补充。
 
+## TODO (active)
+
+- [ ] **P0: 真实 UE5 游戏端到端验证** — renderdoccmd launch → bridge 9998 → GEngine scan → Exec → ToggleDebugCamera → SetViewLocation → trigger capture → .rdc export → RGB+Depth PNG。一个游戏跑通就行。
+- [ ] **P1: AC 预检脚本** — 启动前检测 EasyAntiCheat.dll / BEService.exe，提示用户禁用或切 driver
+- [ ] **P2: 增强 Pause 机制** — 当前只有 slomo 0.0001，加 UWorld::IsPaused 内存写入 fallback
+- [ ] **P3: Per-game profile 系统** — JSON 配置：GEngine offset、vtable index、特殊 CVar、已知问题
+- [ ] **P3: 多游戏 AOB 数据库调研** — 研究 UUU/IGCS 的 offset 来源，评估自建 vs 复用可行性
+
 ## [v0.1.0] Tested Games
 - EagleWalkLJB (UE5 demo): RenderDoc injection OK, console OK, ToggleDebugCamera OK
 
