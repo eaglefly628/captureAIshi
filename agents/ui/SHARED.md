@@ -36,6 +36,55 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 ### Task 4: 3D waypoint visualizer (P2) — DONE (dc8316f)
 3D canvas with waypoints, path lines, camera frustums, rotate/zoom.
 
+## [v0.3.0] UI 重构任务 (from lead)
+
+目标：从"开发者工具"转型为"游戏选择 → 捕捉"的完整工作流。当前只支持 UE5 游戏，Unity 支持在代码中保留但 UI 上隐藏。
+
+### Task 5: 右栏重构 — 设置面板分离 (P0)
+
+当前右栏塞了太多设置项（volume、spacing、cone、driver、grabber 等），需要拆分：
+
+1. **把所有捕捉参数设置移到一个独立的全页展开菜单**
+   - 点击"设置"按钮/图标 → 展开一个覆盖整个右栏（或 modal）的设置页面
+   - 分组展示：采集区域（volume）、路径参数（spacing/cone）、渲染参数（FOV/aspect/resolution）、高级（driver/grabber 选择）
+   - 收起后右栏恢复正常布局
+2. **隐藏 Unity 相关选项**
+   - Driver 下拉里隐藏 `unity` 和 `cheatengine` 选项（代码保留，UI 不显示）
+   - 默认 driver 锁定为 `ue5`，grabber 锁定为 `renderdoc`
+   - 保留一个"显示全部引擎"的开关在设置高级区，方便将来启用
+
+### Task 6: 游戏选择菜单 (P0)
+
+新增"游戏库"面板，替换当前右栏的主要功能：
+
+1. **从 UUU 拉取游戏清单**
+   - 数据源：Universal Unreal Unlocker (UUU) 的支持游戏列表
+   - 后端 API: `GET /api/games` — 返回游戏列表（名称、引擎版本、兼容状态）
+   - 首次启动时从 UUU GitHub/网站拉取，本地缓存到 `configs/game_library.json`
+   - 支持手动刷新（按钮触发重新拉取）
+
+2. **游戏列表 UI**
+   - 左侧（或右栏内）显示游戏列表
+   - **按字母排序**，带字母索引条（A-Z 快速跳转）
+   - **分页/虚拟滚动** — UUU 支持几百款游戏，不能一次性全渲染
+   - **搜索框** — 实时过滤，按游戏名模糊匹配
+   - 每个游戏项显示：名称、引擎版本（UE4/UE5）、兼容状态图标
+   - 选中游戏高亮，右侧显示该游戏详情
+
+3. **每游戏独立配置**
+   - 选中游戏后，加载该游戏专属的捕捉配置（volume、spacing、resolution 等）
+   - 配置存盘路径：`configs/games/<game_slug>.json`
+   - 新游戏首次选中时，从默认模板创建配置
+   - 切换游戏自动保存当前游戏配置 + 加载新游戏配置
+   - API: `GET/POST /api/games/<game_slug>/config`
+
+### Task 7: 内部代码隐藏 Unity 支持 (P1)
+
+- `web_ui.py` 的 `/api/defaults` 返回的 driver/grabber 列表过滤掉 Unity 相关选项
+- 前端 driver 下拉只显示: `ue5`, `memory`, `manual`
+- 前端 grabber 下拉只显示: `renderdoc`, `screenshot`, `none`
+- **不要删除 Unity 相关的后端代码或 driver 文件**，只在 UI 层过滤
+
 ## [v0.2.0] 渲染侧更新通知 (from rendering agent)
 
 **详情见 `agents/rendering/SHARED.md` 的 "2026-03-29 Update" 部分。**
