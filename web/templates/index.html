@@ -746,6 +746,64 @@ body {
   margin-left: auto;
   font-family: var(--font-mono);
 }
+
+/* ── Settings Modal ── */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0,0,0,0.6);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s, visibility 0.15s;
+}
+.settings-overlay.open { opacity: 1; visibility: visible; }
+.settings-panel {
+  position: fixed;
+  top: 40px;
+  right: 0;
+  bottom: 24px;
+  width: 340px;
+  max-width: 90vw;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-default);
+  z-index: 91;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+}
+.settings-overlay.open .settings-panel { transform: translateX(0); }
+.settings-head {
+  height: 36px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.settings-head span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.settings-close {
+  font-size: 16px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  line-height: 1;
+}
+.settings-close:hover { color: var(--text-primary); }
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
 </style>
 </head>
 <body>
@@ -763,8 +821,6 @@ body {
   <select class="sel" id="driver" onchange="updateVisibility()">
     <option value="manual">Manual</option>
     <option value="ue5">UE5</option>
-    <option value="unity">Unity</option>
-    <option value="cheatengine">CE</option>
   </select>
   <select class="sel" id="grabber" onchange="updateVisibility()">
     <option value="none">No Grab</option>
@@ -774,6 +830,8 @@ body {
   <div class="toolbar-sep"></div>
   <label class="tog"><input type="checkbox" id="clean_start" checked><div class="track"></div>Clean</label>
   <label class="tog"><input type="checkbox" id="dry_run"><div class="track"></div>Dry</label>
+  <div class="toolbar-sep"></div>
+  <button class="btn" onclick="toggleSettings()">Settings</button>
   <div class="toolbar-spacer"></div>
   <div id="statusBadge" class="badge badge-idle"><div class="dot"></div><span id="statusText">Idle</span></div>
 </div>
@@ -814,94 +872,6 @@ body {
       <div class="sec">
         <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Presets</button>
         <div class="sec-body"><div class="preset-list" id="presetList"></div></div>
-      </div>
-
-      <!-- Volume -->
-      <div class="sec">
-        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Capture Volume</button>
-        <div class="sec-body open">
-          <div class="f"><label>Min (X, Y, Z)</label>
-            <div class="row">
-              <div class="f"><input type="number" id="vol_min_x" value="-5" step="0.5"></div>
-              <div class="f"><input type="number" id="vol_min_y" value="0" step="0.5"></div>
-              <div class="f"><input type="number" id="vol_min_z" value="-5" step="0.5"></div>
-            </div>
-          </div>
-          <div class="f"><label>Max (X, Y, Z)</label>
-            <div class="row">
-              <div class="f"><input type="number" id="vol_max_x" value="5" step="0.5"></div>
-              <div class="f"><input type="number" id="vol_max_y" value="3" step="0.5"></div>
-              <div class="f"><input type="number" id="vol_max_z" value="5" step="0.5"></div>
-            </div>
-          </div>
-          <div class="f"><label>Spacing (m)</label><input type="number" id="spacing" value="2.0" step="0.1" min="0.1"></div>
-        </div>
-      </div>
-
-      <!-- Path -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Path</button>
-        <div class="sec-body">
-          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="smooth" onchange="updateVisibility()"><div class="track"></div>Smooth Path</label>
-          <div class="f" id="smoothPointsWrap"><label>Points / Segment</label><input type="number" id="smooth_points" value="5" min="2" max="50"></div>
-        </div>
-      </div>
-
-      <!-- Cone Rotation -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Cone Rotation</button>
-        <div class="sec-body">
-          <div class="f"><label>Half Angle (0=off)</label><input type="number" id="cone_angle" value="0" step="1" min="0" max="90"></div>
-          <div class="row">
-            <div class="f"><label>Ring Samples</label><input type="number" id="cone_samples" value="8" min="1"></div>
-            <div class="f"><label>Rings</label><input type="number" id="cone_rings" value="2" min="1"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Camera -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Camera</button>
-        <div class="sec-body">
-          <div class="row">
-            <div class="f"><label>FOV (vertical)</label><input type="number" id="fov" value="90" step="1" min="10" max="180"></div>
-            <div class="f"><label>Aspect Ratio</label><input type="number" id="aspect" value="1.7778" step="0.0001" min="0.1"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Connection -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Connection</button>
-        <div class="sec-body">
-          <div class="row">
-            <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1"></div>
-            <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999"></div>
-          </div>
-          <div class="f" id="ceModeWrap"><label>CE Mode</label>
-            <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
-          </div>
-          <div class="f" id="targetExeWrap"><label>Game Command</label><input type="text" id="target_exe" placeholder="C:\path\to\game.exe -Windowed -ResX=640"></div>
-          <div class="f" id="rdocPathWrap"><label>renderdoccmd</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
-        </div>
-      </div>
-
-      <!-- Streaming -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Streaming</button>
-        <div class="sec-body">
-          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="streaming" checked onchange="updateVisibility()"><div class="track"></div>Streaming Mgmt</label>
-          <div class="f" id="streamingSettleWrap"><label>Settle (s)</label><input type="number" id="streaming_settle" value="0.5" step="0.1" min="0" max="10"></div>
-        </div>
-      </div>
-
-      <!-- Options -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Options</button>
-        <div class="sec-body">
-          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="no_hide_ui"><div class="track"></div>Disable UI Hiding</label>
-          <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output"></div>
-        </div>
       </div>
 
       <!-- Saved Configs -->
@@ -1024,6 +994,116 @@ body {
     </div>
   </div>
 
+</div>
+
+<!-- Settings Panel -->
+<div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)toggleSettings()">
+  <div class="settings-panel">
+    <div class="settings-head">
+      <span>Capture Settings</span>
+      <button class="settings-close" onclick="toggleSettings()">&times;</button>
+    </div>
+    <div class="settings-body">
+
+      <!-- Area -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Capture Area</button>
+        <div class="sec-body open">
+          <div class="f"><label>Min (X, Y, Z)</label>
+            <div class="row">
+              <div class="f"><input type="number" id="vol_min_x" value="-5" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_min_y" value="0" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_min_z" value="-5" step="0.5"></div>
+            </div>
+          </div>
+          <div class="f"><label>Max (X, Y, Z)</label>
+            <div class="row">
+              <div class="f"><input type="number" id="vol_max_x" value="5" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_max_y" value="3" step="0.5"></div>
+              <div class="f"><input type="number" id="vol_max_z" value="5" step="0.5"></div>
+            </div>
+          </div>
+          <div class="f"><label>Spacing (m)</label><input type="number" id="spacing" value="2.0" step="0.1" min="0.1"></div>
+        </div>
+      </div>
+
+      <!-- Path -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Path</button>
+        <div class="sec-body open">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="smooth" onchange="updateVisibility()"><div class="track"></div>Smooth Path</label>
+          <div class="f" id="smoothPointsWrap"><label>Points / Segment</label><input type="number" id="smooth_points" value="5" min="2" max="50"></div>
+        </div>
+      </div>
+
+      <!-- Cone Rotation -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Cone Rotation</button>
+        <div class="sec-body">
+          <div class="f"><label>Half Angle (0=off)</label><input type="number" id="cone_angle" value="0" step="1" min="0" max="90"></div>
+          <div class="row">
+            <div class="f"><label>Ring Samples</label><input type="number" id="cone_samples" value="8" min="1"></div>
+            <div class="f"><label>Rings</label><input type="number" id="cone_rings" value="2" min="1"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rendering -->
+      <div class="sec">
+        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Rendering</button>
+        <div class="sec-body open">
+          <div class="row">
+            <div class="f"><label>FOV (vertical)</label><input type="number" id="fov" value="90" step="1" min="10" max="180"></div>
+            <div class="f"><label>Aspect Ratio</label><input type="number" id="aspect" value="1.7778" step="0.0001" min="0.1"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connection -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Connection</button>
+        <div class="sec-body">
+          <div class="row">
+            <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1"></div>
+            <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999"></div>
+          </div>
+          <div class="f" id="ceModeWrap"><label>CE Mode</label>
+            <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
+          </div>
+          <div class="f" id="targetExeWrap"><label>Game Command</label><input type="text" id="target_exe" placeholder="C:\path\to\game.exe -Windowed -ResX=640"></div>
+          <div class="f" id="rdocPathWrap"><label>renderdoccmd</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
+        </div>
+      </div>
+
+      <!-- Streaming -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Streaming</button>
+        <div class="sec-body">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="streaming" checked onchange="updateVisibility()"><div class="track"></div>Streaming Mgmt</label>
+          <div class="f" id="streamingSettleWrap"><label>Settle (s)</label><input type="number" id="streaming_settle" value="0.5" step="0.1" min="0" max="10"></div>
+        </div>
+      </div>
+
+      <!-- Output -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Output</button>
+        <div class="sec-body">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="no_hide_ui"><div class="track"></div>Disable UI Hiding</label>
+          <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output"></div>
+        </div>
+      </div>
+
+      <!-- Advanced -->
+      <div class="sec">
+        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Advanced</button>
+        <div class="sec-body">
+          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="showAllEngines" onchange="toggleAllEngines()"><div class="track"></div>Show All Engines</label>
+          <p style="font-size:10px;color:var(--text-tertiary);margin-top:4px">Enables Unity and CheatEngine driver options (hidden by default).</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
 </div>
 
 <!-- Lightbox -->
@@ -1725,7 +1805,11 @@ document.addEventListener('keydown', e => {
     else if (e.key === '3') lbSwitchTab('normal');
     return;
   }
-  if (e.key === 'Escape') clearLogs();
+  if (e.key === 'Escape') {
+    const settings = document.getElementById('settingsOverlay');
+    if (settings.classList.contains('open')) { toggleSettings(); return; }
+    clearLogs();
+  }
 });
 
 // ─── Camera Path Editor ───
@@ -2014,6 +2098,31 @@ async function canvas3dMouseUp(e) {
   draggingNode = -1;
   dragStartMouse = null;
   dragStartPos = null;
+}
+
+// ─── Settings Panel ───
+function toggleSettings() {
+  document.getElementById('settingsOverlay').classList.toggle('open');
+}
+
+function toggleAllEngines() {
+  const show = document.getElementById('showAllEngines').checked;
+  const driverSel = document.getElementById('driver');
+  const cur = driverSel.value;
+  // Remove all options, rebuild
+  driverSel.innerHTML = '';
+  const drivers = show
+    ? [['manual','Manual'],['ue5','UE5'],['unity','Unity'],['cheatengine','CE']]
+    : [['manual','Manual'],['ue5','UE5']];
+  drivers.forEach(([v, label]) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    driverSel.appendChild(o);
+  });
+  // Restore selection if still valid, otherwise default to ue5
+  if (drivers.some(d => d[0] === cur)) driverSel.value = cur;
+  else driverSel.value = 'ue5';
+  updateVisibility();
 }
 
 // ─── Game Library ───

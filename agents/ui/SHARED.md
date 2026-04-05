@@ -143,3 +143,11 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 - **Game Library UI**: 游戏库搜索/过滤 (UE4/UE5)，per-game profile 保存/加载 (`configs/games/<slug>.json`)
 - **Per-Game Profile API**: `/api/games` 游戏列表 + 搜索，`/api/games/<slug>/config` GET/POST 独立配置
 - 存储: `configs/camera_paths.json` (路径数据)，`configs/games/<slug>.json` (游戏配置)
+
+### [v0.3.0] — 小由 (Task 5 + Task 7)
+- **Settings Modal**: 所有捕捉参数 (Volume/Path/Cone/Rendering/Connection/Streaming/Output) 从左栏移到右滑设置面板
+- **左栏精简**: 只保留 Game Library、Presets、Saved Configs、Recent
+- **Toolbar Settings 按钮**: 点击打开/关闭设置面板，Escape 关闭
+- **隐藏 Unity/CE 选项**: Driver 下拉只显示 Manual + UE5，Unity/CE 代码保留
+- **Show All Engines 开关**: Settings > Advanced 里的 toggle，启用后恢复 Unity + CE 选项
+- 设置面板分组: Capture Area / Path / Cone Rotation / Rendering / Connection / Streaming / Output / Advanced
