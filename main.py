@@ -406,6 +406,7 @@ def run_capture(args):
             base_name = f"{session_prefix}_p{pose.point_index}_{pose.view_name}"
             rgb_filename = f"{base_name}.png"
             depth_filename = f"{base_name}_d.png"
+            normal_filename = ""
 
             if grabber_ctx:
                 if batch_export:
@@ -470,7 +471,7 @@ def run_capture(args):
                 trajectory.append(pose.to_trajectory_dict(
                     rgb_filename=rgb_filename,
                     depth_filename=depth_filename,
-                    normal_filename=locals().get("normal_filename", ""),
+                    normal_filename=normal_filename,
                 ))
 
             # Progress logging every 10%

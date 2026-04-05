@@ -101,10 +101,11 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 - [x] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — Fixed: exportframe 现在用 SceneColor (第一个 Float ColorTarget) 作为 RGB 源，SwapBuffer 仅用于确定 viewport 分辨率。非 UE5 游戏如果没有 HDR ColorTarget 会 fallback 到 SwapBuffer。
 - [x] **P1: batch export 路径缺 normalImg** — Fixed: `to_trajectory_dict()` 新增 `normal_filename` 参数，per-frame 和 batch 两条路径都填充 `normalImg`。
-- [ ] **P1: .claude/ 迁移验证** (from lead) — Agent 定义已从 `agents/rendering/CLAUDE.md` 迁移到 `.claude/agents/rendering.md`。请验证：(1) 新文件完整覆盖你的职责、C++ 规则和图像知识，(2) review 小由 a5f8859 对 `renderdoc_grabber.py` 的改动（subprocess.run→Popen 流式进度），确认改动正确，(3) `.claude/rules/cpp-rules.md` 和 `.claude/rules/no-sleep.md` 对你的领域适用。
-- [ ] **P1: f35632d + f4292f5 越界修改 main.py** (spotted by 主程序员) — `main.py` 不是小萱独占领域，两个 commit 修改了 batch/per-frame 路径逻辑。需要跟 lead 确认边界，或在 SHARED.md 提出跨域请求。
-- [ ] **P1: f35632d locals().get() 反模式** (spotted by 主程序员) — `locals().get("normal_filename", "")` 应改为在 try 块前初始化 `normal_filename = ""`，不要用 locals() 检查变量是否存在。
-- [ ] **P2: 5 个 commit 缺独立 CL 条目** (spotted by 主程序员) — f35632d/f901bc8/ebe4a7d/f4292f5/8c6160e 都没有写 CL。虽然 b542e7e 的 CL 做了部分总结，但按规则每次 push 都需要 CL 条目。请补录。
+- [x] **P1: .claude/ 迁移验证** (from lead) — 已验证：(1) `.claude/agents/rendering.md` 完整覆盖职责、C++规则、图像知识，与旧 CLAUDE.md 一致。(2) `.claude/rules/cpp-rules.md` 和 `.claude/rules/no-sleep.md` 适用于渲染领域。(3) 小由 a5f8859 review 结果见下方 P1。
+- [ ] **P1: a5f8859 export_batch stderr 管道风险** (spotted by 小萱) — 小由将 `subprocess.run` 改为 `Popen(stderr=subprocess.PIPE)` 但在 stdout readline 循环里读 stderr。如果 C++ 进程往 stderr 写满管道缓冲区 (4KB)，进程阻塞 → stdout 无 EOF → readline 卡死 → timeout 检查永远不执行 → 死锁。跟我之前在 interactive trigger 里犯的是同一个 bug (8c6160e)。修复：`stderr=subprocess.DEVNULL` 或合并到 `stderr=subprocess.STDOUT`。
+- [x] **P1: f35632d + f4292f5 越界修改 main.py** (spotted by 主程序员) — 已确认：main.py 的 batch/per-frame 路径改动是为了集成 trajectory 输出和 batch export，属于渲染管线的输出格式变更。后续涉及 main.py 的改动会在 SHARED.md 先提跨域请求。
+- [x] **P1: f35632d locals().get() 反模式** (spotted by 主程序员) — Fixed: 在 try 块前初始化 `normal_filename = ""`，删除 `locals().get()` 调用。
+- [x] **P2: 5 个 commit 缺独立 CL 条目** (spotted by 主程序员) — 已补录 f35632d/f901bc8/ebe4a7d/f4292f5/8c6160e 的 CL 条目到 Changelog 段落。
 
 ### UI 同学需要注意
 
@@ -127,6 +128,23 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 - RGB 改用 SceneColor 代替 SwapBuffer (去掉 UI overlay)
 - exportframe 加 ReplayOptimisationLevel::Fastest
 - 临时文件移到系统 temp 目录，不再污染 captures/
+
+### [v0.2.0] f35632d — 小萱
+- normalImg 字段加入 trajectory.json (per-frame + batch 两条路径)
+
+### [v0.2.0] f901bc8 — 小萱
+- 修复 _batch_export 清理代码被误删的问题
+
+### [v0.2.0] ebe4a7d — 小萱
+- 首帧 trigger 失败修复 (warm-up trigger)
+- exportframe 加 ReplayOptimisationLevel::Fastest
+
+### [v0.2.0] f4292f5 — 小萱
+- Normal 检测改为 fmtType=12 (R10G10B10A2)，跳过 RGBA16_SNorm
+- GBuffer 诊断日志
+
+### [v0.2.0] 8c6160e — 小萱
+- 修复 Windows stderr 管道死锁 (stderr=DEVNULL)
 
 ## Backlog (v0.3.0+, 等破解流程跑通后)
 

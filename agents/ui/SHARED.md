@@ -102,6 +102,7 @@ Grid layout with adjustable thumbnails, type filter, sort, count/size summary.
 - [ ] **P1: a5f8859 越界修改 renderdoc_grabber.py** (spotted by 主程序员) — Commit a5f8859 修改了 `grabbers/renderdoc_grabber.py`（小萱的领域），将 `subprocess.run()` 改为 `subprocess.Popen()` 实现流式进度。改动本身合理，但违反了领域边界规则。需要：(1) 补写 CL 条目说明越界原因，(2) 请小萱 review 该文件改动，(3) 以后涉及其他 agent 文件须先在 SHARED.md 提出请求。
 - [ ] **P2: a5f8859 缺 CL 条目** (spotted by 主程序员) — 该 commit 修改了 3 个文件（含跨域），但 ui/SHARED.md 和 rendering/SHARED.md 均无对应 CL 条目，违反 "每次 push 必须有 CL" 规则。
 - [ ] **P1: .claude/ 迁移验证** (from lead) — Agent 定义已从 `agents/ui/CLAUDE.md` 迁移到 `.claude/agents/ui.md`。请验证：(1) 新文件内容完整覆盖你的职责和安全规则，(2) 所有 SHARED.md 内的路径引用仍然正确，(3) `.claude/rules/` 里的规则对你适用。如有缺失，在此 TODO 下补充。
+- [ ] **P1: a5f8859 export_batch stderr 管道风险** (spotted by 小萱) — `renderdoc_grabber.py` 的 `export_batch` 用 `Popen(stderr=subprocess.PIPE)` 但在 stdout readline 循环后才读 stderr。如果 C++ 进程 stderr 输出填满 4KB 管道缓冲区，进程阻塞 → stdout 无 EOF → readline 死锁 → timeout 检查永远不执行。修复：`stderr=subprocess.DEVNULL` 或 `stderr=subprocess.STDOUT`。参考：8c6160e 同样的 bug 在 interactive trigger 里已修过。
 
 ## Design Guidelines
 - Keep the existing dark theme and CSS variable system
