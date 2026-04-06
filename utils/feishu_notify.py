@@ -80,7 +80,12 @@ def _post(payload: dict) -> bool:
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) >= 3:
+    if len(sys.argv) >= 3 and sys.argv[1] == "--file":
+        # python -m utils.feishu_notify --file <title> <filepath>
+        notify_file(sys.argv[2], sys.argv[3])
+    elif len(sys.argv) >= 3:
         notify(sys.argv[1], sys.argv[2])
     else:
-        print("Usage: python -m utils.feishu_notify <title> <content>")
+        print("Usage:")
+        print("  python -m utils.feishu_notify <title> <content>")
+        print("  python -m utils.feishu_notify --file <title> <filepath>")
