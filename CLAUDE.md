@@ -19,6 +19,7 @@ When a new session starts, IMMEDIATELY:
 2. Read your own SHARED.md for uncompleted TODO items
 3. Start working on the highest priority (P0 > P1 > P2) incomplete task
 4. Do NOT wait for instructions -- begin autonomously
+5. Run `/loop 60m /project:status` to check TODOs every hour automatically
 
 ## Version
 
