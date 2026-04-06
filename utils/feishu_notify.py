@@ -24,49 +24,75 @@ _GITHUB_REPO = "eaglefly628/captureAIshi"
 _GITHUB_BRANCH = "claudeMainBranch"
 
 
-def _md_to_feishu(text: str) -> str:
-    """Pre-process markdown for Feishu card compatibility.
+def _md_to_post(text: str):
+    """Convert markdown text to Feishu 'post' rich-text content array.
 
-    Feishu card markdown does NOT support fenced code blocks (``` ```) --
-    they render as white text on white background on mobile.
-    Convert to indented plain text with a header line instead.
+    Returns a list of paragraphs, where each paragraph is a list of
+    inline elements (text, links, bold text).
     """
+    # Strip fenced code blocks → indented plain text
     def _replace_code_block(m):
-        lang = m.group(1) or ""
         code = m.group(2).rstrip("\n")
-        # Indent each line with 4 spaces so it looks like a code block
-        indented = "\n".join("    " + line for line in code.split("\n"))
-        header = f"[{lang}]" if lang else "[code]"
-        return f"\n**{header}**\n{indented}\n"
+        indented = "\n".join("  " + line for line in code.split("\n"))
+        return f"\n{indented}\n"
 
-    # Replace fenced code blocks: ```lang\n...\n```
-    text = re.sub(
-        r'```(\w*)\n(.*?)```',
-        _replace_code_block,
-        text,
-        flags=re.DOTALL,
-    )
-    return text
+    text = re.sub(r'```\w*\n(.*?)```', _replace_code_block, text, flags=re.DOTALL)
+
+    # Strip inline code backticks
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+
+    # Convert markdown headings to bold lines
+    text = re.sub(r'^#{1,4}\s+(.+)$', r'【\1】', text, flags=re.MULTILINE)
+
+    # Strip bold markers **text** → text (post doesn't render them)
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+
+    # Strip > blockquote markers
+    text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)
+
+    # Strip horizontal rules
+    text = re.sub(r'^---+\s*$', '', text, flags=re.MULTILINE)
+
+    lines = text.split("\n")
+    body = []
+    for line in lines:
+        # Detect markdown links [text](url) and convert to Feishu <a> tags
+        parts = []
+        last_end = 0
+        for m in re.finditer(r'\[([^\]]+)\]\((https?://[^)]+)\)', line):
+            # Text before the link
+            before = line[last_end:m.start()]
+            if before:
+                parts.append({"tag": "text", "text": before})
+            parts.append({"tag": "a", "text": m.group(1), "href": m.group(2)})
+            last_end = m.end()
+        # Remaining text after last link
+        remaining = line[last_end:]
+        if remaining:
+            parts.append({"tag": "text", "text": remaining})
+        if not parts:
+            parts.append({"tag": "text", "text": ""})
+        body.append(parts)
+
+    return body
 
 
 def notify(title: str, content: str) -> bool:
-    """Send a markdown card message to Feishu group."""
-    content = _md_to_feishu(content)
+    """Send a rich-text post message to Feishu group.
+
+    Uses 'post' msg_type which renders reliably on both PC and mobile.
+    Interactive cards have white-on-white issues on mobile.
+    """
+    body = _md_to_post(content)
     payload = {
-        "msg_type": "interactive",
-        "card": {
-            "config": {"wide_screen_mode": True},
-            "header": {
-                "title": {"tag": "plain_text", "content": f"[captureAIshi] {title}"},
-                "template": "blue",
-            },
-            "elements": [
-                {
-                    "tag": "markdown",
-                    "content": content,
-                    "text_align": "left",
-                },
-            ],
+        "msg_type": "post",
+        "content": {
+            "post": {
+                "zh_cn": {
+                    "title": f"[captureAIshi] {title}",
+                    "content": body,
+                }
+            }
         },
     }
     return _post(payload)
@@ -75,10 +101,9 @@ def notify(title: str, content: str) -> bool:
 def notify_file(title: str, file_path: str, chunk_size: int = 4000) -> bool:
     """Send a file's content to Feishu, split into chunks if needed.
 
-    Feishu card markdown has a practical limit around 4-5KB per element.
     Long files are split at section boundaries (## headings) and sent
     as multiple sequential messages. The first message includes a GitHub
-    link to the original file for full rendering.
+    link to the original file for full markdown rendering.
     """
     path = Path(file_path)
     if not path.exists():
@@ -86,11 +111,11 @@ def notify_file(title: str, file_path: str, chunk_size: int = 4000) -> bool:
 
     text = path.read_text(encoding="utf-8")
 
-    # Add GitHub link at the top for full markdown rendering
+    # GitHub link for full rendered version
     github_url = (
         f"https://github.com/{_GITHUB_REPO}/blob/{_GITHUB_BRANCH}/{file_path}"
     )
-    link_header = f"[GitHub 完整文档]({github_url})\n\n---\n\n"
+    link_header = f"[GitHub 完整文档(含排版)]({github_url})\n\n"
 
     if len(text) + len(link_header) <= chunk_size:
         return notify(title, link_header + text)
