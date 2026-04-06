@@ -20,15 +20,25 @@ WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/bad13239-7ace-4829-8
 
 
 def notify(title: str, content: str) -> bool:
-    """Send a card message to Feishu group."""
+    """Send a rich-text message to Feishu group.
+
+    Uses 'post' msg_type instead of 'interactive' card because Feishu
+    interactive cards render white-on-white on mobile (dark mode mismatch).
+    The 'post' type has reliable text color on both PC and mobile.
+    """
+    # Split content into lines, each becomes a text element in the post
+    lines = content.split("\n")
+    body = [[{"tag": "text", "text": line}] for line in lines]
+
     payload = {
-        "msg_type": "interactive",
-        "card": {
-            "header": {
-                "title": {"tag": "plain_text", "content": f"[captureAIshi] {title}"},
-                "template": "blue",
-            },
-            "elements": [{"tag": "markdown", "content": content}],
+        "msg_type": "post",
+        "content": {
+            "post": {
+                "zh_cn": {
+                    "title": f"[captureAIshi] {title}",
+                    "content": body,
+                }
+            }
         },
     }
     return _post(payload)
