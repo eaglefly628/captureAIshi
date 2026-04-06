@@ -6,7 +6,6 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/desktop_app.py",
-            "python": "${workspaceFolder}/python/python.exe",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         },
@@ -15,8 +14,15 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
-            "python": "${workspaceFolder}/python/python.exe",
             "args": ["--driver", "manual", "--dry-run"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Web UI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/web_ui.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         }
