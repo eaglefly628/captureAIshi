@@ -21,8 +21,8 @@
   "hooks": {
     "SessionStart": [
       {
-        "command": "echo '[AUTO-START] Check SHARED.md TODOs, switch to claudeMainBranch, begin working.'",
-        "timeout": 5000
+        "command": "git checkout claudeMainBranch 2>/dev/null && git pull origin claudeMainBranch 2>/dev/null; echo '[AUTO-START] On branch:' $(git branch --show-current)",
+        "timeout": 30000
       }
     ],
     "PostToolUse": [
