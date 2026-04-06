@@ -20,41 +20,68 @@ WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/bad13239-7ace-4829-8
 
 
 def notify(title: str, content: str) -> bool:
-    """Send a rich-text message to Feishu group.
+    """Send a markdown card message to Feishu group.
 
-    Uses 'post' msg_type instead of 'interactive' card because Feishu
-    interactive cards render white-on-white on mobile (dark mode mismatch).
-    The 'post' type has reliable text color on both PC and mobile.
+    Uses interactive card with explicit font_color to fix mobile dark mode
+    white-on-white rendering issue.
     """
-    # Split content into lines, each becomes a text element in the post
-    lines = content.split("\n")
-    body = [[{"tag": "text", "text": line}] for line in lines]
-
     payload = {
-        "msg_type": "post",
-        "content": {
-            "post": {
-                "zh_cn": {
-                    "title": f"[captureAIshi] {title}",
-                    "content": body,
-                }
-            }
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"[captureAIshi] {title}"},
+                "template": "blue",
+            },
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": content,
+                    "text_align": "left",
+                },
+            ],
         },
     }
     return _post(payload)
 
 
-def notify_file(title: str, file_path: str, max_chars: int = 3000) -> bool:
-    """Send a file's content to Feishu. Truncates if too long."""
+def notify_file(title: str, file_path: str, chunk_size: int = 4000) -> bool:
+    """Send a file's content to Feishu, split into chunks if needed.
+
+    Feishu card markdown has a practical limit around 4-5KB per element.
+    Long files are split at section boundaries (## headings) and sent
+    as multiple sequential messages.
+    """
     path = Path(file_path)
     if not path.exists():
         return notify(title, f"File not found: {file_path}")
 
     text = path.read_text(encoding="utf-8")
-    if len(text) > max_chars:
-        text = text[:max_chars] + f"\n\n... (truncated, {len(text)} chars total)"
 
-    return notify(title, text)
+    if len(text) <= chunk_size:
+        return notify(title, text)
+
+    # Split by ## headings to get logical sections
+    import re
+    sections = re.split(r'(?=^## )', text, flags=re.MULTILINE)
+
+    chunks = []
+    current = ""
+    for section in sections:
+        if len(current) + len(section) > chunk_size and current:
+            chunks.append(current)
+            current = section
+        else:
+            current += section
+    if current:
+        chunks.append(current)
+
+    ok = True
+    for i, chunk in enumerate(chunks):
+        part_title = f"{title} ({i + 1}/{len(chunks)})" if len(chunks) > 1 else title
+        if not notify(part_title, chunk):
+            ok = False
+    return ok
 
 
 def _post(payload: dict) -> bool:
