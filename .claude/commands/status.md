@@ -2,7 +2,15 @@
 
 Check the current state of all agents and pending work.
 
-## Steps
+## Quiet Hours
+
+Before doing anything, check the current local time:
+```bash
+date +%H
+```
+If the hour is between 03:00 and 09:00 (i.e. hour >= 3 AND hour < 9), output "Quiet hours (03:00-09:00), skipping check." and STOP. Do not read any files or perform any actions.
+
+## Steps (only during active hours)
 
 1. Read `agents/STATUS.md` for context percentages
 2. Read each agent's SHARED.md for open TODOs:
