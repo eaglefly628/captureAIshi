@@ -21,6 +21,19 @@ When a new session starts, IMMEDIATELY:
 4. Do NOT wait for instructions -- begin autonomously
 5. Run `/loop 60m /project:status` to check TODOs every hour automatically
 
+## Notifications
+
+When you complete a significant task (finish a TODO, push code, produce a document), notify via Feishu:
+```python
+from utils.feishu_notify import notify, notify_file
+
+# Task completion
+notify("Task Done", "xiaoxuan: GBuffer classifier implemented and pushed")
+
+# Send a document
+notify_file("New Document", "docs/captureAIshi_analysis_and_roadmap.md")
+```
+
 ## Version
 
 **Current: v0.2.0** -- See `.claude/rules/versioning.md` for full changelog and rules.

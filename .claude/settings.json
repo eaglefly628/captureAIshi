@@ -21,8 +21,16 @@
   "hooks": {
     "SessionStart": [
       {
-        "command": "echo '[AUTO-START] Agent session started. Check your SHARED.md TODOs and begin working on the highest priority incomplete task. Switch to claudeMainBranch first.'",
+        "command": "echo '[AUTO-START] Check SHARED.md TODOs, switch to claudeMainBranch, begin working.'",
         "timeout": 5000
+      }
+    ],
+    "PostToolUse": [
+      {
+        "event": "Bash",
+        "pattern": "git push",
+        "command": "python -m utils.feishu_notify 'Code Pushed' \"$(git log --oneline -1)\"",
+        "timeout": 15000
       }
     ]
   }
