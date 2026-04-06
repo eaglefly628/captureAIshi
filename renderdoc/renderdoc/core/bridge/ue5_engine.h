@@ -28,7 +28,7 @@
 /* Forward-declare bridge_log from bridge.cpp */
 extern void bridge_log(const char* fmt, ...);
 
-/* ── UE5 type stubs ──────────────────────────────────────────────── */
+/* -- UE5 type stubs ------------------------------------------------ */
 
 /* We only need opaque pointers; no real UE5 headers needed */
 typedef void UEngine;
@@ -36,7 +36,7 @@ typedef void UWorld;
 typedef void APlayerController;
 typedef void FOutputDevice;
 
-/* ── GEngine finder ──────────────────────────────────────────────── */
+/* -- GEngine finder ------------------------------------------------ */
 
 /*
  * GEngine is THE god pointer in UE5. Finding it unlocks:
@@ -68,7 +68,7 @@ static std::atomic<bool> g_engine_found{false};
 /* Address of the GEngine global variable itself (not the pointer value) */
 static uintptr_t         g_engine_global_addr = 0;
 
-/* ── Exec function ───────────────────────────────────────────────── */
+/* -- Exec function ------------------------------------------------- */
 
 /*
  * UEngine::Exec is NOT a simple virtual call in shipped games.
@@ -100,7 +100,7 @@ typedef bool (__fastcall *ExecFn)(
 
 static ExecFn g_exec_fn = nullptr;
 
-/* ── SEH-safe helpers ────────────────────────────────────────────── */
+/* -- SEH-safe helpers ---------------------------------------------- */
 
 /*
  * MSVC __try/__except cannot coexist with C++ objects that have
@@ -152,14 +152,14 @@ static bool seh_call_exec(ExecFn fn, void* engine,
 }
 #pragma warning(pop)
 
-/* ── GLog (default output device) ────────────────────────────────── */
+/* -- GLog (default output device) ---------------------------------- */
 
 /* GLog is UE5's global log output device, needed for Exec() calls.
  * We find it the same way as GEngine: string xref scan.
  * If not found, we pass NULL (most commands still work). */
 static void* g_log_ptr = nullptr;
 
-/* ── Camera struct ───────────────────────────────────────────────── */
+/* -- Camera struct ------------------------------------------------- */
 
 struct CameraState {
     float x, y, z;           /* position (UE5 units = cm) */
@@ -171,12 +171,12 @@ struct CameraState {
 static CameraState g_camera = {0, 0, 0, 0, 0, 0, 90.0f};
 static std::atomic<bool> g_camera_override{false};
 
-/* ── Game speed ──────────────────────────────────────────────────── */
+/* -- Game speed ---------------------------------------------------- */
 
 static float g_game_speed = 1.0f;
 static std::atomic<bool> g_paused{false};
 
-/* ── Implementation ──────────────────────────────────────────────── */
+/* -- Implementation ------------------------------------------------ */
 
 /*
  * Try to find GEngine via string cross-reference method.
@@ -442,7 +442,7 @@ static bool find_gengine()
     return false;
 }
 
-/* ── Console command execution ───────────────────────────────────── */
+/* -- Console command execution ------------------------------------- */
 
 /*
  * Execute a UE5 console command via GEngine->Exec().
@@ -552,7 +552,7 @@ static bool exec_console_command(const char* cmd)
     return false;
 }
 
-/* ── Timestop / Game Speed ───────────────────────────────────────── */
+/* -- Timestop / Game Speed ----------------------------------------- */
 
 static bool set_game_speed(float speed)
 {
@@ -573,7 +573,7 @@ static bool toggle_pause()
     }
 }
 
-/* ── HUD Toggle ──────────────────────────────────────────────────── */
+/* -- HUD Toggle ---------------------------------------------------- */
 
 static bool g_hud_visible = true;
 
@@ -594,7 +594,7 @@ static bool toggle_hud()
     return true;
 }
 
-/* ── Free Camera ─────────────────────────────────────────────────── */
+/* -- Free Camera --------------------------------------------------- */
 
 static bool g_debug_camera_active = false;
 
@@ -639,7 +639,7 @@ static bool set_fov(float fov)
     return exec_console_command(cmd);
 }
 
-/* ── Hotsampling (Window Resize) ─────────────────────────────────── */
+/* -- Hotsampling (Window Resize) ----------------------------------- */
 
 static bool hotsample(int width, int height)
 {

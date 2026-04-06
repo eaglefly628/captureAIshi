@@ -780,7 +780,7 @@ class RenderDocGrabber(FrameGrabber):
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
             timeout_s = 60 * len(valid_paths)
             import time as _btime
@@ -806,10 +806,6 @@ class RenderDocGrabber(FrameGrabber):
                     return [(None, None, None)] * len(rdc_paths)
 
             proc.wait()
-            stderr = proc.stderr.read().decode("utf-8", errors="replace").strip()
-            if stderr:
-                for line in stderr.splitlines():
-                    logger.warning(f"[RDOC batch err] {line}")
             if proc.returncode != 0:
                 logger.error(f"[RDOC] Batch export exited with code {proc.returncode}")
         except Exception as e:

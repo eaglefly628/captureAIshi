@@ -20,7 +20,7 @@
 
 #pragma comment(lib, "psapi.lib")
 
-/* ── Module info helper ──────────────────────────────────────────── */
+/* -- Module info helper -------------------------------------------- */
 
 struct ModuleRegion {
     const uint8_t* base;
@@ -41,7 +41,7 @@ static inline bool get_main_module(ModuleRegion& out)
     return true;
 }
 
-/* ── Pattern scan (mask-based) ───────────────────────────────────── */
+/* -- Pattern scan (mask-based) ------------------------------------- */
 
 /*
  * Scan a memory region for a byte pattern.
@@ -72,7 +72,7 @@ static inline const uint8_t* scan_main_module(
     return pattern_scan(rgn.base, rgn.size, pattern, mask, pat_len);
 }
 
-/* ── String search ───────────────────────────────────────────────── */
+/* -- String search ------------------------------------------------- */
 
 /*
  * Find a UTF-8 string in the module's memory (typically .rdata section).
@@ -108,7 +108,7 @@ static inline const uint8_t* find_wstring_in_module(
     return nullptr;
 }
 
-/* ── RIP-relative address resolution ─────────────────────────────── */
+/* -- RIP-relative address resolution ------------------------------- */
 
 /*
  * Resolve a RIP-relative address from an instruction like:
@@ -130,7 +130,7 @@ static inline uintptr_t resolve_rip_relative(
     return (uintptr_t)(instr_addr + instr_len + disp);
 }
 
-/* ── Cross-reference scanner ─────────────────────────────────────── */
+/* -- Cross-reference scanner --------------------------------------- */
 
 /*
  * Find instructions that reference a known address via RIP-relative

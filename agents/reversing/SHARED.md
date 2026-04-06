@@ -45,6 +45,12 @@ Anti-cheat research: see `docs/anti_cheat_research.md`
 - [x] **P2: Quat 旋转顺序与 Python 端不一致** — Fixed: C++ `from_euler`/`to_euler` 改为 YXZ 顺序，与 Python `euler_to_quaternion` 完全一致（已数值验证）。
 - [x] **P2: 缺 Changelog 条目** — Fixed: CLAUDE.md changelog 已补充。
 
+## TODO (from lead review — new session)
+
+- [x] **P1: C++ headers 含 Unicode 字符** (spotted by 主程序员) — Fixed: `ue5_engine.h`, `console_server.h`, `pattern_scan.h`, `camera_path.h` 的注释分隔符用了 U+2500 (`─`) 而非 ASCII `-`。MSVC `/W4 /WX` + codepage 936 会触发 C4819。已全部替换为 ASCII hyphens。
+- [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — `ue5_console.py` 的 `_detect_bridge()` 在 connect 后立即 ping，如果 bridge 启动慢会误判为 UUU。建议加 2-3 次指数退避重试。
+- [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — `ue5_console.py` line ~279 的 `time.sleep(0.5)` 用于 camera toggle 后等待，违反 no-sleep 规则。改为轮询确认或至少加 TODO 注释说明原因。
+
 ## TODO (active)
 
 - [ ] **P0: 真实 UE5 游戏端到端验证** — renderdoccmd launch → bridge 9998 → GEngine scan → Exec → ToggleDebugCamera → SetViewLocation → trigger capture → .rdc export → RGB+Depth PNG。一个游戏跑通就行。

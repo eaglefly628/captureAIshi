@@ -31,7 +31,7 @@
 #pragma warning(push)
 #pragma warning(disable: 4996)
 
-/* ── Logging ───────────────────────────────────────────────────── */
+/* -- Logging ----------------------------------------------------- */
 
 /* Use OutputDebugStringA for logging -- visible in debugger and
  * RenderDoc's own log. Avoids any macro conflicts with RDCLOG. */
@@ -65,12 +65,12 @@ static void bridge_log_adapter(const char* fmt, ...)
 
 #undef bridge_log
 
-/* ── Configuration ─────────────────────────────────────────────── */
+/* -- Configuration ----------------------------------------------- */
 
 static const int CONSOLE_DEFAULT_PORT = 9998;
 static const int CONSOLE_MAX_CMD_LEN  = 4096;
 
-/* ── Camera Smoothing ──────────────────────────────────────────── */
+/* -- Camera Smoothing -------------------------------------------- */
 
 static float cs_smooth_factor = 1.0f;
 static Vec3  cs_smooth_pos = {0, 0, 0};
@@ -104,7 +104,7 @@ static InterpolatedCamera cs_apply_smoothing(const InterpolatedCamera& raw)
     return out;
 }
 
-/* ── Camera Tick Thread ────────────────────────────────────────── */
+/* -- Camera Tick Thread ------------------------------------------ */
 
 static volatile LONG cs_tick_running = 0;
 static HANDLE cs_tick_handle = NULL;
@@ -140,7 +140,7 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
     return 0;
 }
 
-/* ── TCP helpers ───────────────────────────────────────────────── */
+/* -- TCP helpers ------------------------------------------------- */
 
 static void cs_reply(SOCKET sock, const char* msg) {
     send(sock, msg, (int)strlen(msg), 0);
@@ -164,7 +164,7 @@ static int cs_parse_floats(const char* str, float* out, int max_count) {
     return count;
 }
 
-/* ── Command Router ────────────────────────────────────────────── */
+/* -- Command Router ---------------------------------------------- */
 
 static bool cs_route_command(SOCKET client, const std::string& cmd)
 {
@@ -307,7 +307,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     return false;
 }
 
-/* ── TCP Server ────────────────────────────────────────────────── */
+/* -- TCP Server -------------------------------------------------- */
 
 static volatile LONG cs_server_running = 0;
 static SOCKET cs_listen_socket = INVALID_SOCKET;
@@ -413,7 +413,7 @@ static void cs_server_main(int port)
     BRIDGE_LOG("Console server stopped");
 }
 
-/* ── Startup Thread ────────────────────────────────────────────── */
+/* -- Startup Thread ---------------------------------------------- */
 
 static HANDLE cs_main_thread = NULL;
 
@@ -450,7 +450,7 @@ static DWORD WINAPI cs_startup_thread(LPVOID)
     return 0;
 }
 
-/* ── Public API ────────────────────────────────────────────────── */
+/* -- Public API -------------------------------------------------- */
 
 static inline void ConsoleServer_Start()
 {

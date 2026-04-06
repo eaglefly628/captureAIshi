@@ -181,7 +181,7 @@ class PathStore:
         if not cp:
             return None
         node = PathNode.from_dict(node_data)
-        if index < 0 or index >= len(cp.nodes):
+        if index < 0 or index > len(cp.nodes):
             cp.nodes.append(node)
         else:
             cp.nodes.insert(index, node)

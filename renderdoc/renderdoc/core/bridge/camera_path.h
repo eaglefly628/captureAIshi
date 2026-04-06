@@ -38,7 +38,7 @@
 /* Forward-declare from bridge.cpp */
 extern void bridge_log(const char* fmt, ...);
 
-/* ── Math helpers ────────────────────────────────────────────────── */
+/* -- Math helpers -------------------------------------------------- */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -51,7 +51,7 @@ static inline float clamp_f(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-/* ── Quaternion (for rotation interpolation) ─────────────────────── */
+/* -- Quaternion (for rotation interpolation) ----------------------- */
 
 struct Quat {
     float w, x, y, z;
@@ -153,7 +153,7 @@ static inline Quat slerp(const Quat& a, const Quat& b_in, float t)
     };
 }
 
-/* ── Catmull-Rom Spline (for position interpolation) ─────────────── */
+/* -- Catmull-Rom Spline (for position interpolation) --------------- */
 
 struct Vec3 {
     float x, y, z;
@@ -197,7 +197,7 @@ static inline Vec3 catmull_rom(
     return result;
 }
 
-/* ── Camera Keyframe ─────────────────────────────────────────────── */
+/* -- Camera Keyframe ----------------------------------------------- */
 
 struct CameraKeyframe {
     Vec3  pos;                   /* position (UE5 units) */
@@ -216,7 +216,7 @@ struct CameraKeyframe {
     }
 };
 
-/* ── Interpolated camera state at a given time ───────────────────── */
+/* -- Interpolated camera state at a given time --------------------- */
 
 struct InterpolatedCamera {
     Vec3  pos;
@@ -224,11 +224,11 @@ struct InterpolatedCamera {
     float fov;
 };
 
-/* ── Camera Path System ──────────────────────────────────────────── */
+/* -- Camera Path System -------------------------------------------- */
 
 class CameraPath {
 public:
-    /* ── Keyframe management ── */
+    /* -- Keyframe management -- */
 
     void add_keyframe(const CameraKeyframe& kf)
     {
@@ -261,7 +261,7 @@ public:
 
     size_t count() const { return m_keyframes.size(); }
 
-    /* ── Playback control ── */
+    /* -- Playback control -- */
 
     void play(float speed = 1.0f)
     {
@@ -296,7 +296,7 @@ public:
     bool is_playing() const { return m_playing && !m_play_paused; }
     bool is_active() const { return m_playing; }
 
-    /* ── Tick: advance time and return interpolated camera ── */
+    /* -- Tick: advance time and return interpolated camera -- */
 
     /*
      * Call this every frame (or at your desired update rate).
@@ -357,7 +357,7 @@ public:
         return true;
     }
 
-    /* ── Query ── */
+    /* -- Query -- */
 
     float total_duration() const
     {
@@ -417,7 +417,7 @@ private:
     float              m_speed = 1.0f;
     float              m_play_time = 0.0f;  /* seconds into playback */
 
-    /* ── Core interpolation ── */
+    /* -- Core interpolation -- */
 
     InterpolatedCamera interpolate(size_t seg, float t) const
     {

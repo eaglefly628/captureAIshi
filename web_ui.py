@@ -679,6 +679,9 @@ def list_games():
 @app.route("/api/games/<slug>/config", methods=["GET"])
 def get_game_config(slug):
     """Load per-game capture config. Returns defaults if none saved."""
+    slug = _game_slug(slug)
+    if not slug:
+        return jsonify({"error": "Invalid game slug"}), 400
     path = _GAME_CONFIGS_DIR / f"{slug}.json"
     if not path.exists():
         config = dict(_DEFAULT_GAME_CONFIG)
@@ -695,6 +698,9 @@ def get_game_config(slug):
 @app.route("/api/games/<slug>/config", methods=["POST"])
 def save_game_config(slug):
     """Save per-game capture config."""
+    slug = _game_slug(slug)
+    if not slug:
+        return jsonify({"error": "Invalid game slug"}), 400
     data = request.json
     if not data:
         return jsonify({"error": "JSON body required"}), 400
