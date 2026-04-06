@@ -12,19 +12,46 @@ Usage:
 """
 
 import json
+import re
 import urllib.request
 import urllib.error
 from pathlib import Path
 
 WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/bad13239-7ace-4829-8cd8-c3e08fd0bea1"
 
+# GitHub repo for file links
+_GITHUB_REPO = "eaglefly628/captureAIshi"
+_GITHUB_BRANCH = "claudeMainBranch"
+
+
+def _md_to_feishu(text: str) -> str:
+    """Pre-process markdown for Feishu card compatibility.
+
+    Feishu card markdown does NOT support fenced code blocks (``` ```) --
+    they render as white text on white background on mobile.
+    Convert to indented plain text with a header line instead.
+    """
+    def _replace_code_block(m):
+        lang = m.group(1) or ""
+        code = m.group(2).rstrip("\n")
+        # Indent each line with 4 spaces so it looks like a code block
+        indented = "\n".join("    " + line for line in code.split("\n"))
+        header = f"[{lang}]" if lang else "[code]"
+        return f"\n**{header}**\n{indented}\n"
+
+    # Replace fenced code blocks: ```lang\n...\n```
+    text = re.sub(
+        r'```(\w*)\n(.*?)```',
+        _replace_code_block,
+        text,
+        flags=re.DOTALL,
+    )
+    return text
+
 
 def notify(title: str, content: str) -> bool:
-    """Send a markdown card message to Feishu group.
-
-    Uses interactive card with explicit font_color to fix mobile dark mode
-    white-on-white rendering issue.
-    """
+    """Send a markdown card message to Feishu group."""
+    content = _md_to_feishu(content)
     payload = {
         "msg_type": "interactive",
         "card": {
@@ -50,7 +77,8 @@ def notify_file(title: str, file_path: str, chunk_size: int = 4000) -> bool:
 
     Feishu card markdown has a practical limit around 4-5KB per element.
     Long files are split at section boundaries (## headings) and sent
-    as multiple sequential messages.
+    as multiple sequential messages. The first message includes a GitHub
+    link to the original file for full rendering.
     """
     path = Path(file_path)
     if not path.exists():
@@ -58,11 +86,16 @@ def notify_file(title: str, file_path: str, chunk_size: int = 4000) -> bool:
 
     text = path.read_text(encoding="utf-8")
 
-    if len(text) <= chunk_size:
-        return notify(title, text)
+    # Add GitHub link at the top for full markdown rendering
+    github_url = (
+        f"https://github.com/{_GITHUB_REPO}/blob/{_GITHUB_BRANCH}/{file_path}"
+    )
+    link_header = f"[GitHub 完整文档]({github_url})\n\n---\n\n"
+
+    if len(text) + len(link_header) <= chunk_size:
+        return notify(title, link_header + text)
 
     # Split by ## headings to get logical sections
-    import re
     sections = re.split(r'(?=^## )', text, flags=re.MULTILINE)
 
     chunks = []
@@ -75,6 +108,9 @@ def notify_file(title: str, file_path: str, chunk_size: int = 4000) -> bool:
             current += section
     if current:
         chunks.append(current)
+
+    # Prepend GitHub link to first chunk
+    chunks[0] = link_header + chunks[0]
 
     ok = True
     for i, chunk in enumerate(chunks):
