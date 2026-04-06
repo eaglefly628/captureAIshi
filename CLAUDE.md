@@ -12,6 +12,14 @@ After each response, do two things:
 
 Estimate based on: how many files you've read, how much code you've generated, how many turns have passed. When approaching ~70%, proactively warn the lead programmer. At ~85%, wrap up, push, write CL, suggest new session.
 
+## Auto-Start Rule
+
+When a new session starts, IMMEDIATELY:
+1. `git checkout claudeMainBranch && git pull origin claudeMainBranch`
+2. Read your own SHARED.md for uncompleted TODO items
+3. Start working on the highest priority (P0 > P1 > P2) incomplete task
+4. Do NOT wait for instructions -- begin autonomously
+
 ## Version
 
 **Current: v0.2.0** -- See `.claude/rules/versioning.md` for full changelog and rules.
