@@ -57,6 +57,108 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ─── Menu Bar ─── */
+.menubar {
+  height: 28px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 0;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+.menu-item {
+  position: relative;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.menu-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.menu-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 180px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  padding: 4px 0;
+  z-index: 9999;
+}
+.menu-item.open .menu-dropdown { display: block; }
+.menu-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.menu-dropdown-item:hover { background: var(--accent-dim); color: var(--accent); }
+.menu-dropdown-sep {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 8px;
+}
+
+/* ─── Modal Dialog ─── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 10000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 28px 32px;
+  min-width: 320px;
+  max-width: 420px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  text-align: center;
+}
+.modal-box h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+.modal-box p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+.modal-box .modal-close {
+  margin-top: 16px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  height: 28px;
+  padding: 0 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-default);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.modal-box .modal-close:hover { background: var(--bg-selected); }
+
 /* ─── Toolbar ─── */
 .toolbar {
   height: 40px;
@@ -820,6 +922,39 @@ body {
 </head>
 <body>
 
+<!-- Menu Bar -->
+<div class="menubar">
+  <div class="menu-item" onclick="toggleMenu(this)">Help
+    <div class="menu-dropdown">
+      <div class="menu-dropdown-item" onclick="showModal('helpModal')">&#x2139;&#xFE0E; About captureAIshi</div>
+      <div class="menu-dropdown-sep"></div>
+      <div class="menu-dropdown-item" onclick="window.open('https://github.com/eaglefly628/captureaishi','_blank')">&#x1F4C4; GitHub Repository</div>
+      <div class="menu-dropdown-item" onclick="showModal('copyrightModal')">&#x00A9; Copyright</div>
+    </div>
+  </div>
+</div>
+
+<!-- Help Modal -->
+<div class="modal-overlay" id="helpModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal-box">
+    <h3>captureAIshi</h3>
+    <p>RGB + Depth + Normal capture pipeline for published games.</p>
+    <p style="font-size:11px;color:var(--text-tertiary)">v0.2.0</p>
+    <button class="modal-close" onclick="closeModal(helpModal)">OK</button>
+  </div>
+</div>
+
+<!-- Copyright Modal -->
+<div class="modal-overlay" id="copyrightModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal-box">
+    <h3>&copy; Copyright</h3>
+    <p style="font-size:15px;font-weight:600;color:var(--accent)">&#x7231;&#x840C;</p>
+    <p>Author: lijunbai</p>
+    <p style="font-size:11px;color:var(--text-tertiary)">All rights reserved.</p>
+    <button class="modal-close" onclick="closeModal(copyrightModal)">OK</button>
+  </div>
+</div>
+
 <!-- Toolbar -->
 <div class="toolbar">
   <span class="toolbar-logo"><b>capture</b>AIshi</span>
@@ -1105,6 +1240,26 @@ body {
 </div>
 
 <script>
+// ─── Menu Bar ───
+function toggleMenu(el) {
+  const wasOpen = el.classList.contains('open');
+  document.querySelectorAll('.menu-item.open').forEach(m => m.classList.remove('open'));
+  if (!wasOpen) el.classList.add('open');
+}
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.menu-item')) {
+    document.querySelectorAll('.menu-item.open').forEach(m => m.classList.remove('open'));
+  }
+});
+function showModal(id) {
+  document.querySelectorAll('.menu-item.open').forEach(m => m.classList.remove('open'));
+  document.getElementById(id).classList.add('show');
+}
+function closeModal(el) {
+  if (typeof el === 'string') el = document.getElementById(el);
+  if (el.classList) el.classList.remove('show');
+}
+
 // ─── Resizable Panels ───
 (function initResizers() {
   const sidebar = document.querySelector('.sidebar');
