@@ -164,6 +164,42 @@ class RenderDocGrabber(FrameGrabber):
                 f"or launch with: {self.renderdoc_path} capture <game.exe>"
             )
 
+    def _find_shipping_exe(self) -> Optional[str]:
+        """Search for the real UE5 game exe near the launcher path.
+
+        UE5 packaged games typically have:
+          GameRoot/GameName.exe              (launcher - spawns child and exits)
+          GameRoot/GameName/Binaries/Win64/GameName-Win64-Shipping.exe  (real)
+        or sometimes:
+          GameRoot/Engine/Binaries/Win64/GameName-Win64-Shipping.exe
+        """
+        if not self.target_exe:
+            return None
+
+        exe_path = Path(self.target_exe)
+        game_dir = exe_path.parent
+        stem = exe_path.stem  # e.g. "MyProject"
+
+        # Search patterns for the real exe
+        search_patterns = [
+            game_dir / stem / "Binaries" / "Win64" / f"{stem}-Win64-Shipping.exe",
+            game_dir / stem / "Binaries" / "Win64" / f"{stem}.exe",
+            game_dir / "Engine" / "Binaries" / "Win64" / f"{stem}-Win64-Shipping.exe",
+        ]
+
+        # Also glob for any *-Shipping.exe under the game directory
+        for candidate in search_patterns:
+            if candidate.is_file() and candidate != exe_path:
+                return str(candidate)
+
+        # Broader search: find any *-Shipping.exe
+        for shipping in game_dir.rglob("*-Win64-Shipping.exe"):
+            return str(shipping)
+        for shipping in game_dir.rglob("*-Shipping.exe"):
+            return str(shipping)
+
+        return None
+
     def _resolve_renderdoccmd(self) -> str:
         """Find renderdoccmd executable.
 
@@ -259,7 +295,26 @@ class RenderDocGrabber(FrameGrabber):
                 logger.error(
                     f"renderdoccmd exited after {elapsed:.0f}s: {code_name} ({rc})"
                 )
-                if rc == 4:
+                if rc == 0 and elapsed < 15:
+                    # Exit code 0 within 15 seconds strongly suggests a UE5
+                    # launcher that spawns a child process and exits.
+                    shipping_hint = self._find_shipping_exe()
+                    hint_msg = ""
+                    if shipping_hint:
+                        hint_msg = (
+                            f"\n\n  Auto-detected real game exe:\n"
+                            f"    {shipping_hint}\n"
+                            f"  Set this as target_exe instead of the launcher."
+                        )
+                    logger.error(
+                        "renderdoccmd exited immediately with code 0. This usually means "
+                        "the target is a UE5 launcher that spawns a child process.\n"
+                        "  The launcher exits, but the real game keeps running.\n"
+                        "  Solution: point target_exe at the actual game executable\n"
+                        "  (typically *-Win64-Shipping.exe or *-Cmd.exe in Binaries/Win64/)."
+                        + hint_msg
+                    )
+                elif rc == 4:
                     logger.error(
                         "InjectionFailed: RenderDoc could not inject into the process. "
                         "Common causes:\n"
