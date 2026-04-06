@@ -67,8 +67,12 @@ def _get_bot_chat_id() -> str:
         "https://open.feishu.cn/open-apis/im/v1/chats?page_size=20",
         headers={"Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        result = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"List chats HTTP {e.code}: {body}")
     if result.get("code") != 0:
         raise RuntimeError(f"Failed to list chats: {result}")
 
@@ -129,8 +133,12 @@ def _upload_file(file_path: Path, file_type: str = "stream") -> str:
             "Content-Type": f"multipart/form-data; boundary={boundary}",
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Upload HTTP {e.code}: {body}")
     if result.get("code") != 0:
         raise RuntimeError(f"Failed to upload file: {result}")
     return result["data"]["file_key"]
@@ -173,15 +181,28 @@ def send_file(file_path: str, title: str = "") -> bool:
         return False
 
     try:
+        print("[feishu] Step 1: Getting token...")
+        token = _get_tenant_token()
+        print(f"[feishu] Token OK: {token[:10]}...")
+
+        print("[feishu] Step 2: Finding chat...")
         chat_id = _get_bot_chat_id()
+        print(f"[feishu] Chat ID: {chat_id}")
+
+        print("[feishu] Step 3: Uploading file...")
         file_key = _upload_file(path)
+        print(f"[feishu] File key: {file_key}")
 
         # Send title message first if provided
         if title:
             _send_message(chat_id, "text", {"text": f"[captureAIshi] {title}"})
 
-        # Send the file
+        print("[feishu] Step 4: Sending file message...")
         return _send_message(chat_id, "file", {"file_key": file_key})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"[feishu] HTTP {e.code}: {body}")
+        return False
     except Exception as e:
         print(f"[feishu] File send failed: {e}")
         return False
