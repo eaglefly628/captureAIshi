@@ -1151,31 +1151,101 @@ class RenderDocGrabber(FrameGrabber):
             return None
 
     def _load_normal_image(self, directory: Path) -> Optional[np.ndarray]:
-        """Load exported normal map PNG as uint8 numpy array (H, W, 3)."""
+        """Load normal map, auto-detecting from ct_*.png if normal.png absent.
+
+        Auto-detection: scan all ct_*.png files, pick the one with highest
+        pixel coverage (non-black pixels) and blue channel dominance.
+        Normal maps fill the viewport and have blue-dominant colors
+        (surfaces facing up -> normal.z > 0 -> B channel high).
+        """
         normal_file = directory / "normal.png"
-        if not normal_file.exists():
-            logger.debug("[RDOC] No normal.png found in export directory")
+
+        # If explicit normal.png exists (from --normal-index), use it
+        if normal_file.exists():
+            return self._load_image_as_rgb(normal_file)
+
+        # Auto-detect from ct_*.png files
+        ct_files = sorted(directory.glob("ct_*.png"))
+        if not ct_files:
+            logger.debug("[RDOC] No ct_*.png files for normal auto-detect")
             return None
 
         try:
             from PIL import Image
-            img = Image.open(str(normal_file)).convert("RGB")
+        except ImportError:
+            logger.warning("[RDOC] Pillow required for normal auto-detect")
+            return None
+
+        best_file = None
+        best_score = -1.0
+
+        for ct_file in ct_files:
+            try:
+                img = Image.open(str(ct_file)).convert("RGB")
+                arr = np.array(img, dtype=np.uint8)
+
+                # Subsample for speed: every 8th pixel
+                flat = arr.reshape(-1, 3)[::8]
+                total = len(flat)
+                if total == 0:
+                    continue
+
+                # Coverage: fraction of non-black pixels
+                nonzero = np.any(flat > 2, axis=1).sum()
+                coverage = nonzero / total
+
+                # Blue ratio among non-black pixels
+                nonzero_mask = np.any(flat > 2, axis=1)
+                if nonzero_mask.sum() > 0:
+                    means = flat[nonzero_mask].mean(axis=0).astype(float)
+                    channel_sum = means.sum()
+                    blue_ratio = means[2] / channel_sum if channel_sum > 0 else 0
+                else:
+                    blue_ratio = 0
+
+                score = coverage
+                if blue_ratio > 0.35:
+                    score += 1.0
+
+                logger.debug(
+                    f"[RDOC] normal probe {ct_file.name}: "
+                    f"cov={coverage:.0%} blue={blue_ratio:.0%} score={score:.2f}"
+                )
+
+                if score > best_score:
+                    best_score = score
+                    best_file = ct_file
+
+            except Exception as e:
+                logger.debug(f"[RDOC] Failed to analyze {ct_file.name}: {e}")
+
+        if best_file is None or best_score < 0.5:
+            logger.info("[RDOC] Normal auto-detect: no suitable candidate found")
+            return None
+
+        logger.info(f"[RDOC] Normal auto-detected: {best_file.name} (score={best_score:.2f})")
+        return self._load_image_as_rgb(best_file)
+
+    def _load_image_as_rgb(self, filepath: Path) -> Optional[np.ndarray]:
+        """Load any image file as uint8 RGB numpy array."""
+        try:
+            from PIL import Image
+            img = Image.open(str(filepath)).convert("RGB")
             arr = np.array(img, dtype=np.uint8)
-            logger.debug(f"[RDOC] Loaded normal: {arr.shape[1]}x{arr.shape[0]} from normal.png")
+            logger.debug(f"[RDOC] Loaded image: {arr.shape[1]}x{arr.shape[0]} from {filepath.name}")
             return arr
         except ImportError:
             try:
                 import imageio.v3 as iio
-                arr = iio.imread(str(normal_file))
+                arr = iio.imread(str(filepath))
                 if arr.ndim == 3 and arr.shape[2] == 4:
                     arr = arr[:, :, :3]
-                logger.debug(f"[RDOC] Loaded normal: {arr.shape[1]}x{arr.shape[0]} (imageio)")
                 return arr.astype(np.uint8)
             except ImportError:
                 logger.error("[RDOC] Neither Pillow nor imageio installed")
                 return None
         except Exception as e:
-            logger.error(f"[RDOC] Failed to load normal from {normal_file}: {e}")
+            logger.error(f"[RDOC] Failed to load {filepath}: {e}")
             return None
 
     def _find_renderdoc_dirs(self):
