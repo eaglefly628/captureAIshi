@@ -200,6 +200,16 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
+    /* Commands below require GEngine -- return error if not ready */
+    if (!g_engine_found) {
+        if (cmd == "__cam_toggle" || cmd == "__cam_pause" ||
+            cmd == "__timestop" || cmd.rfind("__cam_speed ",0)==0 ||
+            cmd == "__hud_toggle" || cmd.rfind("__hotsample ",0)==0) {
+            cs_reply(client, "error: engine_not_ready\n");
+            return false;
+        }
+    }
+
     if (cmd == "__cam_toggle") { toggle_debug_camera(); cs_reply(client, "ok\n"); return true; }
 
     if (cmd == "__cam_pause" || cmd == "__timestop") {
@@ -300,7 +310,14 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     /* Regular UE5 console command (pass-through) */
-    if (cmd.rfind("__",0) != 0) { exec_console_command(cmd.c_str()); return true; }
+    if (cmd.rfind("__",0) != 0) {
+        if (!g_engine_found) {
+            cs_reply(client, "error: engine_not_ready\n");
+            return false;
+        }
+        exec_console_command(cmd.c_str());
+        return true;
+    }
 
     BRIDGE_LOG("Unknown command: %s", cmd.c_str());
     cs_reply(client, "error: unknown command\n");

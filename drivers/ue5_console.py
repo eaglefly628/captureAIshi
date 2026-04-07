@@ -111,6 +111,11 @@ class UE5ConsoleDriver(CameraDriver):
             logger.info(
                 f"[UE5] Connected to {server_type} at {self.host}:{try_port}"
             )
+
+            # Bridge: wait for GEngine scan to complete before sending commands
+            if self._is_bridge:
+                self._wait_for_engine()
+
             return
 
         # All ports failed
@@ -133,6 +138,55 @@ class UE5ConsoleDriver(CameraDriver):
             return data.strip() == b"pong"
         except (socket.timeout, OSError):
             return False
+
+    def _wait_for_engine(self, timeout: float = 120.0) -> bool:
+        """Poll __bridge_status until GEngine is found.
+
+        The bridge TCP server starts immediately but GEngine scan runs
+        in a background thread. Console commands won't work until the
+        scan completes. This method blocks until engine_found=1.
+        """
+        poll_interval = 2.0
+        elapsed = 0.0
+        logger.info("[UE5] Waiting for GEngine scan to complete...")
+
+        while elapsed < timeout:
+            try:
+                self._socket.sendall(b"__bridge_status\n")
+                self._socket.settimeout(3.0)
+                data = self._socket.recv(1024).decode("utf-8", errors="replace").strip()
+
+                status = {}
+                for pair in data.split():
+                    if "=" in pair:
+                        k, v = pair.split("=", 1)
+                        status[k] = v
+
+                if status.get("engine_found") == "1":
+                    exec_fn = status.get("exec_fn", "?")
+                    logger.info(
+                        f"[UE5] GEngine found after {elapsed:.0f}s "
+                        f"(exec_fn={exec_fn})"
+                    )
+                    return True
+
+            except (socket.timeout, OSError) as e:
+                logger.debug(f"[UE5] Status poll error: {e}")
+
+            if int(elapsed) % 10 == 0 and elapsed > 0:
+                logger.info(f"[UE5] Still waiting for GEngine... ({elapsed:.0f}s)")
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        logger.warning(
+            f"[UE5] GEngine not found after {timeout:.0f}s. "
+            f"Console commands may not work. Try:\n"
+            f"  - Wait longer (game may still be loading)\n"
+            f"  - Set CAPTUREAI_GENGINE_OFFSET env var\n"
+            f"  - Use test_bridge_connection.py for diagnostics"
+        )
+        return False
 
     def disconnect(self) -> None:
         if self._socket:
