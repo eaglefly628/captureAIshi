@@ -1104,12 +1104,25 @@ body {
       <div class="f" id="ceModeWrap"><label>CE Mode</label>
         <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
       </div>
-      <div class="f" id="targetExeWrap"><label>Game EXE</label><input type="text" id="target_exe" placeholder="C:\path\to\game.exe"></div>
-      <div class="row" id="gameLaunchOpts">
-        <div class="f"><label>ResX</label><input type="number" id="launch_resx" value="320" min="1"></div>
-        <div class="f"><label>ResY</label><input type="number" id="launch_resy" value="160" min="1"></div>
-        <label class="tog"><input type="checkbox" id="launch_windowed" checked><div class="track"></div>Windowed</label>
-        <label class="tog"><input type="checkbox" id="launch_log"><div class="track"></div>-log</label>
+      <div class="f" id="targetExeWrap"><label>Game EXE Path</label><input type="text" id="target_exe" placeholder="C:\Games\MyGame\game.exe"></div>
+      <div id="gameLaunchOpts">
+        <div class="f"><label>Resolution Preset</label>
+          <select id="launch_res_preset" onchange="applyResPreset(this.value)">
+            <option value="">Custom...</option>
+            <option value="320x160">320 x 160 (Tiny)</option>
+            <option value="640x360" selected>640 x 360 (Fast Preview)</option>
+            <option value="1280x720">1280 x 720 (HD)</option>
+            <option value="1920x1080">1920 x 1080 (Full HD)</option>
+          </select>
+        </div>
+        <div class="row">
+          <div class="f"><label>Width (ResX)</label><input type="number" id="launch_resx" value="640" min="1" step="1" placeholder="640"></div>
+          <div class="f"><label>Height (ResY)</label><input type="number" id="launch_resy" value="360" min="1" step="1" placeholder="360"></div>
+        </div>
+        <div class="row" style="gap:16px;padding:4px 0">
+          <label class="tog"><input type="checkbox" id="launch_windowed" checked><div class="track"></div>Windowed Mode</label>
+          <label class="tog"><input type="checkbox" id="launch_log"><div class="track"></div>Enable Log (-log)</label>
+        </div>
       </div>
       <div class="f" id="rdocPathWrap"><label>renderdoccmd</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
     </div>
@@ -1365,6 +1378,7 @@ function applyParams(p) {
   if(p.launch_resy!=null) document.getElementById('launch_resy').value=p.launch_resy;
   document.getElementById('launch_windowed').checked=p.launch_windowed!==false;
   document.getElementById('launch_log').checked=!!p.launch_log;
+  syncResPreset();
   document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run;
   document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
   if(p.fov!=null) document.getElementById('fov').value=p.fov;
@@ -1465,13 +1479,34 @@ function setBadge(s) {
   if (s === 'idle' || s === 'error') resetProgress();
 }
 
+// ─── Resolution Presets ───
+const _resPresets = {'320x160':[320,160],'640x360':[640,360],'1280x720':[1280,720],'1920x1080':[1920,1080]};
+function applyResPreset(v) {
+  const p = _resPresets[v];
+  if (p) {
+    document.getElementById('launch_resx').value = p[0];
+    document.getElementById('launch_resy').value = p[1];
+  }
+}
+function syncResPreset() {
+  const rx = document.getElementById('launch_resx').value;
+  const ry = document.getElementById('launch_resy').value;
+  const key = rx + 'x' + ry;
+  const sel = document.getElementById('launch_res_preset');
+  sel.value = _resPresets[key] ? key : '';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('launch_resx').addEventListener('input', syncResPreset);
+  document.getElementById('launch_resy').addEventListener('input', syncResPreset);
+});
+
 // ─── Visibility ───
 function updateVisibility() {
   const h=(id,hide)=>{const el=document.getElementById(id);if(el)el.classList.toggle('hidden',hide);};
   h('smoothPointsWrap',!cb('smooth'));
   h('ceModeWrap',val('driver')!=='cheatengine');
   h('targetExeWrap',val('grabber')!=='renderdoc');
-  h('targetArgsWrap',val('grabber')!=='renderdoc');
+  h('gameLaunchOpts',val('grabber')!=='renderdoc');
   h('rdocPathWrap',val('grabber')!=='renderdoc');
   h('streamingSettleWrap',!cb('streaming'));
 }
