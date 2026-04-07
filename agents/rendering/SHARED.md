@@ -146,8 +146,25 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 ### [v0.2.0] 8c6160e — 小萱
 - 修复 Windows stderr 管道死锁 (stderr=DEVNULL)
 
-## Backlog (v0.3.0+, 等破解流程跑通后)
+### [v0.2.0] bfe81db — 小萱
+- Normal 自动检测移到 Python 侧（PIL 分析 SaveTexture 输出的 RGBA8 PNG）
+- C++ 导出所有 ColorTarget 为 ct_{index}.png
+- 覆盖率 + 蓝色占比启发式
 
+## Known Issues (待下个 session 修)
+
+### P0: Normal 自动检测帧间不稳定
+p1-p3 检测正确（蓝绿色 WorldNormal），p0 选错了（彩虹圆环 debug buffer）。
+原因：每帧的 texture index 可能不同，auto-detect 独立运行导致结果不一致。
+修复方案：第一帧做 auto-detect，确定 best candidate 的特征签名（格式+相对位置），后续帧用同一签名匹配。或者用 `--normal-index` 锁定。
+
+### P1: Depth 归一化帧间不一致
+每帧独立做百分位 (1st-99th) 黑白点映射，场景变化导致 depth range 不同。
+修复方案：第一帧计算 depth range，后续帧复用同一 range。或者用固定 near/far plane。
+
+### P1: 无 Float SceneColor 的游戏 RGB 取自 SwapBuffer（含 UI）
+部分游戏没有 RGBA16F SceneColor，fallback 到 SwapBuffer 导致 UI overlay 残留。
+修复方案：需要在 RenderDoc replay 层面过滤 UI draw calls（已有 ui_hiders/renderdoc_hider.py 但未集成到 batch export 路径）。
 
 ## Backlog (v0.3.0+, 等破解流程跑通后)
 
