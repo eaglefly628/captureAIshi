@@ -467,9 +467,34 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
     return 0;
 }
 
+/*
+ * Minimum module size to start the bridge (10 MB).
+ *
+ * When --opt-hook-children is used, renderdoc.dll gets injected into
+ * BOTH the launcher EXE and the real game process. The launcher is
+ * typically tiny (< 1 MB) and has no UE5 engine code. If we start
+ * the bridge in the launcher, it grabs port 9998 and blocks the real
+ * game process from binding. Skip bridge startup for small modules.
+ */
+static const size_t BRIDGE_MIN_MODULE_SIZE = 10 * 1024 * 1024;
+
 static DWORD WINAPI cs_startup_thread(LPVOID)
 {
+    /* Check if this is a real game process or just a tiny launcher */
+    ModuleRegion check_rgn;
+    size_t mod_size = 0;
+    if (get_main_module(check_rgn))
+        mod_size = check_rgn.size;
+
+    if (mod_size < BRIDGE_MIN_MODULE_SIZE) {
+        BRIDGE_LOG("Module size=%zu bytes (< %zu MB threshold). "
+                   "Skipping bridge in launcher process.",
+                   mod_size, BRIDGE_MIN_MODULE_SIZE / (1024*1024));
+        return 0;
+    }
+
     BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
+    BRIDGE_LOG("Module size: %zu MB -- starting bridge", mod_size / (1024*1024));
 
     int port = CONSOLE_DEFAULT_PORT;
     const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
