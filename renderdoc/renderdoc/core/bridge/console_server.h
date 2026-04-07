@@ -34,16 +34,21 @@
 /* -- Logging ----------------------------------------------------- */
 
 /* Use OutputDebugStringA for logging -- visible in debugger and
- * RenderDoc's own log. Avoids any macro conflicts with RDCLOG. */
+ * RenderDoc's own log. Single call to avoid DebugView line splitting. */
 static void BRIDGE_LOG(const char* fmt, ...)
 {
     char buf[1024];
+    const char prefix[] = "[BRIDGE] ";
+    const int prefix_len = sizeof(prefix) - 1;
+    memcpy(buf, prefix, prefix_len);
+
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf(buf, sizeof(buf) - 2, fmt, args);
+    int n = vsnprintf(buf + prefix_len, sizeof(buf) - prefix_len - 2, fmt, args);
     va_end(args);
-    if (n > 0 && buf[n-1] != '\n') { buf[n] = '\n'; buf[n+1] = '\0'; }
-    OutputDebugStringA("[BRIDGE] ");
+
+    int total = prefix_len + (n > 0 ? n : 0);
+    if (total > 0 && buf[total - 1] != '\n') { buf[total] = '\n'; buf[total + 1] = '\0'; }
     OutputDebugStringA(buf);
 }
 
