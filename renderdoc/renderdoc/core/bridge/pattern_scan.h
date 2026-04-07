@@ -27,18 +27,64 @@ struct ModuleRegion {
     size_t         size;
 };
 
+/*
+ * Get the main game module base and size.
+ *
+ * Primary: GetModuleInformation (PSAPI). May return SizeOfImage=0
+ * on some systems or when called very early in process startup.
+ *
+ * Fallback: Parse the PE header directly to read SizeOfImage from
+ * IMAGE_OPTIONAL_HEADER. This always works as long as the module
+ * handle is valid, since the PE header is mapped at the base address.
+ */
+static inline size_t pe_get_image_size(const uint8_t* base)
+{
+    /* DOS header: e_lfanew at offset 0x3C gives PE header offset */
+    if (base[0] != 'M' || base[1] != 'Z') return 0;
+    int32_t pe_offset = *(const int32_t*)(base + 0x3C);
+    if (pe_offset < 0 || pe_offset > 0x1000) return 0;
+
+    const uint8_t* pe = base + pe_offset;
+    /* PE signature: "PE\0\0" */
+    if (pe[0] != 'P' || pe[1] != 'E' || pe[2] != 0 || pe[3] != 0)
+        return 0;
+
+    /* COFF header is 20 bytes after PE sig, Optional header follows.
+     * For PE32+: SizeOfImage is at Optional header offset +0x38 (56). */
+    const uint8_t* opt = pe + 4 + 20;  /* skip PE sig + COFF header */
+    uint16_t magic = *(const uint16_t*)opt;
+
+    if (magic == 0x20B) {
+        /* PE32+ (64-bit) */
+        return *(const uint32_t*)(opt + 56);
+    } else if (magic == 0x10B) {
+        /* PE32 (32-bit) */
+        return *(const uint32_t*)(opt + 56);
+    }
+    return 0;
+}
+
 static inline bool get_main_module(ModuleRegion& out)
 {
     HMODULE mod = GetModuleHandleA(NULL);
     if (!mod) return false;
 
-    MODULEINFO info = {};
-    if (!GetModuleInformation(GetCurrentProcess(), mod, &info, sizeof(info)))
-        return false;
+    out.base = (const uint8_t*)mod;
+    out.size = 0;
 
-    out.base = (const uint8_t*)info.lpBaseOfDll;
-    out.size = info.SizeOfImage;
-    return true;
+    /* Try PSAPI first */
+    MODULEINFO info = {};
+    if (GetModuleInformation(GetCurrentProcess(), mod, &info, sizeof(info))) {
+        out.base = (const uint8_t*)info.lpBaseOfDll;
+        out.size = info.SizeOfImage;
+    }
+
+    /* Fallback: read PE header if PSAPI returned 0 */
+    if (out.size == 0) {
+        out.size = pe_get_image_size(out.base);
+    }
+
+    return out.size > 0;
 }
 
 /* -- Pattern scan (mask-based) ------------------------------------- */
