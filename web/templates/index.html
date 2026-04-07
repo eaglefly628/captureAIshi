@@ -1110,14 +1110,15 @@ body {
           <select id="launch_res_preset" onchange="applyResPreset(this.value)">
             <option value="">Custom...</option>
             <option value="320x160">320 x 160 (Tiny)</option>
-            <option value="640x360" selected>640 x 360 (Fast Preview)</option>
+            <option value="640x360">640 x 360 (Fast Preview)</option>
+            <option value="1024x768" selected>1024 x 768 (Default)</option>
             <option value="1280x720">1280 x 720 (HD)</option>
             <option value="1920x1080">1920 x 1080 (Full HD)</option>
           </select>
         </div>
         <div class="row">
-          <div class="f"><label>Width (ResX)</label><input type="number" id="launch_resx" value="640" min="1" step="1" placeholder="640"></div>
-          <div class="f"><label>Height (ResY)</label><input type="number" id="launch_resy" value="360" min="1" step="1" placeholder="360"></div>
+          <div class="f"><label>Width (ResX)</label><input type="number" id="launch_resx" value="1024" min="1" step="1" placeholder="1024"></div>
+          <div class="f"><label>Height (ResY)</label><input type="number" id="launch_resy" value="768" min="1" step="1" placeholder="768"></div>
         </div>
         <div class="row" style="gap:16px;padding:4px 0">
           <label class="tog"><input type="checkbox" id="launch_windowed" checked><div class="track"></div>Windowed Mode</label>
@@ -1480,7 +1481,7 @@ function setBadge(s) {
 }
 
 // ─── Resolution Presets ───
-const _resPresets = {'320x160':[320,160],'640x360':[640,360],'1280x720':[1280,720],'1920x1080':[1920,1080]};
+const _resPresets = {'320x160':[320,160],'640x360':[640,360],'1024x768':[1024,768],'1280x720':[1280,720],'1920x1080':[1920,1080]};
 function applyResPreset(v) {
   const p = _resPresets[v];
   if (p) {
