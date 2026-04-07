@@ -1104,7 +1104,13 @@ body {
       <div class="f" id="ceModeWrap"><label>CE Mode</label>
         <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
       </div>
-      <div class="f" id="targetExeWrap"><label>Game Command</label><input type="text" id="target_exe" placeholder="C:\path\to\game.exe -Windowed -ResX=640"></div>
+      <div class="f" id="targetExeWrap"><label>Game EXE</label><input type="text" id="target_exe" placeholder="C:\path\to\game.exe"></div>
+      <div class="row" id="gameLaunchOpts">
+        <div class="f"><label>ResX</label><input type="number" id="launch_resx" value="320" min="1"></div>
+        <div class="f"><label>ResY</label><input type="number" id="launch_resy" value="160" min="1"></div>
+        <label class="tog"><input type="checkbox" id="launch_windowed" checked><div class="track"></div>Windowed</label>
+        <label class="tog"><input type="checkbox" id="launch_log"><div class="track"></div>-log</label>
+      </div>
       <div class="f" id="rdocPathWrap"><label>renderdoccmd</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
     </div>
     <div class="cascade-detail" id="catStreaming" style="display:none">
@@ -1355,6 +1361,10 @@ function applyParams(p) {
   document.getElementById('driver').value=p.driver; document.getElementById('driver_host').value=p.driver_host; document.getElementById('driver_port').value=p.driver_port;
   document.getElementById('ce_mode').value=p.ce_mode; document.getElementById('grabber').value=p.grabber;
   document.getElementById('target_exe').value=p.target_exe||''; document.getElementById('renderdoc_path').value=p.renderdoc_path||''; document.getElementById('no_hide_ui').checked=p.no_hide_ui;
+  if(p.launch_resx!=null) document.getElementById('launch_resx').value=p.launch_resx;
+  if(p.launch_resy!=null) document.getElementById('launch_resy').value=p.launch_resy;
+  document.getElementById('launch_windowed').checked=p.launch_windowed!==false;
+  document.getElementById('launch_log').checked=!!p.launch_log;
   document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run;
   document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
   if(p.fov!=null) document.getElementById('fov').value=p.fov;
@@ -1375,7 +1385,9 @@ function getFormData() {
     spacing:pf('spacing'), smooth:cb('smooth'), smooth_points:pi('smooth_points'),
     cone_angle:pf('cone_angle'), cone_samples:pi('cone_samples'), cone_rings:pi('cone_rings'),
     driver:val('driver'), driver_host:val('driver_host'), driver_port:pi('driver_port'), ce_mode:val('ce_mode'),
-    grabber:val('grabber'), target_exe:val('target_exe'), renderdoc_path:val('renderdoc_path'), no_hide_ui:cb('no_hide_ui'),
+    grabber:val('grabber'), target_exe:val('target_exe'),
+    launch_resx:pi('launch_resx'), launch_resy:pi('launch_resy'), launch_windowed:cb('launch_windowed'), launch_log:cb('launch_log'),
+    renderdoc_path:val('renderdoc_path'), no_hide_ui:cb('no_hide_ui'),
     output_dir:val('output_dir'), dry_run:cb('dry_run'), clean_start:cb('clean_start'),
     streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
     fov:pf('fov'), aspect:pf('aspect'),

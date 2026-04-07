@@ -247,6 +247,10 @@ def defaults():
         "ce_mode": "file",
         "grabber": "none",
         "target_exe": "",
+        "launch_resx": 320,
+        "launch_resy": 160,
+        "launch_windowed": True,
+        "launch_log": False,
         "no_hide_ui": False,
         "output_dir": "./output",
         "dry_run": False,
@@ -758,18 +762,23 @@ def _build_args(data: dict) -> Namespace:
         raise ValueError(f"Invalid grabber: {grabber}")
     args.grabber = grabber
 
-    # "Game Command" field: "C:\path\game.exe -Windowed -ResX=640"
-    # Split into exe path + args. The grabber also does this defensively,
-    # but splitting here keeps args clean for logging and config display.
-    import shlex
-    _game_cmd = str(data.get("target_exe", "")).strip()
-    if _game_cmd:
-        parts = shlex.split(_game_cmd, posix=False)
-        args.target_exe = parts[0]
-        args.target_args = parts[1:]
-    else:
-        args.target_exe = None
-        args.target_args = []
+    # Game executable path
+    _exe = str(data.get("target_exe", "")).strip()
+    args.target_exe = _exe or None
+
+    # Build launch args from separate UI fields
+    launch_args = []
+    resx = int(data.get("launch_resx", 0) or 0)
+    resy = int(data.get("launch_resy", 0) or 0)
+    if resx > 0:
+        launch_args.append(f"-ResX={resx}")
+    if resy > 0:
+        launch_args.append(f"-ResY={resy}")
+    if data.get("launch_windowed", False):
+        launch_args.append("-Windowed")
+    if data.get("launch_log", False):
+        launch_args.append("-log")
+    args.target_args = launch_args
     args.renderdoc_path = str(data.get("renderdoc_path", "")) or "renderdoccmd"
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
     args.dry_run = bool(data.get("dry_run", False))
