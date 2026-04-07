@@ -1278,7 +1278,7 @@ public:
       if(saveRes.OK())
       {
         std::cout << "OK rgb " << swapWidth << "x" << swapHeight
-                  << (useSceneColor ? " (SceneColor)" : " (SwapBuffer)")
+                  << " (" << rgbSource << ")"
                   << " -> " << rgbPath << std::endl;
         foundRGB = true;
       }
