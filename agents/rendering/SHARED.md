@@ -148,6 +148,9 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## Backlog (v0.3.0+, 等破解流程跑通后)
 
+
+## Backlog (v0.3.0+, 等破解流程跑通后)
+
 | 优先级 | 功能 | 说明 |
 |--------|------|------|
 | P0 | Depth 精度升级 | 8-bit PNG → 16-bit PNG 或 EXR float32，NeRF/3DGS 需要 |
