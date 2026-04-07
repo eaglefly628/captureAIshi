@@ -1038,6 +1038,8 @@ private:
   std::string format;
   bool dumpAll;
   bool exportNormal;
+  int normalIndex;   // -1 = auto-detect, >= 0 = use specific texture index
+  int rgbIndex;      // -1 = auto-detect, >= 0 = use specific texture index
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1047,8 +1049,10 @@ public:
     parser.add<std::string>("out", 'o', "Output directory for exported images", false, ".");
     parser.add<std::string>("format", 'f', "Image format: png, jpg, exr, hdr, bmp, tga", false,
                             "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
-    parser.add("dump-all", '\0', "Also export all ColorTargets matching viewport resolution");
+    parser.add("dump-all", '\0', "Export all ColorTargets matching viewport resolution (for manual identification)");
     parser.add("no-normal", '\0', "Skip normal buffer export (on by default)");
+    parser.add<int>("normal-index", '\0', "Use texture at this index as normal (from GBuffer scan output). -1 = auto-detect", false, -1);
+    parser.add<int>("rgb-index", '\0', "Use texture at this index as RGB (from GBuffer scan output). -1 = auto-detect", false, -1);
   }
   virtual const char *Description()
   {
@@ -1074,6 +1078,8 @@ public:
     format = parser.get<std::string>("format");
     dumpAll = parser.exist("dump-all");
     exportNormal = !parser.exist("no-normal");
+    normalIndex = parser.get<int>("normal-index");
+    rgbIndex = parser.get<int>("rgb-index");
     return true;
   }
 
@@ -1205,15 +1211,24 @@ public:
       }
     }
 
-    // Second pass: find SceneColor (first Float ColorTarget at viewport res) for RGB.
-    // We use SceneColor instead of SwapBuffer because SwapBuffer includes UE5 UI
-    // overlays ("Game is running, Press Esc") that contaminate the RGB output.
-    // SceneColor is the HDR render result before UI compositing.
-    // For non-UE5 games without HDR ColorTargets, fall back to SwapBuffer.
+    // Find RGB source texture
     ResourceId rgbTextureId;
-    bool useSceneColor = false;
-    if(swapWidth > 0)
+    std::string rgbSource = "none";
+    if(rgbIndex >= 0)
     {
+      // Manual override: use specified texture index
+      if((size_t)rgbIndex < textures.size())
+      {
+        rgbTextureId = textures[rgbIndex].resourceId;
+        rgbSource = "manual [" + std::to_string(rgbIndex) + "]";
+        std::cout << "  RGB source: manual index [" << rgbIndex << "]" << std::endl;
+      }
+      else
+        std::cerr << "  --rgb-index " << rgbIndex << " out of range (max " << textures.size() - 1 << ")" << std::endl;
+    }
+    else if(swapWidth > 0)
+    {
+      // Auto-detect: try SceneColor (Float), then SwapBuffer
       for(size_t i = 0; i < textures.size(); i++)
       {
         const TextureDescription &tex = textures[i];
@@ -1225,27 +1240,25 @@ public:
            tex.format.compCount >= 3)
         {
           rgbTextureId = tex.resourceId;
-          useSceneColor = true;
+          rgbSource = "SceneColor [" + std::to_string(i) + "]";
           std::cout << "  [" << i << "] SceneColor (Float "
-                    << (uint32_t)tex.format.compCount << "ch "
-                    << (uint32_t)tex.format.compByteWidth << "B) "
+                    << (uint32_t)tex.format.compCount << "ch) "
                     << tex.width << "x" << tex.height << std::endl;
           break;
         }
       }
-    }
-
-    // Fallback to SwapBuffer if no SceneColor found
-    if(!useSceneColor)
-    {
-      for(size_t i = 0; i < textures.size(); i++)
+      // Fallback to SwapBuffer
+      if(rgbSource == "none")
       {
-        const TextureDescription &tex = textures[i];
-        if(tex.creationFlags & TextureCategory::SwapBuffer)
+        for(size_t i = 0; i < textures.size(); i++)
         {
-          rgbTextureId = tex.resourceId;
-          std::cout << "  No SceneColor found, using SwapBuffer for RGB" << std::endl;
-          break;
+          if(textures[i].creationFlags & TextureCategory::SwapBuffer)
+          {
+            rgbTextureId = textures[i].resourceId;
+            rgbSource = "SwapBuffer [" + std::to_string(i) + "]";
+            std::cout << "  No SceneColor, using SwapBuffer for RGB" << std::endl;
+            break;
+          }
         }
       }
     }
@@ -1382,44 +1395,6 @@ public:
         }
       }
 
-      // Auto-detect and export Normal buffer (GBufferA).
-      //
-      // From GBuffer scan, UE5 WorldNormal is R10G10B10A2 (packed format):
-      //   fmtType=12 (ResourceFormatType::R10G10B10A2)
-      //   compType=SNorm, compCount=4, compByteWidth=0 (packed, not per-component)
-      //
-      // The first non-SwapBuffer ColorTarget matching fmtType=12 is WorldNormal.
-      // This skips RGBA16_SNorm (compByteWidth=2) which is a different buffer.
-      if(exportNormal && !foundNormal &&
-         (flags & (uint32_t)TextureCategory::ColorTarget) &&
-         !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
-         swapWidth > 0 && tex.width == swapWidth && tex.height == swapHeight &&
-         (uint32_t)tex.format.type == 12)
-      {
-        std::string normalPath = fileOutdir + sep + "normal.png";
-        TextureSave texsave;
-        texsave.resourceId = tex.resourceId;
-        texsave.mip = 0;
-        texsave.slice.sliceIndex = 0;
-        texsave.alpha = AlphaMapping::Discard;
-        texsave.destType = FileType::PNG;
-
-        ResultDetails saveRes = controller->SaveTexture(texsave, conv(normalPath));
-        if(saveRes.OK())
-        {
-          std::cout << "OK normal [" << i << "] " << tex.width << "x" << tex.height
-                    << " fmt=" << (uint32_t)tex.format.type
-                    << " compType=" << (uint32_t)tex.format.compType
-                    << " compCount=" << (uint32_t)tex.format.compCount
-                    << " -> " << normalPath << std::endl;
-          foundNormal = true;
-        }
-        else
-        {
-          std::cerr << "Failed to save normal: " << saveRes.Message() << std::endl;
-        }
-      }
-
       // Optional: export all ColorTargets matching SwapBuffer resolution (--dump-all)
       if(dumpAll &&
          (flags & (uint32_t)TextureCategory::ColorTarget) &&
@@ -1445,6 +1420,158 @@ public:
                     << " -> " << ctPathPNG << std::endl;
         }
         colorTargetIdx++;
+      }
+    }
+
+    // ── Normal auto-detection via content analysis ──
+    // Format-based detection is unreliable across games. Instead, we check
+    // the actual pixel data: a real WorldNormal fills the entire viewport
+    // (high coverage), while atlases/particles have mostly empty pixels.
+    // We also check that the blue channel is dominant (normals pointing up).
+    if(exportNormal && !foundNormal && swapWidth > 0)
+    {
+      if(normalIndex >= 0 && (size_t)normalIndex < textures.size())
+      {
+        // Manual override via --normal-index
+        const TextureDescription &tex = textures[normalIndex];
+        std::string normalPath = fileOutdir + sep + "normal.png";
+        TextureSave texsave;
+        texsave.resourceId = tex.resourceId;
+        texsave.mip = 0;
+        texsave.slice.sliceIndex = 0;
+        texsave.alpha = AlphaMapping::Discard;
+        texsave.destType = FileType::PNG;
+        ResultDetails saveRes = controller->SaveTexture(texsave, conv(normalPath));
+        if(saveRes.OK())
+        {
+          std::cout << "OK normal [" << normalIndex << "] (manual) "
+                    << tex.width << "x" << tex.height << " -> " << normalPath << std::endl;
+          foundNormal = true;
+        }
+      }
+      else
+      {
+        // Auto-detect: find the ColorTarget with highest pixel coverage
+        // that looks like a normal map (non-empty, blue-dominant)
+        struct NormalCandidate {
+          size_t texIndex;
+          float coverage;    // fraction of non-zero pixels
+          float blueRatio;   // avg blue channel / avg total
+        };
+        std::vector<NormalCandidate> candidates;
+
+        for(size_t i = 0; i < textures.size(); i++)
+        {
+          const TextureDescription &tex = textures[i];
+          uint32_t flags = (uint32_t)tex.creationFlags;
+          if(!(flags & (uint32_t)TextureCategory::ColorTarget))
+            continue;
+          if(flags & (uint32_t)TextureCategory::SwapBuffer)
+            continue;
+          if(tex.width != swapWidth || tex.height != swapHeight)
+            continue;
+          if(tex.format.compCount < 3)
+            continue;
+          // Skip Float (HDR SceneColor) and single-channel textures
+          if(tex.format.compType == CompType::Float)
+            continue;
+
+          // Read raw texture data and compute coverage + blue ratio
+          bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
+          if(rawData.empty())
+            continue;
+
+          size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
+          size_t bytesPerPixel = rawData.size() / pixelCount;
+          if(bytesPerPixel < 3)
+            continue;
+
+          size_t nonZero = 0;
+          double totalR = 0, totalG = 0, totalB = 0;
+
+          // Sample every 4th pixel for speed (full scan too slow at 4K)
+          size_t step = 4;
+          size_t sampled = 0;
+          for(size_t p = 0; p < pixelCount; p += step)
+          {
+            size_t offset = p * bytesPerPixel;
+            if(offset + 2 >= rawData.size())
+              break;
+
+            uint8_t r = rawData[offset + 0];
+            uint8_t g = rawData[offset + 1];
+            uint8_t b = rawData[offset + 2];
+            sampled++;
+
+            if(r > 0 || g > 0 || b > 0)
+            {
+              nonZero++;
+              totalR += r;
+              totalG += g;
+              totalB += b;
+            }
+          }
+
+          if(sampled == 0)
+            continue;
+
+          float coverage = (float)nonZero / (float)sampled;
+          float blueRatio = 0.0f;
+          double totalAll = totalR + totalG + totalB;
+          if(totalAll > 0)
+            blueRatio = (float)(totalB / totalAll);
+
+          std::cout << "  normal candidate [" << i << "] coverage="
+                    << (int)(coverage * 100) << "%%"
+                    << " blueRatio=" << (int)(blueRatio * 100) << "%%"
+                    << " fmt=" << (uint32_t)tex.format.type << std::endl;
+
+          // Normal maps typically have >80% coverage and >35% blue ratio
+          if(coverage > 0.5f)
+            candidates.push_back({i, coverage, blueRatio});
+        }
+
+        // Pick best candidate: prefer high coverage + blue dominance
+        if(!candidates.empty())
+        {
+          // Sort by: blue ratio > 35% first, then by coverage
+          size_t bestIdx = 0;
+          float bestScore = -1.0f;
+          for(size_t c = 0; c < candidates.size(); c++)
+          {
+            float score = candidates[c].coverage;
+            if(candidates[c].blueRatio > 0.35f)
+              score += 1.0f;  // bonus for blue-dominant
+            if(score > bestScore)
+            {
+              bestScore = score;
+              bestIdx = c;
+            }
+          }
+
+          size_t texIdx = candidates[bestIdx].texIndex;
+          const TextureDescription &tex = textures[texIdx];
+          std::string normalPath = fileOutdir + sep + "normal.png";
+          TextureSave texsave;
+          texsave.resourceId = tex.resourceId;
+          texsave.mip = 0;
+          texsave.slice.sliceIndex = 0;
+          texsave.alpha = AlphaMapping::Discard;
+          texsave.destType = FileType::PNG;
+          ResultDetails saveRes = controller->SaveTexture(texsave, conv(normalPath));
+          if(saveRes.OK())
+          {
+            std::cout << "OK normal [" << texIdx << "] (auto: coverage="
+                      << (int)(candidates[bestIdx].coverage * 100)
+                      << "%% blue=" << (int)(candidates[bestIdx].blueRatio * 100)
+                      << "%%) " << tex.width << "x" << tex.height
+                      << " -> " << normalPath << std::endl;
+            foundNormal = true;
+          }
+        }
+
+        if(!foundNormal)
+          std::cout << "No normal buffer detected (no candidate with >50%% coverage)" << std::endl;
       }
     }
 
