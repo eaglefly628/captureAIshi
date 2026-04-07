@@ -416,14 +416,20 @@ static void cs_server_main(int port)
 /* -- Startup Thread ---------------------------------------------- */
 
 static HANDLE cs_main_thread = NULL;
+static HANDLE cs_engine_scan_handle = NULL;
 
-static DWORD WINAPI cs_startup_thread(LPVOID)
+/*
+ * GEngine scan runs in its own thread so the TCP server can start
+ * immediately. Commands that need GEngine will report "not available"
+ * until the scan succeeds, but __bridge_ping / __bridge_status work
+ * right away -- critical for the Python side's readiness detection.
+ */
+static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 {
-    BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
+    BRIDGE_LOG("GEngine scan thread started");
 
-    /* Poll for GEngine until found or timeout. */
     const int poll_interval_ms = 500;
-    const int timeout_ms = 60000;
+    const int timeout_ms = 120000;   /* 2 minutes for slow-loading games */
     int elapsed = 0;
     while (!find_gengine() && elapsed < timeout_ms) {
         Sleep(poll_interval_ms);
@@ -431,8 +437,17 @@ static DWORD WINAPI cs_startup_thread(LPVOID)
         if (elapsed % 5000 == 0)
             BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
     }
-    if (!g_engine_found)
+    if (g_engine_found)
+        BRIDGE_LOG("GEngine found after %ds", elapsed / 1000);
+    else
         BRIDGE_LOG("WARNING: GEngine not found after %ds", timeout_ms / 1000);
+
+    return 0;
+}
+
+static DWORD WINAPI cs_startup_thread(LPVOID)
+{
+    BRIDGE_LOG("=== captureAIshi console server (embedded in RenderDoc) ===");
 
     int port = CONSOLE_DEFAULT_PORT;
     const char* env_port = getenv("CAPTUREAI_BRIDGE_PORT");
@@ -445,7 +460,12 @@ static DWORD WINAPI cs_startup_thread(LPVOID)
     InterlockedExchange(&cs_tick_running, 1);
     cs_tick_handle = CreateThread(NULL, 0, cs_camera_tick, NULL, 0, NULL);
 
-    /* Run TCP server (blocks until shutdown) */
+    /* Start GEngine scan in background -- don't block TCP server */
+    cs_engine_scan_handle = CreateThread(NULL, 0, cs_engine_scan_thread, NULL, 0, NULL);
+
+    /* Run TCP server immediately (blocks until shutdown).
+     * __bridge_ping works right away; GEngine-dependent commands
+     * return "GEngine not available" until scan completes. */
     cs_server_main(port);
     return 0;
 }
@@ -478,6 +498,13 @@ static inline void ConsoleServer_Stop()
         WaitForSingleObject(cs_tick_handle, 1000);
         CloseHandle(cs_tick_handle);
         cs_tick_handle = NULL;
+    }
+
+    /* Wait for engine scan thread */
+    if (cs_engine_scan_handle) {
+        WaitForSingleObject(cs_engine_scan_handle, 2000);
+        CloseHandle(cs_engine_scan_handle);
+        cs_engine_scan_handle = NULL;
     }
 
     /* Wait for client threads */
