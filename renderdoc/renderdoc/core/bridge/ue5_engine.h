@@ -732,14 +732,17 @@ static uintptr_t check_uobject_ptr(void* ptr,
                                     uintptr_t mod_start, uintptr_t mod_end)
 {
     if (!ptr || (uintptr_t)ptr < 0x10000) return 0;
+
+    /* UObjects are heap-allocated. Reject pointers inside the module
+     * (those are vtables, static data, code -- not UObject instances). */
+    if ((uintptr_t)ptr >= mod_start && (uintptr_t)ptr < mod_end) return 0;
+
     uintptr_t vtable = seh_read_ptr(ptr);
     if (vtable < mod_start || vtable >= mod_end) return 0;
 
-    /* Check first vtable entry is a valid function */
     void* fn0 = (void*)seh_read_ptr((void*)vtable);
     if (!validate_function_ptr(fn0)) return 0;
 
-    /* Check ClassPrivate at offset 16 -- should be a valid pointer */
     uintptr_t class_ptr = seh_read_ptr((uint8_t*)ptr + 16);
     if (class_ptr < 0x10000) return 0;
 
