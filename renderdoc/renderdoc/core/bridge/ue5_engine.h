@@ -1245,12 +1245,16 @@ static bool exec_console_command_internal(const char* cmd)
         return false;
     }
 
-    if (g_exec_crash_count >= 5) {
-        /* Too many crashes -- try clearing world ptr as it may be wrong */
-        if (g_world_ptr) {
-            bridge_log("  Clearing bad world ptr, retrying with NULL");
+    if (g_exec_crash_count >= 3) {
+        /* Crashes with world ptr -> disable world, keep Exec alive.
+         * Crashes with NULL world -> truly broken, disable Exec. */
+        if (g_world_global_addr && g_exec_crash_count < 6) {
+            bridge_log("  Disabling world ptr after %d crashes",
+                       g_exec_crash_count);
+            g_world_global_addr = 0;
             g_world_ptr = nullptr;
-            g_exec_crash_count = 0;
+            g_exec_crash_count = 0;  /* reset, try with NULL */
+            /* Don't return -- re-run this command with NULL world */
         } else {
             bridge_log("  [SKIP] FExec disabled after %d crashes",
                        g_exec_crash_count);
@@ -1270,11 +1274,15 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* SAFETY: Pass NULL as world for now. Passing wrong UWorld pointers
-     * corrupts engine state permanently (even subsequent NULL calls crash).
-     * Engine-level commands (stat, CVar, ShowFlag) work with NULL.
-     * TODO: implement reliable UWorld finding (GUObjectArray method). */
+    /* Read UWorld from GWorld global address if available.
+     * The .data scan with root-package filter finds this.
+     * If not found, pass NULL (engine commands still work). */
     void* world = NULL;
+    if (g_world_global_addr) {
+        void* w = *(void**)g_world_global_addr;
+        if (w && (uintptr_t)w > 0x10000)
+            world = w;
+    }
 
     bool cmd_ret = false;
     if (seh_call_fexec(g_fexec_exec, this_fexec,
