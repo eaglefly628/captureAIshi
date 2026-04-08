@@ -71,31 +71,27 @@ static uintptr_t         g_engine_global_addr = 0;
 /* -- Exec function ------------------------------------------------- */
 
 /*
- * UEngine::Exec is NOT a simple virtual call in shipped games.
- * Instead, we find and call these two alternatives:
+ * UObject::ProcessConsoleExec is the virtual function that handles
+ * console command execution in UE4/UE5.  Its vtable index varies
+ * per engine version (data from UE4SS PDB-verified vtable dumps):
  *
- * Option A: GEngine->Exec(UWorld*, const TCHAR*, FOutputDevice&)
- *   - Virtual function, vtable index varies per UE version
- *   - Risky: wrong index = crash
+ *   UE 4.27: 71    UE 5.02-5.04: 80
+ *   UE 5.00: 78    UE 5.05:      82
+ *   UE 5.01: 79    UE 5.06-5.07: 79
  *
- * Option B: FExec::Exec(UWorld*, const TCHAR*, FOutputDevice&)
- *   - Static/global function, can be found by pattern scan
- *   - Safer: direct call, no vtable lookup needed
+ * ProcessConsoleExec is always at ProcessEvent + 3.
  *
- * Option C: UGameplayStatics::ExecuteConsoleCommand() via ProcessEvent
- *   - Uses UE5 reflection system
- *   - Most robust but requires finding UObject::ProcessEvent
- *
- * We use Option A with validation: scan for the Exec function
- * prologue pattern and verify it looks correct before calling.
- *
- * In x64 MSVC, __thiscall uses rcx=this (same as __fastcall).
+ * Signature (x64 MSVC __fastcall):
+ *   rcx = this (GEngine)
+ *   rdx = const TCHAR* Cmd
+ *   r8  = FOutputDevice& Ar
+ *   r9  = UObject* Executor (can be NULL)
  */
 typedef bool (__fastcall *ExecFn)(
     void* engine,         /* rcx = this (GEngine) */
-    void* world,          /* rdx = UWorld* (can be NULL) */
-    const wchar_t* cmd,   /* r8  = command string */
-    void* output_device   /* r9  = FOutputDevice& */
+    const wchar_t* cmd,   /* rdx = command string */
+    void* output_device,  /* r8  = FOutputDevice& */
+    void* executor        /* r9  = UObject* (NULL ok) */
 );
 
 static ExecFn g_exec_fn = nullptr;
@@ -138,14 +134,14 @@ static bool seh_validate_function(void* fn)
     }
 }
 
-/* Safely call ExecFn.  If out_retval is non-NULL, stores the bool
- * value returned by fn().  Returns true if no SEH exception fired. */
+/* Safely call ExecFn (ProcessConsoleExec).
+ * Returns true if no SEH exception. Stores fn return in *out_retval. */
 static bool seh_call_exec(ExecFn fn, void* engine,
-                           void* world, const wchar_t* cmd, void* ar,
+                           const wchar_t* cmd, void* ar, void* executor,
                            bool* out_retval = NULL)
 {
     __try {
-        bool ret = fn(engine, world, cmd, ar);
+        bool ret = fn(engine, cmd, ar, executor);
         if (out_retval) *out_retval = ret;
         return true;
     }
@@ -168,9 +164,12 @@ static bool seh_call_exec(ExecFn fn, void* engine,
  * no-op function pointers.  Any virtual call (Serialize, Flush,
  * TearDown, ...) safely does nothing and returns 0.
  */
+static volatile LONG g_dummy_ar_called = 0;
+
 static int dummy_ar_fn(void* self, void* a, void* b, void* c)
 {
     (void)self; (void)a; (void)b; (void)c;
+    InterlockedExchange(&g_dummy_ar_called, 1);
     return 0;
 }
 
@@ -476,23 +475,16 @@ static bool find_gengine()
 /* -- Console command execution ------------------------------------- */
 
 /*
- * Execute a UE5 console command via GEngine->Exec().
+ * Execute a UE5 console command via ProcessConsoleExec().
  *
- * When g_exec_fn is found (via pattern scan), we call it directly.
- * Otherwise, we fall back to the virtual function call through
- * the vtable at a known index.
+ * UE4SS PDB-verified vtable indices for ProcessConsoleExec:
+ *   UE 4.27: 71    UE 5.02-5.04: 80
+ *   UE 5.00: 78    UE 5.05:      82
+ *   UE 5.01: 79    UE 5.06-5.07: 79
  *
- * UE5 Exec is at different vtable indices per version:
- *   UE 5.0-5.1: ~index 114-118
- *   UE 5.2-5.3: ~index 116-120
- *   UE 5.4+:    ~index 118-122
- *
- * We validate by checking that the function at the index
- * starts with a valid prologue (push rbp / sub rsp / mov).
+ * ProcessConsoleExec = ProcessEvent + 3 (always).
  */
 
-/* Validate a function pointer looks like a real function.
- * Uses seh_validate_function() to safely read memory. */
 static bool validate_function_ptr(void* fn)
 {
     return seh_validate_function(fn);
@@ -622,18 +614,44 @@ static bool exec_console_command(const char* cmd)
 }
 
 /*
- * Internal: actually call GEngine->Exec(). Must be on game thread.
+ * Internal: call GEngine->ProcessConsoleExec(). Must be on game thread.
  *
- * Two-probe vtable validation (new in this version):
- *   OLD: accept the first vtable index that doesn't crash.
- *        This latched onto wrong functions (e.g. index 113 in UE5.7
- *        when the real Exec is at ~120).  NULL FOutputDevice made
- *        the real Exec crash, so SEH skipped it.
- *   NEW: 1) Use a dummy FOutputDevice so Exec never crashes on Ar.
- *        2) Check return value: Exec returns true for valid commands
- *           ("stat none") and false for unknown commands.
- *        3) Only accept an index that passes BOTH probes.
+ * Validation: Ar-callback detection.  The real ProcessConsoleExec
+ * calls Ar.Serialize() (a virtual on FOutputDevice) to log results.
+ * Random vtable functions don't use our FOutputDevice at all.
+ * We detect whether Ar was touched via g_dummy_ar_called flag.
  */
+
+/* Known ProcessConsoleExec indices (UE4SS PDB-verified).
+ * ProcessConsoleExec = ProcessEvent + 3, always. */
+struct UEExecEntry { int major; int minor; int idx; };
+static const UEExecEntry g_known_exec[] = {
+    {4,27,71}, {5,0,78}, {5,1,79}, {5,2,80}, {5,3,80},
+    {5,4,80},  {5,5,82}, {5,6,79}, {5,7,79},
+};
+static const int g_known_exec_count =
+    sizeof(g_known_exec) / sizeof(g_known_exec[0]);
+
+/* Try a single vtable index: call with "stat none" and check
+ * whether our dummy Ar was used (virtual method called). */
+static bool try_exec_at_index(uintptr_t* vtable, int idx, void* ar)
+{
+    void* fn = (void*)vtable[idx];
+    if (!validate_function_ptr(fn)) return false;
+
+    ExecFn try_fn = (ExecFn)fn;
+    InterlockedExchange(&g_dummy_ar_called, 0);
+
+    bool ret = false;
+    if (!seh_call_exec(try_fn, g_engine_ptr,
+                       L"stat none", ar, NULL, &ret))
+        return false;   /* crashed */
+
+    if (!g_dummy_ar_called) return false;  /* did not use Ar */
+
+    return true;   /* used Ar -- high confidence this is Exec */
+}
+
 static bool exec_console_command_internal(const char* cmd)
 {
     bridge_log("CMD: %s", cmd);
@@ -660,66 +678,60 @@ static bool exec_console_command_internal(const char* cmd)
         return false;
     }
 
-    /* Fast path: cached Exec function */
+    /* Fast path: cached function */
     if (g_exec_fn) {
-        if (seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), ar)) {
+        if (seh_call_exec(g_exec_fn, g_engine_ptr,
+                          wcmd.data(), ar, NULL)) {
             bridge_log("  OK (direct call)");
             return true;
         }
-        bridge_log("  ERROR: Exec call crashed, clearing cached fn");
+        bridge_log("  ERROR: cached Exec crashed, clearing");
         g_exec_fn = NULL;
         return false;
     }
 
     /*
-     * Probe vtable to find Exec.  Two-probe validation:
-     *   Probe 1 -- "stat none" (valid built-in command).
-     *              Real Exec returns true.
-     *   Probe 2 -- "__captureai_noop_9999" (nonsense).
-     *              Real Exec returns false.
-     * A random non-Exec function is very unlikely to satisfy both.
+     * Step 1: Try known indices from the version database first.
+     * These are PDB-verified and should hit on the first try
+     * for standard UE builds. Minimizes risky blind probing.
      */
-    bridge_log("  Probing vtable[110..130] with two-probe validation...");
+    bridge_log("  Trying %d known ProcessConsoleExec indices...",
+               g_known_exec_count);
 
-    const wchar_t* probe_valid   = L"stat none";
-    const wchar_t* probe_invalid = L"__captureai_noop_9999";
-
-    for (int idx = 110; idx <= 130; idx++) {
-        void* fn = (void*)vtable[idx];
-        if (!validate_function_ptr(fn)) continue;
-
-        ExecFn try_exec = (ExecFn)fn;
-
-        /* Probe 1: valid command must not crash AND return true */
-        bool ret1 = false;
-        if (!seh_call_exec(try_exec, g_engine_ptr, NULL,
-                           probe_valid, ar, &ret1))
-            continue;   /* crashed */
-        if (!ret1)
-            continue;   /* returned false -- not Exec */
-
-        /* Probe 2: invalid command must return false */
-        bool ret2 = true;
-        if (!seh_call_exec(try_exec, g_engine_ptr, NULL,
-                           probe_invalid, ar, &ret2))
-            continue;   /* crashed */
-        if (ret2) {
-            bridge_log("  vtable[%d]: true for invalid cmd, skip", idx);
-            continue;   /* returned true for garbage -- not Exec */
+    for (int i = 0; i < g_known_exec_count; i++) {
+        int idx = g_known_exec[i].idx;
+        if (try_exec_at_index(vtable, idx, ar)) {
+            g_exec_fn = (ExecFn)(void*)vtable[idx];
+            bridge_log("  ProcessConsoleExec confirmed at vtable[%d] "
+                       "(UE%d.%d entry)", idx,
+                       g_known_exec[i].major, g_known_exec[i].minor);
+            seh_call_exec(g_exec_fn, g_engine_ptr,
+                          wcmd.data(), ar, NULL);
+            bridge_log("  OK");
+            return true;
         }
-
-        /* Both probes passed -- high confidence this is Exec */
-        g_exec_fn = try_exec;
-        bridge_log("  Exec confirmed at vtable[%d] = 0x%p", idx, fn);
-
-        /* Now run the actual user command */
-        seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), ar);
-        bridge_log("  OK");
-        return true;
     }
 
-    bridge_log("  FAILED: no vtable index passed two-probe validation "
-               "[110..130]");
+    /*
+     * Step 2: Full scan [65..90] with Ar-callback validation.
+     * Covers unknown UE versions or custom engine builds.
+     */
+    bridge_log("  Known indices failed, scanning vtable[65..90]...");
+
+    for (int idx = 65; idx <= 90; idx++) {
+        if (try_exec_at_index(vtable, idx, ar)) {
+            g_exec_fn = (ExecFn)(void*)vtable[idx];
+            bridge_log("  ProcessConsoleExec found at vtable[%d] = "
+                       "0x%p (scan)", idx, (void*)vtable[idx]);
+            seh_call_exec(g_exec_fn, g_engine_ptr,
+                          wcmd.data(), ar, NULL);
+            bridge_log("  OK");
+            return true;
+        }
+    }
+
+    bridge_log("  FAILED: ProcessConsoleExec not found in "
+               "vtable[65..90]");
     return false;
 }
 
