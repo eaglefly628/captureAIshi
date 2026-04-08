@@ -471,13 +471,12 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         if (!find_fexec_vtable())
             BRIDGE_LOG("WARNING: FExec not found, commands will fail");
 
-        /* Find UWorld for game command routing (ToggleDebugCamera etc.) */
-        if (!find_gworld()) {
-            BRIDGE_LOG("GWorld not found via xref, trying GetWorld vtable...");
-            if (!find_world_via_getworld())
-                BRIDGE_LOG("WARNING: UWorld not found, game commands "
-                           "(ToggleDebugCamera) may not work");
-        }
+        /* Find UWorld for game command routing (ToggleDebugCamera etc.)
+         * Strategy: scan .data section near GEngine for GWorld global.
+         * GetWorld vtable probe runs lazily on game thread later. */
+        if (!find_gworld_near_gengine())
+            BRIDGE_LOG("WARNING: UWorld not found near GEngine. "
+                       "Will retry via GetWorld() on first command.");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */

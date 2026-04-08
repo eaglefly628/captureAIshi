@@ -687,74 +687,93 @@ static bool find_fexec_vtable()
  * Strategy: find GWorld via the same string xref technique.
  * GWorld is a TObjectPtr<UWorld> global, always present in UE5.
  */
-static bool find_gworld()
+/*
+ * Strategy A: Scan .data/.bss near GEngine's global address.
+ * In UE5, global pointers (GEngine, GWorld, GIsEditor, etc.) are
+ * all stored in the same data section, typically within +-8KB.
+ */
+static bool find_gworld_near_gengine()
 {
+    if (!g_engine_global_addr) return false;
+
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
-
-    /* Search for wide string L"GWorld" */
-    const uint8_t* str_addr = find_wstring_in_module(
-        rgn.base, rgn.size, L"GWorld");
-    if (!str_addr) {
-        /* Try ASCII "GWorld" as fallback */
-        str_addr = find_string_in_module(rgn.base, rgn.size, "GWorld");
-    }
-
-    if (!str_addr) {
-        bridge_log("  GWorld string not found in module");
-        return false;
-    }
-
-    bridge_log("  GWorld string at offset +0x%llX",
-               (unsigned long long)(str_addr - rgn.base));
-
-    /* Find xrefs to this string */
-    auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
-    bridge_log("  GWorld: %zu xrefs", xrefs.size());
 
     uintptr_t mod_start = (uintptr_t)rgn.base;
     uintptr_t mod_end = mod_start + rgn.size;
 
-    for (const uint8_t* xref : xrefs) {
-        /* Scan nearby for MOV reg, [rip+X] */
-        const uint8_t* scan_start = xref - 256;
-        if (scan_start < rgn.base) scan_start = rgn.base;
-        const uint8_t* scan_end = xref + 512;
-        if (scan_end > rgn.base + rgn.size - 7)
-            scan_end = rgn.base + rgn.size - 7;
+    bridge_log("  Scanning near GEngine global (0x%llX) for UWorld...",
+               (unsigned long long)g_engine_global_addr);
 
-        for (const uint8_t* p = scan_start; p < scan_end; p++) {
-            if (p[0] != 0x48 || p[1] != 0x8B) continue;
-            if ((p[2] & 0xC7) != 0x05) continue;
+    /* Scan +-8KB around GEngine's global address */
+    const int RANGE = 8192;
+    uintptr_t scan_start = g_engine_global_addr - RANGE;
+    if (scan_start < mod_start) scan_start = mod_start;
+    uintptr_t scan_end = g_engine_global_addr + RANGE;
+    if (scan_end > mod_end - 8) scan_end = mod_end - 8;
 
-            uintptr_t resolved = resolve_rip_relative(p, 3, 7);
-            if (resolved < mod_start || resolved >= mod_end) continue;
+    /* Align to 8 bytes */
+    scan_start &= ~(uintptr_t)7;
 
-            void* candidate = *(void**)resolved;
-            if (!candidate || (uintptr_t)candidate < 0x10000) continue;
+    int candidates = 0;
+    for (uintptr_t addr = scan_start; addr < scan_end; addr += 8) {
+        if (addr == g_engine_global_addr) continue;  /* skip GEngine */
 
-            /* Basic vtable check */
-            uintptr_t vtable = seh_read_ptr(candidate);
-            if (vtable < 0x10000) continue;
+        void* ptr = *(void**)addr;
+        if (!ptr || (uintptr_t)ptr < 0x10000) continue;
 
-            /* Ensure it's not GEngine (different global) */
-            if (candidate == (void*)g_engine_ptr) continue;
+        /* Must be a valid heap pointer with a vtable in module */
+        uintptr_t vtable = seh_read_ptr(ptr);
+        if (vtable < mod_start || vtable >= mod_end) continue;
 
-            g_world_ptr = candidate;
-            bridge_log("  GWorld FOUND: 0x%p (vtable=0x%llX)",
-                       candidate, (unsigned long long)vtable);
-            return true;
+        /* Check vtable has valid functions (UObject-like) */
+        void* fn0 = (void*)seh_read_ptr((void*)vtable);
+        if (!validate_function_ptr(fn0)) continue;
+
+        /* Check if vtable is large (80+ entries = UObject subclass) */
+        int valid_count = 0;
+        for (int i = 0; i < 20; i++) {
+            void* fn = (void*)seh_read_ptr((void*)(vtable + i * 8));
+            if (validate_function_ptr(fn))
+                valid_count++;
+            else
+                break;
         }
+
+        if (valid_count < 20) continue;  /* UWorld has 80+ vtable entries */
+
+        /* Ensure it's different from GEngine */
+        if (ptr == (void*)g_engine_ptr) continue;
+
+        /* Ensure vtable is different from GEngine's vtable */
+        uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
+        if (vtable == engine_vt) continue;  /* same class, probably not UWorld */
+
+        candidates++;
+        bridge_log("    Candidate at global+%+d: ptr=0x%p vtable=0x%llX "
+                   "(%d+ vfuncs)",
+                   (int)(addr - g_engine_global_addr),
+                   ptr, (unsigned long long)vtable, valid_count);
+
+        /* First non-GEngine UObject with different vtable = likely GWorld */
+        g_world_ptr = ptr;
+        bridge_log("  GWorld FOUND near GEngine: 0x%p", ptr);
+        return true;
     }
 
-    bridge_log("  GWorld: xref scan failed, will try GetWorld vtable");
+    bridge_log("  GWorld: no UObject candidates near GEngine "
+               "(%d total)", candidates);
     return false;
 }
 
 /*
  * Alternative: get UWorld from GEngine->GetWorld().
- * GetWorld() is at primary vtable index ~48-50 (varies by UE version).
- * We try a few common indices and validate the result.
+ * GetWorld() is at a known vtable index (varies by UE version).
+ * In UE5.0-5.4 it's ~48, in UE5.5+ it may shift.
+ * We probe a wider range and validate results.
+ *
+ * IMPORTANT: Should only be called from the game thread since
+ * GetWorld() may access thread-local or game-thread-only state.
  */
 typedef void* (__fastcall *GetWorldFn)(void* this_ptr);
 
@@ -766,13 +785,17 @@ static bool find_world_via_getworld()
     uintptr_t primary_vptr = seh_read_ptr(obj);
     if (primary_vptr < 0x10000) return false;
 
-    /* GetWorld is typically at vtable[48] in UE5.
-     * Try indices 46-52 to be safe. */
-    for (int idx = 46; idx <= 52; idx++) {
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+
+    /* Try a wide range of vtable indices.
+     * GetWorld is typically 44-52 depending on UE version. */
+    for (int idx = 40; idx <= 60; idx++) {
         void* fn = (void*)seh_read_ptr((void*)(primary_vptr + idx * 8));
         if (!validate_function_ptr(fn)) continue;
 
-        /* Call it and see if we get a valid UWorld* back */
         GetWorldFn get_world = (GetWorldFn)fn;
         void* world = NULL;
 
@@ -785,26 +808,32 @@ static bool find_world_via_getworld()
 
         if (!world || (uintptr_t)world < 0x10000) continue;
 
-        /* Validate: UWorld should have a vtable in module range */
         uintptr_t wvt = seh_read_ptr(world);
-        ModuleRegion rgn;
-        if (!get_main_module(rgn)) continue;
-        uintptr_t mod_start = (uintptr_t)rgn.base;
-        uintptr_t mod_end = mod_start + rgn.size;
         if (wvt < mod_start || wvt >= mod_end) continue;
 
+        /* Ensure it's a large vtable (UWorld is a UObject subclass) */
+        int vc = 0;
+        for (int i = 0; i < 20; i++) {
+            void* f = (void*)seh_read_ptr((void*)(wvt + i * 8));
+            if (validate_function_ptr(f)) vc++; else break;
+        }
+        if (vc < 10) continue;  /* too small, not a UObject */
+
         g_world_ptr = world;
-        bridge_log("  UWorld via GetWorld() vtable[%d]: 0x%p", idx, world);
+        bridge_log("  UWorld via GetWorld() vtable[%d]: 0x%p "
+                   "(vt=0x%llX, %d+ vfuncs)",
+                   idx, world, (unsigned long long)wvt, vc);
         return true;
     }
 
-    bridge_log("  GetWorld vtable probe failed");
+    bridge_log("  GetWorld vtable probe failed (indices 40-60)");
     return false;
 }
 
 /*
  * Refresh g_world_ptr.  Called before exec to handle level transitions.
  * UWorld can change when the game loads a new level.
+ * This runs on the game thread (from WndProc), so GetWorld() is safe.
  */
 static void refresh_world_ptr()
 {
@@ -816,9 +845,10 @@ static void refresh_world_ptr()
         if (vt > 0x10000) return;  /* still valid */
     }
 
-    /* Try GetWorld first (faster), then GWorld xref */
-    if (!find_world_via_getworld())
-        find_gworld();
+    /* Try near-GEngine scan first (fast), then GetWorld vtable
+     * (safe here because we're on game thread) */
+    if (!find_gworld_near_gengine())
+        find_world_via_getworld();
 }
 
 /* -- Console command execution ------------------------------------- */
