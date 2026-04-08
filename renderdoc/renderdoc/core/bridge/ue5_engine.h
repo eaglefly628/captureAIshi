@@ -615,6 +615,10 @@ static bool try_fexec_at_offset(uint8_t* obj, int off,
     return true;
 }
 
+/* forward decl -- defined after find_fexec_vtable */
+static uintptr_t check_uobject_ptr(void* ptr,
+    uintptr_t mod_start, uintptr_t mod_end);
+
 static bool find_fexec_vtable()
 {
     uint8_t* obj = (uint8_t*)g_engine_ptr;
@@ -626,10 +630,6 @@ static bool find_fexec_vtable()
 
     /* Detect UE version for diagnostics */
     detect_ue_version_string();
-
-    /* forward decl -- defined after find_fexec_vtable */
-    static uintptr_t check_uobject_ptr(void* ptr,
-        uintptr_t mod_start, uintptr_t mod_end);
 
     bridge_log("=== GEngine FExec Lookup ===");
     bridge_log("  GEngine ptr: 0x%p", g_engine_ptr);
