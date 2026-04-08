@@ -10,7 +10,7 @@ After each response, do two things:
    ```
 2. Update your row in `agents/STATUS.md` with your current percentage and timestamp. This file is the shared dashboard the lead programmer reads.
 
-Estimate based on: how many files you've read, how much code you've generated, how many turns have passed. When approaching ~70%, proactively warn the lead programmer. At ~85%, wrap up, push, write CL, suggest new session.
+Estimate based on: how many files you've read, how much code you've generated, how many turns have passed. When approaching ~85%, proactively warn the lead programmer. Do NOT stop working — keep going until the system compresses context or the user tells you to stop.
 
 ## Auto-Start Rule
 
