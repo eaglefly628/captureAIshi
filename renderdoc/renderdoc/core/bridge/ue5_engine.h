@@ -1096,19 +1096,21 @@ static bool cross_validate_world(void* candidate)
         }
     }
 
-    /* Pass 2: indirect (1-level deep).
-     * For each heap pointer in GEngine, scan that object for target. */
+    /* Pass 2: indirect (2 levels deep).
+     * Level 2: GEngine[off] -> sub[sub_off] == target
+     * Level 3: GEngine[off] -> sub[sub_off] -> sub2[sub2_off] == target
+     * Covers: GEngine -> WorldList.Data -> FWorldContext -> UWorld */
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+
     for (int off = 48; off < 8192; off += 8) {
         uintptr_t val = seh_read_ptr(obj + off);
         if (val < 0x10000 || val == target) continue;
-        /* Skip module-range pointers (vtables, static data) */
-        ModuleRegion rgn;
-        if (!get_main_module(rgn)) continue;
-        if (val >= (uintptr_t)rgn.base &&
-            val < (uintptr_t)rgn.base + rgn.size)
-            continue;
+        if (val >= 0x7F0000000000ULL) continue;  /* skip DLL range */
 
-        /* Scan this sub-object for target */
+        /* Level 2: scan sub-object */
         for (int sub = 0; sub < 1024; sub += 8) {
             uintptr_t sv = seh_read_ptr((void*)(val + sub));
             if (sv == target) {
@@ -1116,6 +1118,19 @@ static bool cross_validate_world(void* candidate)
                            "obj+%d contains UWorld 0x%p",
                            off, sub, candidate);
                 return true;
+            }
+
+            /* Level 3: follow heap pointer one more level.
+             * Covers TIndirectArray: Data[0] -> FWorldContext -> UWorld */
+            if (sv < 0x10000 || sv >= 0x7F0000000000ULL) continue;
+            for (int sub2 = 0; sub2 < 512; sub2 += 8) {
+                uintptr_t sv2 = seh_read_ptr((void*)(sv + sub2));
+                if (sv2 == target) {
+                    bridge_log("  CROSS-VALIDATE: GEngine+%d -> "
+                               "+%d -> +%d contains UWorld 0x%p",
+                               off, sub, sub2, candidate);
+                    return true;
+                }
             }
         }
     }
