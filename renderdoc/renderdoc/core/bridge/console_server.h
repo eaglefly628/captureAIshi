@@ -178,13 +178,15 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     if (cmd == "__bridge_status") {
         char buf[512];
         snprintf(buf, sizeof(buf),
-            "engine_found=%d engine_ptr=0x%p exec_fn=0x%p "
+            "engine_found=%d engine_ptr=0x%p "
+            "fexec_exec=0x%p fexec_offset=%d "
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
             "gengine_global=0x%llX "
             "gamethread_dispatch=%d\n",
-            (int)g_engine_found.load(), g_engine_ptr, (void*)g_exec_fn,
+            (int)g_engine_found.load(), g_engine_ptr,
+            (void*)g_fexec_exec, (int)g_fexec_offset,
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
@@ -202,7 +204,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd == "__bridge_rescan") {
-        g_engine_found = false; g_engine_ptr = NULL; g_exec_fn = NULL;
+        g_engine_found = false; g_engine_ptr = NULL;
+        g_fexec_exec = NULL; g_fexec_offset = 0;
         cs_reply(client, find_gengine() ? "ok\n" : "not_found\n");
         return true;
     }
@@ -463,6 +466,10 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
     }
     if (g_engine_found) {
         BRIDGE_LOG("GEngine found after %ds", elapsed / 1000);
+
+        /* Find FExec secondary vtable for console command execution */
+        if (!find_fexec_vtable())
+            BRIDGE_LOG("WARNING: FExec not found, commands will fail");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */
