@@ -473,10 +473,11 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 
         /* Find UWorld for game command routing (ToggleDebugCamera etc.)
          * Strategy: scan .data section near GEngine for GWorld global.
-         * GetWorld vtable probe runs lazily on game thread later. */
+         * NOTE: Never call GetWorld via vtable probe -- calling unknown
+         * vtable functions corrupts game state (RF_MirroredGarbage). */
         if (!find_gworld_near_gengine())
-            BRIDGE_LOG("WARNING: UWorld not found near GEngine. "
-                       "Will retry via GetWorld() on first command.");
+            BRIDGE_LOG("NOTE: UWorld not found. CVars/ShowFlag work, "
+                       "but game commands (ToggleDebugCamera) need UWorld.");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */

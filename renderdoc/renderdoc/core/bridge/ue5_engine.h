@@ -767,86 +767,22 @@ static bool find_gworld_near_gengine()
 }
 
 /*
- * Alternative: get UWorld from GEngine->GetWorld().
- * GetWorld() is at a known vtable index (varies by UE version).
- * In UE5.0-5.4 it's ~48, in UE5.5+ it may shift.
- * We probe a wider range and validate results.
- *
- * IMPORTANT: Should only be called from the game thread since
- * GetWorld() may access thread-local or game-thread-only state.
- */
-typedef void* (__fastcall *GetWorldFn)(void* this_ptr);
-
-static bool find_world_via_getworld()
-{
-    if (!g_engine_ptr) return false;
-
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t primary_vptr = seh_read_ptr(obj);
-    if (primary_vptr < 0x10000) return false;
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-
-    /* Try a wide range of vtable indices.
-     * GetWorld is typically 44-52 depending on UE version. */
-    for (int idx = 40; idx <= 60; idx++) {
-        void* fn = (void*)seh_read_ptr((void*)(primary_vptr + idx * 8));
-        if (!validate_function_ptr(fn)) continue;
-
-        GetWorldFn get_world = (GetWorldFn)fn;
-        void* world = NULL;
-
-        __try {
-            world = get_world(g_engine_ptr);
-        }
-        __except(EXCEPTION_EXECUTE_HANDLER) {
-            continue;
-        }
-
-        if (!world || (uintptr_t)world < 0x10000) continue;
-
-        uintptr_t wvt = seh_read_ptr(world);
-        if (wvt < mod_start || wvt >= mod_end) continue;
-
-        /* Ensure it's a large vtable (UWorld is a UObject subclass) */
-        int vc = 0;
-        for (int i = 0; i < 20; i++) {
-            void* f = (void*)seh_read_ptr((void*)(wvt + i * 8));
-            if (validate_function_ptr(f)) vc++; else break;
-        }
-        if (vc < 10) continue;  /* too small, not a UObject */
-
-        g_world_ptr = world;
-        bridge_log("  UWorld via GetWorld() vtable[%d]: 0x%p "
-                   "(vt=0x%llX, %d+ vfuncs)",
-                   idx, world, (unsigned long long)wvt, vc);
-        return true;
-    }
-
-    bridge_log("  GetWorld vtable probe failed (indices 40-60)");
-    return false;
-}
-
-/*
- * Refresh g_world_ptr.  Called before exec to handle level transitions.
- * UWorld can change when the game loads a new level.
- * This runs on the game thread (from WndProc), so GetWorld() is safe.
+ * Refresh g_world_ptr.  Called periodically (not on every command).
+ * Only uses safe memory-scan approaches, never calls vtable functions.
  */
 static void refresh_world_ptr()
 {
-    if (!g_engine_ptr) return;
+    if (!g_engine_ptr || !g_engine_global_addr) return;
 
     /* Quick check: is current world still valid? */
     if (g_world_ptr) {
         uintptr_t vt = seh_read_ptr(g_world_ptr);
         if (vt > 0x10000) return;  /* still valid */
+        g_world_ptr = nullptr;
     }
 
-    /* Try near-GEngine scan first (fast), then GetWorld vtable
-     * (safe here because we're on game thread) */
+    find_gworld_near_gengine();
+}
     if (!find_gworld_near_gengine())
         find_world_via_getworld();
 }
@@ -996,12 +932,20 @@ static bool exec_console_command(const char* cmd)
  *   this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset
  * The vtable thunk then adjusts it back to UEngine base.
  */
+static int g_exec_crash_count = 0;
+
 static bool exec_console_command_internal(const char* cmd)
 {
-    bridge_log("CMD: %s", cmd);
+    bridge_log("  exec: %s (world=%p)", cmd,
+               g_world_ptr);
 
     if (!g_fexec_exec) {
-        bridge_log("  [SKIP] FExec::Exec not found");
+        bridge_log("  [SKIP] FExec::Exec not available");
+        return false;
+    }
+
+    if (g_exec_crash_count >= 3) {
+        bridge_log("  [SKIP] FExec disabled after %d crashes", g_exec_crash_count);
         return false;
     }
 
@@ -1017,18 +961,17 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Refresh world pointer (handles level transitions) */
-    refresh_world_ptr();
-
     bool cmd_ret = false;
     if (seh_call_fexec(g_fexec_exec, this_fexec,
                         g_world_ptr, wcmd.data(), ar, &cmd_ret)) {
         bridge_log("  OK ret=%d", (int)cmd_ret);
+        g_exec_crash_count = 0;  /* reset on success */
         return cmd_ret;
     }
 
-    bridge_log("  ERROR: FExec::Exec crashed");
-    g_fexec_exec = NULL;  /* clear so we don't keep crashing */
+    g_exec_crash_count++;
+    bridge_log("  ERROR: FExec::Exec crashed (count=%d/3)",
+               g_exec_crash_count);
     return false;
 }
 
