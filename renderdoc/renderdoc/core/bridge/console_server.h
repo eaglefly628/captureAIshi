@@ -490,12 +490,20 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         if (!find_fexec_vtable())
             BRIDGE_LOG("WARNING: FExec not found, commands will fail");
 
-        /* Find UWorld for game command routing (ToggleDebugCamera etc.)
-         * NOTE: Never call vtable functions to probe -- calling unknown
-         * vtable indices corrupts game state (RF_MirroredGarbage). */
+        /* Install Exec hook to capture UWorld from game calls.
+         * This is the most reliable method: the game itself provides
+         * UWorld when it calls Exec during level loading, console
+         * commands, etc. We intercept and save it. */
+        if (install_exec_hook())
+            BRIDGE_LOG("Exec hook active -- will capture UWorld "
+                       "from game calls");
+        else
+            BRIDGE_LOG("WARNING: Exec hook failed");
+
+        /* Also try static methods as fallback */
         if (!find_uworld())
-            BRIDGE_LOG("NOTE: UWorld not found yet. "
-                       "ToggleDebugCamera may not work.");
+            BRIDGE_LOG("NOTE: UWorld not found via static scan. "
+                       "Hook will capture it from game calls.");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */
@@ -618,6 +626,9 @@ static inline void ConsoleServer_Stop()
     cs_client_count = 0;
     LeaveCriticalSection(&cs_client_cs);
     DeleteCriticalSection(&cs_client_cs);
+
+    /* Remove Exec hook before shutdown */
+    uninstall_exec_hook();
 
     BRIDGE_LOG("Console server shutdown complete");
 }

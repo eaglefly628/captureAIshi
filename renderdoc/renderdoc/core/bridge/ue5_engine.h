@@ -1160,6 +1160,86 @@ static bool find_uworld()
     return false;
 }
 
+/* -- FExec::Exec vtable hook (captures UWorld from game calls) ----- */
+
+/*
+ * Hook the FExec::Exec vtable entry to capture UWorld from game-initiated
+ * calls. The game's own console, level loading, and gameplay systems all
+ * call UEngine::Exec with a valid UWorld. We intercept it and save it.
+ *
+ * This is the most reliable method: the game GIVES us UWorld, we don't
+ * have to find it ourselves.
+ */
+static FExecExecFn g_original_exec = NULL;
+static std::atomic<bool> g_exec_hook_installed{false};
+
+static bool __fastcall hooked_fexec_exec(
+    void* this_fexec, void* world, const wchar_t* cmd, void* ar)
+{
+    /* Capture UWorld from game-initiated calls.
+     * Only accept heap pointers (not NULL, not DLL range). */
+    if (world && (uintptr_t)world > 0x10000 &&
+        (uintptr_t)world < 0x7F0000000000ULL)
+    {
+        if (g_world_ptr != world) {
+            g_world_ptr = world;
+            bridge_log("HOOK: captured UWorld 0x%p from game Exec call",
+                       world);
+        }
+    }
+
+    /* Call the original adjustor thunk -> UEngine::Exec */
+    return g_original_exec(this_fexec, world, cmd, ar);
+}
+
+static bool install_exec_hook()
+{
+    if (!g_engine_ptr || !g_fexec_offset || !g_fexec_exec)
+        return false;
+
+    uint8_t* obj = (uint8_t*)g_engine_ptr;
+    uintptr_t vptr = *(uintptr_t*)(obj + g_fexec_offset);
+
+    /* vtable[1] = Exec (adjustor thunk) */
+    uintptr_t* exec_slot = (uintptr_t*)(vptr + 8);
+    g_original_exec = (FExecExecFn)*exec_slot;
+
+    /* Make vtable page writable */
+    DWORD old_protect = 0;
+    if (!VirtualProtect(exec_slot, 8, PAGE_READWRITE, &old_protect)) {
+        bridge_log("WARNING: VirtualProtect failed for vtable hook "
+                   "(%d)", GetLastError());
+        return false;
+    }
+
+    /* Replace vtable entry with our hook */
+    *exec_slot = (uintptr_t)hooked_fexec_exec;
+    VirtualProtect(exec_slot, 8, old_protect, &old_protect);
+
+    g_exec_hook_installed = true;
+    bridge_log("FExec::Exec hook installed (original=0x%p, "
+               "hook=0x%p)", (void*)g_original_exec,
+               (void*)hooked_fexec_exec);
+    return true;
+}
+
+static void uninstall_exec_hook()
+{
+    if (!g_exec_hook_installed || !g_original_exec) return;
+
+    uint8_t* obj = (uint8_t*)g_engine_ptr;
+    uintptr_t vptr = *(uintptr_t*)(obj + g_fexec_offset);
+    uintptr_t* exec_slot = (uintptr_t*)(vptr + 8);
+
+    DWORD old_protect = 0;
+    VirtualProtect(exec_slot, 8, PAGE_READWRITE, &old_protect);
+    *exec_slot = (uintptr_t)g_original_exec;
+    VirtualProtect(exec_slot, 8, old_protect, &old_protect);
+
+    g_exec_hook_installed = false;
+    bridge_log("FExec::Exec hook removed");
+}
+
 /* -- Console command execution ------------------------------------- */
 
 /*
@@ -1348,18 +1428,21 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Read UWorld from GWorld global address if available.
-     * The .data scan with root-package filter finds this.
-     * If not found, pass NULL (engine commands still work). */
-    void* world = NULL;
-    if (g_world_global_addr) {
+    /* Use UWorld captured by hook (most reliable), or from
+     * .data scan global address, or NULL as fallback. */
+    void* world = g_world_ptr;  /* set by hooked_fexec_exec */
+    if (!world && g_world_global_addr) {
         void* w = *(void**)g_world_global_addr;
-        if (w && (uintptr_t)w > 0x10000)
+        if (w && (uintptr_t)w > 0x10000 &&
+            (uintptr_t)w < 0x7F0000000000ULL)
             world = w;
     }
 
+    /* Use original Exec (bypass hook to avoid recursion) */
+    FExecExecFn exec_fn = g_original_exec ? g_original_exec : g_fexec_exec;
+
     bool cmd_ret = false;
-    if (seh_call_fexec(g_fexec_exec, this_fexec,
+    if (seh_call_fexec(exec_fn, this_fexec,
                         world, wcmd.data(), ar, &cmd_ret)) {
         bridge_log("  OK ret=%d", (int)cmd_ret);
         g_exec_crash_count = 0;  /* reset on success */
