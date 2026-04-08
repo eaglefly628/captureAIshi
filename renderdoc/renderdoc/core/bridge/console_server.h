@@ -455,13 +455,19 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 {
     BRIDGE_LOG("GEngine scan thread started");
 
-    const int poll_interval_ms = 500;
-    const int timeout_ms = 120000;   /* 2 minutes for slow-loading games */
+    /* Wait for game to finish initial loading before scanning.
+     * Scanning too early (while DRM unpacks or sections load)
+     * causes intermittent crashes at entry 3 of string search. */
+    BRIDGE_LOG("Waiting 5s for game to stabilize...");
+    Sleep(5000);
+
+    const int poll_interval_ms = 2000;
+    const int timeout_ms = 120000;
     int elapsed = 0;
     while (!find_gengine() && elapsed < timeout_ms) {
         Sleep(poll_interval_ms);
         elapsed += poll_interval_ms;
-        if (elapsed % 5000 == 0)
+        if (elapsed % 10000 == 0)
             BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
     }
     if (g_engine_found) {
