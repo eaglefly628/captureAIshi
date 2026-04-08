@@ -108,6 +108,67 @@ typedef bool (__fastcall *FExecExecFn)(
 static FExecExecFn g_fexec_exec = NULL;
 static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 
+/* -- GUObjectArray globals ----------------------------------------- */
+
+/*
+ * GUObjectArray (FUObjectArray) is the master UObject registry.
+ * Layout (UE5, x64 -- from UE source and UE4SS/UEPseudo):
+ *
+ * FUObjectArray:
+ *   +0   ObjFirstGCIndex         (int32)
+ *   +4   ObjLastNonGCIndex       (int32)
+ *   +8   MaxObjectsNotConsideredByGC (int32)
+ *   +12  OpenForDisregardForGC   (bool, 1 byte + 3 pad)
+ *   +16  ObjObjects (FChunkedFixedUObjectArray):
+ *     +16  Objects** (chunk array pointer)
+ *     +24  PreAllocatedObjects* (may be NULL)
+ *     +32  MaxElements (int32)
+ *     +36  NumElements (int32)
+ *     +40  MaxChunks (int32)
+ *     +44  NumChunks (int32)
+ *
+ * FUObjectItem (24 bytes):
+ *   +0   Object (UObjectBase*)
+ *   +8   Flags (int32)
+ *   +12  ClusterRootIndex (int32)
+ *   +16  SerialNumber (int32)
+ *   +20  padding (int32)
+ *
+ * Access pattern (same as UE4SS IndexToObject):
+ *   chunk_idx      = index >> 16   (= index / 65536)
+ *   within_idx     = index & 0xFFFF
+ *   item           = Objects[chunk_idx][within_idx]  -- 24-byte stride
+ *   object         = item.Object  (at item+0)
+ */
+
+#define GUOBJARRAY_OBJECTS_OFF    16   /* &GUObjectArray.ObjObjects.Objects */
+#define GUOBJARRAY_NUMELEMS_OFF   36   /* &GUObjectArray.ObjObjects.NumElements */
+#define FUOBJECTITEM_STRIDE       24   /* sizeof(FUObjectItem) */
+#define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
+#define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
+
+static void*              g_guobjectarray = NULL;
+static std::atomic<bool>  g_guobjectarray_found{false};
+
+/* -- FExec multi-hook table ---------------------------------------- */
+
+/*
+ * UE4SS hooks FExec on BOTH GEngine (UGameEngine) AND ULocalPlayer.
+ * ULocalPlayer::Exec(UWorld* InWorld, ...) receives UWorld as param.
+ * We hook every unique FExec vtable found in GUObjectArray.
+ *
+ * Default FExec vtable offset in both GEngine and ULocalPlayer: 0x28.
+ * (Configurable in UE4SS as FExecVTableOffsetInLocalPlayer, default 0x28.)
+ */
+struct FExecHookEntry {
+    uintptr_t   vtable_base;   /* address of the secondary vtable (key) */
+    uintptr_t*  slot;          /* &vtable[1] -- the patched slot */
+    FExecExecFn original;      /* saved original vtable[1] */
+};
+
+static FExecHookEntry     g_fexec_hook_table[16];
+static int                g_fexec_hook_count = 0;
+
 /* -- SEH-safe helpers ---------------------------------------------- */
 
 /*
@@ -1059,6 +1120,347 @@ static bool find_gworld_in_data_section()
     return false;
 }
 
+/* -- GUObjectArray finder ------------------------------------------ */
+
+/*
+ * Validate a GUObjectArray candidate.
+ * Checks: NumElements in [1000, 5000000], Objects** valid, chunk[0] valid.
+ * Mirrors UE4SS's SetupGUObjectArrayAddress() sanity checks.
+ */
+static bool validate_guobjectarray(void* candidate)
+{
+    if (!candidate || (uintptr_t)candidate < 0x10000) return false;
+
+    uint8_t* p = (uint8_t*)candidate;
+
+    /* NumElements = p + GUOBJARRAY_NUMELEMS_OFF */
+    int32_t num_elems = 0;
+    __try { num_elems = *(int32_t*)(p + GUOBJARRAY_NUMELEMS_OFF); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+
+    if (num_elems < 1000 || num_elems > 5000000) {
+        bridge_log("  GUObjectArray: NumElements=%d out of [1000,5M]",
+                   num_elems);
+        return false;
+    }
+
+    /* Objects** = p + GUOBJARRAY_OBJECTS_OFF */
+    uintptr_t chunks_ptr = seh_read_ptr(p + GUOBJARRAY_OBJECTS_OFF);
+    if (chunks_ptr < 0x10000 || chunks_ptr >= 0x7F0000000000ULL) {
+        bridge_log("  GUObjectArray: Objects** invalid 0x%llX",
+                   (unsigned long long)chunks_ptr);
+        return false;
+    }
+
+    /* Objects*[0] = first chunk must be readable */
+    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
+    if (chunk0 < 0x10000 || chunk0 >= 0x7F0000000000ULL) {
+        bridge_log("  GUObjectArray: Objects[0] invalid 0x%llX",
+                   (unsigned long long)chunk0);
+        return false;
+    }
+
+    /* First FUObjectItem in chunk0: Object* at +0 must look valid */
+    uintptr_t first_obj = seh_read_ptr((void*)chunk0);
+    if (first_obj < 0x10000) {
+        bridge_log("  GUObjectArray: first object 0x%llX invalid",
+                   (unsigned long long)first_obj);
+        return false;
+    }
+
+    bridge_log("  GUObjectArray valid: %d objects, "
+               "Objects**=0x%llX, chunk[0]=0x%llX",
+               num_elems, (unsigned long long)chunks_ptr,
+               (unsigned long long)chunk0);
+    return true;
+}
+
+/*
+ * Get object at index i. Returns UObjectBase* or NULL.
+ * Implements UE4SS IndexToObject() chunk arithmetic.
+ */
+static void* guobjectarray_get(int32_t index)
+{
+    if (!g_guobjectarray || index < 0) return NULL;
+
+    uint8_t* arr = (uint8_t*)g_guobjectarray;
+    uintptr_t chunks_ptr = seh_read_ptr(arr + GUOBJARRAY_OBJECTS_OFF);
+    if (!chunks_ptr) return NULL;
+
+    int32_t chunk_idx   = (uint32_t)index >> FUOBJECTARRAY_CHUNK_SHIFT;
+    int32_t within_idx  = (uint32_t)index &  FUOBJECTARRAY_CHUNK_MASK;
+
+    uintptr_t chunk = seh_read_ptr(
+        (void*)(chunks_ptr + (uintptr_t)chunk_idx * 8));
+    if (!chunk) return NULL;
+
+    /* FUObjectItem::Object at offset 0 within the item */
+    uintptr_t item_addr = chunk + (uintptr_t)within_idx * FUOBJECTITEM_STRIDE;
+    return (void*)seh_read_ptr((void*)item_addr);
+}
+
+static int32_t guobjectarray_num_elements()
+{
+    if (!g_guobjectarray) return 0;
+    int32_t n = 0;
+    __try {
+        n = *(int32_t*)((uint8_t*)g_guobjectarray + GUOBJARRAY_NUMELEMS_OFF);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) { n = 0; }
+    return n;
+}
+
+/*
+ * Find GUObjectArray.
+ *
+ * Strategy 1: Export symbol lookup.
+ *   Many UE5 games export "?GUObjectArray@@3VFUObjectArray@@A".
+ *   (Used by Returnal, per UE4SS GUObjectArray.lua.)
+ *
+ * Strategy 2-4: AOB pattern scan -- three patterns sourced from
+ *   UE4SS CustomGameConfigs Lua scripts (validated on real UE5 games):
+ *
+ *   Pat-A (LN3): LEA reg, [RIP+GUObjectArray] in AllocateUObjectIndex
+ *     48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01
+ *     Decode: next=addr+7, GUA = next + *(int32*)(addr+3)
+ *
+ *   Pat-B (FF7 Remake): MOV reg, [RIP+ptr_into_GUA+0x10]
+ *     48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07
+ *     Decode: next=addr+7, ptr = next+*(int32*)(addr+3), GUA = ptr-0x10
+ *
+ *   Pat-C (FF7 Rebirth): ADD targeting GUObjectArray+6
+ *     03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D
+ *     Decode: next=addr+6, GUA = next + *(int32*)(addr+2)
+ */
+static bool find_guobjectarray()
+{
+    bridge_log("=== GUObjectArray Search ===");
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+
+    /* --- Strategy 1: Export symbol --- */
+    HMODULE exe = GetModuleHandleA(NULL);
+    void* exp_addr = (void*)GetProcAddress(
+        exe, "?GUObjectArray@@3VFUObjectArray@@A");
+    if (exp_addr) {
+        bridge_log("  Strategy 1: export found at 0x%p", exp_addr);
+        if (validate_guobjectarray(exp_addr)) {
+            g_guobjectarray = exp_addr;
+            g_guobjectarray_found = true;
+            bridge_log("  GUObjectArray via export: 0x%p", exp_addr);
+            return true;
+        }
+    } else {
+        bridge_log("  Strategy 1: export not found");
+    }
+
+    /* --- Strategy 2-4: AOB patterns --- */
+
+    /* Pat-A: 48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01 */
+    static const uint8_t patA[] = {
+        0x48,0x8D, 0,0,0,0,0,  0x4C,0x8B,0xC9, 0x48,0x89,0x01
+    };
+    static const char maskA[] = "xx?????xxxxxx";
+
+    /* Pat-B: 48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07 */
+    static const uint8_t patB[] = {
+        0x48,0x8B, 0,0,0,0,0,  0x4C,0x8B,0x04,0xC8, 0x4D,0x85,0xC0,0x74,0x07
+    };
+    static const char maskB[] = "xx?????xxxxxxxxx";
+
+    /* Pat-C: 03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D */
+    static const uint8_t patC[] = {
+        0x03, 0,0,0,0,0,  0xFF,0xC8, 0x3B,0xD0, 0x0F,0x8D
+    };
+    static const char maskC[] = "x?????xxxxxx";
+
+    struct PatEntry {
+        const uint8_t* bytes;
+        const char*    mask;
+        size_t         len;
+        int            disp_off;   /* offset to int32 displacement */
+        int            instr_len;  /* total instruction bytes */
+        int            adjustment; /* subtract from resolved addr */
+        const char*    name;
+    };
+
+    PatEntry pats[] = {
+        {patA, maskA, 13, 3, 7,    0, "Pat-A (LN3/AllocateUObjectIndex)"},
+        {patB, maskB, 16, 3, 7, 0x10, "Pat-B (FF7R/GUObjectArray+0x10)"},
+        {patC, maskC, 12, 2, 6,    0, "Pat-C (FF7Rebirth/ADD-pattern)"},
+    };
+    const int NUM_PATS = 3;
+
+    for (int pi = 0; pi < NUM_PATS; pi++) {
+        const PatEntry& pe = pats[pi];
+        const uint8_t* hit = pattern_scan(
+            rgn.base, rgn.size, pe.bytes, pe.mask, pe.len);
+
+        if (!hit) {
+            bridge_log("  Strategy %d: %s -- no match", pi + 2, pe.name);
+            continue;
+        }
+
+        bridge_log("  Strategy %d: %s matched at +0x%llX",
+                   pi + 2, pe.name,
+                   (unsigned long long)(hit - rgn.base));
+
+        uintptr_t resolved = resolve_rip_relative(
+            hit, pe.disp_off, pe.instr_len);
+        void* candidate = (void*)(resolved - (uintptr_t)pe.adjustment);
+
+        bridge_log("    resolved=0x%llX, candidate=0x%p",
+                   (unsigned long long)resolved, candidate);
+
+        if ((uintptr_t)candidate < mod_start ||
+            (uintptr_t)candidate >= mod_end) {
+            bridge_log("    candidate outside module, skip");
+            continue;
+        }
+
+        if (!validate_guobjectarray(candidate)) continue;
+
+        g_guobjectarray = candidate;
+        g_guobjectarray_found = true;
+        bridge_log("  GUObjectArray FOUND via %s: 0x%p", pe.name, candidate);
+        return true;
+    }
+
+    bridge_log("  GUObjectArray: all strategies failed");
+    return false;
+}
+
+/* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
+
+/*
+ * Install a hook on vtable[1] of a secondary FExec vtable.
+ * Returns true if newly installed, false if already hooked.
+ *
+ * Reuses hooked_fexec_exec (defined later) which:
+ *   1. Captures UWorld from the `world` parameter.
+ *   2. Looks up the correct original in g_fexec_hook_table.
+ *   3. Forwards to the original.
+ */
+static bool __fastcall hooked_fexec_exec(  /* forward decl */
+    void* this_fexec, void* world, const wchar_t* cmd, void* ar);
+
+static bool install_fexec_hook_on(uintptr_t fexec_vtable,
+                                   uintptr_t primary_vptr,
+                                   uintptr_t mod_start, uintptr_t mod_end)
+{
+    if (g_fexec_hook_count >= 16) {
+        bridge_log("  FExec hook table full");
+        return false;
+    }
+
+    /* Reject primary vtable */
+    if (fexec_vtable == primary_vptr) return false;
+
+    /* Check if already hooked */
+    for (int i = 0; i < g_fexec_hook_count; i++) {
+        if (g_fexec_hook_table[i].vtable_base == fexec_vtable)
+            return false;  /* already done */
+    }
+
+    /* vtable[1] = Exec (the function we want to intercept) */
+    uintptr_t* slot = (uintptr_t*)(fexec_vtable + 8);
+    FExecExecFn orig = (FExecExecFn)seh_read_ptr((void*)slot);
+    if (!orig || orig == (FExecExecFn)hooked_fexec_exec) return false;
+    if (!validate_function_ptr((void*)orig)) return false;
+
+    /* Make vtable page writable */
+    DWORD old_prot = 0;
+    if (!VirtualProtect(slot, 8, PAGE_READWRITE, &old_prot)) {
+        bridge_log("  FExec hook: VirtualProtect failed (%d)",
+                   GetLastError());
+        return false;
+    }
+    *slot = (uintptr_t)hooked_fexec_exec;
+    VirtualProtect(slot, 8, old_prot, &old_prot);
+
+    FExecHookEntry& e = g_fexec_hook_table[g_fexec_hook_count++];
+    e.vtable_base = fexec_vtable;
+    e.slot        = slot;
+    e.original    = orig;
+
+    bridge_log("  FExec hook installed: vtable=0x%llX "
+               "original=0x%p slot=%d",
+               (unsigned long long)fexec_vtable, (void*)orig,
+               g_fexec_hook_count - 1);
+    return true;
+}
+
+/*
+ * Scan GUObjectArray for all UObjects that have a secondary FExec vtable
+ * at offset 0x28 (= sizeof(UObject) = UE4SS default FExecVTableOffsetInLocalPlayer).
+ *
+ * This finds UGameEngine (already hooked), ULocalPlayer, and any other
+ * FExec implementors. We hook all unique vtables.
+ *
+ * Caps at 200,000 objects to avoid blocking the game thread too long.
+ * ULocalPlayer is created early and typically has index < 10,000.
+ */
+static void scan_guobjectarray_for_fexec_hooks()
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return;
+    if (!g_engine_ptr) return;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+    uintptr_t primary_vptr = seh_read_ptr(g_engine_ptr);  /* GEngine vtable */
+
+    int32_t num_elems = guobjectarray_num_elements();
+    int32_t scan_limit = (num_elems < 200000) ? num_elems : 200000;
+
+    bridge_log("=== GUObjectArray FExec scan (%d objects, limit %d) ===",
+               num_elems, scan_limit);
+
+    int checked = 0;
+    int hooked_new = 0;
+
+    for (int32_t i = 0; i < scan_limit; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x7F0000000000ULL) continue;
+
+        checked++;
+
+        /* Check for FExec vtable at UE4SS default offset 0x28 (= 40) */
+        uintptr_t fexec_off = 0x28;
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
+        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+        if (fexec_vptr == primary_vptr) continue;  /* skip primary */
+
+        /* Validate: vtable[0] and vtable[1] must be valid functions
+         * in module; 3-8 total entries (FExec signature). */
+        void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
+        void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
+        if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1))
+            continue;
+
+        int vcnt = 2;
+        for (int vi = 2; vi < 9; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            vcnt++;
+        }
+        if (vcnt < 3 || vcnt > 8) continue;
+
+        /* This object has a valid FExec vtable -- hook it */
+        if (install_fexec_hook_on(fexec_vptr, primary_vptr,
+                                   mod_start, mod_end))
+            hooked_new++;
+    }
+
+    bridge_log("  GUObjectArray scan done: checked=%d, new_hooks=%d "
+               "total_hooks=%d", checked, hooked_new, g_fexec_hook_count);
+}
+
 /*
  * Refresh g_world_ptr.  Called periodically (not on every command).
  * Only uses safe memory-scan approaches, never calls vtable functions.
@@ -1146,113 +1548,134 @@ static bool find_uworld()
 
     bridge_log("=== UWorld Search ===");
 
-    /* A: GWorld-specific string xref */
+    /* Strategy A: hooks already installed capture UWorld when game calls
+     * ULocalPlayer::Exec(UWorld* InWorld, ...) -- UWorld is passed as arg.
+     * This fires on next in-game console command or system call. Hooks are
+     * installed by scan_guobjectarray_for_fexec_hooks() at startup.
+     * Return true if we already have a captured world. */
+    if (g_world_ptr) return true;
+
+    /* Strategy B: GWorld string xref (works if strings exist) */
     if (find_gworld_via_string_xref()) {
         cross_validate_world(g_world_ptr);  /* log only */
         return true;
     }
 
-    /* B: GSpots AOB pattern scan */
+    /* Strategy C: GSpots AOB pattern scan */
     if (find_gworld_via_aob()) {
         cross_validate_world(g_world_ptr);
         return true;
     }
 
-    /* C: scan entire .data section */
+    /* Strategy D: scan entire .data section (last resort, must cross-validate) */
     if (find_gworld_in_data_section()) {
         if (cross_validate_world(g_world_ptr)) {
             bridge_log("  UWorld CONFIRMED by cross-validation");
             return true;
         }
-        /* .data found something but GEngine doesn't reference it.
-         * REJECT -- passing wrong UWorld corrupts engine state. */
         bridge_log("  REJECTED: .data candidate not cross-validated");
         g_world_ptr = nullptr;
         g_world_global_addr = 0;
     }
 
-    bridge_log("  All UWorld strategies failed");
+    bridge_log("  Static UWorld search failed -- will capture via FExec hooks");
     return false;
 }
 
-/* -- FExec::Exec vtable hook (captures UWorld from game calls) ----- */
+/* -- FExec multi-hook: actual hook function and management --------- */
 
 /*
- * Hook the FExec::Exec vtable entry to capture UWorld from game-initiated
- * calls. The game's own console, level loading, and gameplay systems all
- * call UEngine::Exec with a valid UWorld. We intercept it and save it.
+ * THE hook function installed on all FExec vtable[1] slots.
  *
- * This is the most reliable method: the game GIVES us UWorld, we don't
- * have to find it ourselves.
+ * This implements UE4SS's ULocalPlayerExecPreCallback pattern:
+ *   ULocalPlayer::Exec(UWorld* InWorld, cmd, ar) -- UWorld is param 2.
+ *   GEngine::Exec  (UWorld* InWorld, cmd, ar)    -- same calling convention.
+ *
+ * When the game calls any registered FExec::Exec (GEngine or ULocalPlayer),
+ * InWorld (rdx) is the live UWorld pointer.  We capture it here.
+ *
+ * Lookup: find the correct original by matching this_fexec's vtable
+ * against g_fexec_hook_table[].vtable_base.
  */
-static FExecExecFn g_original_exec = NULL;
-static std::atomic<bool> g_exec_hook_installed{false};
-
 static bool __fastcall hooked_fexec_exec(
     void* this_fexec, void* world, const wchar_t* cmd, void* ar)
 {
-    /* Capture UWorld from game-initiated calls.
-     * Only accept heap pointers (not NULL, not DLL range). */
+    /* Capture UWorld -- only accept valid heap pointers */
     if (world && (uintptr_t)world > 0x10000 &&
         (uintptr_t)world < 0x7F0000000000ULL)
     {
         if (g_world_ptr != world) {
             g_world_ptr = world;
-            bridge_log("HOOK: captured UWorld 0x%p from game Exec call",
-                       world);
+            bridge_log("HOOK: UWorld captured 0x%p (this_fexec=0x%p)",
+                       world, this_fexec);
         }
     }
 
-    /* Call the original adjustor thunk -> UEngine::Exec */
-    return g_original_exec(this_fexec, world, cmd, ar);
-}
-
-static bool install_exec_hook()
-{
-    if (!g_engine_ptr || !g_fexec_offset || !g_fexec_exec)
-        return false;
-
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t vptr = *(uintptr_t*)(obj + g_fexec_offset);
-
-    /* vtable[1] = Exec (adjustor thunk) */
-    uintptr_t* exec_slot = (uintptr_t*)(vptr + 8);
-    g_original_exec = (FExecExecFn)*exec_slot;
-
-    /* Make vtable page writable */
-    DWORD old_protect = 0;
-    if (!VirtualProtect(exec_slot, 8, PAGE_READWRITE, &old_protect)) {
-        bridge_log("WARNING: VirtualProtect failed for vtable hook "
-                   "(%d)", GetLastError());
-        return false;
+    /* Dispatch to correct original via vtable lookup.
+     * this_fexec points to the FExec subobject; its first qword is
+     * the secondary vtable pointer (same key we stored at install). */
+    uintptr_t vtable = seh_read_ptr(this_fexec);
+    for (int i = 0; i < g_fexec_hook_count; i++) {
+        if (g_fexec_hook_table[i].vtable_base == vtable)
+            return g_fexec_hook_table[i].original(
+                this_fexec, world, cmd, ar);
     }
 
-    /* Replace vtable entry with our hook */
-    *exec_slot = (uintptr_t)hooked_fexec_exec;
-    VirtualProtect(exec_slot, 8, old_protect, &old_protect);
-
-    g_exec_hook_installed = true;
-    bridge_log("FExec::Exec hook installed (original=0x%p, "
-               "hook=0x%p)", (void*)g_original_exec,
-               (void*)hooked_fexec_exec);
-    return true;
+    /* Fallback: vtable not in table (should not happen).
+     * Return false rather than crashing. */
+    bridge_log("HOOK: vtable 0x%llX not in hook table -- no-op",
+               (unsigned long long)vtable);
+    return false;
 }
 
-static void uninstall_exec_hook()
+/*
+ * Install FExec hook on GEngine (called after find_fexec_vtable()).
+ * Also installs via GUObjectArray scan if available.
+ * This replaces the old install_exec_hook().
+ */
+static bool install_all_fexec_hooks()
 {
-    if (!g_exec_hook_installed || !g_original_exec) return;
+    if (!g_engine_ptr || !g_fexec_offset) return false;
 
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t vptr = *(uintptr_t*)(obj + g_fexec_offset);
-    uintptr_t* exec_slot = (uintptr_t*)(vptr + 8);
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+    uintptr_t primary_vptr = seh_read_ptr(g_engine_ptr);
 
-    DWORD old_protect = 0;
-    VirtualProtect(exec_slot, 8, PAGE_READWRITE, &old_protect);
-    *exec_slot = (uintptr_t)g_original_exec;
-    VirtualProtect(exec_slot, 8, old_protect, &old_protect);
+    bridge_log("=== Installing FExec hooks ===");
 
-    g_exec_hook_installed = false;
-    bridge_log("FExec::Exec hook removed");
+    /* Always hook GEngine's FExec (already found by find_fexec_vtable) */
+    uint8_t* eng = (uint8_t*)g_engine_ptr;
+    uintptr_t engine_fexec_vtable = seh_read_ptr(eng + g_fexec_offset);
+    int n = g_fexec_hook_count;
+    install_fexec_hook_on(engine_fexec_vtable, primary_vptr,
+                          mod_start, mod_end);
+    if (g_fexec_hook_count > n)
+        bridge_log("  GEngine FExec hooked (vtable=0x%llX)",
+                   (unsigned long long)engine_fexec_vtable);
+
+    /* Scan GUObjectArray for additional FExec objects (ULocalPlayer etc.) */
+    if (g_guobjectarray_found)
+        scan_guobjectarray_for_fexec_hooks();
+
+    bridge_log("  Total FExec hooks: %d", g_fexec_hook_count);
+    return g_fexec_hook_count > 0;
+}
+
+static void uninstall_all_fexec_hooks()
+{
+    bridge_log("=== Uninstalling FExec hooks (%d) ===", g_fexec_hook_count);
+    for (int i = 0; i < g_fexec_hook_count; i++) {
+        FExecHookEntry& e = g_fexec_hook_table[i];
+        DWORD old_prot = 0;
+        VirtualProtect(e.slot, 8, PAGE_READWRITE, &old_prot);
+        *e.slot = (uintptr_t)e.original;
+        VirtualProtect(e.slot, 8, old_prot, &old_prot);
+        bridge_log("  Restored vtable=0x%llX",
+                   (unsigned long long)e.vtable_base);
+    }
+    g_fexec_hook_count = 0;
 }
 
 /* -- Console command execution ------------------------------------- */
@@ -1453,8 +1876,11 @@ static bool exec_console_command_internal(const char* cmd)
             world = w;
     }
 
-    /* Use original Exec (bypass hook to avoid recursion) */
-    FExecExecFn exec_fn = g_original_exec ? g_original_exec : g_fexec_exec;
+    /* Use GEngine's original Exec (bypass hook to avoid recursion).
+     * GEngine hook is always the first entry in g_fexec_hook_table. */
+    FExecExecFn exec_fn = g_fexec_exec;  /* default: direct (pre-hook) */
+    if (g_fexec_hook_count > 0)
+        exec_fn = g_fexec_hook_table[0].original;  /* GEngine original */
 
     bool cmd_ret = false;
     if (seh_call_fexec(exec_fn, this_fexec,
