@@ -87,43 +87,6 @@ static inline bool get_main_module(ModuleRegion& out)
     return out.size > 0;
 }
 
-/* -- Pattern scan (mask-based) ------------------------------------- */
-
-/*
- * Scan a memory region for a byte pattern.
- * mask: 'x' = must match, '?' = wildcard
- * Returns address of first match, or nullptr.
- */
-static inline const uint8_t* pattern_scan(
-    const uint8_t* base, size_t size,
-    const uint8_t* pattern, const char* mask, size_t pat_len)
-{
-    auto ranges = get_readable_ranges(base, size);
-    for (const auto& rr : ranges) {
-        if (rr.length < pat_len) continue;
-        const uint8_t* start = base + rr.offset;
-        size_t scan_len = rr.length - pat_len;
-        for (size_t i = 0; i <= scan_len; i++) {
-            bool ok = true;
-            for (size_t j = 0; j < pat_len; j++) {
-                if (mask[j] == '?') continue;
-                if (start[i + j] != pattern[j]) { ok = false; break; }
-            }
-            if (ok) return &start[i];
-        }
-    }
-    return nullptr;
-}
-
-/* Convenience: scan main module */
-static inline const uint8_t* scan_main_module(
-    const uint8_t* pattern, const char* mask, size_t pat_len)
-{
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return nullptr;
-    return pattern_scan(rgn.base, rgn.size, pattern, mask, pat_len);
-}
-
 /* -- Readable region enumeration ----------------------------------- */
 
 /*
@@ -175,6 +138,43 @@ static inline std::vector<ReadableRange> get_readable_ranges(
         if (addr <= region_base) break;  /* overflow guard */
     }
     return ranges;
+}
+
+/* -- Pattern scan (mask-based) ------------------------------------- */
+
+/*
+ * Scan a memory region for a byte pattern.
+ * mask: 'x' = must match, '?' = wildcard
+ * Returns address of first match, or nullptr.
+ */
+static inline const uint8_t* pattern_scan(
+    const uint8_t* base, size_t size,
+    const uint8_t* pattern, const char* mask, size_t pat_len)
+{
+    auto ranges = get_readable_ranges(base, size);
+    for (const auto& rr : ranges) {
+        if (rr.length < pat_len) continue;
+        const uint8_t* start = base + rr.offset;
+        size_t scan_len = rr.length - pat_len;
+        for (size_t i = 0; i <= scan_len; i++) {
+            bool ok = true;
+            for (size_t j = 0; j < pat_len; j++) {
+                if (mask[j] == '?') continue;
+                if (start[i + j] != pattern[j]) { ok = false; break; }
+            }
+            if (ok) return &start[i];
+        }
+    }
+    return nullptr;
+}
+
+/* Convenience: scan main module */
+static inline const uint8_t* scan_main_module(
+    const uint8_t* pattern, const char* mask, size_t pat_len)
+{
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return nullptr;
+    return pattern_scan(rgn.base, rgn.size, pattern, mask, pat_len);
 }
 
 /* -- String search (safe) ------------------------------------------ */
