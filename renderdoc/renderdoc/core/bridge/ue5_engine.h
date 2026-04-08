@@ -1006,22 +1006,35 @@ static bool find_gworld_in_data_section()
                 uintptr_t cls = seh_read_ptr((uint8_t*)ptr + 16);
                 if (cls == engine_class) continue;
 
-                /* Check OuterPrivate */
+                /* Check OuterPrivate -- must be valid */
                 uintptr_t outer = seh_read_ptr((uint8_t*)ptr + 32);
                 if (outer < 0x10000) continue;
 
+                /* UWorld signature: outer is a root UPackage.
+                 * Root UPackage has OuterPrivate = NULL (offset 32).
+                 * Also check outer has valid vtable (is a UObject). */
+                uintptr_t outer_vt = seh_read_ptr((void*)outer);
+                if (outer_vt < mod_start || outer_vt >= mod_end) continue;
+                uintptr_t outer_outer = seh_read_ptr(
+                    (uint8_t*)outer + 32);
+                bool is_root_pkg = (outer_outer == 0);
+
                 candidates++;
                 bridge_log("    .data+0x%llX: ptr=0x%p vt=0x%llX "
-                           "class=0x%llX",
+                           "class=0x%llX outer_outer=%s",
                            (unsigned long long)(a - mod_start),
                            ptr, (unsigned long long)vt,
-                           (unsigned long long)cls);
+                           (unsigned long long)cls,
+                           is_root_pkg ? "NULL(root)" : "non-null");
 
-                /* First match = GWorld (most common UObject global) */
+                /* Only accept objects whose outer is a root package
+                 * (UWorld -> UPackage with OuterPrivate=NULL) */
+                if (!is_root_pkg) continue;
+
                 g_world_ptr = ptr;
                 bridge_log("  GWorld FOUND in .data: 0x%p "
-                           "(%d pages, %d ptrs checked)",
-                           ptr, pages_scanned, ptrs_checked);
+                           "(%d pages, %d ptrs, %d candidates)",
+                           ptr, pages_scanned, ptrs_checked, candidates);
                 return true;
             }
         }
