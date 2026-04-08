@@ -861,8 +861,94 @@ static bool find_gworld_via_string_xref()
     return false;
 }
 
-/* Strategy B: Scan GEngine object members for UWorld. */
-static bool find_world_in_engine_object()
+/*
+ * Strategy B: GSpots AOB pattern scan for GWorld.
+ * From Do0ks/GSpots research -- these byte patterns match the
+ * `mov [rip+GWorld], rax` instruction with specific context bytes.
+ * Version-independent (works UE 4.25 through 5.7+).
+ */
+static bool find_gworld_via_aob()
+{
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
+
+    bridge_log("  Strategy B: GSpots AOB patterns");
+
+    /* Each pattern: bytes + mask. '?' = wildcard.
+     * The 48 89 05 at the start is `mov [rip+disp32], rax`.
+     * We resolve the disp32 to get &GWorld. */
+    struct AOBPattern {
+        const uint8_t* bytes;
+        const char*    mask;
+        int            len;
+        int            mov_offset;  /* offset of 48 89 05 in pattern */
+        const char*    name;
+    };
+
+    /* Pattern 1: 48 89 05 ?? ?? ?? ?? ?? 8B ?? ?? ?? F6 86 3B 01 */
+    static const uint8_t p1[] = {
+        0x48,0x89,0x05, 0,0,0,0, 0,0x8B,0,0,0, 0xF6,0x86, 0x3B,0x01
+    };
+    /* Pattern 2: 48 89 05 ?? ?? ?? ?? 49 8B ?? 78 F6 */
+    static const uint8_t p2[] = {
+        0x48,0x89,0x05, 0,0,0,0, 0x49,0x8B,0,0x78, 0xF6
+    };
+    /* Pattern 3: 48 89 05 ?? ?? ?? ?? ?? 8B ?? 88 ?? ?? ?? F6 */
+    static const uint8_t p3[] = {
+        0x48,0x89,0x05, 0,0,0,0, 0,0x8B,0,0x88, 0,0,0, 0xF6
+    };
+
+    const AOBPattern patterns[] = {
+        {p1, "xxx????x?x??xx??", 16, 0, "GSpots-v1"},
+        {p2, "xxx????xx?xx",     12, 0, "GSpots-v6"},
+        {p3, "xxx????x?x?x??x", 15, 0, "GSpots-v8"},
+    };
+    const int NUM_PATTERNS = 3;
+
+    for (int pi = 0; pi < NUM_PATTERNS; pi++) {
+        const AOBPattern& pat = patterns[pi];
+        const uint8_t* hit = pattern_scan(
+            rgn.base, rgn.size, pat.bytes, pat.mask, pat.len);
+        if (!hit) continue;
+
+        bridge_log("    %s matched at +0x%llX", pat.name,
+                   (unsigned long long)(hit - rgn.base));
+
+        /* Resolve the mov [rip+disp32] at mov_offset */
+        const uint8_t* mov_instr = hit + pat.mov_offset;
+        uintptr_t resolved = resolve_rip_relative(mov_instr, 3, 7);
+        if (resolved < mod_start || resolved >= mod_end) {
+            bridge_log("    resolved 0x%llX out of module, skip",
+                       (unsigned long long)resolved);
+            continue;
+        }
+
+        void* candidate = *(void**)resolved;
+        uintptr_t vt = check_uobject_ptr(candidate, mod_start, mod_end);
+        if (!vt) {
+            bridge_log("    ptr 0x%p not a valid UObject, skip",
+                       candidate);
+            continue;
+        }
+        if (candidate == (void*)g_engine_ptr) continue;
+        if (vt == engine_vt) continue;
+
+        g_world_ptr = candidate;
+        bridge_log("  GWorld FOUND via %s: 0x%p", pat.name, candidate);
+        return true;
+    }
+
+    bridge_log("    no GWorld via AOB patterns");
+    return false;
+}
+
+/* Old Strategy B (engine member scan) removed -- UWorld is NOT a
+ * direct member of UEngine. It's inside WorldList TIndirectArray.
+ * Scanning engine members finds UFont, not UWorld. */
+static bool find_world_in_engine_object_REMOVED()
 {
     if (!g_engine_ptr) return false;
 
@@ -1061,11 +1147,11 @@ static bool find_uworld()
 
     bridge_log("=== UWorld Search ===");
 
-    /* A: GWorld-specific string xref (most reliable) */
+    /* A: GWorld-specific string xref */
     if (find_gworld_via_string_xref()) return true;
 
-    /* B: scan GEngine object members */
-    if (find_world_in_engine_object()) return true;
+    /* B: GSpots AOB pattern scan */
+    if (find_gworld_via_aob()) return true;
 
     /* C: scan entire .data section */
     if (find_gworld_in_data_section())
