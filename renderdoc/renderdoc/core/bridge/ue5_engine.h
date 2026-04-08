@@ -741,9 +741,10 @@ static uintptr_t check_uobject_ptr(void* ptr,
 {
     if (!ptr || (uintptr_t)ptr < 0x10000) return 0;
 
-    /* UObjects are heap-allocated. Reject pointers inside the module
-     * (those are vtables, static data, code -- not UObject instances). */
-    if ((uintptr_t)ptr >= mod_start && (uintptr_t)ptr < mod_end) return 0;
+    /* UObjects are heap-allocated. On Windows x64, heap pointers are
+     * in the low range (0x0000XXXX...). DLL/EXE images are loaded
+     * in the high range (0x7FFx...). Reject non-heap pointers. */
+    if ((uintptr_t)ptr >= 0x7F0000000000ULL) return 0;
 
     uintptr_t vtable = seh_read_ptr(ptr);
     if (vtable < mod_start || vtable >= mod_end) return 0;
@@ -1149,10 +1150,10 @@ static bool find_uworld()
             return true;
         }
         /* .data found something but GEngine doesn't reference it.
-         * Keep it but warn -- might be wrong. */
-        bridge_log("  WARNING: .data candidate not cross-validated. "
-                   "May be wrong.");
-        return true;
+         * REJECT -- passing wrong UWorld corrupts engine state. */
+        bridge_log("  REJECTED: .data candidate not cross-validated");
+        g_world_ptr = nullptr;
+        g_world_global_addr = 0;
     }
 
     bridge_log("  All UWorld strategies failed");
