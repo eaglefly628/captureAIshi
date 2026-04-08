@@ -773,6 +773,75 @@ struct WorldCandidate {
     int       offset_in_engine;   /* where in GEngine we found it */
 };
 
+/*
+ * Strategy A: String xref for GWorld-specific strings.
+ * "Bringing World %s up for play" appears in UWorld::BeginPlay.
+ * Code near it accesses GWorld via MOV [rip+X].
+ */
+static bool find_gworld_via_string_xref()
+{
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
+
+    struct { const wchar_t* w; const char* a; const char* label; } entries[] = {
+        {L"Bringing World",        NULL, "L\"Bringing World\""},
+        {L"Bringing up level for", NULL, "L\"Bringing up level for\""},
+        {NULL, "Bringing World",        "\"Bringing World\""},
+        {NULL, "Bringing up level for", "\"Bringing up level for\""},
+    };
+
+    bridge_log("  Strategy A: GWorld string xref");
+
+    for (int i = 0; i < 4; i++) {
+        const uint8_t* str_addr = entries[i].w
+            ? find_wstring_in_module(rgn.base, rgn.size, entries[i].w)
+            : find_string_in_module(rgn.base, rgn.size, entries[i].a);
+
+        if (!str_addr) continue;
+        bridge_log("    %s found at +0x%llX", entries[i].label,
+                   (unsigned long long)(str_addr - rgn.base));
+
+        auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
+        if (xrefs.empty()) { bridge_log("    no xrefs"); continue; }
+        bridge_log("    %zu xrefs", xrefs.size());
+
+        for (const uint8_t* xref : xrefs) {
+            const uint8_t* ss = (xref > rgn.base + 512) ?
+                                 xref - 512 : rgn.base;
+            const uint8_t* se = xref + 512;
+            if (se > rgn.base + rgn.size - 7)
+                se = rgn.base + rgn.size - 7;
+
+            for (const uint8_t* p = ss; p < se; p++) {
+                if (p[0] != 0x48 || p[1] != 0x8B) continue;
+                if ((p[2] & 0xC7) != 0x05) continue;
+
+                uintptr_t resolved = resolve_rip_relative(p, 3, 7);
+                if (resolved < mod_start || resolved >= mod_end) continue;
+
+                void* candidate = *(void**)resolved;
+                uintptr_t vt = check_uobject_ptr(candidate,
+                                                   mod_start, mod_end);
+                if (!vt) continue;
+                if (candidate == (void*)g_engine_ptr) continue;
+                if (vt == engine_vt) continue;
+
+                g_world_ptr = candidate;
+                bridge_log("  GWorld FOUND via %s: 0x%p",
+                           entries[i].label, candidate);
+                return true;
+            }
+        }
+    }
+
+    bridge_log("    no GWorld via string xref");
+    return false;
+}
+
+/* Strategy B: Scan GEngine object members for UWorld. */
 static bool find_world_in_engine_object()
 {
     if (!g_engine_ptr) return false;
@@ -972,11 +1041,13 @@ static bool find_uworld()
 
     bridge_log("=== UWorld Search ===");
 
-    /* Strategy A: scan GEngine object members */
-    if (find_world_in_engine_object())
-        return true;
+    /* A: GWorld-specific string xref (most reliable) */
+    if (find_gworld_via_string_xref()) return true;
 
-    /* Strategy B: scan entire .data section */
+    /* B: scan GEngine object members */
+    if (find_world_in_engine_object()) return true;
+
+    /* C: scan entire .data section */
     if (find_gworld_in_data_section())
         return true;
 
