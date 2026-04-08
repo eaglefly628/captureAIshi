@@ -632,24 +632,45 @@ static const UEExecEntry g_known_exec[] = {
 static const int g_known_exec_count =
     sizeof(g_known_exec) / sizeof(g_known_exec[0]);
 
-/* Try a single vtable index: call with "stat none" and check
- * whether our dummy Ar was used (virtual method called). */
-static bool try_exec_at_index(uintptr_t* vtable, int idx, void* ar)
+/*
+ * Try a vtable index as ProcessConsoleExec.
+ *
+ * Two modes:
+ *   trusted=true  -- known PDB index; accept if it doesn't crash.
+ *   trusted=false -- unknown index; require Ar-callback proof.
+ *                    Uses CVar query "r.HLOD" which always writes
+ *                    to Ar (prints current value).  "stat none" is
+ *                    silent and never triggers Ar -- don't use it.
+ */
+static bool try_exec_at_index(uintptr_t* vtable, int idx,
+                               void* ar, bool trusted)
 {
     void* fn = (void*)vtable[idx];
     if (!validate_function_ptr(fn)) return false;
 
     ExecFn try_fn = (ExecFn)fn;
+
+    if (trusted) {
+        /* PDB-verified index: just check it doesn't crash */
+        bool ret = false;
+        if (!seh_call_exec(try_fn, g_engine_ptr,
+                           L"stat none", ar, NULL, &ret))
+            return false;
+        return true;  /* didn't crash -- good enough for known index */
+    }
+
+    /* Unknown index: require Ar-callback as proof.
+     * "r.HLOD" queries a CVar and prints its value to Ar. */
     InterlockedExchange(&g_dummy_ar_called, 0);
 
     bool ret = false;
     if (!seh_call_exec(try_fn, g_engine_ptr,
-                       L"stat none", ar, NULL, &ret))
+                       L"r.HLOD", ar, NULL, &ret))
         return false;   /* crashed */
 
     if (!g_dummy_ar_called) return false;  /* did not use Ar */
 
-    return true;   /* used Ar -- high confidence this is Exec */
+    return true;
 }
 
 static bool exec_console_command_internal(const char* cmd)
@@ -700,7 +721,7 @@ static bool exec_console_command_internal(const char* cmd)
 
     for (int i = 0; i < g_known_exec_count; i++) {
         int idx = g_known_exec[i].idx;
-        if (try_exec_at_index(vtable, idx, ar)) {
+        if (try_exec_at_index(vtable, idx, ar, true)) {
             g_exec_fn = (ExecFn)(void*)vtable[idx];
             bridge_log("  ProcessConsoleExec confirmed at vtable[%d] "
                        "(UE%d.%d entry)", idx,
@@ -719,7 +740,7 @@ static bool exec_console_command_internal(const char* cmd)
     bridge_log("  Known indices failed, scanning vtable[65..90]...");
 
     for (int idx = 65; idx <= 90; idx++) {
-        if (try_exec_at_index(vtable, idx, ar)) {
+        if (try_exec_at_index(vtable, idx, ar, false)) {
             g_exec_fn = (ExecFn)(void*)vtable[idx];
             bridge_log("  ProcessConsoleExec found at vtable[%d] = "
                        "0x%p (scan)", idx, (void*)vtable[idx]);
