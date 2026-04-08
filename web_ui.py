@@ -107,6 +107,28 @@ def capture_status():
         })
 
 
+@app.route("/api/bridge-test", methods=["POST"])
+def bridge_test():
+    """Send __bridge_test to the bridge for visual verification.
+    Also supports custom commands via JSON body {"cmd": "slomo 0.1"}."""
+    import socket as _sock
+    cmd = "__bridge_test"
+    body = request.get_json(silent=True)
+    if body and body.get("cmd"):
+        cmd = body["cmd"]
+    port = 9998
+    try:
+        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        s.settimeout(8)
+        s.connect(("127.0.0.1", port))
+        s.sendall((cmd + "\n").encode("utf-8"))
+        resp = s.recv(4096).decode("utf-8", errors="replace")
+        s.close()
+        return jsonify({"ok": True, "response": resp.strip(), "cmd": cmd})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 _CONFIG_DIR = Path("./configs")
 _CONFIG_FILE = _CONFIG_DIR / "_last.json"
 _RECENT_FILE = _CONFIG_DIR / "_recent.json"

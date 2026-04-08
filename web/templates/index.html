@@ -960,6 +960,7 @@ body {
   <div class="toolbar-sep"></div>
   <button class="btn btn-accent" id="btnStart" onclick="startCapture()">&#9654;&#xFE0E; Start</button>
   <button class="btn btn-danger" id="btnStop" onclick="stopCapture()" style="display:none">&#9632;&#xFE0E; Stop</button>
+  <button class="btn" id="btnDebug" onclick="toggleDebugPanel()" title="Bridge Debug">Debug</button>
   <div class="toolbar-sep"></div>
   <select class="sel" id="presetSelect" onchange="selectPresetById(this.value)">
     <option value="">Preset...</option>
@@ -2569,6 +2570,59 @@ loadRecent();
 searchGames();
 setInterval(()=>{pollSessions();pollCaptures();},2000);
 pollSessions();pollCaptures();
+</script>
+
+<!-- Debug Panel (hidden by default) -->
+<div id="debugPanel" style="display:none;position:fixed;bottom:0;right:0;width:420px;max-height:60vh;background:#1a1a2e;border:1px solid #444;border-radius:8px 0 0 0;z-index:9999;font-size:13px;overflow:hidden;box-shadow:0 -2px 16px rgba(0,0,0,0.5)">
+  <div style="padding:8px 12px;background:#16213e;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleDebugPanel()">
+    <b style="color:#e94560">Bridge Debug</b>
+    <span style="color:#888;font-size:11px">click to close</span>
+  </div>
+  <div style="padding:10px 12px">
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn" onclick="bridgeCmd('slomo 0.1')" title="Slow motion">Slow-Mo</button>
+      <button class="btn" onclick="bridgeCmd('slomo 1')" title="Normal speed">Normal</button>
+      <button class="btn" onclick="bridgeCmd('stat fps')" title="Toggle FPS">FPS</button>
+      <button class="btn" onclick="bridgeCmd('stat none')" title="Clear stats">Stat Off</button>
+      <button class="btn btn-accent" onclick="bridgeCmd('ToggleDebugCamera')" title="Debug camera">DebugCam</button>
+      <button class="btn" onclick="bridgeCmd('ShowHUD 0')">HUD Off</button>
+      <button class="btn" onclick="bridgeCmd('ShowHUD 1')">HUD On</button>
+      <button class="btn" onclick="bridgeCmd('pause')">Pause</button>
+      <button class="btn" onclick="bridgeStatus()">Status</button>
+    </div>
+    <div style="display:flex;gap:4px">
+      <input id="debugCmdInput" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:monospace" placeholder="Custom command..." onkeydown="if(event.key==='Enter')bridgeCmd(this.value)">
+      <button class="btn" onclick="bridgeCmd(document.getElementById('debugCmdInput').value)">Send</button>
+    </div>
+    <pre id="debugLog" style="margin-top:8px;max-height:200px;overflow-y:auto;background:#0f0f23;color:#8f8;padding:6px;border-radius:4px;font-size:11px;white-space:pre-wrap"></pre>
+  </div>
+</div>
+
+<script>
+function toggleDebugPanel(){
+  var p=document.getElementById('debugPanel');
+  p.style.display=p.style.display==='none'?'block':'none';
+}
+function debugAppend(msg){
+  var el=document.getElementById('debugLog');
+  var ts=new Date().toLocaleTimeString();
+  el.textContent+='['+ts+'] '+msg+'\n';
+  el.scrollTop=el.scrollHeight;
+}
+function bridgeCmd(cmd){
+  if(!cmd)return;
+  debugAppend('> '+cmd);
+  fetch('/api/bridge-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:cmd})})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok) debugAppend(d.response||'ok');
+      else debugAppend('ERROR: '+(d.error||'unknown'));
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+function bridgeStatus(){
+  bridgeCmd('__bridge_status');
+}
 </script>
 </body>
 </html>
