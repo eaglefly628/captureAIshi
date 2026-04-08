@@ -627,6 +627,10 @@ static bool find_fexec_vtable()
     /* Detect UE version for diagnostics */
     detect_ue_version_string();
 
+    /* forward decl -- defined after find_fexec_vtable */
+    static uintptr_t check_uobject_ptr(void* ptr,
+        uintptr_t mod_start, uintptr_t mod_end);
+
     bridge_log("=== GEngine FExec Lookup ===");
     bridge_log("  GEngine ptr: 0x%p", g_engine_ptr);
     bridge_log("  Module: 0x%llX - 0x%llX (%zu MB)",
