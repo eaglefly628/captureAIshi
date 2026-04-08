@@ -495,6 +495,34 @@ static bool find_gengine()
  * looks like a 2-entry vtable (both entries valid functions, third
  * entry is NOT a function -- distinguishes from the 80+ entry primary).
  */
+/* Try to find UE version string in the game module.
+ * Looks for "++UE5+Release-X.Y" or "+Release-X.Y" ASCII pattern. */
+static void detect_ue_version_string()
+{
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return;
+
+    const char* pattern = "+Release-";
+    int pat_len = 9;
+    const uint8_t* end = rgn.base + rgn.size - 32;
+
+    for (const uint8_t* p = rgn.base; p < end; p++) {
+        if (memcmp(p, pattern, pat_len) != 0) continue;
+        /* Found "+Release-", extract version like "5.7" */
+        const char* ver = (const char*)p + pat_len;
+        if (ver[0] >= '4' && ver[0] <= '9' && ver[1] == '.') {
+            char buf[64];
+            int i = 0;
+            while (i < 30 && ver[i] >= ' ' && ver[i] <= 'z')
+                buf[i] = ver[i], i++;
+            buf[i] = '\0';
+            bridge_log("  UE Version detected: %s", buf);
+            return;
+        }
+    }
+    bridge_log("  UE Version: not found in module");
+}
+
 static bool find_fexec_vtable()
 {
     uint8_t* obj = (uint8_t*)g_engine_ptr;
@@ -504,7 +532,76 @@ static bool find_fexec_vtable()
     uintptr_t mod_start = (uintptr_t)rgn.base;
     uintptr_t mod_end = mod_start + rgn.size;
 
-    bridge_log("Scanning GEngine for FExec secondary vtable...");
+    /* Detect UE version for diagnostics */
+    detect_ue_version_string();
+
+    /* -- Diagnostic: dump GEngine object layout -- */
+    bridge_log("=== GEngine Object Layout ===");
+    bridge_log("  GEngine ptr: 0x%p", g_engine_ptr);
+    bridge_log("  Module range: 0x%llX - 0x%llX (%zu MB)",
+               (unsigned long long)mod_start,
+               (unsigned long long)mod_end,
+               rgn.size / (1024*1024));
+
+    uintptr_t primary_vptr = seh_read_ptr(obj);
+    bridge_log("  obj+0: PRIMARY vptr = 0x%llX",
+               (unsigned long long)primary_vptr);
+
+    /* Verify primary vtable: check ProcessEvent at [76] */
+    if (primary_vptr >= mod_start && primary_vptr < mod_end) {
+        for (int check_idx : {48, 76, 77, 78, 79, 80}) {
+            uintptr_t fn = seh_read_ptr(
+                (void*)(primary_vptr + check_idx * 8));
+            const char* label = "";
+            if (check_idx == 48) label = " (GetWorld?)";
+            if (check_idx == 76) label = " (ProcessEvent?)";
+            if (check_idx == 79) label = " (ProcessConsoleExec?)";
+            bridge_log("    vtable[%d] = 0x%llX%s",
+                       check_idx, (unsigned long long)fn, label);
+        }
+    }
+
+    /* Dump all 8-byte values in the object, classify each */
+    bridge_log("  --- Object bytes (first 256) ---");
+    for (int off = 0; off <= 256; off += 8) {
+        uintptr_t val = seh_read_ptr(obj + off);
+        const char* tag = "";
+
+        if (val >= mod_start && val < mod_end) {
+            /* Points into module -- could be vtable or static data */
+            void* s0 = (void*)seh_read_ptr((void*)val);
+            void* s1 = (void*)seh_read_ptr((void*)(val + 8));
+            bool s0_fn = validate_function_ptr(s0);
+            bool s1_fn = s0_fn ? validate_function_ptr(s1) : false;
+
+            if (s0_fn && s1_fn) {
+                void* s2 = (void*)seh_read_ptr((void*)(val + 16));
+                bool s2_fn = validate_function_ptr(s2);
+                if (s2_fn)
+                    tag = " [VTABLE 3+entries]";
+                else
+                    tag = " [VTABLE 2-entry] <-- FExec candidate!";
+            } else if (s0_fn) {
+                tag = " [PTR->fn]";
+            } else {
+                tag = " [PTR->module]";
+            }
+        } else if (val == 0) {
+            tag = " [NULL]";
+        } else if (val < 0x10000) {
+            tag = " [small int/flags]";
+        } else if (val > 0x7FF000000000ULL) {
+            tag = " [stack-like]";
+        } else {
+            tag = " [heap ptr?]";
+        }
+
+        bridge_log("  obj+%3d: 0x%016llX%s",
+                    off, (unsigned long long)val, tag);
+    }
+
+    /* -- Now do the actual FExec scan -- */
+    bridge_log("=== FExec Secondary VTable Scan ===");
 
     for (int off = 8; off <= 256; off += 8) {
         uintptr_t vptr = seh_read_ptr(obj + off);
@@ -516,22 +613,28 @@ static bool find_fexec_vtable()
         if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1))
             continue;
 
-        /* Check vtable[2]: if also a valid function, this is a big
-         * vtable (like the primary UObject one), not FExec. */
         void* fn2 = (void*)seh_read_ptr((void*)(vptr + 16));
         if (validate_function_ptr(fn2)) {
-            bridge_log("  obj+%d: big vtable (3+ entries), skip", off);
+            bridge_log("  obj+%d: 3+ entry vtable, skip "
+                       "(vptr=0x%llX)", off,
+                       (unsigned long long)vptr);
             continue;
         }
 
         /* Found a 2-entry vtable -- likely FExec */
         g_fexec_offset = (uintptr_t)off;
         g_fexec_exec = (FExecExecFn)fn1;
-        bridge_log("  FExec vtable at obj+%d, Exec=0x%p", off, fn1);
+        bridge_log("  >>> FExec vtable at obj+%d <<<", off);
+        bridge_log("    vptr   = 0x%llX", (unsigned long long)vptr);
+        bridge_log("    [0]dtor= 0x%p", fn0);
+        bridge_log("    [1]Exec= 0x%p", fn1);
+        bridge_log("    this_adj= 0x%p (GEngine+%d)",
+                   (void*)(obj + off), off);
         return true;
     }
 
-    bridge_log("WARNING: FExec secondary vtable not found");
+    bridge_log("WARNING: FExec secondary vtable not found in "
+               "GEngine[0..256]");
     return false;
 }
 
