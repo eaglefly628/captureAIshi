@@ -979,9 +979,6 @@ static bool find_uworld()
     bridge_log("  All UWorld strategies failed");
     return false;
 }
-    if (!find_gworld_near_gengine())
-        find_world_via_getworld();
-}
 
 /* -- Console command execution ------------------------------------- */
 
