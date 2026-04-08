@@ -638,12 +638,39 @@ static bool find_fexec_vtable()
     bridge_log("  Primary vptr (obj+0): 0x%llX",
                (unsigned long long)primary_vptr);
 
-    /* Dump first 64 bytes for diagnostics */
-    bridge_log("  --- Object layout ---");
-    for (int off = 0; off <= 64; off += 8) {
+    /* Dump GEngine object layout with UObject pointer annotations */
+    bridge_log("  --- GEngine object layout (first 4096 bytes) ---");
+    uintptr_t engine_class = seh_read_ptr(obj + 16);
+    for (int off = 0; off < 4096; off += 8) {
         uintptr_t val = seh_read_ptr(obj + off);
-        bridge_log("  obj+%2d: 0x%016llX",
-                   off, (unsigned long long)val);
+        if (!val) continue;  /* skip NULLs to reduce noise */
+
+        /* Check if this value looks like a UObject pointer */
+        const char* tag = "";
+        if (val >= mod_start && val < mod_end) {
+            tag = " [module]";
+        } else if (val > 0x10000) {
+            uintptr_t vt = check_uobject_ptr((void*)val,
+                                              mod_start, mod_end);
+            if (vt) {
+                uintptr_t cls = seh_read_ptr((void*)(val + 16));
+                if (cls == engine_class)
+                    tag = " [UObject same-class]";
+                else
+                    tag = " [UObject DIFF-CLASS] ***";
+            } else {
+                /* Check if it's a pointer to something with a
+                 * module vtable (could be non-UObject) */
+                uintptr_t maybe_vt = seh_read_ptr((void*)val);
+                if (maybe_vt >= mod_start && maybe_vt < mod_end)
+                    tag = " [obj w/ module-vt]";
+                else
+                    tag = " [heap]";
+            }
+        }
+
+        bridge_log("  obj+%4d: 0x%016llX%s",
+                   off, (unsigned long long)val, tag);
     }
 
     /*
