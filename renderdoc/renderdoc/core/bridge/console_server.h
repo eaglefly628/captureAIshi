@@ -184,6 +184,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
             "gengine_global=0x%llX "
+            "gworld_global=0x%llX "
             "gamethread_dispatch=%d\n",
             (int)g_engine_found.load(), g_engine_ptr,
             (void*)g_fexec_exec, (int)g_fexec_offset,
@@ -192,6 +193,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             g_camera_path.count(), (int)g_camera_path.is_active(),
             cs_smooth_factor,
             (unsigned long long)g_engine_global_addr,
+            (unsigned long long)g_world_global_addr,
             (int)g_gamethread_dispatch_ready.load());
         cs_reply(client, buf);
         return true;

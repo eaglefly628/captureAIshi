@@ -70,6 +70,10 @@ static uintptr_t         g_engine_global_addr = 0;
 
 /* UWorld pointer -- needed for game commands (ToggleDebugCamera etc.) */
 static void*             g_world_ptr = nullptr;
+/* Address of the GWorld global variable (in .data section).
+ * If set, we read *(void**)g_world_global_addr each time to get
+ * the current UWorld -- handles level transitions automatically. */
+static uintptr_t         g_world_global_addr = 0;
 
 /* -- Exec function ------------------------------------------------- */
 
@@ -848,9 +852,11 @@ static bool find_gworld_via_string_xref()
                 if (vt == engine_vt) continue;
 
                 g_world_ptr = candidate;
+                g_world_global_addr = resolved;
                 bridge_log("  GWorld FOUND via %s: 0x%p "
-                           "(opcode=%02X = %s)",
+                           "(global=0x%llX, opcode=%02X = %s)",
                            entries[i].label, candidate,
+                           (unsigned long long)resolved,
                            p[1], p[1]==0x89 ? "STORE" : "LOAD");
                 return true;
             }
@@ -937,7 +943,9 @@ static bool find_gworld_via_aob()
         if (vt == engine_vt) continue;
 
         g_world_ptr = candidate;
-        bridge_log("  GWorld FOUND via %s: 0x%p", pat.name, candidate);
+        g_world_global_addr = resolved;
+        bridge_log("  GWorld FOUND via %s: 0x%p (global=0x%llX)",
+                   pat.name, candidate, (unsigned long long)resolved);
         return true;
     }
 
@@ -1032,9 +1040,10 @@ static bool find_gworld_in_data_section()
                 if (!is_root_pkg) continue;
 
                 g_world_ptr = ptr;
+                g_world_global_addr = a;  /* store .data address */
                 bridge_log("  GWorld FOUND in .data: 0x%p "
-                           "(%d pages, %d ptrs, %d candidates)",
-                           ptr, pages_scanned, ptrs_checked, candidates);
+                           "(global=0x%llX, %d candidates)",
+                           ptr, (unsigned long long)a, candidates);
                 return true;
             }
         }
@@ -1226,8 +1235,10 @@ static int g_exec_crash_count = 0;
 
 static bool exec_console_command_internal(const char* cmd)
 {
-    bridge_log("  exec: %s (world=%p)", cmd,
-               g_world_ptr);
+    /* Show current world (dynamic from global addr if available) */
+    void* log_world = g_world_ptr;
+    if (g_world_global_addr)
+        log_world = *(void**)g_world_global_addr;
 
     if (!g_fexec_exec) {
         bridge_log("  [SKIP] FExec::Exec not available");
@@ -1259,9 +1270,15 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
+    /* Read current UWorld from GWorld global (handles level transitions) */
+    void* world = g_world_ptr;
+    if (g_world_global_addr) {
+        world = *(void**)g_world_global_addr;
+    }
+
     bool cmd_ret = false;
     if (seh_call_fexec(g_fexec_exec, this_fexec,
-                        g_world_ptr, wcmd.data(), ar, &cmd_ret)) {
+                        world, wcmd.data(), ar, &cmd_ret)) {
         bridge_log("  OK ret=%d", (int)cmd_ret);
         g_exec_crash_count = 0;  /* reset on success */
         return cmd_ret;
