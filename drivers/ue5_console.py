@@ -140,14 +140,16 @@ class UE5ConsoleDriver(CameraDriver):
             return False
 
     def _wait_for_engine(self, timeout: float = 120.0) -> bool:
-        """Poll __bridge_status until GEngine is found.
+        """Poll __bridge_status until GEngine + game-thread dispatch are ready.
 
-        The bridge TCP server starts immediately but GEngine scan runs
-        in a background thread. Console commands won't work until the
-        scan completes. This method blocks until engine_found=1.
+        The bridge TCP server starts immediately but GEngine scan and
+        WndProc hook setup run in background. Console commands won't work
+        until both are complete. This method blocks until engine_found=1
+        AND gamethread_dispatch=1.
         """
         poll_interval = 2.0
         elapsed = 0.0
+        engine_found = False
         logger.info("[UE5] Waiting for GEngine scan to complete...")
 
         while elapsed < timeout:
@@ -162,13 +164,19 @@ class UE5ConsoleDriver(CameraDriver):
                         k, v = pair.split("=", 1)
                         status[k] = v
 
-                if status.get("engine_found") == "1":
-                    exec_fn = status.get("exec_fn", "?")
+                if status.get("engine_found") == "1" and not engine_found:
+                    engine_found = True
                     logger.info(
                         f"[UE5] GEngine found after {elapsed:.0f}s "
-                        f"(exec_fn={exec_fn})"
+                        f"(exec_fn={status.get('exec_fn', '?')})"
                     )
+
+                if engine_found and status.get("gamethread_dispatch") == "1":
+                    logger.info("[UE5] Game-thread dispatch ready")
                     return True
+
+                if engine_found:
+                    logger.debug("[UE5] Waiting for game-thread dispatch hook...")
 
             except (socket.timeout, OSError) as e:
                 logger.debug(f"[UE5] Status poll error: {e}")
