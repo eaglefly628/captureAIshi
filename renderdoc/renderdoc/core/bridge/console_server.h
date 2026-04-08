@@ -182,13 +182,15 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
-            "gengine_global=0x%llX\n",
+            "gengine_global=0x%llX "
+            "gamethread_dispatch=%d\n",
             (int)g_engine_found.load(), g_engine_ptr, (void*)g_exec_fn,
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
             cs_smooth_factor,
-            (unsigned long long)g_engine_global_addr);
+            (unsigned long long)g_engine_global_addr,
+            (int)g_gamethread_dispatch_ready.load());
         cs_reply(client, buf);
         return true;
     }
@@ -459,10 +461,22 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         if (elapsed % 5000 == 0)
             BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
     }
-    if (g_engine_found)
+    if (g_engine_found) {
         BRIDGE_LOG("GEngine found after %ds", elapsed / 1000);
-    else
+
+        /* Wait a bit for the game window to be created, then install
+         * the WndProc hook for game-thread command dispatch. */
+        for (int retry = 0; retry < 20; retry++) {
+            Sleep(500);
+            if (setup_gamethread_dispatch())
+                break;
+            if (retry % 4 == 3)
+                BRIDGE_LOG("Waiting for game window... (%ds)",
+                           (retry + 1) / 2);
+        }
+    } else {
         BRIDGE_LOG("WARNING: GEngine not found after %ds", timeout_ms / 1000);
+    }
 
     return 0;
 }
@@ -529,6 +543,14 @@ static inline void ConsoleServer_Stop()
 {
     InterlockedExchange(&cs_server_running, 0);
     InterlockedExchange(&cs_tick_running, 0);
+
+    /* Restore original WndProc before shutdown */
+    if (g_game_hwnd && g_original_wndproc) {
+        SetWindowLongPtrA(g_game_hwnd, GWLP_WNDPROC, (LONG_PTR)g_original_wndproc);
+        g_original_wndproc = NULL;
+        g_game_hwnd = NULL;
+        g_gamethread_dispatch_ready = false;
+    }
 
     if (cs_listen_socket != INVALID_SOCKET)
         closesocket(cs_listen_socket);

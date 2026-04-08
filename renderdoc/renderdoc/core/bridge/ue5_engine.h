@@ -467,7 +467,133 @@ static bool validate_function_ptr(void* fn)
     return seh_validate_function(fn);
 }
 
+/* -- Game-thread command dispatch ----------------------------------- */
+
+/*
+ * UE5 requires most console commands to run on the game thread.
+ * Calling Exec() from our TCP handler thread causes assertion failures
+ * (IsInGameThread check in AsyncLoading2.cpp etc.).
+ *
+ * Solution: subclass the game window's WndProc. The game thread runs
+ * the Windows message pump, so PostMessage + custom WM delivers
+ * execution to the game thread. TCP thread pushes commands to a
+ * queue and posts a message; WndProc hook drains the queue and
+ * calls exec_console_command_internal().
+ */
+
+static const int CMD_QUEUE_MAX = 256;
+static char     g_cmd_queue[CMD_QUEUE_MAX][512];
+static volatile LONG g_cmd_queue_head = 0;   /* write index (TCP thread) */
+static volatile LONG g_cmd_queue_tail = 0;   /* read index (game thread) */
+
+static HWND    g_game_hwnd = NULL;
+static WNDPROC g_original_wndproc = NULL;
+static UINT    g_wm_bridge_exec = 0;
+static std::atomic<bool> g_gamethread_dispatch_ready{false};
+
+/* The actual Exec call -- only called from game thread via WndProc */
+static bool exec_console_command_internal(const char* cmd);
+
+static void gamethread_drain_queue()
+{
+    while (g_cmd_queue_tail != g_cmd_queue_head) {
+        LONG idx = g_cmd_queue_tail % CMD_QUEUE_MAX;
+        exec_console_command_internal(g_cmd_queue[idx]);
+        InterlockedIncrement(&g_cmd_queue_tail);
+    }
+}
+
+static LRESULT CALLBACK bridge_wndproc(HWND hwnd, UINT msg,
+                                        WPARAM wp, LPARAM lp)
+{
+    if (msg == g_wm_bridge_exec) {
+        gamethread_drain_queue();
+        return 0;
+    }
+    return CallWindowProcA(g_original_wndproc, hwnd, msg, wp, lp);
+}
+
+static bool setup_gamethread_dispatch()
+{
+    /* Register a unique window message */
+    g_wm_bridge_exec = RegisterWindowMessageA("captureAIshi_bridge_exec");
+    if (!g_wm_bridge_exec) {
+        bridge_log("ERROR: RegisterWindowMessage failed");
+        return false;
+    }
+
+    /* Find the game window (same logic as hotsample) */
+    struct FindCtx { DWORD pid; HWND result; };
+    FindCtx ctx = { GetCurrentProcessId(), NULL };
+
+    EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
+        FindCtx* c = (FindCtx*)lp;
+        DWORD wnd_pid = 0;
+        GetWindowThreadProcessId(hwnd, &wnd_pid);
+        if (wnd_pid == c->pid && IsWindowVisible(hwnd)) {
+            char title[256];
+            GetWindowTextA(hwnd, title, sizeof(title));
+            if (strlen(title) > 0) {
+                c->result = hwnd;
+                return FALSE;
+            }
+        }
+        return TRUE;
+    }, (LPARAM)&ctx);
+
+    g_game_hwnd = ctx.result;
+    if (!g_game_hwnd) {
+        bridge_log("WARNING: Game window not found for dispatch hook. "
+                   "Commands will run on TCP thread (may crash).");
+        return false;
+    }
+
+    /* Subclass the window */
+    g_original_wndproc = (WNDPROC)SetWindowLongPtrA(
+        g_game_hwnd, GWLP_WNDPROC, (LONG_PTR)bridge_wndproc);
+
+    if (!g_original_wndproc) {
+        bridge_log("WARNING: SetWindowLongPtr failed (%d). "
+                   "Commands will run on TCP thread.", GetLastError());
+        g_game_hwnd = NULL;
+        return false;
+    }
+
+    g_gamethread_dispatch_ready = true;
+    bridge_log("Game-thread dispatch ready (hwnd=0x%p, WM=0x%X)",
+               g_game_hwnd, g_wm_bridge_exec);
+    return true;
+}
+
+/*
+ * Public API: queue a command for game-thread execution.
+ * If dispatch is not ready, falls back to direct call (risky).
+ */
 static bool exec_console_command(const char* cmd)
+{
+    if (g_gamethread_dispatch_ready && g_game_hwnd) {
+        /* Push to queue */
+        LONG idx = g_cmd_queue_head % CMD_QUEUE_MAX;
+        strncpy(g_cmd_queue[idx], cmd, 511);
+        g_cmd_queue[idx][511] = '\0';
+        InterlockedIncrement(&g_cmd_queue_head);
+
+        /* Wake the game thread */
+        PostMessageA(g_game_hwnd, g_wm_bridge_exec, 0, 0);
+
+        bridge_log("CMD: %s (queued for game thread)", cmd);
+        return true;
+    }
+
+    /* Fallback: direct call (may crash on some commands) */
+    bridge_log("CMD: %s (direct call -- no dispatch hook)", cmd);
+    return exec_console_command_internal(cmd);
+}
+
+/*
+ * Internal: actually call GEngine->Exec(). Must be on game thread.
+ */
+static bool exec_console_command_internal(const char* cmd)
 {
     bridge_log("CMD: %s", cmd);
 
