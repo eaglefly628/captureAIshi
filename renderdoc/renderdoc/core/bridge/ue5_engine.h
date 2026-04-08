@@ -622,56 +622,24 @@ static bool exec_console_command(const char* cmd)
  * We detect whether Ar was touched via g_dummy_ar_called flag.
  */
 
-/* Known ProcessConsoleExec indices (UE4SS PDB-verified).
- * ProcessConsoleExec = ProcessEvent + 3, always. */
-struct UEExecEntry { int major; int minor; int idx; };
-static const UEExecEntry g_known_exec[] = {
-    {4,27,71}, {5,0,78}, {5,1,79}, {5,2,80}, {5,3,80},
-    {5,4,80},  {5,5,82}, {5,6,79}, {5,7,79},
+/*
+ * Known ProcessConsoleExec vtable indices (UE4SS PDB-verified).
+ * ProcessConsoleExec = ProcessEvent + 3, always.
+ *
+ * Deduplicated, ordered UE5-first (most likely to hit).
+ * IMPORTANT: trusted mode does NOT call the function -- just
+ * validates the pointer. Calling wrong indices triggers UE5's
+ * VEH crash reporter (MessageBox) which SEH cannot suppress.
+ */
+static const int g_known_exec_indices[] = {
+    79,  /* UE 5.01, 5.06, 5.07 (most common) */
+    80,  /* UE 5.02, 5.03, 5.04 */
+    82,  /* UE 5.05 */
+    78,  /* UE 5.00 */
+    71,  /* UE 4.27 */
 };
 static const int g_known_exec_count =
-    sizeof(g_known_exec) / sizeof(g_known_exec[0]);
-
-/*
- * Try a vtable index as ProcessConsoleExec.
- *
- * Two modes:
- *   trusted=true  -- known PDB index; accept if it doesn't crash.
- *   trusted=false -- unknown index; require Ar-callback proof.
- *                    Uses CVar query "r.HLOD" which always writes
- *                    to Ar (prints current value).  "stat none" is
- *                    silent and never triggers Ar -- don't use it.
- */
-static bool try_exec_at_index(uintptr_t* vtable, int idx,
-                               void* ar, bool trusted)
-{
-    void* fn = (void*)vtable[idx];
-    if (!validate_function_ptr(fn)) return false;
-
-    ExecFn try_fn = (ExecFn)fn;
-
-    if (trusted) {
-        /* PDB-verified index: just check it doesn't crash */
-        bool ret = false;
-        if (!seh_call_exec(try_fn, g_engine_ptr,
-                           L"stat none", ar, NULL, &ret))
-            return false;
-        return true;  /* didn't crash -- good enough for known index */
-    }
-
-    /* Unknown index: require Ar-callback as proof.
-     * "r.HLOD" queries a CVar and prints its value to Ar. */
-    InterlockedExchange(&g_dummy_ar_called, 0);
-
-    bool ret = false;
-    if (!seh_call_exec(try_fn, g_engine_ptr,
-                       L"r.HLOD", ar, NULL, &ret))
-        return false;   /* crashed */
-
-    if (!g_dummy_ar_called) return false;  /* did not use Ar */
-
-    return true;
-}
+    sizeof(g_known_exec_indices) / sizeof(g_known_exec_indices[0]);
 
 static bool exec_console_command_internal(const char* cmd)
 {
@@ -701,9 +669,10 @@ static bool exec_console_command_internal(const char* cmd)
 
     /* Fast path: cached function */
     if (g_exec_fn) {
+        bool cmd_ret = false;
         if (seh_call_exec(g_exec_fn, g_engine_ptr,
-                          wcmd.data(), ar, NULL)) {
-            bridge_log("  OK (direct call)");
+                          wcmd.data(), ar, NULL, &cmd_ret)) {
+            bridge_log("  OK ret=%d", (int)cmd_ret);
             return true;
         }
         bridge_log("  ERROR: cached Exec crashed, clearing");
@@ -712,47 +681,60 @@ static bool exec_console_command_internal(const char* cmd)
     }
 
     /*
-     * Step 1: Try known indices from the version database first.
-     * These are PDB-verified and should hit on the first try
-     * for standard UE builds. Minimizes risky blind probing.
+     * Step 1: Try known PDB-verified indices.
+     * DO NOT CALL the function -- just validate the pointer.
+     * Calling wrong indices triggers UE5 VEH crash reporter
+     * (MessageBox dialog) which SEH cannot suppress.
+     * Accept the first valid-looking pointer (79 tried first).
      */
-    bridge_log("  Trying %d known ProcessConsoleExec indices...",
-               g_known_exec_count);
-
     for (int i = 0; i < g_known_exec_count; i++) {
-        int idx = g_known_exec[i].idx;
-        if (try_exec_at_index(vtable, idx, ar, true)) {
-            g_exec_fn = (ExecFn)(void*)vtable[idx];
-            bridge_log("  ProcessConsoleExec confirmed at vtable[%d] "
-                       "(UE%d.%d entry)", idx,
-                       g_known_exec[i].major, g_known_exec[i].minor);
-            seh_call_exec(g_exec_fn, g_engine_ptr,
-                          wcmd.data(), ar, NULL);
-            bridge_log("  OK");
-            return true;
-        }
+        int idx = g_known_exec_indices[i];
+        void* fn = (void*)vtable[idx];
+        if (!validate_function_ptr(fn)) continue;
+
+        g_exec_fn = (ExecFn)fn;
+        bridge_log("  === SELECTED vtable[%d] as ProcessConsoleExec "
+                   "(no probe call) ===", idx);
+
+        /* Execute the actual user command */
+        bool cmd_ret = false;
+        seh_call_exec(g_exec_fn, g_engine_ptr,
+                      wcmd.data(), ar, NULL, &cmd_ret);
+        bridge_log("  OK (first cmd, ret=%d)", (int)cmd_ret);
+        return true;
     }
 
     /*
      * Step 2: Full scan [65..90] with Ar-callback validation.
-     * Covers unknown UE versions or custom engine builds.
+     * Only reached for custom engine builds.
      */
     bridge_log("  Known indices failed, scanning vtable[65..90]...");
 
     for (int idx = 65; idx <= 90; idx++) {
-        if (try_exec_at_index(vtable, idx, ar, false)) {
-            g_exec_fn = (ExecFn)(void*)vtable[idx];
-            bridge_log("  ProcessConsoleExec found at vtable[%d] = "
-                       "0x%p (scan)", idx, (void*)vtable[idx]);
-            seh_call_exec(g_exec_fn, g_engine_ptr,
-                          wcmd.data(), ar, NULL);
-            bridge_log("  OK");
-            return true;
-        }
+        void* fn = (void*)vtable[idx];
+        if (!validate_function_ptr(fn)) continue;
+
+        ExecFn try_fn = (ExecFn)fn;
+        InterlockedExchange(&g_dummy_ar_called, 0);
+
+        bool ret = false;
+        if (!seh_call_exec(try_fn, g_engine_ptr,
+                           L"r.HLOD", ar, NULL, &ret))
+            continue;
+
+        if (!g_dummy_ar_called) continue;
+
+        g_exec_fn = try_fn;
+        bridge_log("  ProcessConsoleExec found at vtable[%d] (scan)",
+                   idx);
+        bool cmd_ret = false;
+        seh_call_exec(g_exec_fn, g_engine_ptr,
+                      wcmd.data(), ar, NULL, &cmd_ret);
+        bridge_log("  OK (scan, ret=%d)", (int)cmd_ret);
+        return true;
     }
 
-    bridge_log("  FAILED: ProcessConsoleExec not found in "
-               "vtable[65..90]");
+    bridge_log("  FAILED: ProcessConsoleExec not found");
     return false;
 }
 
