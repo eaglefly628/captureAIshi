@@ -1066,6 +1066,64 @@ static bool find_gworld_in_data_section()
  * Find UWorld using all available strategies.
  * Called at startup and can be retriggered via TCP command.
  */
+/*
+ * Cross-validation: check if a UWorld candidate is referenced inside
+ * GEngine's member chain (direct or 1-level indirect).
+ *
+ * GEngine -> WorldList -> FWorldContext -> UWorld*
+ * GEngine -> GameViewport -> World (UWorld*)
+ *
+ * We don't know exact offsets, so we scan:
+ *   1. Direct: does GEngine[48..8192] contain this pointer?
+ *   2. Indirect: for each heap pointer in GEngine[48..8192],
+ *      does THAT object contain this pointer in its first 1024 bytes?
+ */
+static bool cross_validate_world(void* candidate)
+{
+    if (!candidate || !g_engine_ptr) return false;
+
+    uint8_t* obj = (uint8_t*)g_engine_ptr;
+    uintptr_t target = (uintptr_t)candidate;
+
+    /* Pass 1: direct reference in GEngine */
+    for (int off = 48; off < 8192; off += 8) {
+        uintptr_t val = seh_read_ptr(obj + off);
+        if (val == target) {
+            bridge_log("  CROSS-VALIDATE: GEngine+%d directly "
+                       "contains UWorld 0x%p", off, candidate);
+            return true;
+        }
+    }
+
+    /* Pass 2: indirect (1-level deep).
+     * For each heap pointer in GEngine, scan that object for target. */
+    for (int off = 48; off < 8192; off += 8) {
+        uintptr_t val = seh_read_ptr(obj + off);
+        if (val < 0x10000 || val == target) continue;
+        /* Skip module-range pointers (vtables, static data) */
+        ModuleRegion rgn;
+        if (!get_main_module(rgn)) continue;
+        if (val >= (uintptr_t)rgn.base &&
+            val < (uintptr_t)rgn.base + rgn.size)
+            continue;
+
+        /* Scan this sub-object for target */
+        for (int sub = 0; sub < 1024; sub += 8) {
+            uintptr_t sv = seh_read_ptr((void*)(val + sub));
+            if (sv == target) {
+                bridge_log("  CROSS-VALIDATE: GEngine+%d -> "
+                           "obj+%d contains UWorld 0x%p",
+                           off, sub, candidate);
+                return true;
+            }
+        }
+    }
+
+    bridge_log("  CROSS-VALIDATE: UWorld 0x%p NOT found in "
+               "GEngine member chain", candidate);
+    return false;
+}
+
 static bool find_uworld()
 {
     if (g_world_ptr) return true;
@@ -1073,14 +1131,29 @@ static bool find_uworld()
     bridge_log("=== UWorld Search ===");
 
     /* A: GWorld-specific string xref */
-    if (find_gworld_via_string_xref()) return true;
+    if (find_gworld_via_string_xref()) {
+        cross_validate_world(g_world_ptr);  /* log only */
+        return true;
+    }
 
     /* B: GSpots AOB pattern scan */
-    if (find_gworld_via_aob()) return true;
+    if (find_gworld_via_aob()) {
+        cross_validate_world(g_world_ptr);
+        return true;
+    }
 
     /* C: scan entire .data section */
-    if (find_gworld_in_data_section())
+    if (find_gworld_in_data_section()) {
+        if (cross_validate_world(g_world_ptr)) {
+            bridge_log("  UWorld CONFIRMED by cross-validation");
+            return true;
+        }
+        /* .data found something but GEngine doesn't reference it.
+         * Keep it but warn -- might be wrong. */
+        bridge_log("  WARNING: .data candidate not cross-validated. "
+                   "May be wrong.");
         return true;
+    }
 
     bridge_log("  All UWorld strategies failed");
     return false;
