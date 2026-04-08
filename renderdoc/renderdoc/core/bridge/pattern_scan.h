@@ -100,10 +100,26 @@ struct ReadableRange {
     size_t length;
 };
 
-static inline std::vector<ReadableRange> get_readable_ranges(
+static std::vector<ReadableRange> g_cached_ranges;
+static const uint8_t* g_cached_base = nullptr;
+static size_t         g_cached_size = 0;
+
+/*
+ * Get readable ranges for a module. Cached after first call for
+ * the same (base, size) to avoid repeated VirtualQuery storms
+ * (302 MB module = ~77000 VirtualQuery calls per invocation).
+ */
+static inline const std::vector<ReadableRange>& get_readable_ranges(
     const uint8_t* base, size_t size)
 {
-    std::vector<ReadableRange> ranges;
+    if (base == g_cached_base && size == g_cached_size &&
+        !g_cached_ranges.empty())
+        return g_cached_ranges;
+
+    g_cached_ranges.clear();
+    g_cached_base = base;
+    g_cached_size = size;
+
     const uint8_t* end = base + size;
     const uint8_t* addr = base;
 
@@ -115,7 +131,6 @@ static inline std::vector<ReadableRange> get_readable_ranges(
         const uint8_t* region_base = (const uint8_t*)mbi.BaseAddress;
         size_t region_size = mbi.RegionSize;
 
-        /* Clamp to our module range */
         const uint8_t* r_start = (region_base < base) ? base : region_base;
         const uint8_t* r_end = region_base + region_size;
         if (r_end > end) r_end = end;
@@ -130,14 +145,14 @@ static inline std::vector<ReadableRange> get_readable_ranges(
                 ReadableRange rr;
                 rr.offset = (size_t)(r_start - base);
                 rr.length = (size_t)(r_end - r_start);
-                ranges.push_back(rr);
+                g_cached_ranges.push_back(rr);
             }
         }
 
         addr = region_base + region_size;
-        if (addr <= region_base) break;  /* overflow guard */
+        if (addr <= region_base) break;
     }
-    return ranges;
+    return g_cached_ranges;
 }
 
 /* -- Pattern scan (mask-based) ------------------------------------- */
@@ -151,7 +166,7 @@ static inline const uint8_t* pattern_scan(
     const uint8_t* base, size_t size,
     const uint8_t* pattern, const char* mask, size_t pat_len)
 {
-    auto ranges = get_readable_ranges(base, size);
+    const auto& ranges = get_readable_ranges(base, size);
     for (const auto& rr : ranges) {
         if (rr.length < pat_len) continue;
         const uint8_t* start = base + rr.offset;
@@ -189,7 +204,7 @@ static inline const uint8_t* find_string_in_module(
     size_t len = strlen(str);
     if (len == 0 || len > size) return nullptr;
 
-    auto ranges = get_readable_ranges(base, size);
+    const auto& ranges = get_readable_ranges(base, size);
     for (const auto& rr : ranges) {
         if (rr.length < len) continue;
         const uint8_t* start = base + rr.offset;
@@ -212,7 +227,7 @@ static inline const uint8_t* find_wstring_in_module(
     size_t byte_len = wcslen(str) * sizeof(wchar_t);
     if (byte_len == 0 || byte_len > size) return nullptr;
 
-    auto ranges = get_readable_ranges(base, size);
+    const auto& ranges = get_readable_ranges(base, size);
     for (const auto& rr : ranges) {
         if (rr.length < byte_len) continue;
         const uint8_t* start = base + rr.offset;
@@ -271,7 +286,7 @@ static inline std::vector<const uint8_t*> find_xrefs(
      * Only scan readable pages to avoid access violations on
      * uncommitted or guard pages within the module's VA range.
      */
-    auto ranges = get_readable_ranges(base, size);
+    const auto& ranges = get_readable_ranges(base, size);
     for (const auto& rr : ranges) {
         if (rr.length < 7) continue;
         const uint8_t* start = base + rr.offset;

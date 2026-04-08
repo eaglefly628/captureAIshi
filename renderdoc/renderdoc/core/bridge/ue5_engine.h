@@ -276,7 +276,7 @@ static bool find_gengine_via_string_xref()
 
     /* Log readable page statistics for diagnostics */
     {
-        auto ranges = get_readable_ranges(rgn.base, rgn.size);
+        const auto& ranges = get_readable_ranges(rgn.base, rgn.size);
         size_t total_readable = 0;
         for (const auto& rr : ranges) total_readable += rr.length;
         bridge_log("  Module pages: %zu readable ranges, "
