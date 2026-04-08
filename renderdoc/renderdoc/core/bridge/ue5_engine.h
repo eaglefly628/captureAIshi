@@ -775,8 +775,16 @@ struct WorldCandidate {
 
 /*
  * Strategy A: String xref for GWorld-specific strings.
- * "Bringing World %s up for play" appears in UWorld::BeginPlay.
- * Code near it accesses GWorld via MOV [rip+X].
+ *
+ * KEY INSIGHT (from UEVR/GSpots research):
+ *   GEngine is LOADED:  48 8B 05 (mov rax, [rip+GEngine])
+ *   GWorld is STORED:   48 89 05 (mov [rip+GWorld], rax)
+ * We must look for BOTH opcodes 8B (load) and 89 (store).
+ *
+ * Best anchor strings (from GSpots/patternsleuth):
+ *   "SeamlessTravel FlushLevelStreaming" - UWorld::SeamlessTravel
+ *   "Bringing World" - UWorld::BeginPlay
+ *   "Bringing up level for" - UWorld init
  */
 static bool find_gworld_via_string_xref()
 {
@@ -787,21 +795,27 @@ static bool find_gworld_via_string_xref()
     uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
 
     struct { const wchar_t* w; const char* a; const char* label; } entries[] = {
+        /* Most reliable first (from GSpots/UEVR research) */
+        {L"SeamlessTravel FlushLevelStreaming", NULL,
+         "L\"SeamlessTravel FlushLevel...\""},
         {L"Bringing World",        NULL, "L\"Bringing World\""},
         {L"Bringing up level for", NULL, "L\"Bringing up level for\""},
+        {NULL, "SeamlessTravel FlushLevelStreaming",
+         "\"SeamlessTravel FlushLevel...\""},
         {NULL, "Bringing World",        "\"Bringing World\""},
         {NULL, "Bringing up level for", "\"Bringing up level for\""},
     };
+    const int NUM_ENTRIES = 6;
 
     bridge_log("  Strategy A: GWorld string xref");
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NUM_ENTRIES; i++) {
         const uint8_t* str_addr = entries[i].w
             ? find_wstring_in_module(rgn.base, rgn.size, entries[i].w)
             : find_string_in_module(rgn.base, rgn.size, entries[i].a);
 
         if (!str_addr) continue;
-        bridge_log("    %s found at +0x%llX", entries[i].label,
+        bridge_log("    %s at +0x%llX", entries[i].label,
                    (unsigned long long)(str_addr - rgn.base));
 
         auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
@@ -816,7 +830,11 @@ static bool find_gworld_via_string_xref()
                 se = rgn.base + rgn.size - 7;
 
             for (const uint8_t* p = ss; p < se; p++) {
-                if (p[0] != 0x48 || p[1] != 0x8B) continue;
+                if (p[0] != 0x48) continue;
+                /* 8B = LOAD (mov reg, [rip+X])
+                 * 89 = STORE (mov [rip+X], reg)
+                 * Both can reference GWorld. */
+                if (p[1] != 0x8B && p[1] != 0x89) continue;
                 if ((p[2] & 0xC7) != 0x05) continue;
 
                 uintptr_t resolved = resolve_rip_relative(p, 3, 7);
@@ -830,8 +848,10 @@ static bool find_gworld_via_string_xref()
                 if (vt == engine_vt) continue;
 
                 g_world_ptr = candidate;
-                bridge_log("  GWorld FOUND via %s: 0x%p",
-                           entries[i].label, candidate);
+                bridge_log("  GWorld FOUND via %s: 0x%p "
+                           "(opcode=%02X = %s)",
+                           entries[i].label, candidate,
+                           p[1], p[1]==0x89 ? "STORE" : "LOAD");
                 return true;
             }
         }
@@ -1212,9 +1232,17 @@ static bool exec_console_command_internal(const char* cmd)
         return false;
     }
 
-    if (g_exec_crash_count >= 3) {
-        bridge_log("  [SKIP] FExec disabled after %d crashes", g_exec_crash_count);
-        return false;
+    if (g_exec_crash_count >= 5) {
+        /* Too many crashes -- try clearing world ptr as it may be wrong */
+        if (g_world_ptr) {
+            bridge_log("  Clearing bad world ptr, retrying with NULL");
+            g_world_ptr = nullptr;
+            g_exec_crash_count = 0;
+        } else {
+            bridge_log("  [SKIP] FExec disabled after %d crashes",
+                       g_exec_crash_count);
+            return false;
+        }
     }
 
     /* Convert UTF-8 to wide string */
