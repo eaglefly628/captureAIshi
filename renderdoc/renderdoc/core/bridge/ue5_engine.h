@@ -766,13 +766,6 @@ static uintptr_t check_uobject_ptr(void* ptr,
  * We collect unique (vtable, ClassPrivate) pairs and pick the
  * most likely UWorld candidate.
  */
-struct WorldCandidate {
-    void*     ptr;
-    uintptr_t vtable;
-    uintptr_t class_ptr;
-    int       offset_in_engine;   /* where in GEngine we found it */
-};
-
 /*
  * Strategy A: String xref for GWorld-specific strings.
  *
@@ -943,103 +936,6 @@ static bool find_gworld_via_aob()
 
     bridge_log("    no GWorld via AOB patterns");
     return false;
-}
-
-/* Old Strategy B (engine member scan) removed -- UWorld is NOT a
- * direct member of UEngine. It's inside WorldList TIndirectArray.
- * Scanning engine members finds UFont, not UWorld. */
-static bool find_world_in_engine_object_REMOVED()
-{
-    if (!g_engine_ptr) return false;
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t engine_vt = seh_read_ptr(obj);
-    uintptr_t engine_class = seh_read_ptr(obj + 16);
-
-    bridge_log("  Scanning GEngine object members for UWorld...");
-    bridge_log("    GEngine vtable=0x%llX class=0x%llX",
-               (unsigned long long)engine_vt,
-               (unsigned long long)engine_class);
-
-    /* Track unique classes we've seen (to filter duplicates like UFont) */
-    const int MAX_CLASSES = 64;
-    uintptr_t seen_classes[MAX_CLASSES];
-    int       seen_class_count[MAX_CLASSES];
-    int       num_classes = 0;
-
-    WorldCandidate best = {0};
-
-    /* Scan object at offsets 48 (after FExec vptr) to 8192 */
-    for (int off = 48; off < 8192; off += 8) {
-        void* member = (void*)seh_read_ptr(obj + off);
-        uintptr_t vt = check_uobject_ptr(member, mod_start, mod_end);
-        if (!vt) continue;
-        if (member == (void*)g_engine_ptr) continue;
-        if (vt == engine_vt) continue;  /* same class as GEngine */
-
-        uintptr_t cls = seh_read_ptr((uint8_t*)member + 16);
-        if (cls == engine_class) continue;
-
-        /* Track class frequency */
-        int ci = -1;
-        for (int i = 0; i < num_classes; i++) {
-            if (seen_classes[i] == cls) { ci = i; break; }
-        }
-        if (ci >= 0) {
-            seen_class_count[ci]++;
-        } else if (num_classes < MAX_CLASSES) {
-            ci = num_classes++;
-            seen_classes[ci] = cls;
-            seen_class_count[ci] = 1;
-        }
-
-        /* UWorld typically appears only once or twice in GEngine.
-         * UFont appears 6+ times. Skip classes with many instances. */
-        if (ci >= 0 && seen_class_count[ci] > 3) continue;
-
-        /* Check OuterPrivate at offset 32. UWorld's outer is typically
-         * a UPackage (which itself has a different class). This helps
-         * distinguish UWorld from small helper objects. */
-        uintptr_t outer = seh_read_ptr((uint8_t*)member + 32);
-        bool has_outer = (outer > 0x10000);
-
-        /* UWorld should have a valid OuterPrivate (UPackage) */
-        if (!has_outer) continue;
-
-        /* Best candidate: first unique-class UObject with outer */
-        if (!best.ptr) {
-            best.ptr = member;
-            best.vtable = vt;
-            best.class_ptr = cls;
-            best.offset_in_engine = off;
-        }
-
-        bridge_log("    obj+%d: UObject ptr=0x%p vt=0x%llX "
-                   "class=0x%llX outer=%s",
-                   off, member, (unsigned long long)vt,
-                   (unsigned long long)cls,
-                   has_outer ? "yes" : "no");
-    }
-
-    bridge_log("    %d unique classes found in GEngine members",
-               num_classes);
-
-    if (!best.ptr) {
-        bridge_log("  UWorld not found in GEngine object members");
-        return false;
-    }
-
-    /* For now, use the first candidate. If wrong, the user will see
-     * ret=0 for ToggleDebugCamera and we can refine. */
-    g_world_ptr = best.ptr;
-    bridge_log("  UWorld candidate from GEngine+%d: 0x%p",
-               best.offset_in_engine, best.ptr);
-    return true;
 }
 
 /*
