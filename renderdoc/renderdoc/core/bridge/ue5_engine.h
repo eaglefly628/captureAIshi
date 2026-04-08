@@ -68,6 +68,9 @@ static std::atomic<bool> g_engine_found{false};
 /* Address of the GEngine global variable itself (not the pointer value) */
 static uintptr_t         g_engine_global_addr = 0;
 
+/* UWorld pointer -- needed for game commands (ToggleDebugCamera etc.) */
+static void*             g_world_ptr = nullptr;
+
 /* -- Exec function ------------------------------------------------- */
 
 /*
@@ -674,6 +677,150 @@ static bool find_fexec_vtable()
     return false;
 }
 
+/* -- UWorld finder ------------------------------------------------- */
+
+/*
+ * UE5's FExec::Exec(UWorld*, cmd, ar) needs a valid UWorld* to route
+ * game commands (ToggleDebugCamera, etc.) through PlayerController.
+ * CVars and ShowFlag work with NULL, but game commands return false.
+ *
+ * Strategy: find GWorld via the same string xref technique.
+ * GWorld is a TObjectPtr<UWorld> global, always present in UE5.
+ */
+static bool find_gworld()
+{
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+
+    /* Search for wide string L"GWorld" */
+    const uint8_t* str_addr = find_wstring_in_module(
+        rgn.base, rgn.size, L"GWorld");
+    if (!str_addr) {
+        /* Try ASCII "GWorld" as fallback */
+        str_addr = find_string_in_module(rgn.base, rgn.size, "GWorld");
+    }
+
+    if (!str_addr) {
+        bridge_log("  GWorld string not found in module");
+        return false;
+    }
+
+    bridge_log("  GWorld string at offset +0x%llX",
+               (unsigned long long)(str_addr - rgn.base));
+
+    /* Find xrefs to this string */
+    auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
+    bridge_log("  GWorld: %zu xrefs", xrefs.size());
+
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+
+    for (const uint8_t* xref : xrefs) {
+        /* Scan nearby for MOV reg, [rip+X] */
+        const uint8_t* scan_start = xref - 256;
+        if (scan_start < rgn.base) scan_start = rgn.base;
+        const uint8_t* scan_end = xref + 512;
+        if (scan_end > rgn.base + rgn.size - 7)
+            scan_end = rgn.base + rgn.size - 7;
+
+        for (const uint8_t* p = scan_start; p < scan_end; p++) {
+            if (p[0] != 0x48 || p[1] != 0x8B) continue;
+            if ((p[2] & 0xC7) != 0x05) continue;
+
+            uintptr_t resolved = resolve_rip_relative(p, 3, 7);
+            if (resolved < mod_start || resolved >= mod_end) continue;
+
+            void* candidate = *(void**)resolved;
+            if (!candidate || (uintptr_t)candidate < 0x10000) continue;
+
+            /* Basic vtable check */
+            uintptr_t vtable = seh_read_ptr(candidate);
+            if (vtable < 0x10000) continue;
+
+            /* Ensure it's not GEngine (different global) */
+            if (candidate == (void*)g_engine_ptr) continue;
+
+            g_world_ptr = candidate;
+            bridge_log("  GWorld FOUND: 0x%p (vtable=0x%llX)",
+                       candidate, (unsigned long long)vtable);
+            return true;
+        }
+    }
+
+    bridge_log("  GWorld: xref scan failed, will try GetWorld vtable");
+    return false;
+}
+
+/*
+ * Alternative: get UWorld from GEngine->GetWorld().
+ * GetWorld() is at primary vtable index ~48-50 (varies by UE version).
+ * We try a few common indices and validate the result.
+ */
+typedef void* (__fastcall *GetWorldFn)(void* this_ptr);
+
+static bool find_world_via_getworld()
+{
+    if (!g_engine_ptr) return false;
+
+    uint8_t* obj = (uint8_t*)g_engine_ptr;
+    uintptr_t primary_vptr = seh_read_ptr(obj);
+    if (primary_vptr < 0x10000) return false;
+
+    /* GetWorld is typically at vtable[48] in UE5.
+     * Try indices 46-52 to be safe. */
+    for (int idx = 46; idx <= 52; idx++) {
+        void* fn = (void*)seh_read_ptr((void*)(primary_vptr + idx * 8));
+        if (!validate_function_ptr(fn)) continue;
+
+        /* Call it and see if we get a valid UWorld* back */
+        GetWorldFn get_world = (GetWorldFn)fn;
+        void* world = NULL;
+
+        __try {
+            world = get_world(g_engine_ptr);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+
+        if (!world || (uintptr_t)world < 0x10000) continue;
+
+        /* Validate: UWorld should have a vtable in module range */
+        uintptr_t wvt = seh_read_ptr(world);
+        ModuleRegion rgn;
+        if (!get_main_module(rgn)) continue;
+        uintptr_t mod_start = (uintptr_t)rgn.base;
+        uintptr_t mod_end = mod_start + rgn.size;
+        if (wvt < mod_start || wvt >= mod_end) continue;
+
+        g_world_ptr = world;
+        bridge_log("  UWorld via GetWorld() vtable[%d]: 0x%p", idx, world);
+        return true;
+    }
+
+    bridge_log("  GetWorld vtable probe failed");
+    return false;
+}
+
+/*
+ * Refresh g_world_ptr.  Called before exec to handle level transitions.
+ * UWorld can change when the game loads a new level.
+ */
+static void refresh_world_ptr()
+{
+    if (!g_engine_ptr) return;
+
+    /* Quick check: is current world still valid? */
+    if (g_world_ptr) {
+        uintptr_t vt = seh_read_ptr(g_world_ptr);
+        if (vt > 0x10000) return;  /* still valid */
+    }
+
+    /* Try GetWorld first (faster), then GWorld xref */
+    if (!find_world_via_getworld())
+        find_gworld();
+}
+
 /* -- Console command execution ------------------------------------- */
 
 /*
@@ -840,9 +987,12 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
+    /* Refresh world pointer (handles level transitions) */
+    refresh_world_ptr();
+
     bool cmd_ret = false;
     if (seh_call_fexec(g_fexec_exec, this_fexec,
-                        NULL, wcmd.data(), ar, &cmd_ret)) {
+                        g_world_ptr, wcmd.data(), ar, &cmd_ret)) {
         bridge_log("  OK ret=%d", (int)cmd_ret);
         return cmd_ret;
     }
