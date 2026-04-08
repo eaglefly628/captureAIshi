@@ -187,7 +187,6 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
             "gengine_global=0x%llX "
-            "gworld_global=0x%llX "
             "gamethread_dispatch=%d\n",
             (int)g_engine_found.load(), g_engine_ptr,
             (void*)g_fexec_exec, (int)g_fexec_offset,
@@ -199,7 +198,6 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             g_camera_path.count(), (int)g_camera_path.is_active(),
             cs_smooth_factor,
             (unsigned long long)g_engine_global_addr,
-            (unsigned long long)g_world_global_addr,
             (int)g_gamethread_dispatch_ready.load());
         cs_reply(client, buf);
         return true;
@@ -517,13 +515,8 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         else
             BRIDGE_LOG("WARNING: No FExec hooks installed");
 
-        /* Also try static UWorld scan methods as fallback.
-         * These work before the game calls any FExec with a live world. */
-        if (find_uworld())
-            BRIDGE_LOG("UWorld found via static scan: 0x%p", g_world_ptr);
-        else
-            BRIDGE_LOG("NOTE: UWorld not found via static scan. "
-                       "FExec hooks will capture it from game calls.");
+        BRIDGE_LOG("NOTE: UWorld will be captured from ULocalPlayer::Exec "
+                   "parameters via FExec hooks (UE4SS approach).");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */

@@ -68,12 +68,8 @@ static std::atomic<bool> g_engine_found{false};
 /* Address of the GEngine global variable itself (not the pointer value) */
 static uintptr_t         g_engine_global_addr = 0;
 
-/* UWorld pointer -- needed for game commands (ToggleDebugCamera etc.) */
+/* UWorld pointer -- captured as direct parameter by FExec hooks */
 static void*             g_world_ptr = nullptr;
-/* Address of the GWorld global variable (in .data section).
- * If set, we read *(void**)g_world_global_addr each time to get
- * the current UWorld -- handles level transitions automatically. */
-static uintptr_t         g_world_global_addr = 0;
 
 /* -- Exec function ------------------------------------------------- */
 
@@ -684,10 +680,6 @@ static bool try_fexec_at_offset(uint8_t* obj, int off,
     return true;
 }
 
-/* forward decl -- defined after find_fexec_vtable */
-static uintptr_t check_uobject_ptr(void* ptr,
-    uintptr_t mod_start, uintptr_t mod_end);
-
 static bool find_fexec_vtable()
 {
     uint8_t* obj = (uint8_t*)g_engine_ptr;
@@ -710,41 +702,6 @@ static bool find_fexec_vtable()
     uintptr_t primary_vptr = seh_read_ptr(obj);
     bridge_log("  Primary vptr (obj+0): 0x%llX",
                (unsigned long long)primary_vptr);
-
-    /* Dump GEngine object layout with UObject pointer annotations */
-    bridge_log("  --- GEngine object layout (first 4096 bytes) ---");
-    uintptr_t engine_class = seh_read_ptr(obj + 16);
-    for (int off = 0; off < 4096; off += 8) {
-        uintptr_t val = seh_read_ptr(obj + off);
-        if (!val) continue;  /* skip NULLs to reduce noise */
-
-        /* Check if this value looks like a UObject pointer */
-        const char* tag = "";
-        if (val >= mod_start && val < mod_end) {
-            tag = " [module]";
-        } else if (val > 0x10000) {
-            uintptr_t vt = check_uobject_ptr((void*)val,
-                                              mod_start, mod_end);
-            if (vt) {
-                uintptr_t cls = seh_read_ptr((void*)(val + 16));
-                if (cls == engine_class)
-                    tag = " [UObject same-class]";
-                else
-                    tag = " [UObject DIFF-CLASS] ***";
-            } else {
-                /* Check if it's a pointer to something with a
-                 * module vtable (could be non-UObject) */
-                uintptr_t maybe_vt = seh_read_ptr((void*)val);
-                if (maybe_vt >= mod_start && maybe_vt < mod_end)
-                    tag = " [obj w/ module-vt]";
-                else
-                    tag = " [heap]";
-            }
-        }
-
-        bridge_log("  obj+%4d: 0x%016llX%s",
-                   off, (unsigned long long)val, tag);
-    }
 
     /*
      * Strategy 1: Try known offsets from UE5 headers.
@@ -777,350 +734,12 @@ static bool find_fexec_vtable()
     return false;
 }
 
-/* -- UWorld finder ------------------------------------------------- */
-
-/*
- * UE5's FExec::Exec(UWorld*, cmd, ar) needs a valid UWorld* to route
- * game commands (ToggleDebugCamera, etc.) through PlayerController.
- * CVars and ShowFlag work with NULL, but game commands return false.
- *
- * Strategy: find GWorld via the same string xref technique.
- * GWorld is a TObjectPtr<UWorld> global, always present in UE5.
- */
-/*
- * Strategy A: Scan .data/.bss near GEngine's global address.
- * In UE5, global pointers (GEngine, GWorld, GIsEditor, etc.) are
- * all stored in the same data section, typically within +-8KB.
- */
-/*
- * Helper: check if a pointer looks like a valid UObject on the heap.
- * Requires vtable in module, ClassPrivate at offset +16 also looks valid.
- * Returns the vtable address or 0 if not a UObject.
- */
-static uintptr_t check_uobject_ptr(void* ptr,
-                                    uintptr_t mod_start, uintptr_t mod_end)
-{
-    if (!ptr || (uintptr_t)ptr < 0x10000) return 0;
-
-    /* UObjects are heap-allocated. On Windows x64, heap pointers are
-     * in the low range (0x0000XXXX...). DLL/EXE images are loaded
-     * in the high range (0x7FFx...). Reject non-heap pointers. */
-    if ((uintptr_t)ptr >= 0x7F0000000000ULL) return 0;
-
-    uintptr_t vtable = seh_read_ptr(ptr);
-    if (vtable < mod_start || vtable >= mod_end) return 0;
-
-    void* fn0 = (void*)seh_read_ptr((void*)vtable);
-    if (!validate_function_ptr(fn0)) return 0;
-
-    uintptr_t class_ptr = seh_read_ptr((uint8_t*)ptr + 16);
-    if (class_ptr < 0x10000) return 0;
-
-    /* ClassPrivate should itself have a vtable in module (it's a UClass) */
-    uintptr_t class_vt = seh_read_ptr((void*)class_ptr);
-    if (class_vt < mod_start || class_vt >= mod_end) return 0;
-
-    return vtable;
-}
-
-/*
- * Strategy A: Scan GEngine OBJECT members for UWorld-like pointers.
- *
- * GEngine has hundreds of members. Some are UObject* pointing to
- * UFont, UGameViewportClient, etc. UWorld is referenced through
- * WorldList (TIndirectArray<FWorldContext>) and GameViewport.
- *
- * We scan the GEngine heap object for any UObject* whose:
- *   - vtable is in module (not NULL, not external DLL)
- *   - ClassPrivate is valid (UObject header at +16)
- *   - vtable differs from GEngine's (different class)
- *   - UClass differs from common types (UFont, etc.)
- *
- * We collect unique (vtable, ClassPrivate) pairs and pick the
- * most likely UWorld candidate.
- */
-/*
- * Strategy A: String xref for GWorld-specific strings.
- *
- * KEY INSIGHT (from UEVR/GSpots research):
- *   GEngine is LOADED:  48 8B 05 (mov rax, [rip+GEngine])
- *   GWorld is STORED:   48 89 05 (mov [rip+GWorld], rax)
- * We must look for BOTH opcodes 8B (load) and 89 (store).
- *
- * Best anchor strings (from GSpots/patternsleuth):
- *   "SeamlessTravel FlushLevelStreaming" - UWorld::SeamlessTravel
- *   "Bringing World" - UWorld::BeginPlay
- *   "Bringing up level for" - UWorld init
- */
-static bool find_gworld_via_string_xref()
-{
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
-
-    struct { const wchar_t* w; const char* a; const char* label; } entries[] = {
-        /* Most reliable first (from GSpots/UEVR research) */
-        {L"SeamlessTravel FlushLevelStreaming", NULL,
-         "L\"SeamlessTravel FlushLevel...\""},
-        {L"Bringing World",        NULL, "L\"Bringing World\""},
-        {L"Bringing up level for", NULL, "L\"Bringing up level for\""},
-        {NULL, "SeamlessTravel FlushLevelStreaming",
-         "\"SeamlessTravel FlushLevel...\""},
-        {NULL, "Bringing World",        "\"Bringing World\""},
-        {NULL, "Bringing up level for", "\"Bringing up level for\""},
-    };
-    const int NUM_ENTRIES = 6;
-
-    bridge_log("  Strategy A: GWorld string xref");
-
-    for (int i = 0; i < NUM_ENTRIES; i++) {
-        const uint8_t* str_addr = entries[i].w
-            ? find_wstring_in_module(rgn.base, rgn.size, entries[i].w)
-            : find_string_in_module(rgn.base, rgn.size, entries[i].a);
-
-        if (!str_addr) continue;
-        bridge_log("    %s at +0x%llX", entries[i].label,
-                   (unsigned long long)(str_addr - rgn.base));
-
-        auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
-        if (xrefs.empty()) { bridge_log("    no xrefs"); continue; }
-        bridge_log("    %zu xrefs", xrefs.size());
-
-        for (const uint8_t* xref : xrefs) {
-            const uint8_t* ss = (xref > rgn.base + 512) ?
-                                 xref - 512 : rgn.base;
-            const uint8_t* se = xref + 512;
-            if (se > rgn.base + rgn.size - 7)
-                se = rgn.base + rgn.size - 7;
-
-            for (const uint8_t* p = ss; p < se; p++) {
-                if (p[0] != 0x48) continue;
-                /* 8B = LOAD (mov reg, [rip+X])
-                 * 89 = STORE (mov [rip+X], reg)
-                 * Both can reference GWorld. */
-                if (p[1] != 0x8B && p[1] != 0x89) continue;
-                if ((p[2] & 0xC7) != 0x05) continue;
-
-                uintptr_t resolved = resolve_rip_relative(p, 3, 7);
-                if (resolved < mod_start || resolved >= mod_end) continue;
-
-                void* candidate = *(void**)resolved;
-                uintptr_t vt = check_uobject_ptr(candidate,
-                                                   mod_start, mod_end);
-                if (!vt) continue;
-                if (candidate == (void*)g_engine_ptr) continue;
-                if (vt == engine_vt) continue;
-
-                g_world_ptr = candidate;
-                g_world_global_addr = resolved;
-                bridge_log("  GWorld FOUND via %s: 0x%p "
-                           "(global=0x%llX, opcode=%02X = %s)",
-                           entries[i].label, candidate,
-                           (unsigned long long)resolved,
-                           p[1], p[1]==0x89 ? "STORE" : "LOAD");
-                return true;
-            }
-        }
-    }
-
-    bridge_log("    no GWorld via string xref");
-    return false;
-}
-
-/*
- * Strategy B: GSpots AOB pattern scan for GWorld.
- * From Do0ks/GSpots research -- these byte patterns match the
- * `mov [rip+GWorld], rax` instruction with specific context bytes.
- * Version-independent (works UE 4.25 through 5.7+).
- */
-static bool find_gworld_via_aob()
-{
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
-
-    bridge_log("  Strategy B: GSpots AOB patterns");
-
-    /* Each pattern: bytes + mask. '?' = wildcard.
-     * The 48 89 05 at the start is `mov [rip+disp32], rax`.
-     * We resolve the disp32 to get &GWorld. */
-    struct AOBPattern {
-        const uint8_t* bytes;
-        const char*    mask;
-        int            len;
-        int            mov_offset;  /* offset of 48 89 05 in pattern */
-        const char*    name;
-    };
-
-    /* Pattern 1: 48 89 05 ?? ?? ?? ?? ?? 8B ?? ?? ?? F6 86 3B 01 */
-    static const uint8_t p1[] = {
-        0x48,0x89,0x05, 0,0,0,0, 0,0x8B,0,0,0, 0xF6,0x86, 0x3B,0x01
-    };
-    /* Pattern 2: 48 89 05 ?? ?? ?? ?? 49 8B ?? 78 F6 */
-    static const uint8_t p2[] = {
-        0x48,0x89,0x05, 0,0,0,0, 0x49,0x8B,0,0x78, 0xF6
-    };
-    /* Pattern 3: 48 89 05 ?? ?? ?? ?? ?? 8B ?? 88 ?? ?? ?? F6 */
-    static const uint8_t p3[] = {
-        0x48,0x89,0x05, 0,0,0,0, 0,0x8B,0,0x88, 0,0,0, 0xF6
-    };
-
-    const AOBPattern patterns[] = {
-        {p1, "xxx????x?x??xx??", 16, 0, "GSpots-v1"},
-        {p2, "xxx????xx?xx",     12, 0, "GSpots-v6"},
-        {p3, "xxx????x?x?x??x", 15, 0, "GSpots-v8"},
-    };
-    const int NUM_PATTERNS = 3;
-
-    for (int pi = 0; pi < NUM_PATTERNS; pi++) {
-        const AOBPattern& pat = patterns[pi];
-        const uint8_t* hit = pattern_scan(
-            rgn.base, rgn.size, pat.bytes, pat.mask, pat.len);
-        if (!hit) continue;
-
-        bridge_log("    %s matched at +0x%llX", pat.name,
-                   (unsigned long long)(hit - rgn.base));
-
-        /* Resolve the mov [rip+disp32] at mov_offset */
-        const uint8_t* mov_instr = hit + pat.mov_offset;
-        uintptr_t resolved = resolve_rip_relative(mov_instr, 3, 7);
-        if (resolved < mod_start || resolved >= mod_end) {
-            bridge_log("    resolved 0x%llX out of module, skip",
-                       (unsigned long long)resolved);
-            continue;
-        }
-
-        void* candidate = *(void**)resolved;
-        uintptr_t vt = check_uobject_ptr(candidate, mod_start, mod_end);
-        if (!vt) {
-            bridge_log("    ptr 0x%p not a valid UObject, skip",
-                       candidate);
-            continue;
-        }
-        if (candidate == (void*)g_engine_ptr) continue;
-        if (vt == engine_vt) continue;
-
-        g_world_ptr = candidate;
-        g_world_global_addr = resolved;
-        bridge_log("  GWorld FOUND via %s: 0x%p (global=0x%llX)",
-                   pat.name, candidate, (unsigned long long)resolved);
-        return true;
-    }
-
-    bridge_log("    no GWorld via AOB patterns");
-    return false;
-}
-
-/*
- * Strategy B: Scan the PE .data section for GWorld global.
- * GWorld is a UWorld* global in the writable data section.
- * We scan all writable pages for non-null UObject pointers with
- * a different class from GEngine.
- */
-static bool find_gworld_in_data_section()
-{
-    if (!g_engine_ptr) return false;
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
-    uintptr_t engine_class = seh_read_ptr((uint8_t*)g_engine_ptr + 16);
-
-    bridge_log("  Scanning .data section for GWorld...");
-
-    /* Use VirtualQuery to find writable pages (likely .data/.bss) */
-    const uint8_t* addr = rgn.base;
-    const uint8_t* end = rgn.base + rgn.size;
-    int pages_scanned = 0;
-    int ptrs_checked = 0;
-    int candidates = 0;
-
-    while (addr < end) {
-        MEMORY_BASIC_INFORMATION mbi = {};
-        if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0) break;
-
-        const uint8_t* region_base = (const uint8_t*)mbi.BaseAddress;
-        size_t region_size = mbi.RegionSize;
-
-        /* Only scan writable pages (.data, .bss) */
-        bool writable = (mbi.State == MEM_COMMIT) &&
-            (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE |
-                            PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) &&
-            !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
-
-        if (writable) {
-            pages_scanned++;
-            const uint8_t* r_start = (region_base < rgn.base) ?
-                                      rgn.base : region_base;
-            const uint8_t* r_end = region_base + region_size;
-            if (r_end > end) r_end = end;
-
-            /* Align to 8 bytes */
-            uintptr_t s = ((uintptr_t)r_start + 7) & ~(uintptr_t)7;
-            uintptr_t e = (uintptr_t)r_end - 8;
-
-            for (uintptr_t a = s; a <= e; a += 8) {
-                void* ptr = *(void**)a;
-                ptrs_checked++;
-                uintptr_t vt = check_uobject_ptr(ptr, mod_start, mod_end);
-                if (!vt) continue;
-                if (ptr == (void*)g_engine_ptr) continue;
-                if (vt == engine_vt) continue;
-
-                uintptr_t cls = seh_read_ptr((uint8_t*)ptr + 16);
-                if (cls == engine_class) continue;
-
-                /* Check OuterPrivate -- must be valid */
-                uintptr_t outer = seh_read_ptr((uint8_t*)ptr + 32);
-                if (outer < 0x10000) continue;
-
-                /* UWorld signature: outer is a root UPackage.
-                 * Root UPackage has OuterPrivate = NULL (offset 32).
-                 * Also check outer has valid vtable (is a UObject). */
-                uintptr_t outer_vt = seh_read_ptr((void*)outer);
-                if (outer_vt < mod_start || outer_vt >= mod_end) continue;
-                uintptr_t outer_outer = seh_read_ptr(
-                    (uint8_t*)outer + 32);
-                bool is_root_pkg = (outer_outer == 0);
-
-                candidates++;
-                bridge_log("    .data+0x%llX: ptr=0x%p vt=0x%llX "
-                           "class=0x%llX outer_outer=%s",
-                           (unsigned long long)(a - mod_start),
-                           ptr, (unsigned long long)vt,
-                           (unsigned long long)cls,
-                           is_root_pkg ? "NULL(root)" : "non-null");
-
-                /* Only accept objects whose outer is a root package
-                 * (UWorld -> UPackage with OuterPrivate=NULL) */
-                if (!is_root_pkg) continue;
-
-                g_world_ptr = ptr;
-                g_world_global_addr = a;  /* store .data address */
-                bridge_log("  GWorld FOUND in .data: 0x%p "
-                           "(global=0x%llX, %d candidates)",
-                           ptr, (unsigned long long)a, candidates);
-                return true;
-            }
-        }
-
-        addr = region_base + region_size;
-        if (addr <= region_base) break;
-    }
-
-    bridge_log("  GWorld not found in .data "
-               "(%d pages, %d ptrs, %d candidates)",
-               pages_scanned, ptrs_checked, candidates);
-    return false;
-}
-
 /* -- GUObjectArray finder ------------------------------------------ */
+/*
+ * UWorld is NOT found by static scan. It is captured as a direct
+ * parameter of ULocalPlayer::Exec(UWorld* InWorld, cmd, ar) by the
+ * FExec hooks installed below. This is the UE4SS approach.
+ */
 
 /*
  * Validate a GUObjectArray candidate.
@@ -1461,126 +1080,6 @@ static void scan_guobjectarray_for_fexec_hooks()
                "total_hooks=%d", checked, hooked_new, g_fexec_hook_count);
 }
 
-/*
- * Refresh g_world_ptr.  Called periodically (not on every command).
- * Only uses safe memory-scan approaches, never calls vtable functions.
- */
-/*
- * Find UWorld using all available strategies.
- * Called at startup and can be retriggered via TCP command.
- */
-/*
- * Cross-validation: check if a UWorld candidate is referenced inside
- * GEngine's member chain (direct or 1-level indirect).
- *
- * GEngine -> WorldList -> FWorldContext -> UWorld*
- * GEngine -> GameViewport -> World (UWorld*)
- *
- * We don't know exact offsets, so we scan:
- *   1. Direct: does GEngine[48..8192] contain this pointer?
- *   2. Indirect: for each heap pointer in GEngine[48..8192],
- *      does THAT object contain this pointer in its first 1024 bytes?
- */
-static bool cross_validate_world(void* candidate)
-{
-    if (!candidate || !g_engine_ptr) return false;
-
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t target = (uintptr_t)candidate;
-
-    /* Pass 1: direct reference in GEngine */
-    for (int off = 48; off < 8192; off += 8) {
-        uintptr_t val = seh_read_ptr(obj + off);
-        if (val == target) {
-            bridge_log("  CROSS-VALIDATE: GEngine+%d directly "
-                       "contains UWorld 0x%p", off, candidate);
-            return true;
-        }
-    }
-
-    /* Pass 2: indirect (2 levels deep).
-     * Level 2: GEngine[off] -> sub[sub_off] == target
-     * Level 3: GEngine[off] -> sub[sub_off] -> sub2[sub2_off] == target
-     * Covers: GEngine -> WorldList.Data -> FWorldContext -> UWorld */
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-
-    for (int off = 48; off < 8192; off += 8) {
-        uintptr_t val = seh_read_ptr(obj + off);
-        if (val < 0x10000 || val == target) continue;
-        if (val >= 0x7F0000000000ULL) continue;  /* skip DLL range */
-
-        /* Level 2: scan sub-object */
-        for (int sub = 0; sub < 1024; sub += 8) {
-            uintptr_t sv = seh_read_ptr((void*)(val + sub));
-            if (sv == target) {
-                bridge_log("  CROSS-VALIDATE: GEngine+%d -> "
-                           "obj+%d contains UWorld 0x%p",
-                           off, sub, candidate);
-                return true;
-            }
-
-            /* Level 3: follow heap pointer one more level.
-             * Covers TIndirectArray: Data[0] -> FWorldContext -> UWorld */
-            if (sv < 0x10000 || sv >= 0x7F0000000000ULL) continue;
-            for (int sub2 = 0; sub2 < 512; sub2 += 8) {
-                uintptr_t sv2 = seh_read_ptr((void*)(sv + sub2));
-                if (sv2 == target) {
-                    bridge_log("  CROSS-VALIDATE: GEngine+%d -> "
-                               "+%d -> +%d contains UWorld 0x%p",
-                               off, sub, sub2, candidate);
-                    return true;
-                }
-            }
-        }
-    }
-
-    bridge_log("  CROSS-VALIDATE: UWorld 0x%p NOT found in "
-               "GEngine member chain", candidate);
-    return false;
-}
-
-static bool find_uworld()
-{
-    if (g_world_ptr) return true;
-
-    bridge_log("=== UWorld Search ===");
-
-    /* Strategy A: hooks already installed capture UWorld when game calls
-     * ULocalPlayer::Exec(UWorld* InWorld, ...) -- UWorld is passed as arg.
-     * This fires on next in-game console command or system call. Hooks are
-     * installed by scan_guobjectarray_for_fexec_hooks() at startup.
-     * Return true if we already have a captured world. */
-    if (g_world_ptr) return true;
-
-    /* Strategy B: GWorld string xref (works if strings exist) */
-    if (find_gworld_via_string_xref()) {
-        cross_validate_world(g_world_ptr);  /* log only */
-        return true;
-    }
-
-    /* Strategy C: GSpots AOB pattern scan */
-    if (find_gworld_via_aob()) {
-        cross_validate_world(g_world_ptr);
-        return true;
-    }
-
-    /* Strategy D: scan entire .data section (last resort, must cross-validate) */
-    if (find_gworld_in_data_section()) {
-        if (cross_validate_world(g_world_ptr)) {
-            bridge_log("  UWorld CONFIRMED by cross-validation");
-            return true;
-        }
-        bridge_log("  REJECTED: .data candidate not cross-validated");
-        g_world_ptr = nullptr;
-        g_world_global_addr = 0;
-    }
-
-    bridge_log("  Static UWorld search failed -- will capture via FExec hooks");
-    return false;
-}
 
 /* -- FExec multi-hook: actual hook function and management --------- */
 
@@ -1823,35 +1322,11 @@ static bool exec_console_command(const char* cmd)
  *   this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset
  * The vtable thunk then adjusts it back to UEngine base.
  */
-static int g_exec_crash_count = 0;
-
 static bool exec_console_command_internal(const char* cmd)
 {
-    /* Show current world (dynamic from global addr if available) */
-    void* log_world = g_world_ptr;
-    if (g_world_global_addr)
-        log_world = *(void**)g_world_global_addr;
-
     if (!g_fexec_exec) {
         bridge_log("  [SKIP] FExec::Exec not available");
         return false;
-    }
-
-    if (g_exec_crash_count >= 3) {
-        /* Crashes with world ptr -> disable world, keep Exec alive.
-         * Crashes with NULL world -> truly broken, disable Exec. */
-        if (g_world_global_addr && g_exec_crash_count < 6) {
-            bridge_log("  Disabling world ptr after %d crashes",
-                       g_exec_crash_count);
-            g_world_global_addr = 0;
-            g_world_ptr = nullptr;
-            g_exec_crash_count = 0;  /* reset, try with NULL */
-            /* Don't return -- re-run this command with NULL world */
-        } else {
-            bridge_log("  [SKIP] FExec disabled after %d crashes",
-                       g_exec_crash_count);
-            return false;
-        }
     }
 
     /* Convert UTF-8 to wide string */
@@ -1866,33 +1341,24 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Use UWorld captured by hook (most reliable), or from
-     * .data scan global address, or NULL as fallback. */
-    void* world = g_world_ptr;  /* set by hooked_fexec_exec */
-    if (!world && g_world_global_addr) {
-        void* w = *(void**)g_world_global_addr;
-        if (w && (uintptr_t)w > 0x10000 &&
-            (uintptr_t)w < 0x7F0000000000ULL)
-            world = w;
-    }
+    /* UWorld captured by FExec hooks from ULocalPlayer::Exec.
+     * NULL is accepted -- CVars and showflag work without it. */
+    void* world = g_world_ptr;
 
-    /* Use GEngine's original Exec (bypass hook to avoid recursion).
+    /* Use GEngine's original Exec to avoid recursion.
      * GEngine hook is always the first entry in g_fexec_hook_table. */
-    FExecExecFn exec_fn = g_fexec_exec;  /* default: direct (pre-hook) */
+    FExecExecFn exec_fn = g_fexec_exec;
     if (g_fexec_hook_count > 0)
-        exec_fn = g_fexec_hook_table[0].original;  /* GEngine original */
+        exec_fn = g_fexec_hook_table[0].original;
 
     bool cmd_ret = false;
     if (seh_call_fexec(exec_fn, this_fexec,
                         world, wcmd.data(), ar, &cmd_ret)) {
         bridge_log("  OK ret=%d", (int)cmd_ret);
-        g_exec_crash_count = 0;  /* reset on success */
         return cmd_ret;
     }
 
-    g_exec_crash_count++;
-    bridge_log("  ERROR: FExec::Exec crashed (count=%d/3)",
-               g_exec_crash_count);
+    bridge_log("  ERROR: FExec::Exec crashed");
     return false;
 }
 
