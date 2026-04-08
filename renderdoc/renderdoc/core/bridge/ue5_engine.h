@@ -1270,11 +1270,11 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Read current UWorld from GWorld global (handles level transitions) */
-    void* world = g_world_ptr;
-    if (g_world_global_addr) {
-        world = *(void**)g_world_global_addr;
-    }
+    /* SAFETY: Pass NULL as world for now. Passing wrong UWorld pointers
+     * corrupts engine state permanently (even subsequent NULL calls crash).
+     * Engine-level commands (stat, CVar, ShowFlag) work with NULL.
+     * TODO: implement reliable UWorld finding (GUObjectArray method). */
+    void* world = NULL;
 
     bool cmd_ret = false;
     if (seh_call_fexec(g_fexec_exec, this_fexec,
