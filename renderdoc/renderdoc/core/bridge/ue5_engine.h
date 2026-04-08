@@ -138,26 +138,57 @@ static bool seh_validate_function(void* fn)
     }
 }
 
-/* Safely call ExecFn; returns true if it didn't crash. */
+/* Safely call ExecFn.  If out_retval is non-NULL, stores the bool
+ * value returned by fn().  Returns true if no SEH exception fired. */
 static bool seh_call_exec(ExecFn fn, void* engine,
-                           void* world, const wchar_t* cmd, void* ar)
+                           void* world, const wchar_t* cmd, void* ar,
+                           bool* out_retval = NULL)
 {
     __try {
-        fn(engine, world, cmd, ar);
+        bool ret = fn(engine, world, cmd, ar);
+        if (out_retval) *out_retval = ret;
         return true;
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
+        if (out_retval) *out_retval = false;
         return false;
     }
 }
 #pragma warning(pop)
 
-/* -- GLog (default output device) ---------------------------------- */
+/* -- Dummy FOutputDevice (safe stub for Exec calls) ---------------- */
 
-/* GLog is UE5's global log output device, needed for Exec() calls.
- * We find it the same way as GEngine: string xref scan.
- * If not found, we pass NULL (most commands still work). */
-static void* g_log_ptr = nullptr;
+/*
+ * UE5 Exec() takes an FOutputDevice& for logging output.
+ * Passing NULL crashes when commands try to log results,
+ * which causes the vtable probe to skip the REAL Exec function
+ * and latch onto a wrong (no-op) function instead.
+ *
+ * Solution: build a minimal stub whose vtable is filled with
+ * no-op function pointers.  Any virtual call (Serialize, Flush,
+ * TearDown, ...) safely does nothing and returns 0.
+ */
+static int dummy_ar_fn(void* self, void* a, void* b, void* c)
+{
+    (void)self; (void)a; (void)b; (void)c;
+    return 0;
+}
+
+static void*  g_dummy_ar_vtable[64];
+static struct  DummyAr { void** vptr; char pad[256]; } g_dummy_ar;
+static bool    g_dummy_ar_ready = false;
+
+static void* get_output_device()
+{
+    if (!g_dummy_ar_ready) {
+        for (int i = 0; i < 64; i++)
+            g_dummy_ar_vtable[i] = (void*)&dummy_ar_fn;
+        g_dummy_ar.vptr = g_dummy_ar_vtable;
+        memset(g_dummy_ar.pad, 0, sizeof(g_dummy_ar.pad));
+        g_dummy_ar_ready = true;
+    }
+    return &g_dummy_ar;
+}
 
 /* -- Camera struct ------------------------------------------------- */
 
@@ -592,6 +623,16 @@ static bool exec_console_command(const char* cmd)
 
 /*
  * Internal: actually call GEngine->Exec(). Must be on game thread.
+ *
+ * Two-probe vtable validation (new in this version):
+ *   OLD: accept the first vtable index that doesn't crash.
+ *        This latched onto wrong functions (e.g. index 113 in UE5.7
+ *        when the real Exec is at ~120).  NULL FOutputDevice made
+ *        the real Exec crash, so SEH skipped it.
+ *   NEW: 1) Use a dummy FOutputDevice so Exec never crashes on Ar.
+ *        2) Check return value: Exec returns true for valid commands
+ *           ("stat none") and false for unknown commands.
+ *        3) Only accept an index that passes BOTH probes.
  */
 static bool exec_console_command_internal(const char* cmd)
 {
@@ -611,23 +652,7 @@ static bool exec_console_command_internal(const char* cmd)
     std::vector<wchar_t> wcmd(wlen);
     MultiByteToWideChar(CP_UTF8, 0, cmd, -1, wcmd.data(), wlen);
 
-    /*
-     * Call through vtable. UEngine::Exec is a virtual function.
-     *
-     * vtable layout (simplified):
-     *   vptr -> [0]: destructor
-     *           [1]: ...
-     *           [N]: Exec(UWorld*, TCHAR*, FOutputDevice&)
-     *
-     * We try indices 110-130 and validate each looks like Exec
-     * by checking the function prologue and attempting a safe call.
-     *
-     * The Exec function signature in x64 MSVC __fastcall:
-     *   rcx = this (UEngine*)
-     *   rdx = UWorld* (NULL for global commands)
-     *   r8  = const TCHAR* (command)
-     *   r9  = FOutputDevice& (GLog or NULL)
-     */
+    void* ar = get_output_device();
 
     uintptr_t* vtable = *(uintptr_t**)g_engine_ptr;
     if (!vtable || (uintptr_t)vtable < 0x10000) {
@@ -635,24 +660,29 @@ static bool exec_console_command_internal(const char* cmd)
         return false;
     }
 
-    /* If we already found the Exec function, call it directly */
+    /* Fast path: cached Exec function */
     if (g_exec_fn) {
-        if (seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), g_log_ptr)) {
+        if (seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), ar)) {
             bridge_log("  OK (direct call)");
             return true;
         }
         bridge_log("  ERROR: Exec call crashed, clearing cached fn");
-        g_exec_fn = nullptr;
+        g_exec_fn = NULL;
         return false;
     }
 
-    /* Probe vtable to find Exec using a safe no-op command first.
-     * "stat none" is benign: disables all stat overlays, no side effects.
-     * Only after we confirm the correct vtable index do we run the
-     * user's actual command. */
-    bridge_log("  Probing vtable for Exec with safe command...");
+    /*
+     * Probe vtable to find Exec.  Two-probe validation:
+     *   Probe 1 -- "stat none" (valid built-in command).
+     *              Real Exec returns true.
+     *   Probe 2 -- "__captureai_noop_9999" (nonsense).
+     *              Real Exec returns false.
+     * A random non-Exec function is very unlikely to satisfy both.
+     */
+    bridge_log("  Probing vtable[110..130] with two-probe validation...");
 
-    const wchar_t* probe_cmd = L"stat none";
+    const wchar_t* probe_valid   = L"stat none";
+    const wchar_t* probe_invalid = L"__captureai_noop_9999";
 
     for (int idx = 110; idx <= 130; idx++) {
         void* fn = (void*)vtable[idx];
@@ -660,21 +690,36 @@ static bool exec_console_command_internal(const char* cmd)
 
         ExecFn try_exec = (ExecFn)fn;
 
-        /* Probe with safe command first (SEH-safe) */
-        if (!seh_call_exec(try_exec, g_engine_ptr, NULL, probe_cmd, g_log_ptr))
-            continue;
+        /* Probe 1: valid command must not crash AND return true */
+        bool ret1 = false;
+        if (!seh_call_exec(try_exec, g_engine_ptr, NULL,
+                           probe_valid, ar, &ret1))
+            continue;   /* crashed */
+        if (!ret1)
+            continue;   /* returned false -- not Exec */
 
-        /* If we get here, this index works. Cache it. */
+        /* Probe 2: invalid command must return false */
+        bool ret2 = true;
+        if (!seh_call_exec(try_exec, g_engine_ptr, NULL,
+                           probe_invalid, ar, &ret2))
+            continue;   /* crashed */
+        if (ret2) {
+            bridge_log("  vtable[%d]: true for invalid cmd, skip", idx);
+            continue;   /* returned true for garbage -- not Exec */
+        }
+
+        /* Both probes passed -- high confidence this is Exec */
         g_exec_fn = try_exec;
-        bridge_log("  Found Exec at vtable[%d] = 0x%p", idx, fn);
+        bridge_log("  Exec confirmed at vtable[%d] = 0x%p", idx, fn);
 
         /* Now run the actual user command */
-        seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), g_log_ptr);
+        seh_call_exec(g_exec_fn, g_engine_ptr, NULL, wcmd.data(), ar);
         bridge_log("  OK");
         return true;
     }
 
-    bridge_log("  FAILED: Could not find Exec in vtable[110..130]");
+    bridge_log("  FAILED: no vtable index passed two-probe validation "
+               "[110..130]");
     return false;
 }
 

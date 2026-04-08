@@ -24,6 +24,13 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] Fix vtable probe — xiaoni
+- Fix: vtable probe latched onto wrong function (index 113 instead of real Exec)
+- Root cause: NULL FOutputDevice crashed real Exec via SEH, probe fell through to wrong fn
+- Added dummy FOutputDevice stub (no-op vtable) so Exec never crashes on Ar dereference
+- Added two-probe validation: "stat none" must return true AND invalid cmd must return false
+- Captures Exec return value via seh_call_exec out_retval parameter
+
 ### [v0.2.0] d32d2aa — xiaoni
 - TCP 秒启 + GEngine 后台 scan, launcher 秒退检测, 8 锚点, diagnostics, fallback, status
 
