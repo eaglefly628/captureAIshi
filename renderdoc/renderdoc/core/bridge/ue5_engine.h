@@ -271,9 +271,24 @@ static bool find_gengine_via_string_xref()
     int rejected_low_addr = 0;
     int rejected_bad_vtable = 0;
 
+    /* Log readable page statistics for diagnostics */
+    {
+        auto ranges = get_readable_ranges(rgn.base, rgn.size);
+        size_t total_readable = 0;
+        for (const auto& rr : ranges) total_readable += rr.length;
+        bridge_log("  Module pages: %zu readable ranges, "
+                   "%zu MB readable / %zu MB total",
+                   ranges.size(),
+                   total_readable / (1024*1024),
+                   rgn.size / (1024*1024));
+    }
+
     for (int si = 0; si < num_entries; si++) {
         const SearchEntry& se = search_entries[si];
         const uint8_t* str_addr = NULL;
+
+        bridge_log("  [SCAN] Searching %s (%d/%d)...",
+                   se.label, si + 1, num_entries);
 
         if (se.wstr)
             str_addr = find_wstring_in_module(rgn.base, rgn.size, se.wstr);
@@ -281,7 +296,7 @@ static bool find_gengine_via_string_xref()
             str_addr = find_string_in_module(rgn.base, rgn.size, se.astr);
 
         if (!str_addr) {
-            bridge_log("  [SCAN] %s -- not found in module", se.label);
+            bridge_log("  [SCAN] %s -- not found", se.label);
             continue;
         }
 
@@ -515,25 +530,27 @@ static void detect_ue_version_string()
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return;
 
-    const char* pattern = "+Release-";
-    int pat_len = 9;
-    const uint8_t* end = rgn.base + rgn.size - 32;
+    const char* pat = "+Release-";
+    size_t pat_len = 9;
 
-    for (const uint8_t* p = rgn.base; p < end; p++) {
-        if (memcmp(p, pattern, pat_len) != 0) continue;
-        /* Found "+Release-", extract version like "5.7" */
-        const char* ver = (const char*)p + pat_len;
-        if (ver[0] >= '4' && ver[0] <= '9' && ver[1] == '.') {
-            char buf[64];
-            int i = 0;
-            while (i < 30 && ver[i] >= ' ' && ver[i] <= 'z')
-                buf[i] = ver[i], i++;
-            buf[i] = '\0';
-            bridge_log("  UE Version detected: %s", buf);
-            return;
-        }
+    /* Use find_string_in_module (VirtualQuery-safe) */
+    const uint8_t* hit = find_string_in_module(
+        rgn.base, rgn.size, pat);
+    if (!hit) {
+        bridge_log("  UE Version: not found in module");
+        return;
     }
-    bridge_log("  UE Version: not found in module");
+    const char* ver = (const char*)hit + pat_len;
+    if (ver[0] >= '4' && ver[0] <= '9' && ver[1] == '.') {
+        char buf[64];
+        int i = 0;
+        while (i < 30 && ver[i] >= ' ' && ver[i] <= 'z')
+            buf[i] = ver[i], i++;
+        buf[i] = '\0';
+        bridge_log("  UE Version detected: %s", buf);
+    } else {
+        bridge_log("  UE Version: pattern found but no version number");
+    }
 }
 
 /* Check if offset `off` in the GEngine object holds an FExec vtable.
