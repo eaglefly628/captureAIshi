@@ -692,77 +692,238 @@ static bool find_fexec_vtable()
  * In UE5, global pointers (GEngine, GWorld, GIsEditor, etc.) are
  * all stored in the same data section, typically within +-8KB.
  */
-static bool find_gworld_near_gengine()
+/*
+ * Helper: check if a pointer looks like a valid UObject on the heap.
+ * Requires vtable in module, ClassPrivate at offset +16 also looks valid.
+ * Returns the vtable address or 0 if not a UObject.
+ */
+static uintptr_t check_uobject_ptr(void* ptr,
+                                    uintptr_t mod_start, uintptr_t mod_end)
 {
-    if (!g_engine_global_addr) return false;
+    if (!ptr || (uintptr_t)ptr < 0x10000) return 0;
+    uintptr_t vtable = seh_read_ptr(ptr);
+    if (vtable < mod_start || vtable >= mod_end) return 0;
+
+    /* Check first vtable entry is a valid function */
+    void* fn0 = (void*)seh_read_ptr((void*)vtable);
+    if (!validate_function_ptr(fn0)) return 0;
+
+    /* Check ClassPrivate at offset 16 -- should be a valid pointer */
+    uintptr_t class_ptr = seh_read_ptr((uint8_t*)ptr + 16);
+    if (class_ptr < 0x10000) return 0;
+
+    /* ClassPrivate should itself have a vtable in module (it's a UClass) */
+    uintptr_t class_vt = seh_read_ptr((void*)class_ptr);
+    if (class_vt < mod_start || class_vt >= mod_end) return 0;
+
+    return vtable;
+}
+
+/*
+ * Strategy A: Scan GEngine OBJECT members for UWorld-like pointers.
+ *
+ * GEngine has hundreds of members. Some are UObject* pointing to
+ * UFont, UGameViewportClient, etc. UWorld is referenced through
+ * WorldList (TIndirectArray<FWorldContext>) and GameViewport.
+ *
+ * We scan the GEngine heap object for any UObject* whose:
+ *   - vtable is in module (not NULL, not external DLL)
+ *   - ClassPrivate is valid (UObject header at +16)
+ *   - vtable differs from GEngine's (different class)
+ *   - UClass differs from common types (UFont, etc.)
+ *
+ * We collect unique (vtable, ClassPrivate) pairs and pick the
+ * most likely UWorld candidate.
+ */
+struct WorldCandidate {
+    void*     ptr;
+    uintptr_t vtable;
+    uintptr_t class_ptr;
+    int       offset_in_engine;   /* where in GEngine we found it */
+};
+
+static bool find_world_in_engine_object()
+{
+    if (!g_engine_ptr) return false;
 
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
-
     uintptr_t mod_start = (uintptr_t)rgn.base;
     uintptr_t mod_end = mod_start + rgn.size;
 
-    bridge_log("  Scanning near GEngine global (0x%llX) for UWorld...",
-               (unsigned long long)g_engine_global_addr);
+    uint8_t* obj = (uint8_t*)g_engine_ptr;
+    uintptr_t engine_vt = seh_read_ptr(obj);
+    uintptr_t engine_class = seh_read_ptr(obj + 16);
 
-    /* Scan +-8KB around GEngine's global address */
-    const int RANGE = 8192;
-    uintptr_t scan_start = g_engine_global_addr - RANGE;
-    if (scan_start < mod_start) scan_start = mod_start;
-    uintptr_t scan_end = g_engine_global_addr + RANGE;
-    if (scan_end > mod_end - 8) scan_end = mod_end - 8;
+    bridge_log("  Scanning GEngine object members for UWorld...");
+    bridge_log("    GEngine vtable=0x%llX class=0x%llX",
+               (unsigned long long)engine_vt,
+               (unsigned long long)engine_class);
 
-    /* Align to 8 bytes */
-    scan_start &= ~(uintptr_t)7;
+    /* Track unique classes we've seen (to filter duplicates like UFont) */
+    const int MAX_CLASSES = 64;
+    uintptr_t seen_classes[MAX_CLASSES];
+    int       seen_class_count[MAX_CLASSES];
+    int       num_classes = 0;
 
-    int candidates = 0;
-    for (uintptr_t addr = scan_start; addr < scan_end; addr += 8) {
-        if (addr == g_engine_global_addr) continue;  /* skip GEngine */
+    WorldCandidate best = {0};
 
-        void* ptr = *(void**)addr;
-        if (!ptr || (uintptr_t)ptr < 0x10000) continue;
+    /* Scan object at offsets 48 (after FExec vptr) to 8192 */
+    for (int off = 48; off < 8192; off += 8) {
+        void* member = (void*)seh_read_ptr(obj + off);
+        uintptr_t vt = check_uobject_ptr(member, mod_start, mod_end);
+        if (!vt) continue;
+        if (member == (void*)g_engine_ptr) continue;
+        if (vt == engine_vt) continue;  /* same class as GEngine */
 
-        /* Must be a valid heap pointer with a vtable in module */
-        uintptr_t vtable = seh_read_ptr(ptr);
-        if (vtable < mod_start || vtable >= mod_end) continue;
+        uintptr_t cls = seh_read_ptr((uint8_t*)member + 16);
+        if (cls == engine_class) continue;
 
-        /* Check vtable has valid functions (UObject-like) */
-        void* fn0 = (void*)seh_read_ptr((void*)vtable);
-        if (!validate_function_ptr(fn0)) continue;
-
-        /* Check if vtable is large (80+ entries = UObject subclass) */
-        int valid_count = 0;
-        for (int i = 0; i < 20; i++) {
-            void* fn = (void*)seh_read_ptr((void*)(vtable + i * 8));
-            if (validate_function_ptr(fn))
-                valid_count++;
-            else
-                break;
+        /* Track class frequency */
+        int ci = -1;
+        for (int i = 0; i < num_classes; i++) {
+            if (seen_classes[i] == cls) { ci = i; break; }
+        }
+        if (ci >= 0) {
+            seen_class_count[ci]++;
+        } else if (num_classes < MAX_CLASSES) {
+            ci = num_classes++;
+            seen_classes[ci] = cls;
+            seen_class_count[ci] = 1;
         }
 
-        if (valid_count < 20) continue;  /* UWorld has 80+ vtable entries */
+        /* UWorld typically appears only once or twice in GEngine.
+         * UFont appears 6+ times. Skip classes with many instances. */
+        if (ci >= 0 && seen_class_count[ci] > 3) continue;
 
-        /* Ensure it's different from GEngine */
-        if (ptr == (void*)g_engine_ptr) continue;
+        /* Check OuterPrivate at offset 32. UWorld's outer is typically
+         * a UPackage (which itself has a different class). This helps
+         * distinguish UWorld from small helper objects. */
+        uintptr_t outer = seh_read_ptr((uint8_t*)member + 32);
+        bool has_outer = (outer > 0x10000);
 
-        /* Ensure vtable is different from GEngine's vtable */
-        uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
-        if (vtable == engine_vt) continue;  /* same class, probably not UWorld */
+        /* UWorld should have a valid OuterPrivate (UPackage) */
+        if (!has_outer) continue;
 
-        candidates++;
-        bridge_log("    Candidate at global+%+d: ptr=0x%p vtable=0x%llX "
-                   "(%d+ vfuncs)",
-                   (int)(addr - g_engine_global_addr),
-                   ptr, (unsigned long long)vtable, valid_count);
+        /* Best candidate: first unique-class UObject with outer */
+        if (!best.ptr) {
+            best.ptr = member;
+            best.vtable = vt;
+            best.class_ptr = cls;
+            best.offset_in_engine = off;
+        }
 
-        /* First non-GEngine UObject with different vtable = likely GWorld */
-        g_world_ptr = ptr;
-        bridge_log("  GWorld FOUND near GEngine: 0x%p", ptr);
-        return true;
+        bridge_log("    obj+%d: UObject ptr=0x%p vt=0x%llX "
+                   "class=0x%llX outer=%s",
+                   off, member, (unsigned long long)vt,
+                   (unsigned long long)cls,
+                   has_outer ? "yes" : "no");
     }
 
-    bridge_log("  GWorld: no UObject candidates near GEngine "
-               "(%d total)", candidates);
+    bridge_log("    %d unique classes found in GEngine members",
+               num_classes);
+
+    if (!best.ptr) {
+        bridge_log("  UWorld not found in GEngine object members");
+        return false;
+    }
+
+    /* For now, use the first candidate. If wrong, the user will see
+     * ret=0 for ToggleDebugCamera and we can refine. */
+    g_world_ptr = best.ptr;
+    bridge_log("  UWorld candidate from GEngine+%d: 0x%p",
+               best.offset_in_engine, best.ptr);
+    return true;
+}
+
+/*
+ * Strategy B: Scan the PE .data section for GWorld global.
+ * GWorld is a UWorld* global in the writable data section.
+ * We scan all writable pages for non-null UObject pointers with
+ * a different class from GEngine.
+ */
+static bool find_gworld_in_data_section()
+{
+    if (!g_engine_ptr) return false;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
+    uintptr_t engine_class = seh_read_ptr((uint8_t*)g_engine_ptr + 16);
+
+    bridge_log("  Scanning .data section for GWorld...");
+
+    /* Use VirtualQuery to find writable pages (likely .data/.bss) */
+    const uint8_t* addr = rgn.base;
+    const uint8_t* end = rgn.base + rgn.size;
+    int pages_scanned = 0;
+    int ptrs_checked = 0;
+    int candidates = 0;
+
+    while (addr < end) {
+        MEMORY_BASIC_INFORMATION mbi = {};
+        if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0) break;
+
+        const uint8_t* region_base = (const uint8_t*)mbi.BaseAddress;
+        size_t region_size = mbi.RegionSize;
+
+        /* Only scan writable pages (.data, .bss) */
+        bool writable = (mbi.State == MEM_COMMIT) &&
+            (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE |
+                            PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) &&
+            !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+
+        if (writable) {
+            pages_scanned++;
+            const uint8_t* r_start = (region_base < rgn.base) ?
+                                      rgn.base : region_base;
+            const uint8_t* r_end = region_base + region_size;
+            if (r_end > end) r_end = end;
+
+            /* Align to 8 bytes */
+            uintptr_t s = ((uintptr_t)r_start + 7) & ~(uintptr_t)7;
+            uintptr_t e = (uintptr_t)r_end - 8;
+
+            for (uintptr_t a = s; a <= e; a += 8) {
+                void* ptr = *(void**)a;
+                ptrs_checked++;
+                uintptr_t vt = check_uobject_ptr(ptr, mod_start, mod_end);
+                if (!vt) continue;
+                if (ptr == (void*)g_engine_ptr) continue;
+                if (vt == engine_vt) continue;
+
+                uintptr_t cls = seh_read_ptr((uint8_t*)ptr + 16);
+                if (cls == engine_class) continue;
+
+                /* Check OuterPrivate */
+                uintptr_t outer = seh_read_ptr((uint8_t*)ptr + 32);
+                if (outer < 0x10000) continue;
+
+                candidates++;
+                bridge_log("    .data+0x%llX: ptr=0x%p vt=0x%llX "
+                           "class=0x%llX",
+                           (unsigned long long)(a - mod_start),
+                           ptr, (unsigned long long)vt,
+                           (unsigned long long)cls);
+
+                /* First match = GWorld (most common UObject global) */
+                g_world_ptr = ptr;
+                bridge_log("  GWorld FOUND in .data: 0x%p "
+                           "(%d pages, %d ptrs checked)",
+                           ptr, pages_scanned, ptrs_checked);
+                return true;
+            }
+        }
+
+        addr = region_base + region_size;
+        if (addr <= region_base) break;
+    }
+
+    bridge_log("  GWorld not found in .data "
+               "(%d pages, %d ptrs, %d candidates)",
+               pages_scanned, ptrs_checked, candidates);
     return false;
 }
 
@@ -770,18 +931,26 @@ static bool find_gworld_near_gengine()
  * Refresh g_world_ptr.  Called periodically (not on every command).
  * Only uses safe memory-scan approaches, never calls vtable functions.
  */
-static void refresh_world_ptr()
+/*
+ * Find UWorld using all available strategies.
+ * Called at startup and can be retriggered via TCP command.
+ */
+static bool find_uworld()
 {
-    if (!g_engine_ptr || !g_engine_global_addr) return;
+    if (g_world_ptr) return true;
 
-    /* Quick check: is current world still valid? */
-    if (g_world_ptr) {
-        uintptr_t vt = seh_read_ptr(g_world_ptr);
-        if (vt > 0x10000) return;  /* still valid */
-        g_world_ptr = nullptr;
-    }
+    bridge_log("=== UWorld Search ===");
 
-    find_gworld_near_gengine();
+    /* Strategy A: scan GEngine object members */
+    if (find_world_in_engine_object())
+        return true;
+
+    /* Strategy B: scan entire .data section */
+    if (find_gworld_in_data_section())
+        return true;
+
+    bridge_log("  All UWorld strategies failed");
+    return false;
 }
     if (!find_gworld_near_gengine())
         find_world_via_getworld();
