@@ -221,7 +221,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd == "__bridge_test") {
-        bridge_log("=== VISUAL TEST ===");
+        BRIDGE_LOG("=== VISUAL TEST ===");
         /* These commands produce obvious visual effects: */
         exec_console_command("slomo 0.1");        /* extreme slow-mo */
         Sleep(3000);                               /* hold 3 seconds */
