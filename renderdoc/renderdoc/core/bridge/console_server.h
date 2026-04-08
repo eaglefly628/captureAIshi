@@ -220,6 +220,17 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         }
     }
 
+    if (cmd == "__bridge_test") {
+        bridge_log("=== VISUAL TEST ===");
+        /* These commands produce obvious visual effects: */
+        exec_console_command("slomo 0.1");        /* extreme slow-mo */
+        Sleep(3000);                               /* hold 3 seconds */
+        exec_console_command("slomo 1");           /* restore */
+        exec_console_command("stat fps");          /* show FPS counter */
+        cs_reply(client, "test_done\n");
+        return true;
+    }
+
     if (cmd == "__cam_toggle") { toggle_debug_camera(); cs_reply(client, "ok\n"); return true; }
 
     if (cmd == "__cam_pause" || cmd == "__timestop") {
