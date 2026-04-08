@@ -87,14 +87,19 @@ static uintptr_t         g_engine_global_addr = 0;
  *   r8  = FOutputDevice& Ar
  *   r9  = UObject* Executor (can be NULL)
  */
-typedef bool (__fastcall *ExecFn)(
-    void* engine,         /* rcx = this (GEngine) */
-    const wchar_t* cmd,   /* rdx = command string */
-    void* output_device,  /* r8  = FOutputDevice& */
-    void* executor        /* r9  = UObject* (NULL ok) */
+/* FExec::Exec -- the universal console command router.
+ * UEngine inherits FExec via multiple inheritance, so this is in a
+ * SECONDARY vtable at some offset within the GEngine object.
+ * Different param order from ProcessConsoleExec! */
+typedef bool (__fastcall *FExecExecFn)(
+    void* this_fexec,     /* rcx = FExec subobject (GEngine + offset) */
+    void* world,          /* rdx = UWorld* (NULL ok for most cmds) */
+    const wchar_t* cmd,   /* r8  = command string */
+    void* output_device   /* r9  = FOutputDevice& */
 );
 
-static ExecFn g_exec_fn = nullptr;
+static FExecExecFn g_fexec_exec = NULL;
+static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 
 /* -- SEH-safe helpers ---------------------------------------------- */
 
@@ -134,14 +139,13 @@ static bool seh_validate_function(void* fn)
     }
 }
 
-/* Safely call ExecFn (ProcessConsoleExec).
- * Returns true if no SEH exception. Stores fn return in *out_retval. */
-static bool seh_call_exec(ExecFn fn, void* engine,
-                           const wchar_t* cmd, void* ar, void* executor,
-                           bool* out_retval = NULL)
+/* Safely call FExec::Exec (secondary vtable). */
+static bool seh_call_fexec(FExecExecFn fn, void* this_fexec,
+                            void* world, const wchar_t* cmd, void* ar,
+                            bool* out_retval = NULL)
 {
     __try {
-        bool ret = fn(engine, cmd, ar, executor);
+        bool ret = fn(this_fexec, world, cmd, ar);
         if (out_retval) *out_retval = ret;
         return true;
     }
@@ -472,16 +476,68 @@ static bool find_gengine()
     return false;
 }
 
+/* -- FExec secondary vtable finder --------------------------------- */
+
+/*
+ * UEngine inherits from both UObject and FExec (multiple inheritance).
+ * The FExec vtable is a SECONDARY vtable at some offset in the object:
+ *
+ *   GEngine layout (x64):
+ *     offset 0:   UObject vptr (primary, 80+ entries)
+ *     offset 8+:  UObject members (FName, UClass*, etc.)
+ *     offset N:   FExec vptr (secondary, 2 entries: dtor + Exec)
+ *
+ * FExec::Exec is the UNIVERSAL console command router that handles
+ * CVars, stat, showflag, ToggleDebugCamera, and all other commands.
+ * ProcessConsoleExec (primary vtable) only handles UFUNCTION(Exec).
+ *
+ * Heuristic: scan GEngine object for a pointer into the module that
+ * looks like a 2-entry vtable (both entries valid functions, third
+ * entry is NOT a function -- distinguishes from the 80+ entry primary).
+ */
+static bool find_fexec_vtable()
+{
+    uint8_t* obj = (uint8_t*)g_engine_ptr;
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end = mod_start + rgn.size;
+
+    bridge_log("Scanning GEngine for FExec secondary vtable...");
+
+    for (int off = 8; off <= 256; off += 8) {
+        uintptr_t vptr = seh_read_ptr(obj + off);
+        if (vptr < mod_start || vptr >= mod_end)
+            continue;
+
+        void* fn0 = (void*)seh_read_ptr((void*)vptr);
+        void* fn1 = (void*)seh_read_ptr((void*)(vptr + 8));
+        if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1))
+            continue;
+
+        /* Check vtable[2]: if also a valid function, this is a big
+         * vtable (like the primary UObject one), not FExec. */
+        void* fn2 = (void*)seh_read_ptr((void*)(vptr + 16));
+        if (validate_function_ptr(fn2)) {
+            bridge_log("  obj+%d: big vtable (3+ entries), skip", off);
+            continue;
+        }
+
+        /* Found a 2-entry vtable -- likely FExec */
+        g_fexec_offset = (uintptr_t)off;
+        g_fexec_exec = (FExecExecFn)fn1;
+        bridge_log("  FExec vtable at obj+%d, Exec=0x%p", off, fn1);
+        return true;
+    }
+
+    bridge_log("WARNING: FExec secondary vtable not found");
+    return false;
+}
+
 /* -- Console command execution ------------------------------------- */
 
 /*
- * Execute a UE5 console command via ProcessConsoleExec().
- *
- * UE4SS PDB-verified vtable indices for ProcessConsoleExec:
- *   UE 4.27: 71    UE 5.02-5.04: 80
- *   UE 5.00: 78    UE 5.05:      82
- *   UE 5.01: 79    UE 5.06-5.07: 79
- *
  * ProcessConsoleExec = ProcessEvent + 3 (always).
  */
 
@@ -614,39 +670,22 @@ static bool exec_console_command(const char* cmd)
 }
 
 /*
- * Internal: call GEngine->ProcessConsoleExec(). Must be on game thread.
+ * Internal: call FExec::Exec() on GEngine. Must be on game thread.
  *
- * Validation: Ar-callback detection.  The real ProcessConsoleExec
- * calls Ar.Serialize() (a virtual on FOutputDevice) to log results.
- * Random vtable functions don't use our FOutputDevice at all.
- * We detect whether Ar was touched via g_dummy_ar_called flag.
- */
-
-/*
- * Known ProcessConsoleExec vtable indices (UE4SS PDB-verified).
- * ProcessConsoleExec = ProcessEvent + 3, always.
+ * FExec::Exec is the universal command router.  It handles CVars,
+ * stat, showflag, and routes to world/player controllers for game
+ * commands like ToggleDebugCamera.
  *
- * Deduplicated, ordered UE5-first (most likely to hit).
- * IMPORTANT: trusted mode does NOT call the function -- just
- * validates the pointer. Calling wrong indices triggers UE5's
- * VEH crash reporter (MessageBox) which SEH cannot suppress.
+ * The this pointer must be adjusted to the FExec subobject:
+ *   this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset
+ * The vtable thunk then adjusts it back to UEngine base.
  */
-static const int g_known_exec_indices[] = {
-    79,  /* UE 5.01, 5.06, 5.07 (most common) */
-    80,  /* UE 5.02, 5.03, 5.04 */
-    82,  /* UE 5.05 */
-    78,  /* UE 5.00 */
-    71,  /* UE 4.27 */
-};
-static const int g_known_exec_count =
-    sizeof(g_known_exec_indices) / sizeof(g_known_exec_indices[0]);
-
 static bool exec_console_command_internal(const char* cmd)
 {
     bridge_log("CMD: %s", cmd);
 
-    if (!g_engine_found || !g_engine_ptr) {
-        bridge_log("  [SKIP] GEngine not available");
+    if (!g_fexec_exec) {
+        bridge_log("  [SKIP] FExec::Exec not found");
         return false;
     }
 
@@ -660,81 +699,17 @@ static bool exec_console_command_internal(const char* cmd)
     MultiByteToWideChar(CP_UTF8, 0, cmd, -1, wcmd.data(), wlen);
 
     void* ar = get_output_device();
+    void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    uintptr_t* vtable = *(uintptr_t**)g_engine_ptr;
-    if (!vtable || (uintptr_t)vtable < 0x10000) {
-        bridge_log("  ERROR: Invalid vtable pointer");
-        return false;
+    bool cmd_ret = false;
+    if (seh_call_fexec(g_fexec_exec, this_fexec,
+                        NULL, wcmd.data(), ar, &cmd_ret)) {
+        bridge_log("  OK ret=%d", (int)cmd_ret);
+        return cmd_ret;
     }
 
-    /* Fast path: cached function */
-    if (g_exec_fn) {
-        bool cmd_ret = false;
-        if (seh_call_exec(g_exec_fn, g_engine_ptr,
-                          wcmd.data(), ar, NULL, &cmd_ret)) {
-            bridge_log("  OK ret=%d", (int)cmd_ret);
-            return true;
-        }
-        bridge_log("  ERROR: cached Exec crashed, clearing");
-        g_exec_fn = NULL;
-        return false;
-    }
-
-    /*
-     * Step 1: Try known PDB-verified indices.
-     * DO NOT CALL the function -- just validate the pointer.
-     * Calling wrong indices triggers UE5 VEH crash reporter
-     * (MessageBox dialog) which SEH cannot suppress.
-     * Accept the first valid-looking pointer (79 tried first).
-     */
-    for (int i = 0; i < g_known_exec_count; i++) {
-        int idx = g_known_exec_indices[i];
-        void* fn = (void*)vtable[idx];
-        if (!validate_function_ptr(fn)) continue;
-
-        g_exec_fn = (ExecFn)fn;
-        bridge_log("  === SELECTED vtable[%d] as ProcessConsoleExec "
-                   "(no probe call) ===", idx);
-
-        /* Execute the actual user command */
-        bool cmd_ret = false;
-        seh_call_exec(g_exec_fn, g_engine_ptr,
-                      wcmd.data(), ar, NULL, &cmd_ret);
-        bridge_log("  OK (first cmd, ret=%d)", (int)cmd_ret);
-        return true;
-    }
-
-    /*
-     * Step 2: Full scan [65..90] with Ar-callback validation.
-     * Only reached for custom engine builds.
-     */
-    bridge_log("  Known indices failed, scanning vtable[65..90]...");
-
-    for (int idx = 65; idx <= 90; idx++) {
-        void* fn = (void*)vtable[idx];
-        if (!validate_function_ptr(fn)) continue;
-
-        ExecFn try_fn = (ExecFn)fn;
-        InterlockedExchange(&g_dummy_ar_called, 0);
-
-        bool ret = false;
-        if (!seh_call_exec(try_fn, g_engine_ptr,
-                           L"r.HLOD", ar, NULL, &ret))
-            continue;
-
-        if (!g_dummy_ar_called) continue;
-
-        g_exec_fn = try_fn;
-        bridge_log("  ProcessConsoleExec found at vtable[%d] (scan)",
-                   idx);
-        bool cmd_ret = false;
-        seh_call_exec(g_exec_fn, g_engine_ptr,
-                      wcmd.data(), ar, NULL, &cmd_ret);
-        bridge_log("  OK (scan, ret=%d)", (int)cmd_ret);
-        return true;
-    }
-
-    bridge_log("  FAILED: ProcessConsoleExec not found");
+    bridge_log("  ERROR: FExec::Exec crashed");
+    g_fexec_exec = NULL;  /* clear so we don't keep crashing */
     return false;
 }
 
