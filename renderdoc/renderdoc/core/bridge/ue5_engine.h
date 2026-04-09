@@ -535,6 +535,8 @@ static bool find_gengine_via_offset(uintptr_t offset)
     return true;
 }
 
+static bool find_gengine_via_guobjectarray();  /* forward decl -- defined after GUA section */
+
 /*
  * Master GEngine finder -- dual method with cross-validation.
  *
@@ -676,8 +678,7 @@ static bool find_gengine()
  *
  * Strategy: try known offsets 40 and 48 first, then scan.
  */
-static bool validate_function_ptr(void* fn);         /* forward decl */
-static bool find_gengine_via_guobjectarray();        /* forward decl */
+static bool validate_function_ptr(void* fn);  /* forward decl */
 /* Try to find UE version string in the game module.
  * Looks for "++UE5+Release-X.Y" or "+Release-X.Y" ASCII pattern. */
 static void detect_ue_version_string()
