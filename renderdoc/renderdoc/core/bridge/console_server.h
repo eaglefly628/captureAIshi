@@ -513,8 +513,14 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         else
             BRIDGE_LOG("WARNING: No FExec hooks installed");
 
-        BRIDGE_LOG("NOTE: UWorld will be captured from ULocalPlayer::Exec "
-                   "parameters via FExec hooks (UE4SS approach).");
+        /* Proactively find UWorld via GUObjectArray structural scan.
+         * UE4SS relies on ULocalPlayer::Exec hook firing; we also scan
+         * directly so commands work even when the game is idle. */
+        if (find_uworld_via_guobjectarray())
+            BRIDGE_LOG("UWorld found via GUObjectArray: 0x%p", g_world_ptr);
+        else
+            BRIDGE_LOG("NOTE: UWorld not found yet -- will be captured "
+                       "from FExec hook parameters when game calls Exec.");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */

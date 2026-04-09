@@ -1007,6 +1007,96 @@ static bool find_gengine_via_guobjectarray()
 }
 
 /*
+ * Find UWorld via GUObjectArray structural scan.
+ *
+ * UE4SS captures UWorld as an InWorld parameter of ULocalPlayer::Exec().
+ * When the game is idle (no player input triggers FExec), that hook never
+ * fires.  This function actively scans GUObjectArray using structural
+ * fingerprints -- no FName::ToString or RTTI required.
+ *
+ * UWorld fingerprint (UE5 x64 MSVC layout):
+ *   1. Primary vtable at +0x00 is inside the game module.
+ *   2. Primary vtable differs from GEngine's vtable.
+ *   3. Primary vtable has >= 50 entries (UWorld is large, like GEngine).
+ *   4. FExec secondary vtable at +0x28 with 3-8 entries (UWorld : FExec).
+ *   5. OuterPrivate at +0x20 is non-null (UWorld's outer = level UPackage).
+ *   6. Outer's OuterPrivate at outer+0x20 is null (root UPackage has no parent).
+ *
+ * Requires: g_guobjectarray_found && g_engine_found.
+ */
+static bool find_uworld_via_guobjectarray()
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return false;
+    if (!g_engine_ptr) return false;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start  = (uintptr_t)rgn.base;
+    uintptr_t mod_end    = mod_start + rgn.size;
+    uintptr_t engine_vptr = seh_read_ptr(g_engine_ptr); /* exclude GEngine */
+
+    int32_t num_elems = guobjectarray_num_elements();
+    bridge_log("=== UWorld scan via GUObjectArray (%d objects) ===",
+               num_elems);
+
+    for (int32_t i = 0; i < num_elems; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x7F0000000000ULL) continue;
+
+        /* 1+2. Primary vtable in module, not GEngine */
+        uintptr_t vptr = seh_read_ptr(obj);
+        if (vptr < mod_start || vptr >= mod_end) continue;
+        if (vptr == engine_vptr) continue;
+
+        /* 4. FExec secondary vtable at +0x28 */
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + 0x28);
+        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+        if (fexec_vptr == vptr) continue;
+
+        /* Validate FExec vtable: exactly 3-8 valid entries */
+        void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
+        void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
+        if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1)) continue;
+        int fexec_cnt = 2;
+        for (int vi = 2; vi <= 8; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            fexec_cnt++;
+        }
+        if (fexec_cnt < 3 || fexec_cnt > 8) continue;
+
+        /* 3. Primary vtable has >= 50 entries (UWorld is large) */
+        int vcnt = 0;
+        for (int vi = 0; vi < 256; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            vcnt++;
+        }
+        if (vcnt < 50) continue;
+
+        /* 5. OuterPrivate at +0x20 must be a valid heap pointer */
+        uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
+        if (outer < 0x10000 || outer >= 0x7F0000000000ULL) continue;
+
+        /* 6. Outer's OuterPrivate must be null (root UPackage) */
+        uintptr_t outer_outer = seh_read_ptr((void*)(outer + 0x20));
+        if (outer_outer != 0) continue;
+
+        /* UWorld found */
+        bridge_log("  UWorld found: 0x%p "
+                   "(vptr=0x%llX vcnt=%d outer=0x%llX)",
+                   obj, (unsigned long long)vptr, vcnt,
+                   (unsigned long long)outer);
+        g_world_ptr = obj;
+        return true;
+    }
+
+    bridge_log("  UWorld not found in GUObjectArray scan");
+    return false;
+}
+
+/*
  * Find GUObjectArray.
  *
  * Strategy 1: Export symbol lookup.
