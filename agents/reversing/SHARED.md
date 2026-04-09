@@ -31,6 +31,14 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] fa65fba -- xiaoni
+- `find_uworld_via_guobjectarray()`: 主动扫 GUObjectArray 找 UWorld，结构指纹（无 RTTI/FName）
+  - 指纹：主 vtable >= 50 entries + FExec@+0x28 + OuterPrivate != null + Outer.Outer == null
+  - 对比 UE4SS：他们靠 hook ULocalPlayer::Exec 参数被动捕获，游戏空闲时失效
+  - 我们：hook（被动更新）+ 主动扫描（立即可用），双路保障
+- 调用位置：cs_engine_scan_thread 在 install_all_fexec_hooks() 之后立即调用
+- 解决 "还是不行啊" -- ToggleDebugCamera/ShowHUD 等游戏命令因 g_world_ptr=NULL 失败
+
 ### [v0.2.0] Fix ProcessConsoleExec: wrong function + wrong vtable range — xiaoni
 - **Root cause**: calling wrong function (Exec) at wrong vtable range (110-130) with wrong param order
 - **Correct function**: `UObject::ProcessConsoleExec(TCHAR*, FOutputDevice&, UObject*)` at vtable[79] (UE5.7)
