@@ -1033,8 +1033,6 @@ static bool find_guobjectarray()
 
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end   = mod_start + rgn.size;
 
     /* --- Strategy 1: Export symbol --- */
     HMODULE exe = GetModuleHandleA(NULL);
@@ -1053,6 +1051,9 @@ static bool find_guobjectarray()
     }
 
     /* --- Strategy 2-5: AOB patterns --- */
+    /* mod_start/mod_end only needed for AOB candidate validation */
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
 
     /* Pat-A: 48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01
      * LEA reg,[rip+GUA] in AllocateUObjectIndex (LN3 demo) */
