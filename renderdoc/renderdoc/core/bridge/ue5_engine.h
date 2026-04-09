@@ -538,13 +538,14 @@ static bool find_gengine_via_offset(uintptr_t offset)
 /*
  * Master GEngine finder -- dual method with cross-validation.
  *
- * Method A: string xref (fast, gives g_engine_global_addr)
+ * Method 0: env var / TCP override
+ * Method 1: PE export "?GEngine@@3PEAVUEngine@@EA" (fastest, many Shipping builds)
+ * Method A: string xref (gives g_engine_global_addr)
  * Method B: GUObjectArray structural scan (UE4SS approach, if GUA found)
  *
- * If both succeed and agree  -> confirmed, high confidence.
- * If both succeed but differ -> log warning, prefer Method A (has global addr).
- * If only one succeeds       -> use it as-is.
- * If both fail               -> report failure.
+ * If both A and B succeed and agree  -> confirmed, high confidence.
+ * If both succeed but differ         -> prefer A (has global addr).
+ * If only one of A/B succeeds        -> use it as-is.
  */
 static bool find_gengine()
 {
@@ -554,6 +555,32 @@ static bool find_gengine()
         uintptr_t offset = strtoull(env_offset, NULL, 16);
         if (find_gengine_via_offset(offset))
             return true;
+    }
+
+    /* Method 1: PE export symbol -- fastest, works for many Shipping builds.
+     * The export IS the global variable (UEngine**), so dereference once. */
+    {
+        void** exp_ptr = (void**)GetProcAddress(
+            GetModuleHandleA(NULL), "?GEngine@@3PEAVUEngine@@EA");
+        if (exp_ptr) {
+            void* candidate = seh_read_ptr(exp_ptr) ? *exp_ptr : NULL;
+            if (candidate && (uintptr_t)candidate > 0x10000 &&
+                (uintptr_t)candidate < 0x7F0000000000ULL)
+            {
+                uintptr_t vtable = seh_read_ptr(candidate);
+                if (vtable > 0x10000) {
+                    g_engine_ptr          = (UEngine*)candidate;
+                    g_engine_found        = true;
+                    g_engine_global_addr  = (uintptr_t)exp_ptr;
+                    bridge_log("GEngine via export: 0x%p (global=0x%llX)",
+                               candidate, (unsigned long long)exp_ptr);
+                    return true;
+                }
+            }
+            bridge_log("GEngine export found but pointer invalid, continue");
+        } else {
+            bridge_log("GEngine export not found, trying scan methods");
+        }
     }
 
     /* Method A: string xref scan */
