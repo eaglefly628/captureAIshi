@@ -109,24 +109,38 @@ def capture_status():
 
 @app.route("/api/bridge-test", methods=["POST"])
 def bridge_test():
-    """Send __bridge_test to the bridge for visual verification.
-    Also supports custom commands via JSON body {"cmd": "slomo 0.1"}."""
+    """Send a command to the bridge for visual verification.
+    Accepts JSON body {"cmd": "slomo 0.1"}. Only bridge internal commands
+    (__bridge_*) and a safe allowlist of UE5 commands are permitted."""
     import socket as _sock
+
+    _SAFE_PREFIXES = (
+        "__bridge_", "__cam_", "__timestop", "__hud_", "__hotsample",
+        "__smooth", "__path_",
+        "slomo ", "stat ", "showflag.", "r.", "t.",
+        "toggledebugcamera", "showhud",
+    )
+
     cmd = "__bridge_test"
     body = request.get_json(silent=True)
     if body and body.get("cmd"):
-        cmd = body["cmd"]
+        cmd = str(body["cmd"]).strip()
+
+    if not any(cmd.lower().startswith(p) for p in _SAFE_PREFIXES):
+        return jsonify({"ok": False, "error": f"Command not in allowlist: {cmd}"}), 403
+
     port = 9998
+    s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    s.settimeout(8)
     try:
-        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-        s.settimeout(8)
         s.connect(("127.0.0.1", port))
         s.sendall((cmd + "\n").encode("utf-8"))
         resp = s.recv(4096).decode("utf-8", errors="replace")
-        s.close()
         return jsonify({"ok": True, "response": resp.strip(), "cmd": cmd})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "Bridge connection failed"}), 500
+    finally:
+        s.close()
 
 
 _CONFIG_DIR = Path("./configs")
