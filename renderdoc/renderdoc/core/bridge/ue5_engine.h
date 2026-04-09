@@ -876,25 +876,40 @@ static bool find_guobjectarray()
         bridge_log("  Strategy 1: export not found");
     }
 
-    /* --- Strategy 2-4: AOB patterns --- */
+    /* --- Strategy 2-5: AOB patterns --- */
 
-    /* Pat-A: 48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01 */
+    /* Pat-A: 48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01
+     * LEA reg,[rip+GUA] in AllocateUObjectIndex (LN3 demo) */
     static const uint8_t patA[] = {
         0x48,0x8D, 0,0,0,0,0,  0x4C,0x8B,0xC9, 0x48,0x89,0x01
     };
     static const char maskA[] = "xx?????xxxxxx";
 
-    /* Pat-B: 48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07 */
+    /* Pat-B: 48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07
+     * MOV reg,[rip+GUA+0x10] (FF7 Remake) */
     static const uint8_t patB[] = {
         0x48,0x8B, 0,0,0,0,0,  0x4C,0x8B,0x04,0xC8, 0x4D,0x85,0xC0,0x74,0x07
     };
     static const char maskB[] = "xx?????xxxxxxxxx";
 
-    /* Pat-C: 03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D */
+    /* Pat-C: 03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D
+     * ADD targeting GUObjectArray+6 (FF7 Rebirth) */
     static const uint8_t patC[] = {
         0x03, 0,0,0,0,0,  0xFF,0xC8, 0x3B,0xD0, 0x0F,0x8D
     };
     static const char maskC[] = "x?????xxxxxx";
+
+    /* Pat-D: 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01
+     * LEA RCX,[rip+GUA+0x10] in engine init sequence (Split Fiction)
+     * Same -0x10 adjustment as Pat-B. */
+    static const uint8_t patD[] = {
+        0x48,0x8D,0x0D, 0,0,0,0,
+        0xE8, 0,0,0,0,
+        0xE8, 0,0,0,0,
+        0xE8, 0,0,0,0,
+        0xC6,0x05, 0,0,0,0, 0x01
+    };
+    static const char maskD[] = "xxx????x????x????x????xx????x";
 
     struct PatEntry {
         const uint8_t* bytes;
@@ -910,8 +925,9 @@ static bool find_guobjectarray()
         {patA, maskA, 13, 3, 7,    0, "Pat-A (LN3/AllocateUObjectIndex)"},
         {patB, maskB, 16, 3, 7, 0x10, "Pat-B (FF7R/GUObjectArray+0x10)"},
         {patC, maskC, 12, 2, 6,    0, "Pat-C (FF7Rebirth/ADD-pattern)"},
+        {patD, maskD, 29, 3, 7, 0x10, "Pat-D (SplitFiction/LEA-RCX)"},
     };
-    const int NUM_PATS = 3;
+    const int NUM_PATS = 4;
 
     for (int pi = 0; pi < NUM_PATS; pi++) {
         const PatEntry& pe = pats[pi];
