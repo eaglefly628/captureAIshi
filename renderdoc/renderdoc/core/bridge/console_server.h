@@ -478,6 +478,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
     BRIDGE_LOG("Waiting 5s for game to stabilize...");
     Sleep(5000);
 
+    /* Find GUObjectArray FIRST so GEngine finder can use it as fallback.
+     * GUObjectArray is present from very early in game startup. */
+    if (find_guobjectarray())
+        BRIDGE_LOG("GUObjectArray found: 0x%p (%d objects)",
+                   g_guobjectarray, guobjectarray_num_elements());
+    else
+        BRIDGE_LOG("NOTE: GUObjectArray not found -- "
+                   "GEngine Method B unavailable, string xref only");
+
     const int poll_interval_ms = 2000;
     const int timeout_ms = 120000;
     int elapsed = 0;
@@ -493,17 +502,6 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         /* Find FExec secondary vtable for console command execution */
         if (!find_fexec_vtable())
             BRIDGE_LOG("WARNING: FExec not found, commands will fail");
-
-        /* Find GUObjectArray -- enables ULocalPlayer FExec hooking.
-         * UE4SS approach: hook ALL FExec implementors, not just GEngine.
-         * ULocalPlayer::Exec(UWorld* InWorld, ...) passes UWorld directly
-         * as parameter, so we capture it the moment the game calls it. */
-        if (find_guobjectarray())
-            BRIDGE_LOG("GUObjectArray found: 0x%p (%d objects)",
-                       g_guobjectarray, guobjectarray_num_elements());
-        else
-            BRIDGE_LOG("NOTE: GUObjectArray not found -- "
-                       "only GEngine FExec will be hooked");
 
         /* Install FExec hooks on GEngine AND all FExec objects in
          * GUObjectArray (including ULocalPlayer).  When any FExec::Exec

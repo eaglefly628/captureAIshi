@@ -536,11 +536,19 @@ static bool find_gengine_via_offset(uintptr_t offset)
 }
 
 /*
- * Master GEngine finder: tries all methods in order.
+ * Master GEngine finder -- dual method with cross-validation.
+ *
+ * Method A: string xref (fast, gives g_engine_global_addr)
+ * Method B: GUObjectArray structural scan (UE4SS approach, if GUA found)
+ *
+ * If both succeed and agree  -> confirmed, high confidence.
+ * If both succeed but differ -> log warning, prefer Method A (has global addr).
+ * If only one succeeds       -> use it as-is.
+ * If both fail               -> report failure.
  */
 static bool find_gengine()
 {
-    /* Method 1: env var override */
+    /* Method 0: env var / TCP override (highest priority) */
     const char* env_offset = getenv("CAPTUREAI_GENGINE_OFFSET");
     if (env_offset) {
         uintptr_t offset = strtoull(env_offset, NULL, 16);
@@ -548,12 +556,63 @@ static bool find_gengine()
             return true;
     }
 
-    /* Method 2: automatic string xref scan */
-    bridge_log("Starting GEngine auto-scan...");
-    if (find_gengine_via_string_xref())
-        return true;
+    /* Method A: string xref scan */
+    bridge_log("GEngine Method A: string xref scan...");
+    bool a_ok = find_gengine_via_string_xref();
+    UEngine* a_result = a_ok ? g_engine_ptr : NULL;
 
-    bridge_log("WARNING: GEngine not found automatically. "
+    /* Method B: GUObjectArray structural scan (only if GUA already found) */
+    bool b_ok = false;
+    UEngine* b_result = NULL;
+    if (g_guobjectarray_found) {
+        bridge_log("GEngine Method B: GUObjectArray structural scan...");
+        /* Temporarily clear so find_gengine_via_guobjectarray can write */
+        UEngine* saved_a = g_engine_ptr;
+        uintptr_t saved_addr = g_engine_global_addr;
+        bool saved_found = g_engine_found;
+        g_engine_ptr = NULL; g_engine_found = false; g_engine_global_addr = 0;
+
+        b_ok = find_gengine_via_guobjectarray();
+        b_result = b_ok ? g_engine_ptr : NULL;
+
+        /* Restore Method A state as base */
+        g_engine_ptr   = saved_a;
+        g_engine_found = saved_found;
+        g_engine_global_addr = saved_addr;
+    } else {
+        bridge_log("GEngine Method B: skipped (GUObjectArray not yet found)");
+    }
+
+    /* Cross-validate */
+    if (a_ok && b_ok) {
+        if (a_result == b_result) {
+            bridge_log("GEngine CONFIRMED by both methods: 0x%p", a_result);
+        } else {
+            bridge_log("GEngine WARNING: Method A=0x%p vs Method B=0x%p -- "
+                       "preferring Method A (has global addr)",
+                       a_result, b_result);
+        }
+        /* Keep Method A result (has g_engine_global_addr) */
+        g_engine_ptr = a_result;
+        g_engine_found = true;
+        return true;
+    }
+
+    if (a_ok) {
+        bridge_log("GEngine found via Method A only (GUObjectArray unavailable)");
+        return true;
+    }
+
+    if (b_ok) {
+        bridge_log("GEngine found via Method B (GUObjectArray) -- "
+                   "string xref failed");
+        g_engine_ptr   = b_result;
+        g_engine_found = true;
+        g_engine_global_addr = 0;  /* not available via GUA scan */
+        return true;
+    }
+
+    bridge_log("WARNING: GEngine not found by either method. "
                "Use __bridge_set_offset <hex> via TCP, "
                "or set CAPTUREAI_GENGINE_OFFSET env var.");
     return false;
@@ -590,7 +649,8 @@ static bool find_gengine()
  *
  * Strategy: try known offsets 40 and 48 first, then scan.
  */
-static bool validate_function_ptr(void* fn);  /* forward decl */
+static bool validate_function_ptr(void* fn);         /* forward decl */
+static bool find_gengine_via_guobjectarray();        /* forward decl */
 /* Try to find UE version string in the game module.
  * Looks for "++UE5+Release-X.Y" or "+Release-X.Y" ASCII pattern. */
 static void detect_ue_version_string()
@@ -827,6 +887,95 @@ static int32_t guobjectarray_num_elements()
     }
     __except(EXCEPTION_EXECUTE_HANDLER) { n = 0; }
     return n;
+}
+
+/*
+ * GEngine finder via GUObjectArray structural scan (UE4SS approach).
+ *
+ * UGameEngine has the largest primary vtable of any FExec implementor:
+ * typically 80-120 entries vs ULocalPlayer ~20-40, others <= 30.
+ * We scan the first 1000 objects (GEngine is always created early),
+ * find every FExec implementor (secondary vtable at +0x28 with 3-8 entries),
+ * and pick the one with the most primary vtable entries.
+ *
+ * Requires: GUObjectArray already found.
+ * Does NOT require FName::ToString -- purely structural.
+ */
+static bool find_gengine_via_guobjectarray()
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return false;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+
+    int32_t num_elems  = guobjectarray_num_elements();
+    int32_t scan_limit = (num_elems < 1000) ? num_elems : 1000;
+
+    bridge_log("  GUA GEngine scan: first %d objects", scan_limit);
+
+    void*     best_obj    = NULL;
+    int       best_vcnt   = 0;
+    uintptr_t best_vptr   = 0;
+
+    for (int32_t i = 0; i < scan_limit; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x7F0000000000ULL) continue;
+
+        /* Primary vtable must be in module */
+        uintptr_t vptr = seh_read_ptr(obj);
+        if (vptr < mod_start || vptr >= mod_end) continue;
+
+        /* Must have FExec secondary vtable at +0x28 */
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + 0x28);
+        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+        if (fexec_vptr == vptr) continue;
+
+        /* Validate FExec vtable has 3-8 entries */
+        void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
+        void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
+        if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1)) continue;
+
+        int fexec_cnt = 2;
+        for (int vi = 2; vi <= 8; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            fexec_cnt++;
+        }
+        if (fexec_cnt < 3 || fexec_cnt > 8) continue;
+
+        /* Count primary vtable entries -- GEngine wins with 80+ */
+        int vcnt = 0;
+        for (int vi = 0; vi < 256; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            vcnt++;
+        }
+
+        if (vcnt > best_vcnt) {
+            best_vcnt = vcnt;
+            best_obj  = obj;
+            best_vptr = vptr;
+        }
+    }
+
+    /* UGameEngine requires at least 50 primary vtable entries.
+     * This filters out ULocalPlayer, UNetDriver, and similar. */
+    if (!best_obj || best_vcnt < 50) {
+        bridge_log("  GUA GEngine scan: no candidate "
+                   "(best=%d vtable entries, need >=50)", best_vcnt);
+        return false;
+    }
+
+    bridge_log("  GUA GEngine found: 0x%p (vptr=0x%llX, %d vtable entries)",
+               best_obj, (unsigned long long)best_vptr, best_vcnt);
+
+    g_engine_ptr   = (UEngine*)best_obj;
+    g_engine_found = true;
+    /* g_engine_global_addr not available via this method */
+    return true;
 }
 
 /*
