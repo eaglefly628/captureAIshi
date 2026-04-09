@@ -2,12 +2,18 @@
 
 ## Active TODO
 
-- [ ] **P0: 真实 UE5 游戏端到端验证** — renderdoccmd → bridge 9998 → GEngine → Exec → camera → capture → export。跑通一个游戏。
+- [ ] **P0: 四级 Fallback GEngine/UWorld 检测** (from lead 调研) — 当前只有 Level 2（字符串锚点）。需实现完整 fallback 链，多重交叉验证：
+  - **Level 0: PE 导出符号** — 搜修饰名 `?GUObjectArray@@3VFUObjectArray@@A`、`?GEngine@@3PEAVUEngine@@EA` 等。很多 Shipping build 保留了导出符号（UE4SS 的主要策略），最快最准。
+  - **Level 1: GUObjectArray AOB → 反射遍历** — GUObjectArray 是 UE 所有版本都有的核心全局变量（比 GEngine 更稳定）。找到后遍历所有 UObject 找 UEngine/UWorld 实例。Dumper-7 和 UE4SS 都验证过，支持 UE4.11-5.x。注意 UE4.21+ 用 Chunked Array，之前用 Fixed Array。有些游戏用加密指针（Dumper-7 有 InitObjectArrayDecryption）。
+  - **Level 2: 字符串锚点 xref** — 我们现有的 8 个锚点（已实现）。
+  - **Level 3: GSpots 式文件级扫描** — 在 exe .text 段搜 `MOV [rip+xx]` 指令模式 + Lua 自定义签名兜底。
+  - 参考: UE4SS (`docs/refCode/RE-UE4SS-main/`), Dumper-7 (github.com/Encryqed/Dumper-7), GSpots (github.com/Do0ks/GSpots), UEVR (github.com/praydog/UEVR)
+- [ ] **P0: 真实 UE5 游戏端到端验证** — 跑通一个游戏。
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
-- [x] **P1: bridge-test 命令注入** (spotted by 主程序员, fixed by 主程序员) — `/api/bridge-test` 接受任意命令无白名单，已加 `_SAFE_PREFIXES` 过滤 + socket `try/finally`。
-- [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
-- [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — camera toggle 后改轮询。
-- [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
+- [x] **P1: bridge-test 命令注入** (fixed by 主程序员) — 已加白名单。
+- [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员)
+- [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员)
+- [ ] **P2: 增强 Pause** — UWorld::IsPaused 内存写入 fallback
 
 ## [v0.2.0] Bridge DLL Architecture
 
