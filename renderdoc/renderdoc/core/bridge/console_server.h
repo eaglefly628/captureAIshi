@@ -176,24 +176,28 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     if (cmd == "__bridge_ping") { cs_reply(client, "pong\n"); return true; }
 
     if (cmd == "__bridge_status") {
-        char buf[512];
+        char buf[768];
         snprintf(buf, sizeof(buf),
             "engine_found=%d engine_ptr=0x%p "
             "fexec_exec=0x%p fexec_offset=%d "
+            "fexec_hooks=%d "
+            "guobjectarray_found=%d guobjectarray=0x%p "
+            "world_ptr=0x%p "
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
             "gengine_global=0x%llX "
-            "gworld_global=0x%llX "
             "gamethread_dispatch=%d\n",
             (int)g_engine_found.load(), g_engine_ptr,
             (void*)g_fexec_exec, (int)g_fexec_offset,
+            g_fexec_hook_count,
+            (int)g_guobjectarray_found.load(), g_guobjectarray,
+            g_world_ptr,
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
             cs_smooth_factor,
             (unsigned long long)g_engine_global_addr,
-            (unsigned long long)g_world_global_addr,
             (int)g_gamethread_dispatch_ready.load());
         cs_reply(client, buf);
         return true;
@@ -474,6 +478,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
     BRIDGE_LOG("Waiting 5s for game to stabilize...");
     Sleep(5000);
 
+    /* Find GUObjectArray FIRST so GEngine finder can use it as fallback.
+     * GUObjectArray is present from very early in game startup. */
+    if (find_guobjectarray())
+        BRIDGE_LOG("GUObjectArray found: 0x%p (%d objects)",
+                   g_guobjectarray, guobjectarray_num_elements());
+    else
+        BRIDGE_LOG("NOTE: GUObjectArray not found -- "
+                   "GEngine Method B unavailable, string xref only");
+
     const int poll_interval_ms = 2000;
     const int timeout_ms = 120000;
     int elapsed = 0;
@@ -490,20 +503,18 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         if (!find_fexec_vtable())
             BRIDGE_LOG("WARNING: FExec not found, commands will fail");
 
-        /* Install Exec hook to capture UWorld from game calls.
-         * This is the most reliable method: the game itself provides
-         * UWorld when it calls Exec during level loading, console
-         * commands, etc. We intercept and save it. */
-        if (install_exec_hook())
-            BRIDGE_LOG("Exec hook active -- will capture UWorld "
-                       "from game calls");
+        /* Install FExec hooks on GEngine AND all FExec objects in
+         * GUObjectArray (including ULocalPlayer).  When any FExec::Exec
+         * fires with a non-NULL UWorld, we capture it automatically. */
+        if (install_all_fexec_hooks())
+            BRIDGE_LOG("FExec hooks active (%d total) -- "
+                       "UWorld will be captured from game calls",
+                       g_fexec_hook_count);
         else
-            BRIDGE_LOG("WARNING: Exec hook failed");
+            BRIDGE_LOG("WARNING: No FExec hooks installed");
 
-        /* Also try static methods as fallback */
-        if (!find_uworld())
-            BRIDGE_LOG("NOTE: UWorld not found via static scan. "
-                       "Hook will capture it from game calls.");
+        BRIDGE_LOG("NOTE: UWorld will be captured from ULocalPlayer::Exec "
+                   "parameters via FExec hooks (UE4SS approach).");
 
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */
@@ -627,8 +638,8 @@ static inline void ConsoleServer_Stop()
     LeaveCriticalSection(&cs_client_cs);
     DeleteCriticalSection(&cs_client_cs);
 
-    /* Remove Exec hook before shutdown */
-    uninstall_exec_hook();
+    /* Remove all FExec hooks before shutdown */
+    uninstall_all_fexec_hooks();
 
     BRIDGE_LOG("Console server shutdown complete");
 }

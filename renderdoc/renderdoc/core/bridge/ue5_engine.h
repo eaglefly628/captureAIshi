@@ -68,12 +68,8 @@ static std::atomic<bool> g_engine_found{false};
 /* Address of the GEngine global variable itself (not the pointer value) */
 static uintptr_t         g_engine_global_addr = 0;
 
-/* UWorld pointer -- needed for game commands (ToggleDebugCamera etc.) */
+/* UWorld pointer -- captured as direct parameter by FExec hooks */
 static void*             g_world_ptr = nullptr;
-/* Address of the GWorld global variable (in .data section).
- * If set, we read *(void**)g_world_global_addr each time to get
- * the current UWorld -- handles level transitions automatically. */
-static uintptr_t         g_world_global_addr = 0;
 
 /* -- Exec function ------------------------------------------------- */
 
@@ -107,6 +103,67 @@ typedef bool (__fastcall *FExecExecFn)(
 
 static FExecExecFn g_fexec_exec = NULL;
 static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
+
+/* -- GUObjectArray globals ----------------------------------------- */
+
+/*
+ * GUObjectArray (FUObjectArray) is the master UObject registry.
+ * Layout (UE5, x64 -- from UE source and UE4SS/UEPseudo):
+ *
+ * FUObjectArray:
+ *   +0   ObjFirstGCIndex         (int32)
+ *   +4   ObjLastNonGCIndex       (int32)
+ *   +8   MaxObjectsNotConsideredByGC (int32)
+ *   +12  OpenForDisregardForGC   (bool, 1 byte + 3 pad)
+ *   +16  ObjObjects (FChunkedFixedUObjectArray):
+ *     +16  Objects** (chunk array pointer)
+ *     +24  PreAllocatedObjects* (may be NULL)
+ *     +32  MaxElements (int32)
+ *     +36  NumElements (int32)
+ *     +40  MaxChunks (int32)
+ *     +44  NumChunks (int32)
+ *
+ * FUObjectItem (24 bytes):
+ *   +0   Object (UObjectBase*)
+ *   +8   Flags (int32)
+ *   +12  ClusterRootIndex (int32)
+ *   +16  SerialNumber (int32)
+ *   +20  padding (int32)
+ *
+ * Access pattern (same as UE4SS IndexToObject):
+ *   chunk_idx      = index >> 16   (= index / 65536)
+ *   within_idx     = index & 0xFFFF
+ *   item           = Objects[chunk_idx][within_idx]  -- 24-byte stride
+ *   object         = item.Object  (at item+0)
+ */
+
+#define GUOBJARRAY_OBJECTS_OFF    16   /* &GUObjectArray.ObjObjects.Objects */
+#define GUOBJARRAY_NUMELEMS_OFF   36   /* &GUObjectArray.ObjObjects.NumElements */
+#define FUOBJECTITEM_STRIDE       24   /* sizeof(FUObjectItem) */
+#define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
+#define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
+
+static void*              g_guobjectarray = NULL;
+static std::atomic<bool>  g_guobjectarray_found{false};
+
+/* -- FExec multi-hook table ---------------------------------------- */
+
+/*
+ * UE4SS hooks FExec on BOTH GEngine (UGameEngine) AND ULocalPlayer.
+ * ULocalPlayer::Exec(UWorld* InWorld, ...) receives UWorld as param.
+ * We hook every unique FExec vtable found in GUObjectArray.
+ *
+ * Default FExec vtable offset in both GEngine and ULocalPlayer: 0x28.
+ * (Configurable in UE4SS as FExecVTableOffsetInLocalPlayer, default 0x28.)
+ */
+struct FExecHookEntry {
+    uintptr_t   vtable_base;   /* address of the secondary vtable (key) */
+    uintptr_t*  slot;          /* &vtable[1] -- the patched slot */
+    FExecExecFn original;      /* saved original vtable[1] */
+};
+
+static FExecHookEntry     g_fexec_hook_table[16];
+static int                g_fexec_hook_count = 0;
 
 /* -- SEH-safe helpers ---------------------------------------------- */
 
@@ -479,11 +536,20 @@ static bool find_gengine_via_offset(uintptr_t offset)
 }
 
 /*
- * Master GEngine finder: tries all methods in order.
+ * Master GEngine finder -- dual method with cross-validation.
+ *
+ * Method 0: env var / TCP override
+ * Method 1: PE export "?GEngine@@3PEAVUEngine@@EA" (fastest, many Shipping builds)
+ * Method A: string xref (gives g_engine_global_addr)
+ * Method B: GUObjectArray structural scan (UE4SS approach, if GUA found)
+ *
+ * If both A and B succeed and agree  -> confirmed, high confidence.
+ * If both succeed but differ         -> prefer A (has global addr).
+ * If only one of A/B succeeds        -> use it as-is.
  */
 static bool find_gengine()
 {
-    /* Method 1: env var override */
+    /* Method 0: env var / TCP override (highest priority) */
     const char* env_offset = getenv("CAPTUREAI_GENGINE_OFFSET");
     if (env_offset) {
         uintptr_t offset = strtoull(env_offset, NULL, 16);
@@ -491,12 +557,89 @@ static bool find_gengine()
             return true;
     }
 
-    /* Method 2: automatic string xref scan */
-    bridge_log("Starting GEngine auto-scan...");
-    if (find_gengine_via_string_xref())
-        return true;
+    /* Method 1: PE export symbol -- fastest, works for many Shipping builds.
+     * The export IS the global variable (UEngine**), so dereference once. */
+    {
+        void** exp_ptr = (void**)GetProcAddress(
+            GetModuleHandleA(NULL), "?GEngine@@3PEAVUEngine@@EA");
+        if (exp_ptr) {
+            void* candidate = seh_read_ptr(exp_ptr) ? *exp_ptr : NULL;
+            if (candidate && (uintptr_t)candidate > 0x10000 &&
+                (uintptr_t)candidate < 0x7F0000000000ULL)
+            {
+                uintptr_t vtable = seh_read_ptr(candidate);
+                if (vtable > 0x10000) {
+                    g_engine_ptr          = (UEngine*)candidate;
+                    g_engine_found        = true;
+                    g_engine_global_addr  = (uintptr_t)exp_ptr;
+                    bridge_log("GEngine via export: 0x%p (global=0x%llX)",
+                               candidate, (unsigned long long)exp_ptr);
+                    return true;
+                }
+            }
+            bridge_log("GEngine export found but pointer invalid, continue");
+        } else {
+            bridge_log("GEngine export not found, trying scan methods");
+        }
+    }
 
-    bridge_log("WARNING: GEngine not found automatically. "
+    /* Method A: string xref scan */
+    bridge_log("GEngine Method A: string xref scan...");
+    bool a_ok = find_gengine_via_string_xref();
+    UEngine* a_result = a_ok ? g_engine_ptr : NULL;
+
+    /* Method B: GUObjectArray structural scan (only if GUA already found) */
+    bool b_ok = false;
+    UEngine* b_result = NULL;
+    if (g_guobjectarray_found) {
+        bridge_log("GEngine Method B: GUObjectArray structural scan...");
+        /* Temporarily clear so find_gengine_via_guobjectarray can write */
+        UEngine* saved_a = g_engine_ptr;
+        uintptr_t saved_addr = g_engine_global_addr;
+        bool saved_found = g_engine_found;
+        g_engine_ptr = NULL; g_engine_found = false; g_engine_global_addr = 0;
+
+        b_ok = find_gengine_via_guobjectarray();
+        b_result = b_ok ? g_engine_ptr : NULL;
+
+        /* Restore Method A state as base */
+        g_engine_ptr   = saved_a;
+        g_engine_found = saved_found;
+        g_engine_global_addr = saved_addr;
+    } else {
+        bridge_log("GEngine Method B: skipped (GUObjectArray not yet found)");
+    }
+
+    /* Cross-validate */
+    if (a_ok && b_ok) {
+        if (a_result == b_result) {
+            bridge_log("GEngine CONFIRMED by both methods: 0x%p", a_result);
+        } else {
+            bridge_log("GEngine WARNING: Method A=0x%p vs Method B=0x%p -- "
+                       "preferring Method A (has global addr)",
+                       a_result, b_result);
+        }
+        /* Keep Method A result (has g_engine_global_addr) */
+        g_engine_ptr = a_result;
+        g_engine_found = true;
+        return true;
+    }
+
+    if (a_ok) {
+        bridge_log("GEngine found via Method A only (GUObjectArray unavailable)");
+        return true;
+    }
+
+    if (b_ok) {
+        bridge_log("GEngine found via Method B (GUObjectArray) -- "
+                   "string xref failed");
+        g_engine_ptr   = b_result;
+        g_engine_found = true;
+        g_engine_global_addr = 0;  /* not available via GUA scan */
+        return true;
+    }
+
+    bridge_log("WARNING: GEngine not found by either method. "
                "Use __bridge_set_offset <hex> via TCP, "
                "or set CAPTUREAI_GENGINE_OFFSET env var.");
     return false;
@@ -533,7 +676,8 @@ static bool find_gengine()
  *
  * Strategy: try known offsets 40 and 48 first, then scan.
  */
-static bool validate_function_ptr(void* fn);  /* forward decl */
+static bool validate_function_ptr(void* fn);         /* forward decl */
+static bool find_gengine_via_guobjectarray();        /* forward decl */
 /* Try to find UE version string in the game module.
  * Looks for "++UE5+Release-X.Y" or "+Release-X.Y" ASCII pattern. */
 static void detect_ue_version_string()
@@ -623,10 +767,6 @@ static bool try_fexec_at_offset(uint8_t* obj, int off,
     return true;
 }
 
-/* forward decl -- defined after find_fexec_vtable */
-static uintptr_t check_uobject_ptr(void* ptr,
-    uintptr_t mod_start, uintptr_t mod_end);
-
 static bool find_fexec_vtable()
 {
     uint8_t* obj = (uint8_t*)g_engine_ptr;
@@ -649,41 +789,6 @@ static bool find_fexec_vtable()
     uintptr_t primary_vptr = seh_read_ptr(obj);
     bridge_log("  Primary vptr (obj+0): 0x%llX",
                (unsigned long long)primary_vptr);
-
-    /* Dump GEngine object layout with UObject pointer annotations */
-    bridge_log("  --- GEngine object layout (first 4096 bytes) ---");
-    uintptr_t engine_class = seh_read_ptr(obj + 16);
-    for (int off = 0; off < 4096; off += 8) {
-        uintptr_t val = seh_read_ptr(obj + off);
-        if (!val) continue;  /* skip NULLs to reduce noise */
-
-        /* Check if this value looks like a UObject pointer */
-        const char* tag = "";
-        if (val >= mod_start && val < mod_end) {
-            tag = " [module]";
-        } else if (val > 0x10000) {
-            uintptr_t vt = check_uobject_ptr((void*)val,
-                                              mod_start, mod_end);
-            if (vt) {
-                uintptr_t cls = seh_read_ptr((void*)(val + 16));
-                if (cls == engine_class)
-                    tag = " [UObject same-class]";
-                else
-                    tag = " [UObject DIFF-CLASS] ***";
-            } else {
-                /* Check if it's a pointer to something with a
-                 * module vtable (could be non-UObject) */
-                uintptr_t maybe_vt = seh_read_ptr((void*)val);
-                if (maybe_vt >= mod_start && maybe_vt < mod_end)
-                    tag = " [obj w/ module-vt]";
-                else
-                    tag = " [heap]";
-            }
-        }
-
-        bridge_log("  obj+%4d: 0x%016llX%s",
-                   off, (unsigned long long)val, tag);
-    }
 
     /*
      * Strategy 1: Try known offsets from UE5 headers.
@@ -716,543 +821,553 @@ static bool find_fexec_vtable()
     return false;
 }
 
-/* -- UWorld finder ------------------------------------------------- */
+/* -- GUObjectArray finder ------------------------------------------ */
+/*
+ * UWorld is NOT found by static scan. It is captured as a direct
+ * parameter of ULocalPlayer::Exec(UWorld* InWorld, cmd, ar) by the
+ * FExec hooks installed below. This is the UE4SS approach.
+ */
 
 /*
- * UE5's FExec::Exec(UWorld*, cmd, ar) needs a valid UWorld* to route
- * game commands (ToggleDebugCamera, etc.) through PlayerController.
- * CVars and ShowFlag work with NULL, but game commands return false.
- *
- * Strategy: find GWorld via the same string xref technique.
- * GWorld is a TObjectPtr<UWorld> global, always present in UE5.
+ * Validate a GUObjectArray candidate.
+ * Checks: NumElements in [1000, 5000000], Objects** valid, chunk[0] valid.
+ * Mirrors UE4SS's SetupGUObjectArrayAddress() sanity checks.
  */
-/*
- * Strategy A: Scan .data/.bss near GEngine's global address.
- * In UE5, global pointers (GEngine, GWorld, GIsEditor, etc.) are
- * all stored in the same data section, typically within +-8KB.
- */
-/*
- * Helper: check if a pointer looks like a valid UObject on the heap.
- * Requires vtable in module, ClassPrivate at offset +16 also looks valid.
- * Returns the vtable address or 0 if not a UObject.
- */
-static uintptr_t check_uobject_ptr(void* ptr,
-                                    uintptr_t mod_start, uintptr_t mod_end)
+static bool validate_guobjectarray(void* candidate)
 {
-    if (!ptr || (uintptr_t)ptr < 0x10000) return 0;
+    if (!candidate || (uintptr_t)candidate < 0x10000) return false;
 
-    /* UObjects are heap-allocated. On Windows x64, heap pointers are
-     * in the low range (0x0000XXXX...). DLL/EXE images are loaded
-     * in the high range (0x7FFx...). Reject non-heap pointers. */
-    if ((uintptr_t)ptr >= 0x7F0000000000ULL) return 0;
+    uint8_t* p = (uint8_t*)candidate;
 
-    uintptr_t vtable = seh_read_ptr(ptr);
-    if (vtable < mod_start || vtable >= mod_end) return 0;
+    /* NumElements = p + GUOBJARRAY_NUMELEMS_OFF */
+    int32_t num_elems = 0;
+    __try { num_elems = *(int32_t*)(p + GUOBJARRAY_NUMELEMS_OFF); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 
-    void* fn0 = (void*)seh_read_ptr((void*)vtable);
-    if (!validate_function_ptr(fn0)) return 0;
+    if (num_elems < 1000 || num_elems > 5000000) {
+        bridge_log("  GUObjectArray: NumElements=%d out of [1000,5M]",
+                   num_elems);
+        return false;
+    }
 
-    uintptr_t class_ptr = seh_read_ptr((uint8_t*)ptr + 16);
-    if (class_ptr < 0x10000) return 0;
+    /* Objects** = p + GUOBJARRAY_OBJECTS_OFF */
+    uintptr_t chunks_ptr = seh_read_ptr(p + GUOBJARRAY_OBJECTS_OFF);
+    if (chunks_ptr < 0x10000 || chunks_ptr >= 0x7F0000000000ULL) {
+        bridge_log("  GUObjectArray: Objects** invalid 0x%llX",
+                   (unsigned long long)chunks_ptr);
+        return false;
+    }
 
-    /* ClassPrivate should itself have a vtable in module (it's a UClass) */
-    uintptr_t class_vt = seh_read_ptr((void*)class_ptr);
-    if (class_vt < mod_start || class_vt >= mod_end) return 0;
+    /* Objects*[0] = first chunk must be readable */
+    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
+    if (chunk0 < 0x10000 || chunk0 >= 0x7F0000000000ULL) {
+        bridge_log("  GUObjectArray: Objects[0] invalid 0x%llX",
+                   (unsigned long long)chunk0);
+        return false;
+    }
 
-    return vtable;
+    /* First FUObjectItem in chunk0: Object* at +0 must look valid */
+    uintptr_t first_obj = seh_read_ptr((void*)chunk0);
+    if (first_obj < 0x10000) {
+        bridge_log("  GUObjectArray: first object 0x%llX invalid",
+                   (unsigned long long)first_obj);
+        return false;
+    }
+
+    bridge_log("  GUObjectArray valid: %d objects, "
+               "Objects**=0x%llX, chunk[0]=0x%llX",
+               num_elems, (unsigned long long)chunks_ptr,
+               (unsigned long long)chunk0);
+    return true;
 }
 
 /*
- * Strategy A: Scan GEngine OBJECT members for UWorld-like pointers.
- *
- * GEngine has hundreds of members. Some are UObject* pointing to
- * UFont, UGameViewportClient, etc. UWorld is referenced through
- * WorldList (TIndirectArray<FWorldContext>) and GameViewport.
- *
- * We scan the GEngine heap object for any UObject* whose:
- *   - vtable is in module (not NULL, not external DLL)
- *   - ClassPrivate is valid (UObject header at +16)
- *   - vtable differs from GEngine's (different class)
- *   - UClass differs from common types (UFont, etc.)
- *
- * We collect unique (vtable, ClassPrivate) pairs and pick the
- * most likely UWorld candidate.
+ * Get object at index i. Returns UObjectBase* or NULL.
+ * Implements UE4SS IndexToObject() chunk arithmetic.
  */
-/*
- * Strategy A: String xref for GWorld-specific strings.
- *
- * KEY INSIGHT (from UEVR/GSpots research):
- *   GEngine is LOADED:  48 8B 05 (mov rax, [rip+GEngine])
- *   GWorld is STORED:   48 89 05 (mov [rip+GWorld], rax)
- * We must look for BOTH opcodes 8B (load) and 89 (store).
- *
- * Best anchor strings (from GSpots/patternsleuth):
- *   "SeamlessTravel FlushLevelStreaming" - UWorld::SeamlessTravel
- *   "Bringing World" - UWorld::BeginPlay
- *   "Bringing up level for" - UWorld init
- */
-static bool find_gworld_via_string_xref()
+static void* guobjectarray_get(int32_t index)
 {
+    if (!g_guobjectarray || index < 0) return NULL;
+
+    uint8_t* arr = (uint8_t*)g_guobjectarray;
+    uintptr_t chunks_ptr = seh_read_ptr(arr + GUOBJARRAY_OBJECTS_OFF);
+    if (!chunks_ptr) return NULL;
+
+    int32_t chunk_idx   = (uint32_t)index >> FUOBJECTARRAY_CHUNK_SHIFT;
+    int32_t within_idx  = (uint32_t)index &  FUOBJECTARRAY_CHUNK_MASK;
+
+    uintptr_t chunk = seh_read_ptr(
+        (void*)(chunks_ptr + (uintptr_t)chunk_idx * 8));
+    if (!chunk) return NULL;
+
+    /* FUObjectItem::Object at offset 0 within the item */
+    uintptr_t item_addr = chunk + (uintptr_t)within_idx * FUOBJECTITEM_STRIDE;
+    return (void*)seh_read_ptr((void*)item_addr);
+}
+
+static int32_t guobjectarray_num_elements()
+{
+    if (!g_guobjectarray) return 0;
+    int32_t n = 0;
+    __try {
+        n = *(int32_t*)((uint8_t*)g_guobjectarray + GUOBJARRAY_NUMELEMS_OFF);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) { n = 0; }
+    return n;
+}
+
+/*
+ * GEngine finder via GUObjectArray structural scan (UE4SS approach).
+ *
+ * UGameEngine has the largest primary vtable of any FExec implementor:
+ * typically 80-120 entries vs ULocalPlayer ~20-40, others <= 30.
+ * We scan the first 1000 objects (GEngine is always created early),
+ * find every FExec implementor (secondary vtable at +0x28 with 3-8 entries),
+ * and pick the one with the most primary vtable entries.
+ *
+ * Requires: GUObjectArray already found.
+ * Does NOT require FName::ToString -- purely structural.
+ */
+static bool find_gengine_via_guobjectarray()
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return false;
+
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
     uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
+    uintptr_t mod_end   = mod_start + rgn.size;
 
-    struct { const wchar_t* w; const char* a; const char* label; } entries[] = {
-        /* Most reliable first (from GSpots/UEVR research) */
-        {L"SeamlessTravel FlushLevelStreaming", NULL,
-         "L\"SeamlessTravel FlushLevel...\""},
-        {L"Bringing World",        NULL, "L\"Bringing World\""},
-        {L"Bringing up level for", NULL, "L\"Bringing up level for\""},
-        {NULL, "SeamlessTravel FlushLevelStreaming",
-         "\"SeamlessTravel FlushLevel...\""},
-        {NULL, "Bringing World",        "\"Bringing World\""},
-        {NULL, "Bringing up level for", "\"Bringing up level for\""},
-    };
-    const int NUM_ENTRIES = 6;
+    int32_t num_elems  = guobjectarray_num_elements();
+    int32_t scan_limit = (num_elems < 1000) ? num_elems : 1000;
 
-    bridge_log("  Strategy A: GWorld string xref");
+    bridge_log("  GUA GEngine scan: first %d objects", scan_limit);
 
-    for (int i = 0; i < NUM_ENTRIES; i++) {
-        const uint8_t* str_addr = entries[i].w
-            ? find_wstring_in_module(rgn.base, rgn.size, entries[i].w)
-            : find_string_in_module(rgn.base, rgn.size, entries[i].a);
+    void*     best_obj    = NULL;
+    int       best_vcnt   = 0;
+    uintptr_t best_vptr   = 0;
 
-        if (!str_addr) continue;
-        bridge_log("    %s at +0x%llX", entries[i].label,
-                   (unsigned long long)(str_addr - rgn.base));
+    for (int32_t i = 0; i < scan_limit; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x7F0000000000ULL) continue;
 
-        auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
-        if (xrefs.empty()) { bridge_log("    no xrefs"); continue; }
-        bridge_log("    %zu xrefs", xrefs.size());
+        /* Primary vtable must be in module */
+        uintptr_t vptr = seh_read_ptr(obj);
+        if (vptr < mod_start || vptr >= mod_end) continue;
 
-        for (const uint8_t* xref : xrefs) {
-            const uint8_t* ss = (xref > rgn.base + 512) ?
-                                 xref - 512 : rgn.base;
-            const uint8_t* se = xref + 512;
-            if (se > rgn.base + rgn.size - 7)
-                se = rgn.base + rgn.size - 7;
+        /* Must have FExec secondary vtable at +0x28 */
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + 0x28);
+        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+        if (fexec_vptr == vptr) continue;
 
-            for (const uint8_t* p = ss; p < se; p++) {
-                if (p[0] != 0x48) continue;
-                /* 8B = LOAD (mov reg, [rip+X])
-                 * 89 = STORE (mov [rip+X], reg)
-                 * Both can reference GWorld. */
-                if (p[1] != 0x8B && p[1] != 0x89) continue;
-                if ((p[2] & 0xC7) != 0x05) continue;
+        /* Validate FExec vtable has 3-8 entries */
+        void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
+        void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
+        if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1)) continue;
 
-                uintptr_t resolved = resolve_rip_relative(p, 3, 7);
-                if (resolved < mod_start || resolved >= mod_end) continue;
+        int fexec_cnt = 2;
+        for (int vi = 2; vi <= 8; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            fexec_cnt++;
+        }
+        if (fexec_cnt < 3 || fexec_cnt > 8) continue;
 
-                void* candidate = *(void**)resolved;
-                uintptr_t vt = check_uobject_ptr(candidate,
-                                                   mod_start, mod_end);
-                if (!vt) continue;
-                if (candidate == (void*)g_engine_ptr) continue;
-                if (vt == engine_vt) continue;
+        /* Count primary vtable entries -- GEngine wins with 80+ */
+        int vcnt = 0;
+        for (int vi = 0; vi < 256; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            vcnt++;
+        }
 
-                g_world_ptr = candidate;
-                g_world_global_addr = resolved;
-                bridge_log("  GWorld FOUND via %s: 0x%p "
-                           "(global=0x%llX, opcode=%02X = %s)",
-                           entries[i].label, candidate,
-                           (unsigned long long)resolved,
-                           p[1], p[1]==0x89 ? "STORE" : "LOAD");
-                return true;
-            }
+        if (vcnt > best_vcnt) {
+            best_vcnt = vcnt;
+            best_obj  = obj;
+            best_vptr = vptr;
         }
     }
 
-    bridge_log("    no GWorld via string xref");
-    return false;
+    /* UGameEngine requires at least 50 primary vtable entries.
+     * This filters out ULocalPlayer, UNetDriver, and similar. */
+    if (!best_obj || best_vcnt < 50) {
+        bridge_log("  GUA GEngine scan: no candidate "
+                   "(best=%d vtable entries, need >=50)", best_vcnt);
+        return false;
+    }
+
+    bridge_log("  GUA GEngine found: 0x%p (vptr=0x%llX, %d vtable entries)",
+               best_obj, (unsigned long long)best_vptr, best_vcnt);
+
+    g_engine_ptr   = (UEngine*)best_obj;
+    g_engine_found = true;
+    /* g_engine_global_addr not available via this method */
+    return true;
 }
 
 /*
- * Strategy B: GSpots AOB pattern scan for GWorld.
- * From Do0ks/GSpots research -- these byte patterns match the
- * `mov [rip+GWorld], rax` instruction with specific context bytes.
- * Version-independent (works UE 4.25 through 5.7+).
+ * Find GUObjectArray.
+ *
+ * Strategy 1: Export symbol lookup.
+ *   Many UE5 games export "?GUObjectArray@@3VFUObjectArray@@A".
+ *   (Used by Returnal, per UE4SS GUObjectArray.lua.)
+ *
+ * Strategy 2-4: AOB pattern scan -- three patterns sourced from
+ *   UE4SS CustomGameConfigs Lua scripts (validated on real UE5 games):
+ *
+ *   Pat-A (LN3): LEA reg, [RIP+GUObjectArray] in AllocateUObjectIndex
+ *     48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01
+ *     Decode: next=addr+7, GUA = next + *(int32*)(addr+3)
+ *
+ *   Pat-B (FF7 Remake): MOV reg, [RIP+ptr_into_GUA+0x10]
+ *     48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07
+ *     Decode: next=addr+7, ptr = next+*(int32*)(addr+3), GUA = ptr-0x10
+ *
+ *   Pat-C (FF7 Rebirth): ADD targeting GUObjectArray+6
+ *     03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D
+ *     Decode: next=addr+6, GUA = next + *(int32*)(addr+2)
  */
-static bool find_gworld_via_aob()
+static bool find_guobjectarray()
 {
+    bridge_log("=== GUObjectArray Search ===");
+
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
+
+    /* --- Strategy 1: Export symbol --- */
+    HMODULE exe = GetModuleHandleA(NULL);
+    void* exp_addr = (void*)GetProcAddress(
+        exe, "?GUObjectArray@@3VFUObjectArray@@A");
+    if (exp_addr) {
+        bridge_log("  Strategy 1: export found at 0x%p", exp_addr);
+        if (validate_guobjectarray(exp_addr)) {
+            g_guobjectarray = exp_addr;
+            g_guobjectarray_found = true;
+            bridge_log("  GUObjectArray via export: 0x%p", exp_addr);
+            return true;
+        }
+    } else {
+        bridge_log("  Strategy 1: export not found");
+    }
+
+    /* --- Strategy 2-5: AOB patterns --- */
+    /* mod_start/mod_end only needed for AOB candidate validation */
     uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
+    uintptr_t mod_end   = mod_start + rgn.size;
 
-    bridge_log("  Strategy B: GSpots AOB patterns");
+    /* Pat-A: 48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01
+     * LEA reg,[rip+GUA] in AllocateUObjectIndex (LN3 demo) */
+    static const uint8_t patA[] = {
+        0x48,0x8D, 0,0,0,0,0,  0x4C,0x8B,0xC9, 0x48,0x89,0x01
+    };
+    static const char maskA[] = "xx?????xxxxxx";
 
-    /* Each pattern: bytes + mask. '?' = wildcard.
-     * The 48 89 05 at the start is `mov [rip+disp32], rax`.
-     * We resolve the disp32 to get &GWorld. */
-    struct AOBPattern {
+    /* Pat-B: 48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07
+     * MOV reg,[rip+GUA+0x10] (FF7 Remake) */
+    static const uint8_t patB[] = {
+        0x48,0x8B, 0,0,0,0,0,  0x4C,0x8B,0x04,0xC8, 0x4D,0x85,0xC0,0x74,0x07
+    };
+    static const char maskB[] = "xx?????xxxxxxxxx";
+
+    /* Pat-C: 03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D
+     * ADD targeting GUObjectArray+6 (FF7 Rebirth) */
+    static const uint8_t patC[] = {
+        0x03, 0,0,0,0,0,  0xFF,0xC8, 0x3B,0xD0, 0x0F,0x8D
+    };
+    static const char maskC[] = "x?????xxxxxx";
+
+    /* Pat-D: 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01
+     * LEA RCX,[rip+GUA+0x10] in engine init sequence (Split Fiction)
+     * Same -0x10 adjustment as Pat-B. */
+    static const uint8_t patD[] = {
+        0x48,0x8D,0x0D, 0,0,0,0,
+        0xE8, 0,0,0,0,
+        0xE8, 0,0,0,0,
+        0xE8, 0,0,0,0,
+        0xC6,0x05, 0,0,0,0, 0x01
+    };
+    static const char maskD[] = "xxx????x????x????x????xx????x";
+
+    struct PatEntry {
         const uint8_t* bytes;
         const char*    mask;
-        int            len;
-        int            mov_offset;  /* offset of 48 89 05 in pattern */
+        size_t         len;
+        int            disp_off;   /* offset to int32 displacement */
+        int            instr_len;  /* total instruction bytes */
+        int            adjustment; /* subtract from resolved addr */
         const char*    name;
     };
 
-    /* Pattern 1: 48 89 05 ?? ?? ?? ?? ?? 8B ?? ?? ?? F6 86 3B 01 */
-    static const uint8_t p1[] = {
-        0x48,0x89,0x05, 0,0,0,0, 0,0x8B,0,0,0, 0xF6,0x86, 0x3B,0x01
+    PatEntry pats[] = {
+        {patA, maskA, 13, 3, 7,    0, "Pat-A (LN3/AllocateUObjectIndex)"},
+        {patB, maskB, 16, 3, 7, 0x10, "Pat-B (FF7R/GUObjectArray+0x10)"},
+        {patC, maskC, 12, 2, 6,    0, "Pat-C (FF7Rebirth/ADD-pattern)"},
+        {patD, maskD, 29, 3, 7, 0x10, "Pat-D (SplitFiction/LEA-RCX)"},
     };
-    /* Pattern 2: 48 89 05 ?? ?? ?? ?? 49 8B ?? 78 F6 */
-    static const uint8_t p2[] = {
-        0x48,0x89,0x05, 0,0,0,0, 0x49,0x8B,0,0x78, 0xF6
-    };
-    /* Pattern 3: 48 89 05 ?? ?? ?? ?? ?? 8B ?? 88 ?? ?? ?? F6 */
-    static const uint8_t p3[] = {
-        0x48,0x89,0x05, 0,0,0,0, 0,0x8B,0,0x88, 0,0,0, 0xF6
-    };
+    const int NUM_PATS = 4;
 
-    const AOBPattern patterns[] = {
-        {p1, "xxx????x?x??xx??", 16, 0, "GSpots-v1"},
-        {p2, "xxx????xx?xx",     12, 0, "GSpots-v6"},
-        {p3, "xxx????x?x?x??x", 15, 0, "GSpots-v8"},
-    };
-    const int NUM_PATTERNS = 3;
-
-    for (int pi = 0; pi < NUM_PATTERNS; pi++) {
-        const AOBPattern& pat = patterns[pi];
+    for (int pi = 0; pi < NUM_PATS; pi++) {
+        const PatEntry& pe = pats[pi];
         const uint8_t* hit = pattern_scan(
-            rgn.base, rgn.size, pat.bytes, pat.mask, pat.len);
-        if (!hit) continue;
+            rgn.base, rgn.size, pe.bytes, pe.mask, pe.len);
 
-        bridge_log("    %s matched at +0x%llX", pat.name,
+        if (!hit) {
+            bridge_log("  Strategy %d: %s -- no match", pi + 2, pe.name);
+            continue;
+        }
+
+        bridge_log("  Strategy %d: %s matched at +0x%llX",
+                   pi + 2, pe.name,
                    (unsigned long long)(hit - rgn.base));
 
-        /* Resolve the mov [rip+disp32] at mov_offset */
-        const uint8_t* mov_instr = hit + pat.mov_offset;
-        uintptr_t resolved = resolve_rip_relative(mov_instr, 3, 7);
-        if (resolved < mod_start || resolved >= mod_end) {
-            bridge_log("    resolved 0x%llX out of module, skip",
-                       (unsigned long long)resolved);
+        uintptr_t resolved = resolve_rip_relative(
+            hit, pe.disp_off, pe.instr_len);
+        void* candidate = (void*)(resolved - (uintptr_t)pe.adjustment);
+
+        bridge_log("    resolved=0x%llX, candidate=0x%p",
+                   (unsigned long long)resolved, candidate);
+
+        if ((uintptr_t)candidate < mod_start ||
+            (uintptr_t)candidate >= mod_end) {
+            bridge_log("    candidate outside module, skip");
             continue;
         }
 
-        void* candidate = *(void**)resolved;
-        uintptr_t vt = check_uobject_ptr(candidate, mod_start, mod_end);
-        if (!vt) {
-            bridge_log("    ptr 0x%p not a valid UObject, skip",
-                       candidate);
+        if (!validate_guobjectarray(candidate)) continue;
+
+        g_guobjectarray = candidate;
+        g_guobjectarray_found = true;
+        bridge_log("  GUObjectArray FOUND via %s: 0x%p", pe.name, candidate);
+        return true;
+    }
+
+    bridge_log("  GUObjectArray: all strategies failed");
+    return false;
+}
+
+/* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
+
+/*
+ * Install a hook on vtable[1] of a secondary FExec vtable.
+ * Returns true if newly installed, false if already hooked.
+ *
+ * Reuses hooked_fexec_exec (defined later) which:
+ *   1. Captures UWorld from the `world` parameter.
+ *   2. Looks up the correct original in g_fexec_hook_table.
+ *   3. Forwards to the original.
+ */
+static bool __fastcall hooked_fexec_exec(  /* forward decl */
+    void* this_fexec, void* world, const wchar_t* cmd, void* ar);
+
+static bool install_fexec_hook_on(uintptr_t fexec_vtable,
+                                   uintptr_t primary_vptr,
+                                   uintptr_t mod_start, uintptr_t mod_end)
+{
+    if (g_fexec_hook_count >= 16) {
+        bridge_log("  FExec hook table full");
+        return false;
+    }
+
+    /* Reject primary vtable */
+    if (fexec_vtable == primary_vptr) return false;
+
+    /* Check if already hooked */
+    for (int i = 0; i < g_fexec_hook_count; i++) {
+        if (g_fexec_hook_table[i].vtable_base == fexec_vtable)
+            return false;  /* already done */
+    }
+
+    /* vtable[1] = Exec (the function we want to intercept) */
+    uintptr_t* slot = (uintptr_t*)(fexec_vtable + 8);
+    FExecExecFn orig = (FExecExecFn)seh_read_ptr((void*)slot);
+    if (!orig || orig == (FExecExecFn)hooked_fexec_exec) return false;
+    if (!validate_function_ptr((void*)orig)) return false;
+
+    /* Make vtable page writable */
+    DWORD old_prot = 0;
+    if (!VirtualProtect(slot, 8, PAGE_READWRITE, &old_prot)) {
+        bridge_log("  FExec hook: VirtualProtect failed (%d)",
+                   GetLastError());
+        return false;
+    }
+    *slot = (uintptr_t)hooked_fexec_exec;
+    VirtualProtect(slot, 8, old_prot, &old_prot);
+
+    FExecHookEntry& e = g_fexec_hook_table[g_fexec_hook_count++];
+    e.vtable_base = fexec_vtable;
+    e.slot        = slot;
+    e.original    = orig;
+
+    bridge_log("  FExec hook installed: vtable=0x%llX "
+               "original=0x%p slot=%d",
+               (unsigned long long)fexec_vtable, (void*)orig,
+               g_fexec_hook_count - 1);
+    return true;
+}
+
+/*
+ * Scan GUObjectArray for all UObjects that have a secondary FExec vtable
+ * at offset 0x28 (= sizeof(UObject) = UE4SS default FExecVTableOffsetInLocalPlayer).
+ *
+ * This finds UGameEngine (already hooked), ULocalPlayer, and any other
+ * FExec implementors. We hook all unique vtables.
+ *
+ * Caps at 200,000 objects to avoid blocking the game thread too long.
+ * ULocalPlayer is created early and typically has index < 10,000.
+ */
+static void scan_guobjectarray_for_fexec_hooks()
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return;
+    if (!g_engine_ptr) return;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+    uintptr_t primary_vptr = seh_read_ptr(g_engine_ptr);  /* GEngine vtable */
+
+    int32_t num_elems = guobjectarray_num_elements();
+    int32_t scan_limit = (num_elems < 200000) ? num_elems : 200000;
+
+    bridge_log("=== GUObjectArray FExec scan (%d objects, limit %d) ===",
+               num_elems, scan_limit);
+
+    int checked = 0;
+    int hooked_new = 0;
+
+    for (int32_t i = 0; i < scan_limit; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x7F0000000000ULL) continue;
+
+        checked++;
+
+        /* Check for FExec vtable at UE4SS default offset 0x28 (= 40) */
+        uintptr_t fexec_off = 0x28;
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
+        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+        if (fexec_vptr == primary_vptr) continue;  /* skip primary */
+
+        /* Validate: vtable[0] and vtable[1] must be valid functions
+         * in module; 3-8 total entries (FExec signature). */
+        void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
+        void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
+        if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1))
             continue;
-        }
-        if (candidate == (void*)g_engine_ptr) continue;
-        if (vt == engine_vt) continue;
 
-        g_world_ptr = candidate;
-        g_world_global_addr = resolved;
-        bridge_log("  GWorld FOUND via %s: 0x%p (global=0x%llX)",
-                   pat.name, candidate, (unsigned long long)resolved);
-        return true;
+        int vcnt = 2;
+        for (int vi = 2; vi < 9; vi++) {
+            void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
+            if (!validate_function_ptr(fn)) break;
+            vcnt++;
+        }
+        if (vcnt < 3 || vcnt > 8) continue;
+
+        /* This object has a valid FExec vtable -- hook it */
+        if (install_fexec_hook_on(fexec_vptr, primary_vptr,
+                                   mod_start, mod_end))
+            hooked_new++;
     }
 
-    bridge_log("    no GWorld via AOB patterns");
-    return false;
+    bridge_log("  GUObjectArray scan done: checked=%d, new_hooks=%d "
+               "total_hooks=%d", checked, hooked_new, g_fexec_hook_count);
 }
 
-/*
- * Strategy B: Scan the PE .data section for GWorld global.
- * GWorld is a UWorld* global in the writable data section.
- * We scan all writable pages for non-null UObject pointers with
- * a different class from GEngine.
- */
-static bool find_gworld_in_data_section()
-{
-    if (!g_engine_ptr) return false;
 
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-    uintptr_t engine_vt = seh_read_ptr(g_engine_ptr);
-    uintptr_t engine_class = seh_read_ptr((uint8_t*)g_engine_ptr + 16);
-
-    bridge_log("  Scanning .data section for GWorld...");
-
-    /* Use VirtualQuery to find writable pages (likely .data/.bss) */
-    const uint8_t* addr = rgn.base;
-    const uint8_t* end = rgn.base + rgn.size;
-    int pages_scanned = 0;
-    int ptrs_checked = 0;
-    int candidates = 0;
-
-    while (addr < end) {
-        MEMORY_BASIC_INFORMATION mbi = {};
-        if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0) break;
-
-        const uint8_t* region_base = (const uint8_t*)mbi.BaseAddress;
-        size_t region_size = mbi.RegionSize;
-
-        /* Only scan writable pages (.data, .bss) */
-        bool writable = (mbi.State == MEM_COMMIT) &&
-            (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE |
-                            PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) &&
-            !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
-
-        if (writable) {
-            pages_scanned++;
-            const uint8_t* r_start = (region_base < rgn.base) ?
-                                      rgn.base : region_base;
-            const uint8_t* r_end = region_base + region_size;
-            if (r_end > end) r_end = end;
-
-            /* Align to 8 bytes */
-            uintptr_t s = ((uintptr_t)r_start + 7) & ~(uintptr_t)7;
-            uintptr_t e = (uintptr_t)r_end - 8;
-
-            for (uintptr_t a = s; a <= e; a += 8) {
-                void* ptr = *(void**)a;
-                ptrs_checked++;
-                uintptr_t vt = check_uobject_ptr(ptr, mod_start, mod_end);
-                if (!vt) continue;
-                if (ptr == (void*)g_engine_ptr) continue;
-                if (vt == engine_vt) continue;
-
-                uintptr_t cls = seh_read_ptr((uint8_t*)ptr + 16);
-                if (cls == engine_class) continue;
-
-                /* Check OuterPrivate -- must be valid */
-                uintptr_t outer = seh_read_ptr((uint8_t*)ptr + 32);
-                if (outer < 0x10000) continue;
-
-                /* UWorld signature: outer is a root UPackage.
-                 * Root UPackage has OuterPrivate = NULL (offset 32).
-                 * Also check outer has valid vtable (is a UObject). */
-                uintptr_t outer_vt = seh_read_ptr((void*)outer);
-                if (outer_vt < mod_start || outer_vt >= mod_end) continue;
-                uintptr_t outer_outer = seh_read_ptr(
-                    (uint8_t*)outer + 32);
-                bool is_root_pkg = (outer_outer == 0);
-
-                candidates++;
-                bridge_log("    .data+0x%llX: ptr=0x%p vt=0x%llX "
-                           "class=0x%llX outer_outer=%s",
-                           (unsigned long long)(a - mod_start),
-                           ptr, (unsigned long long)vt,
-                           (unsigned long long)cls,
-                           is_root_pkg ? "NULL(root)" : "non-null");
-
-                /* Only accept objects whose outer is a root package
-                 * (UWorld -> UPackage with OuterPrivate=NULL) */
-                if (!is_root_pkg) continue;
-
-                g_world_ptr = ptr;
-                g_world_global_addr = a;  /* store .data address */
-                bridge_log("  GWorld FOUND in .data: 0x%p "
-                           "(global=0x%llX, %d candidates)",
-                           ptr, (unsigned long long)a, candidates);
-                return true;
-            }
-        }
-
-        addr = region_base + region_size;
-        if (addr <= region_base) break;
-    }
-
-    bridge_log("  GWorld not found in .data "
-               "(%d pages, %d ptrs, %d candidates)",
-               pages_scanned, ptrs_checked, candidates);
-    return false;
-}
+/* -- FExec multi-hook: actual hook function and management --------- */
 
 /*
- * Refresh g_world_ptr.  Called periodically (not on every command).
- * Only uses safe memory-scan approaches, never calls vtable functions.
- */
-/*
- * Find UWorld using all available strategies.
- * Called at startup and can be retriggered via TCP command.
- */
-/*
- * Cross-validation: check if a UWorld candidate is referenced inside
- * GEngine's member chain (direct or 1-level indirect).
+ * THE hook function installed on all FExec vtable[1] slots.
  *
- * GEngine -> WorldList -> FWorldContext -> UWorld*
- * GEngine -> GameViewport -> World (UWorld*)
+ * This implements UE4SS's ULocalPlayerExecPreCallback pattern:
+ *   ULocalPlayer::Exec(UWorld* InWorld, cmd, ar) -- UWorld is param 2.
+ *   GEngine::Exec  (UWorld* InWorld, cmd, ar)    -- same calling convention.
  *
- * We don't know exact offsets, so we scan:
- *   1. Direct: does GEngine[48..8192] contain this pointer?
- *   2. Indirect: for each heap pointer in GEngine[48..8192],
- *      does THAT object contain this pointer in its first 1024 bytes?
- */
-static bool cross_validate_world(void* candidate)
-{
-    if (!candidate || !g_engine_ptr) return false;
-
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t target = (uintptr_t)candidate;
-
-    /* Pass 1: direct reference in GEngine */
-    for (int off = 48; off < 8192; off += 8) {
-        uintptr_t val = seh_read_ptr(obj + off);
-        if (val == target) {
-            bridge_log("  CROSS-VALIDATE: GEngine+%d directly "
-                       "contains UWorld 0x%p", off, candidate);
-            return true;
-        }
-    }
-
-    /* Pass 2: indirect (2 levels deep).
-     * Level 2: GEngine[off] -> sub[sub_off] == target
-     * Level 3: GEngine[off] -> sub[sub_off] -> sub2[sub2_off] == target
-     * Covers: GEngine -> WorldList.Data -> FWorldContext -> UWorld */
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end = mod_start + rgn.size;
-
-    for (int off = 48; off < 8192; off += 8) {
-        uintptr_t val = seh_read_ptr(obj + off);
-        if (val < 0x10000 || val == target) continue;
-        if (val >= 0x7F0000000000ULL) continue;  /* skip DLL range */
-
-        /* Level 2: scan sub-object */
-        for (int sub = 0; sub < 1024; sub += 8) {
-            uintptr_t sv = seh_read_ptr((void*)(val + sub));
-            if (sv == target) {
-                bridge_log("  CROSS-VALIDATE: GEngine+%d -> "
-                           "obj+%d contains UWorld 0x%p",
-                           off, sub, candidate);
-                return true;
-            }
-
-            /* Level 3: follow heap pointer one more level.
-             * Covers TIndirectArray: Data[0] -> FWorldContext -> UWorld */
-            if (sv < 0x10000 || sv >= 0x7F0000000000ULL) continue;
-            for (int sub2 = 0; sub2 < 512; sub2 += 8) {
-                uintptr_t sv2 = seh_read_ptr((void*)(sv + sub2));
-                if (sv2 == target) {
-                    bridge_log("  CROSS-VALIDATE: GEngine+%d -> "
-                               "+%d -> +%d contains UWorld 0x%p",
-                               off, sub, sub2, candidate);
-                    return true;
-                }
-            }
-        }
-    }
-
-    bridge_log("  CROSS-VALIDATE: UWorld 0x%p NOT found in "
-               "GEngine member chain", candidate);
-    return false;
-}
-
-static bool find_uworld()
-{
-    if (g_world_ptr) return true;
-
-    bridge_log("=== UWorld Search ===");
-
-    /* A: GWorld-specific string xref */
-    if (find_gworld_via_string_xref()) {
-        cross_validate_world(g_world_ptr);  /* log only */
-        return true;
-    }
-
-    /* B: GSpots AOB pattern scan */
-    if (find_gworld_via_aob()) {
-        cross_validate_world(g_world_ptr);
-        return true;
-    }
-
-    /* C: scan entire .data section */
-    if (find_gworld_in_data_section()) {
-        if (cross_validate_world(g_world_ptr)) {
-            bridge_log("  UWorld CONFIRMED by cross-validation");
-            return true;
-        }
-        /* .data found something but GEngine doesn't reference it.
-         * REJECT -- passing wrong UWorld corrupts engine state. */
-        bridge_log("  REJECTED: .data candidate not cross-validated");
-        g_world_ptr = nullptr;
-        g_world_global_addr = 0;
-    }
-
-    bridge_log("  All UWorld strategies failed");
-    return false;
-}
-
-/* -- FExec::Exec vtable hook (captures UWorld from game calls) ----- */
-
-/*
- * Hook the FExec::Exec vtable entry to capture UWorld from game-initiated
- * calls. The game's own console, level loading, and gameplay systems all
- * call UEngine::Exec with a valid UWorld. We intercept it and save it.
+ * When the game calls any registered FExec::Exec (GEngine or ULocalPlayer),
+ * InWorld (rdx) is the live UWorld pointer.  We capture it here.
  *
- * This is the most reliable method: the game GIVES us UWorld, we don't
- * have to find it ourselves.
+ * Lookup: find the correct original by matching this_fexec's vtable
+ * against g_fexec_hook_table[].vtable_base.
  */
-static FExecExecFn g_original_exec = NULL;
-static std::atomic<bool> g_exec_hook_installed{false};
-
 static bool __fastcall hooked_fexec_exec(
     void* this_fexec, void* world, const wchar_t* cmd, void* ar)
 {
-    /* Capture UWorld from game-initiated calls.
-     * Only accept heap pointers (not NULL, not DLL range). */
+    /* Capture UWorld -- only accept valid heap pointers */
     if (world && (uintptr_t)world > 0x10000 &&
         (uintptr_t)world < 0x7F0000000000ULL)
     {
         if (g_world_ptr != world) {
             g_world_ptr = world;
-            bridge_log("HOOK: captured UWorld 0x%p from game Exec call",
-                       world);
+            bridge_log("HOOK: UWorld captured 0x%p (this_fexec=0x%p)",
+                       world, this_fexec);
         }
     }
 
-    /* Call the original adjustor thunk -> UEngine::Exec */
-    return g_original_exec(this_fexec, world, cmd, ar);
-}
-
-static bool install_exec_hook()
-{
-    if (!g_engine_ptr || !g_fexec_offset || !g_fexec_exec)
-        return false;
-
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t vptr = *(uintptr_t*)(obj + g_fexec_offset);
-
-    /* vtable[1] = Exec (adjustor thunk) */
-    uintptr_t* exec_slot = (uintptr_t*)(vptr + 8);
-    g_original_exec = (FExecExecFn)*exec_slot;
-
-    /* Make vtable page writable */
-    DWORD old_protect = 0;
-    if (!VirtualProtect(exec_slot, 8, PAGE_READWRITE, &old_protect)) {
-        bridge_log("WARNING: VirtualProtect failed for vtable hook "
-                   "(%d)", GetLastError());
-        return false;
+    /* Dispatch to correct original via vtable lookup.
+     * this_fexec points to the FExec subobject; its first qword is
+     * the secondary vtable pointer (same key we stored at install). */
+    uintptr_t vtable = seh_read_ptr(this_fexec);
+    for (int i = 0; i < g_fexec_hook_count; i++) {
+        if (g_fexec_hook_table[i].vtable_base == vtable)
+            return g_fexec_hook_table[i].original(
+                this_fexec, world, cmd, ar);
     }
 
-    /* Replace vtable entry with our hook */
-    *exec_slot = (uintptr_t)hooked_fexec_exec;
-    VirtualProtect(exec_slot, 8, old_protect, &old_protect);
-
-    g_exec_hook_installed = true;
-    bridge_log("FExec::Exec hook installed (original=0x%p, "
-               "hook=0x%p)", (void*)g_original_exec,
-               (void*)hooked_fexec_exec);
-    return true;
+    /* Fallback: vtable not in table (should not happen).
+     * Return false rather than crashing. */
+    bridge_log("HOOK: vtable 0x%llX not in hook table -- no-op",
+               (unsigned long long)vtable);
+    return false;
 }
 
-static void uninstall_exec_hook()
+/*
+ * Install FExec hook on GEngine (called after find_fexec_vtable()).
+ * Also installs via GUObjectArray scan if available.
+ * This replaces the old install_exec_hook().
+ */
+static bool install_all_fexec_hooks()
 {
-    if (!g_exec_hook_installed || !g_original_exec) return;
+    if (!g_engine_ptr || !g_fexec_offset) return false;
 
-    uint8_t* obj = (uint8_t*)g_engine_ptr;
-    uintptr_t vptr = *(uintptr_t*)(obj + g_fexec_offset);
-    uintptr_t* exec_slot = (uintptr_t*)(vptr + 8);
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+    uintptr_t primary_vptr = seh_read_ptr(g_engine_ptr);
 
-    DWORD old_protect = 0;
-    VirtualProtect(exec_slot, 8, PAGE_READWRITE, &old_protect);
-    *exec_slot = (uintptr_t)g_original_exec;
-    VirtualProtect(exec_slot, 8, old_protect, &old_protect);
+    bridge_log("=== Installing FExec hooks ===");
 
-    g_exec_hook_installed = false;
-    bridge_log("FExec::Exec hook removed");
+    /* Always hook GEngine's FExec (already found by find_fexec_vtable) */
+    uint8_t* eng = (uint8_t*)g_engine_ptr;
+    uintptr_t engine_fexec_vtable = seh_read_ptr(eng + g_fexec_offset);
+    int n = g_fexec_hook_count;
+    install_fexec_hook_on(engine_fexec_vtable, primary_vptr,
+                          mod_start, mod_end);
+    if (g_fexec_hook_count > n)
+        bridge_log("  GEngine FExec hooked (vtable=0x%llX)",
+                   (unsigned long long)engine_fexec_vtable);
+
+    /* Scan GUObjectArray for additional FExec objects (ULocalPlayer etc.) */
+    if (g_guobjectarray_found)
+        scan_guobjectarray_for_fexec_hooks();
+
+    bridge_log("  Total FExec hooks: %d", g_fexec_hook_count);
+    return g_fexec_hook_count > 0;
+}
+
+static void uninstall_all_fexec_hooks()
+{
+    bridge_log("=== Uninstalling FExec hooks (%d) ===", g_fexec_hook_count);
+    for (int i = 0; i < g_fexec_hook_count; i++) {
+        FExecHookEntry& e = g_fexec_hook_table[i];
+        DWORD old_prot = 0;
+        VirtualProtect(e.slot, 8, PAGE_READWRITE, &old_prot);
+        *e.slot = (uintptr_t)e.original;
+        VirtualProtect(e.slot, 8, old_prot, &old_prot);
+        bridge_log("  Restored vtable=0x%llX",
+                   (unsigned long long)e.vtable_base);
+    }
+    g_fexec_hook_count = 0;
 }
 
 /* -- Console command execution ------------------------------------- */
@@ -1400,35 +1515,11 @@ static bool exec_console_command(const char* cmd)
  *   this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset
  * The vtable thunk then adjusts it back to UEngine base.
  */
-static int g_exec_crash_count = 0;
-
 static bool exec_console_command_internal(const char* cmd)
 {
-    /* Show current world (dynamic from global addr if available) */
-    void* log_world = g_world_ptr;
-    if (g_world_global_addr)
-        log_world = *(void**)g_world_global_addr;
-
     if (!g_fexec_exec) {
         bridge_log("  [SKIP] FExec::Exec not available");
         return false;
-    }
-
-    if (g_exec_crash_count >= 3) {
-        /* Crashes with world ptr -> disable world, keep Exec alive.
-         * Crashes with NULL world -> truly broken, disable Exec. */
-        if (g_world_global_addr && g_exec_crash_count < 6) {
-            bridge_log("  Disabling world ptr after %d crashes",
-                       g_exec_crash_count);
-            g_world_global_addr = 0;
-            g_world_ptr = nullptr;
-            g_exec_crash_count = 0;  /* reset, try with NULL */
-            /* Don't return -- re-run this command with NULL world */
-        } else {
-            bridge_log("  [SKIP] FExec disabled after %d crashes",
-                       g_exec_crash_count);
-            return false;
-        }
     }
 
     /* Convert UTF-8 to wide string */
@@ -1443,30 +1534,24 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Use UWorld captured by hook (most reliable), or from
-     * .data scan global address, or NULL as fallback. */
-    void* world = g_world_ptr;  /* set by hooked_fexec_exec */
-    if (!world && g_world_global_addr) {
-        void* w = *(void**)g_world_global_addr;
-        if (w && (uintptr_t)w > 0x10000 &&
-            (uintptr_t)w < 0x7F0000000000ULL)
-            world = w;
-    }
+    /* UWorld captured by FExec hooks from ULocalPlayer::Exec.
+     * NULL is accepted -- CVars and showflag work without it. */
+    void* world = g_world_ptr;
 
-    /* Use original Exec (bypass hook to avoid recursion) */
-    FExecExecFn exec_fn = g_original_exec ? g_original_exec : g_fexec_exec;
+    /* Use GEngine's original Exec to avoid recursion.
+     * GEngine hook is always the first entry in g_fexec_hook_table. */
+    FExecExecFn exec_fn = g_fexec_exec;
+    if (g_fexec_hook_count > 0)
+        exec_fn = g_fexec_hook_table[0].original;
 
     bool cmd_ret = false;
     if (seh_call_fexec(exec_fn, this_fexec,
                         world, wcmd.data(), ar, &cmd_ret)) {
         bridge_log("  OK ret=%d", (int)cmd_ret);
-        g_exec_crash_count = 0;  /* reset on success */
         return cmd_ret;
     }
 
-    g_exec_crash_count++;
-    bridge_log("  ERROR: FExec::Exec crashed (count=%d/3)",
-               g_exec_crash_count);
+    bridge_log("  ERROR: FExec::Exec crashed");
     return false;
 }
 
