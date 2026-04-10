@@ -956,10 +956,24 @@ static bool find_gengine_via_guobjectarray()
         uintptr_t vptr = seh_read_ptr(obj);
         if (vptr < mod_start || vptr >= mod_end) continue;
 
-        /* Must have FExec secondary vtable at +0x28 */
-        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + 0x28);
-        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
-        if (fexec_vptr == vptr) continue;
+        /* Find FExec secondary vtable. Try both known offsets:
+         *   +0x28 = standard UE5 (FName = 8 bytes, sizeof(UObjectBase)=40)
+         *   +0x30 = WITH_CASE_PRESERVING_NAME (FName = 12 bytes, sizeof=48)
+         * This function runs before find_fexec_vtable(), so g_fexec_offset=0. */
+        static const uintptr_t fexec_candidates[] = { 0x28, 0x30 };
+        uintptr_t fexec_vptr = 0;
+        for (int ci = 0; ci < 2; ci++) {
+            uintptr_t candidate = seh_read_ptr((uint8_t*)obj + fexec_candidates[ci]);
+            if (candidate >= mod_start && candidate < mod_end && candidate != vptr) {
+                void* f0 = (void*)seh_read_ptr((void*)candidate);
+                void* f1 = (void*)seh_read_ptr((void*)(candidate + 8));
+                if (validate_function_ptr(f0) && validate_function_ptr(f1)) {
+                    fexec_vptr = candidate;
+                    break;
+                }
+            }
+        }
+        if (!fexec_vptr) continue;
 
         /* Validate FExec vtable has 3-8 entries */
         void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
@@ -1049,8 +1063,15 @@ static bool find_uworld_via_guobjectarray()
         if (vptr < mod_start || vptr >= mod_end) continue;
         if (vptr == engine_vptr) continue;
 
-        /* 4. FExec secondary vtable at +0x28 */
-        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + 0x28);
+        /* 4. FExec secondary vtable at g_fexec_offset (auto-detected by
+         *    find_fexec_vtable(); NOT hardcoded 0x28 -- some UE5 builds
+         *    use WITH_CASE_PRESERVING_NAME which makes FName 12 bytes,
+         *    shifting UObjectBase from 40 to 48 bytes, so FExec moves
+         *    from +0x28 to +0x30).  OuterPrivate is always 8 bytes before
+         *    FExec in UObjectBase layout. */
+        uintptr_t fexec_off  = g_fexec_offset ? g_fexec_offset : 0x28;
+        uintptr_t outer_off  = fexec_off - 8;  /* OuterPrivate = last UObjectBase field */
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
         if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
         if (fexec_vptr == vptr) continue;
 
@@ -1075,24 +1096,29 @@ static bool find_uworld_via_guobjectarray()
         }
         if (vcnt < 50) continue;
 
-        /* 5. OuterPrivate at +0x20 must be a valid heap pointer */
-        uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
+        /* 5. OuterPrivate (at outer_off = fexec_off - 8) must be a valid heap pointer */
+        uintptr_t outer = seh_read_ptr((uint8_t*)obj + outer_off);
         if (outer < 0x10000 || outer >= 0x7F0000000000ULL) continue;
 
-        /* 6. Outer's OuterPrivate must be null (root UPackage) */
-        uintptr_t outer_outer = seh_read_ptr((void*)(outer + 0x20));
+        /* 6. Outer's OuterPrivate (at outer+outer_off) must be null (root UPackage).
+         *    Use same outer_off for the nested read: OuterPrivate is always at the
+         *    same field position in any UObject. */
+        uintptr_t outer_outer = seh_read_ptr((uint8_t*)outer + outer_off);
         if (outer_outer != 0) continue;
 
         /* UWorld found */
         bridge_log("  UWorld found: 0x%p "
-                   "(vptr=0x%llX vcnt=%d outer=0x%llX)",
-                   obj, (unsigned long long)vptr, vcnt,
+                   "(fexec_off=0x%llX vptr=0x%llX vcnt=%d outer=0x%llX)",
+                   obj, (unsigned long long)fexec_off,
+                   (unsigned long long)vptr, vcnt,
                    (unsigned long long)outer);
         g_world_ptr = obj;
         return true;
     }
 
-    bridge_log("  UWorld not found in GUObjectArray scan");
+    bridge_log("  UWorld not found in GUObjectArray scan "
+               "(fexec_off=0x%llX outer_off=0x%llX)",
+               (unsigned long long)fexec_off, (unsigned long long)outer_off);
     return false;
 }
 
@@ -1333,8 +1359,10 @@ static void scan_guobjectarray_for_fexec_hooks()
 
         checked++;
 
-        /* Check for FExec vtable at UE4SS default offset 0x28 (= 40) */
-        uintptr_t fexec_off = 0x28;
+        /* Use g_fexec_offset detected by find_fexec_vtable() on GEngine.
+         * This handles both standard layout (+0x28) and WITH_CASE_PRESERVING_NAME
+         * layout (+0x30) transparently. */
+        uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
         uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
         if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
         if (fexec_vptr == primary_vptr) continue;  /* skip primary */
