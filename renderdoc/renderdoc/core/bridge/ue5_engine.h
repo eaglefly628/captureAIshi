@@ -1053,6 +1053,11 @@ static bool find_uworld_via_guobjectarray()
     bridge_log("=== UWorld scan via GUObjectArray (%d objects) ===",
                num_elems);
 
+    /* FExec and OuterPrivate offsets -- constant for this game/build.
+     * g_fexec_offset is set by find_fexec_vtable() before this is called. */
+    uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
+    uintptr_t outer_off = fexec_off - 8;  /* OuterPrivate = last UObjectBase field */
+
     for (int32_t i = 0; i < num_elems; i++) {
         void* obj = guobjectarray_get(i);
         if (!obj || (uintptr_t)obj < 0x10000) continue;
@@ -1069,8 +1074,6 @@ static bool find_uworld_via_guobjectarray()
          *    shifting UObjectBase from 40 to 48 bytes, so FExec moves
          *    from +0x28 to +0x30).  OuterPrivate is always 8 bytes before
          *    FExec in UObjectBase layout. */
-        uintptr_t fexec_off  = g_fexec_offset ? g_fexec_offset : 0x28;
-        uintptr_t outer_off  = fexec_off - 8;  /* OuterPrivate = last UObjectBase field */
         uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
         if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
         if (fexec_vptr == vptr) continue;
