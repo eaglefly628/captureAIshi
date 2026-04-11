@@ -6,25 +6,23 @@ set UE_ROOT=D:\UnrealVersion\UE_5.7
 set PROJECT=D:\StackOBot\StackOBot.uproject
 :: ------------------------
 
-set UBT=%UE_ROOT%\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe
 set GEN=%UE_ROOT%\Engine\Build\BatchFiles\GenerateProjectFiles.bat
+set BUILD=%UE_ROOT%\Engine\Build\BatchFiles\Build.bat
 
-echo === Step 1: Generate VS project files ===
-call "%GEN%" -project="%PROJECT%" -game -engine
-if errorlevel 1 (
-    echo WARNING: GenerateProjectFiles failed, trying direct UBT...
-    "%UBT%" -projectfiles -project="%PROJECT%" -game -engine
-)
+echo === Step 1: Generate VS project files (skip IntelliSense) ===
+call "%GEN%" -project="%PROJECT%" -game -nointellisense
+echo GenerateProjectFiles exited with code %ERRORLEVEL% (non-zero is OK if .sln was created)
 
 echo.
-echo === Step 2: Build Development Editor ===
-"%UE_ROOT%\Engine\Build\BatchFiles\Build.bat" StackOBotEditor Development Win64 -Project="%PROJECT%" -WaitMutex -FromMsBuild
+echo === Step 2: Build StackOBotEditor Development Win64 ===
+"%BUILD%" StackOBotEditor Development Win64 -Project="%PROJECT%" -WaitMutex
 if errorlevel 1 (
+    echo.
     echo BUILD FAILED
     pause
     exit /b 1
 )
 
 echo.
-echo === Done! Open .uproject to launch editor ===
+echo === Done! Open StackOBot.sln in Visual Studio ===
 pause
