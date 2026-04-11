@@ -986,7 +986,7 @@ static bool find_gengine_via_guobjectarray()
             if (!validate_function_ptr(fn)) break;
             fexec_cnt++;
         }
-        if (fexec_cnt < 3 || fexec_cnt > 8) continue;
+        if (fexec_cnt < 2 || fexec_cnt > 8) continue;
 
         /* Count primary vtable entries -- GEngine wins with 80+ */
         int vcnt = 0;
@@ -1078,7 +1078,7 @@ static bool find_uworld_via_guobjectarray()
         if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
         if (fexec_vptr == vptr) continue;
 
-        /* Validate FExec vtable: exactly 3-8 valid entries */
+        /* Validate FExec vtable: 2-8 valid entries (FExec base has exactly 2: ~FExec + Exec) */
         void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
         void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
         if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1)) continue;
@@ -1088,16 +1088,18 @@ static bool find_uworld_via_guobjectarray()
             if (!validate_function_ptr(fn)) break;
             fexec_cnt++;
         }
-        if (fexec_cnt < 3 || fexec_cnt > 8) continue;
+        if (fexec_cnt < 2 || fexec_cnt > 8) continue;
 
-        /* 3. Primary vtable has >= 50 entries (UWorld is large) */
+        /* 3. Primary vtable has >= 30 entries (UWorld is large).
+         *    50 was too strict -- stripped builds can have fewer virtuals.
+         *    ULocalPlayer has ~20-25 entries so 30 still filters it out. */
         int vcnt = 0;
         for (int vi = 0; vi < 256; vi++) {
             void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
             if (!validate_function_ptr(fn)) break;
             vcnt++;
         }
-        if (vcnt < 50) continue;
+        if (vcnt < 30) continue;
 
         /* 5. OuterPrivate (at outer_off = fexec_off - 8) must be a valid heap pointer */
         uintptr_t outer = seh_read_ptr((uint8_t*)obj + outer_off);
@@ -1383,7 +1385,7 @@ static void scan_guobjectarray_for_fexec_hooks()
             if (!validate_function_ptr(fn)) break;
             vcnt++;
         }
-        if (vcnt < 3 || vcnt > 8) continue;
+        if (vcnt < 2 || vcnt > 8) continue;
 
         /* This object has a valid FExec vtable -- hook it */
         if (install_fexec_hook_on(fexec_vptr, primary_vptr,
