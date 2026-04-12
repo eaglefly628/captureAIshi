@@ -1337,6 +1337,81 @@ static uint32_t get_fname_cmpidx_for(const char* target)
     return 0xFFFFFFFF;
 }
 
+/* ---- General: find UObjects by class name ----------------------- */
+
+/*
+ * find_objects_by_class_name(class_name, out_objs, max_out)
+ *
+ * Walk GUObjectArray and return all objects whose ClassPrivate FName
+ * matches class_name (looked up in FNamePool block 0).
+ *
+ * Works for all standard engine class names (PlayerController,
+ * PlayerCameraManager, DirectionalLight, PostProcessVolume, etc.)
+ * because they are in FNamePool block 0.  Game-specific classes may
+ * be in later blocks and would not be found.
+ *
+ * UObjectBase layout (fixed):
+ *   +0x00 vtable
+ *   +0x08 ObjectFlags
+ *   +0x0C InternalIndex
+ *   +0x10 ClassPrivate (UClass*)
+ *   +0x18 NamePrivate  (FName -- lo32 = ComparisonIndex)
+ *   +0x20 OuterPrivate (UObject*)
+ *
+ * Returns number of objects found.
+ * Requires: g_guobjectarray_found.
+ */
+static int find_objects_by_class_name(const char* class_name,
+                                      void** out_objs, int max_out)
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return 0;
+    if (!out_objs || max_out <= 0) return 0;
+
+    uint32_t target_idx = get_fname_cmpidx_for(class_name);
+    if (target_idx == 0xFFFFFFFF) {
+        bridge_log("  find_by_class('%s'): FName not in block 0", class_name);
+        return 0;
+    }
+
+    bridge_log("  find_by_class('%s'): FName idx=0x%X scanning %d objects...",
+               class_name, target_idx, guobjectarray_num_elements());
+
+    int32_t num_elems = guobjectarray_num_elements();
+    int found = 0;
+
+    for (int32_t i = 0; i < num_elems && found < max_out; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
+
+        /* ClassPrivate at UObjectBase+0x10 */
+        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+        if (class_ptr < 0x10000) continue;
+
+        /* UClass.NamePrivate lo32 = ComparisonIndex */
+        uint32_t cmp_idx = (uint32_t)(
+            seh_read_ptr((uint8_t*)class_ptr + 0x18) & 0xFFFFFFFF);
+        if (cmp_idx != target_idx) continue;
+
+        out_objs[found++] = obj;
+    }
+
+    bridge_log("  find_by_class('%s'): found %d", class_name, found);
+    return found;
+}
+
+/*
+ * find_first_object_by_class_name(class_name)
+ *
+ * Convenience wrapper -- returns the first matching object or NULL.
+ */
+static void* find_first_object_by_class_name(const char* class_name)
+{
+    void* result = NULL;
+    find_objects_by_class_name(class_name, &result, 1);
+    return result;
+}
+
 /* ---- UWorld via GUObjectArray + FName class comparison ---------- */
 
 /*
