@@ -1357,14 +1357,16 @@ static uint32_t get_fname_cmpidx_for(const char* target)
 static bool find_uworld_via_guobjectarray()
 {
     if (!g_guobjectarray_found || !g_guobjectarray) return false;
-    if (!g_engine_ptr) return false;
+    /* g_engine_ptr is NOT required for the FName path (only for vtable fallback).
+     * OuterPrivate is fixed at UObjectBase+0x20 regardless of g_fexec_offset. */
 
     int32_t num_elems = guobjectarray_num_elements();
     bridge_log("=== UWorld scan via GUObjectArray (%d objects, "
                "stride=%d off=0x%02X) ===",
                num_elems, g_fuobjectitem_stride, g_fuobjectitem_object_off);
 
-    uintptr_t outer_off = g_fexec_offset ? (g_fexec_offset - 8) : 0x20;
+    /* OuterPrivate at UObjectBase+0x20 (always -- part of fixed UObjectBase layout) */
+    uintptr_t outer_off = 0x20;
 
     /* --- FName-based search (preferred) --- */
     uint32_t world_idx = get_fname_cmpidx_for("World");
@@ -1426,14 +1428,20 @@ static bool find_uworld_via_guobjectarray()
 
     /* --- Vtable fingerprint fallback --- */
     bridge_log("  FNamePool N/A -- vtable fingerprint fallback");
+    if (!g_engine_ptr) {
+        bridge_log("  vtable fallback skipped: g_engine_ptr not found yet");
+        return false;
+    }
 
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
     uintptr_t mod_start   = (uintptr_t)rgn.base;
     uintptr_t mod_end     = mod_start + rgn.size;
     uintptr_t engine_vptr = seh_read_ptr(g_engine_ptr);
-    uintptr_t fexec_off   = g_fexec_offset ? g_fexec_offset : 0x28;
 
+    /* UWorld identification: primary vtable >= 30 entries + outer chain.
+     * Do NOT use secondary vtable offset -- UWorld's FNetworkNotify is at an
+     * unknown offset (not 0x28, which is GEngine's FExec). */
     for (int32_t i = 0; i < num_elems; i++) {
         void* obj = guobjectarray_get(i);
         if (!obj || (uintptr_t)obj < 0x10000) continue;
@@ -1441,19 +1449,7 @@ static bool find_uworld_via_guobjectarray()
 
         uintptr_t vptr = seh_read_ptr(obj);
         if (vptr < mod_start || vptr >= mod_end) continue;
-        if (vptr == engine_vptr) continue;
-
-        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
-        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
-        if (fexec_vptr == vptr) continue;
-
-        int sec_cnt = 0;
-        for (int vi = 0; vi < 12; vi++) {
-            void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
-            if (!validate_function_ptr(fn)) break;
-            sec_cnt++;
-        }
-        if (sec_cnt < 4 || sec_cnt > 10) continue;
+        if (vptr == engine_vptr) continue;  /* skip GEngine itself */
 
         int vcnt = 0;
         for (int vi = 0; vi < 256; vi++) {
@@ -1467,8 +1463,8 @@ static bool find_uworld_via_guobjectarray()
         if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
         if (seh_read_ptr((uint8_t*)outer + outer_off) != 0) continue;
 
-        bridge_log("  UWorld found via vtable: idx=%d obj=0x%p "
-                   "(sec=%d vcnt=%d)", i, obj, sec_cnt, vcnt);
+        bridge_log("  UWorld found via vtable fallback: idx=%d obj=0x%p "
+                   "(vcnt=%d outer=0x%llX)", i, obj, vcnt, (unsigned long long)outer);
         g_world_ptr = obj;
         return true;
     }
@@ -1512,8 +1508,9 @@ static bool find_uworld_via_worldlist()
     uintptr_t mod_start = (uintptr_t)rgn.base;
     uintptr_t mod_end   = mod_start + rgn.size;
 
-    uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
-    uintptr_t outer_off = fexec_off - 8;  /* OuterPrivate always 8B before FExec */
+    /* OuterPrivate is at UObjectBase+0x20 (fixed in all UE versions).
+     * Do not derive from g_fexec_offset -- that's GEngine's FExec offset, not UWorld's. */
+    const uintptr_t outer_off = 0x20;
 
     uintptr_t eng = (uintptr_t)g_engine_ptr;
     bridge_log("=== UWorld scan via GEngine WorldList ===");
@@ -1558,7 +1555,13 @@ static bool find_uworld_via_worldlist()
 
         /* --- Step 3: Scan FWorldContext for UWorld pointer ---
          * ThisCurrentWorld is a TObjectPtr<UWorld> near the end of the struct.
-         * Walk every 8-byte-aligned word of FWorldContext looking for UWorld. */
+         * Walk every 8-byte-aligned word of FWorldContext looking for UWorld.
+         *
+         * Identification: UWorld inherits UObject + FNetworkNotify.
+         * FNetworkNotify secondary vtable offset is NOT 0x28 (that's GEngine/FExec).
+         * Do NOT check secondary vtable here -- we don't know its offset in UWorld.
+         * Instead: primary vtable in module + outer chain (UWorld->UPackage->null)
+         * is sufficient to uniquely identify UWorld among FWorldContext fields. */
         for (int woff = 0; woff <= 0x1000; woff += 8) {
             uintptr_t candidate = seh_read_ptr((void*)(fwc + woff));
             if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
@@ -1570,25 +1573,7 @@ static bool find_uworld_via_worldlist()
             uintptr_t vptr = seh_read_ptr((void*)candidate);
             if (vptr < mod_start || vptr >= mod_end) continue;
 
-            /* FNetworkNotify secondary vtable at candidate+fexec_off.
-             * Must be in module, distinct from primary vtable. */
-            uintptr_t fexec_vptr = seh_read_ptr(
-                (void*)(candidate + fexec_off));
-            if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
-            if (fexec_vptr == vptr) continue;
-
-            /* FNetworkNotify has 4-10 entries; FExec (GVC, ULP) has exactly 2.
-             * Requiring >= 4 eliminates all FExec objects. */
-            int sec_cnt = 0;
-            for (int vi = 0; vi < 12; vi++) {
-                void* fn = (void*)seh_read_ptr(
-                    (void*)(fexec_vptr + vi * 8));
-                if (!validate_function_ptr(fn)) break;
-                sec_cnt++;
-            }
-            if (sec_cnt < 4 || sec_cnt > 10) continue;
-
-            /* Primary vtable >= 30 entries (UWorld is large). */
+            /* Primary vtable >= 30 entries (UWorld is a large class). */
             int vcnt = 0;
             for (int vi = 0; vi < 256; vi++) {
                 void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
@@ -1597,20 +1582,20 @@ static bool find_uworld_via_worldlist()
             }
             if (vcnt < 30) continue;
 
-            /* OuterPrivate at outer_off must be a valid heap ptr (UPackage) */
+            /* OuterPrivate at outer_off must be a valid heap ptr (UPackage). */
             uintptr_t outer = seh_read_ptr(
                 (void*)(candidate + outer_off));
             if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
 
-            /* UPackage.OuterPrivate must be null (root object) */
+            /* UPackage.OuterPrivate must be null (root package has no outer). */
             uintptr_t outer_outer = seh_read_ptr(
                 (void*)(outer + outer_off));
             if (outer_outer != 0) continue;
 
             bridge_log("  UWorld found via WorldList: FWC+0x%X=0x%llX "
-                       "(sec=%d vcnt=%d outer=0x%llX)",
+                       "(vcnt=%d outer=0x%llX)",
                        woff, (unsigned long long)candidate,
-                       sec_cnt, vcnt, (unsigned long long)outer);
+                       vcnt, (unsigned long long)outer);
             g_world_ptr = (void*)candidate;
             return true;
         }
