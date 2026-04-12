@@ -16,5 +16,11 @@ copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Engine\GameViewportClien
 echo Copying UObjectBase.h...
 copy /Y "%UE_ROOT%\Engine\Source\Runtime\CoreUObject\Public\UObject\UObjectBase.h" "%DEST%\UObjectBase.h"
 
+echo Copying WorldContext.h...
+copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Engine\WorldContext.h" "%DEST%\WorldContext.h"
+
+echo Copying World.h...
+copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Engine\World.h" "%DEST%\World.h"
+
 echo Done. Files in: %DEST%
 pause
