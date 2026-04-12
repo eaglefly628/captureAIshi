@@ -1183,6 +1183,152 @@ static bool find_uworld_via_guobjectarray()
 }
 
 /*
+ * find_uworld_via_worldlist()
+ *
+ * Locate UWorld by scanning GEngine for its WorldList field.
+ * Does NOT require GUObjectArray -- works even when GUObjectArray
+ * pattern matching fails (e.g. stripped/LTCG builds).
+ *
+ * UEngine::WorldList is TIndirectArray<FWorldContext>.
+ * TIndirectArray<T> is TArray<T*> internally:
+ *   +0x00  FWorldContext** Data   (pointer to array of FWorldContext*)
+ *   +0x08  int32           Num    (element count)
+ *   +0x0C  int32           Max    (capacity)
+ *
+ * In a standalone game, WorldList always has exactly Num=1.
+ * FWorldContext[+0x00] = TEnumAsByte<EWorldType> = uint8 = 1 (Game).
+ *
+ * Confirmed for UE5.7 standalone:
+ *   WorldList at GEngine+0x1250, Num=1, Max=4.
+ *   FWorldContext::ThisCurrentWorld holds UWorld* at the end of struct.
+ *
+ * Strategy:
+ *   1. Scan GEngine+0..+0x6000 step 8 for TIndirectArray pattern.
+ *   2. Validate FWorldContext: Data[0] valid heap ptr, WorldType==1.
+ *   3. Scan FWorldContext for UWorld: FNetworkNotify secondary vtable
+ *      (4-10 entries), primary vtable >= 30, outer chain World->Pkg->null.
+ */
+static bool find_uworld_via_worldlist()
+{
+    if (!g_engine_ptr) return false;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+
+    uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
+    uintptr_t outer_off = fexec_off - 8;  /* OuterPrivate always 8B before FExec */
+
+    uintptr_t eng = (uintptr_t)g_engine_ptr;
+    bridge_log("=== UWorld scan via GEngine WorldList ===");
+
+    for (int off = 0; off <= 0x6000; off += 8) {
+        uintptr_t slot = eng + off;
+
+        /* --- Step 1: Check TIndirectArray layout at GEngine+off ---
+         * Read Data* at +0 (must be heap), then Num/Max packed in next 8B. */
+        uintptr_t data_ptr = seh_read_ptr((void*)slot);
+        if (data_ptr < 0x10000 || data_ptr >= 0x800000000000ULL) continue;
+        /* Data* must not point inside GEngine itself */
+        if (data_ptr >= eng && data_ptr < eng + 0x10000) continue;
+        /* Data* must not be in the module image (vtable or code section) */
+        if (data_ptr >= mod_start && data_ptr < mod_end) continue;
+
+        /* Num(lo32) and Max(hi32) are packed in bytes +8..+15 */
+        uintptr_t num_max = seh_read_ptr((void*)(slot + 8));
+        int32_t num = (int32_t)(num_max & 0xFFFFFFFFULL);
+        int32_t max = (int32_t)(num_max >> 32);
+
+        if (num != 1) continue;          /* standalone always has exactly 1 */
+        if (max < 1 || max > 16) continue;
+
+        /* --- Step 2: Validate FWorldContext pointer ---
+         * Data[0] is FWorldContext* (TIndirectArray stores pointers-to-elements). */
+        uintptr_t fwc = seh_read_ptr((void*)data_ptr);
+        if (fwc < 0x10000 || fwc >= 0x800000000000ULL) continue;
+        if (fwc >= mod_start && fwc < mod_end) continue;
+        if (fwc >= eng && fwc < eng + 0x10000) continue;
+
+        /* FWorldContext[+0x00] = TEnumAsByte<EWorldType> = uint8.
+         * EWorldType::Game == 1.  Read as low byte of the first 8-byte word. */
+        uintptr_t first8 = seh_read_ptr((void*)fwc);
+        uint8_t world_type = (uint8_t)(first8 & 0xFF);
+        if (world_type != 1) continue;   /* not a Game world context */
+
+        bridge_log("  WorldList candidate GEngine+0x%X: Data=0x%llX "
+                   "Num=%d Max=%d FWC=0x%llX",
+                   off, (unsigned long long)data_ptr,
+                   num, max, (unsigned long long)fwc);
+
+        /* --- Step 3: Scan FWorldContext for UWorld pointer ---
+         * ThisCurrentWorld is a TObjectPtr<UWorld> near the end of the struct.
+         * Walk every 8-byte-aligned word of FWorldContext looking for UWorld. */
+        for (int woff = 0; woff <= 0x1000; woff += 8) {
+            uintptr_t candidate = seh_read_ptr((void*)(fwc + woff));
+            if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
+            if (candidate >= mod_start && candidate < mod_end) continue;
+            if (candidate == (uintptr_t)g_engine_ptr) continue;
+            if (candidate == fwc) continue;
+
+            /* Primary vtable must be in module image */
+            uintptr_t vptr = seh_read_ptr((void*)candidate);
+            if (vptr < mod_start || vptr >= mod_end) continue;
+
+            /* FNetworkNotify secondary vtable at candidate+fexec_off.
+             * Must be in module, distinct from primary vtable. */
+            uintptr_t fexec_vptr = seh_read_ptr(
+                (void*)(candidate + fexec_off));
+            if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+            if (fexec_vptr == vptr) continue;
+
+            /* FNetworkNotify has 4-10 entries; FExec (GVC, ULP) has exactly 2.
+             * Requiring >= 4 eliminates all FExec objects. */
+            int sec_cnt = 0;
+            for (int vi = 0; vi < 12; vi++) {
+                void* fn = (void*)seh_read_ptr(
+                    (void*)(fexec_vptr + vi * 8));
+                if (!validate_function_ptr(fn)) break;
+                sec_cnt++;
+            }
+            if (sec_cnt < 4 || sec_cnt > 10) continue;
+
+            /* Primary vtable >= 30 entries (UWorld is large). */
+            int vcnt = 0;
+            for (int vi = 0; vi < 256; vi++) {
+                void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
+                if (!validate_function_ptr(fn)) break;
+                vcnt++;
+            }
+            if (vcnt < 30) continue;
+
+            /* OuterPrivate at outer_off must be a valid heap ptr (UPackage) */
+            uintptr_t outer = seh_read_ptr(
+                (void*)(candidate + outer_off));
+            if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
+
+            /* UPackage.OuterPrivate must be null (root object) */
+            uintptr_t outer_outer = seh_read_ptr(
+                (void*)(outer + outer_off));
+            if (outer_outer != 0) continue;
+
+            bridge_log("  UWorld found via WorldList: FWC+0x%X=0x%llX "
+                       "(sec=%d vcnt=%d outer=0x%llX)",
+                       woff, (unsigned long long)candidate,
+                       sec_cnt, vcnt, (unsigned long long)outer);
+            g_world_ptr = (void*)candidate;
+            return true;
+        }
+
+        bridge_log("  FWC at 0x%llX (GEngine+0x%X) found but UWorld scan failed",
+                   (unsigned long long)fwc, off);
+    }
+
+    bridge_log("  UWorld not found via WorldList scan");
+    return false;
+}
+
+/*
  * Find GUObjectArray.
  *
  * Strategy 1: Export symbol lookup.
@@ -1713,11 +1859,14 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Lazy UWorld scan: startup scan runs before map load so UWorld is not
-     * in GUObjectArray yet.  Re-scan here on first command after map load.
+    /* Lazy UWorld scan: startup scan runs before map load so UWorld may not
+     * exist yet.  Re-scan here on first command after map load.
+     * Priority: WorldList scan (no GUObjectArray needed) -> GUObjectArray fallback.
      * FExec hook parameters also update g_world_ptr when the game calls Exec. */
-    if (!g_world_ptr && g_guobjectarray_found.load())
-        find_uworld_via_guobjectarray();
+    if (!g_world_ptr) {
+        if (!find_uworld_via_worldlist() && g_guobjectarray_found.load())
+            find_uworld_via_guobjectarray();
+    }
     void* world = g_world_ptr;
 
     /* Use GEngine's original Exec to avoid recursion.

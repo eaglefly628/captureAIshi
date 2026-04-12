@@ -518,10 +518,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         else
             BRIDGE_LOG("WARNING: No FExec hooks installed");
 
-        /* Proactively find UWorld via GUObjectArray structural scan.
-         * UE4SS relies on ULocalPlayer::Exec hook firing; we also scan
-         * directly so commands work even when the game is idle. */
-        if (find_uworld_via_guobjectarray())
+        /* Proactively find UWorld.
+         * Priority 1: WorldList scan -- does not need GUObjectArray,
+         *   scans GEngine object for TIndirectArray<FWorldContext> then
+         *   walks FWorldContext for UWorld by FNetworkNotify fingerprint.
+         * Priority 2: GUObjectArray scan -- fallback for games where
+         *   WorldList scan finds no FWorldContext (edge cases). */
+        if (find_uworld_via_worldlist())
+            BRIDGE_LOG("UWorld found via WorldList: 0x%p", g_world_ptr);
+        else if (find_uworld_via_guobjectarray())
             BRIDGE_LOG("UWorld found via GUObjectArray: 0x%p", g_world_ptr);
         else
             BRIDGE_LOG("NOTE: UWorld not found yet -- will be captured "
