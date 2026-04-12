@@ -145,6 +145,7 @@ static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 
 static void*              g_guobjectarray = NULL;
 static std::atomic<bool>  g_guobjectarray_found{false};
+static int                g_fuobjectitem_stride = FUOBJECTITEM_STRIDE; /* auto-detected */
 
 /* -- FExec multi-hook table ---------------------------------------- */
 
@@ -902,8 +903,57 @@ static void* guobjectarray_get(int32_t index)
     if (!chunk) return NULL;
 
     /* FUObjectItem::Object at offset 0 within the item */
-    uintptr_t item_addr = chunk + (uintptr_t)within_idx * FUOBJECTITEM_STRIDE;
+    uintptr_t item_addr = chunk + (uintptr_t)within_idx * g_fuobjectitem_stride;
     return (void*)seh_read_ptr((void*)item_addr);
+}
+
+/*
+ * Auto-detect FUObjectItem stride by verifying GEngine's InternalIndex.
+ * GEngine ptr is known; InternalIndex is at GEngine+0x0C (UObjectBase layout).
+ * We try strides 16, 24, 32 and pick the one where
+ * guobjectarray_get(ge_idx) == g_engine_ptr.
+ * Must be called AFTER both g_engine_ptr and g_guobjectarray are set.
+ */
+static void detect_fuobjectitem_stride()
+{
+    if (!g_engine_ptr || !g_guobjectarray) return;
+
+    int32_t ge_idx = 0;
+    __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        bridge_log("  FUObjectItem stride: could not read GEngine InternalIndex");
+        return;
+    }
+
+    if (ge_idx < 0 || ge_idx >= 2000000) {
+        bridge_log("  FUObjectItem stride: GEngine InternalIndex=%d out of range", ge_idx);
+        return;
+    }
+
+    bridge_log("  FUObjectItem stride probe: GEngine idx=%d ptr=0x%p",
+               ge_idx, g_engine_ptr);
+
+    static const int candidates[] = {16, 24, 32, 20};
+    for (int ci = 0; ci < 4; ci++) {
+        int s = candidates[ci];
+        /* Temporarily override stride for the probe */
+        int old = g_fuobjectitem_stride;
+        g_fuobjectitem_stride = s;
+        void* probe = guobjectarray_get(ge_idx);
+        g_fuobjectitem_stride = old;
+
+        bridge_log("  stride=%d -> guobjectarray_get(%d)=0x%p (want 0x%p)",
+                   s, ge_idx, probe, g_engine_ptr);
+
+        if (probe == g_engine_ptr) {
+            g_fuobjectitem_stride = s;
+            bridge_log("  FUObjectItem stride CONFIRMED: %d bytes", s);
+            return;
+        }
+    }
+
+    bridge_log("  FUObjectItem stride: auto-detect failed, keeping %d",
+               g_fuobjectitem_stride);
 }
 
 static int32_t guobjectarray_num_elements()

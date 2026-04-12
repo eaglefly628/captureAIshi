@@ -503,6 +503,11 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         if (!find_fexec_vtable())
             BRIDGE_LOG("WARNING: FExec not found, commands will fail");
 
+        /* Auto-detect FUObjectItem element stride.
+         * GEngine.InternalIndex (+0x0C) lets us verify guobjectarray_get().
+         * Default 24 bytes is wrong for some UE5 builds (may be 16). */
+        detect_fuobjectitem_stride();
+
         /* Install FExec hooks on GEngine AND all FExec objects in
          * GUObjectArray (including ULocalPlayer).  When any FExec::Exec
          * fires with a non-NULL UWorld, we capture it automatically. */
