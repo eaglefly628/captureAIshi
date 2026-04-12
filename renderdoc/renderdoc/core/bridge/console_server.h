@@ -480,12 +480,14 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 
     /* Find GUObjectArray FIRST so GEngine finder can use it as fallback.
      * GUObjectArray is present from very early in game startup. */
-    if (find_guobjectarray())
+    if (find_guobjectarray()) {
         BRIDGE_LOG("GUObjectArray found: 0x%p (%d objects)",
                    g_guobjectarray, guobjectarray_num_elements());
-    else
+        log_guobjectarray_details();
+    } else {
         BRIDGE_LOG("NOTE: GUObjectArray not found -- "
                    "GEngine Method B unavailable, string xref only");
+    }
 
     const int poll_interval_ms = 2000;
     const int timeout_ms = 120000;

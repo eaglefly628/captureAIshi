@@ -951,6 +951,96 @@ static bool validate_guobjectarray(void* candidate)
 }
 
 /*
+ * log_guobjectarray_details() -- verbose dump for cross-checking with game.
+ *
+ * Prints the FUObjectArray header fields (ObjFirstGCIndex, NumElements, etc.),
+ * chunk 0 address, and a sample of object pointers near the tail of the array.
+ * Call this immediately after find_guobjectarray() succeeds so the user can
+ * compare the bridge's view with the game's own BeginPlay log output.
+ */
+static void log_guobjectarray_details()
+{
+    if (!g_guobjectarray) return;
+    uint8_t* p = (uint8_t*)g_guobjectarray;
+
+    /* FUObjectArray header fields (UE4.21+ fixed layout) */
+    int32_t first_gc_idx    = 0;
+    int32_t last_nongc_idx  = 0;
+    int32_t max_not_gc      = 0;
+    int32_t max_elems       = 0;
+    int32_t num_elems       = 0;
+    int32_t max_chunks      = 0;
+    int32_t num_chunks      = 0;
+    uintptr_t chunks_ptr    = 0;
+    uintptr_t prealloc_ptr  = 0;
+
+    __try {
+        first_gc_idx   = *(int32_t*)(p + 0x00);
+        last_nongc_idx = *(int32_t*)(p + 0x04);
+        max_not_gc     = *(int32_t*)(p + 0x08);
+        /* +0x0C: OpenForDisregardForGC (bool, skip) */
+        chunks_ptr     = *(uintptr_t*)(p + 0x10);
+        prealloc_ptr   = *(uintptr_t*)(p + 0x18);
+        max_elems      = *(int32_t*)(p + 0x20);
+        num_elems      = *(int32_t*)(p + 0x24);
+        max_chunks     = *(int32_t*)(p + 0x28);
+        num_chunks     = *(int32_t*)(p + 0x2C);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        bridge_log("  GUA details: read fault");
+        return;
+    }
+
+    bridge_log("  GUA details @ 0x%p:", p);
+    bridge_log("    ObjFirstGCIndex=%d ObjLastNonGCIndex=%d MaxNotGC=%d",
+               first_gc_idx, last_nongc_idx, max_not_gc);
+    bridge_log("    Objects**=0x%llX PreAllocated*=0x%llX",
+               (unsigned long long)chunks_ptr, (unsigned long long)prealloc_ptr);
+    bridge_log("    MaxElements=%d NumElements=%d MaxChunks=%d NumChunks=%d",
+               max_elems, num_elems, max_chunks, num_chunks);
+
+    /* Chunk 0 address */
+    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
+    bridge_log("    Chunk[0]=0x%llX", (unsigned long long)chunk0);
+
+    if (!chunk0) return;
+
+    /* Sample objects near the tail (highest density -- recently allocated).
+     * Print index, raw item bytes, and the Object* for each of 5 items.
+     * Use the current detected stride (may still be default). */
+    int s   = g_fuobjectitem_stride;
+    int off = g_fuobjectitem_object_off;
+    int start_idx = (num_elems > 5) ? num_elems - 5 : 0;
+    bridge_log("    Sample objects [%d..%d] stride=%d off=0x%02X:",
+               start_idx, start_idx + 4, s, off);
+
+    for (int i = 0; i < 5; i++) {
+        int32_t idx = start_idx + i;
+        if (idx >= 65536) break;  /* stay within chunk 0 bounds */
+        uintptr_t item_addr = chunk0 + (uintptr_t)idx * s;
+        uintptr_t obj_ptr   = seh_read_ptr((void*)(item_addr + off));
+        uintptr_t raw_w0    = seh_read_ptr((void*)(item_addr + 0));
+        bridge_log("      [%d] item=0x%llX raw0=0x%llX obj*=0x%llX",
+                   idx,
+                   (unsigned long long)item_addr,
+                   (unsigned long long)raw_w0,
+                   (unsigned long long)obj_ptr);
+    }
+
+    /* Also sample a few early permanent objects (idx 1..5) for comparison */
+    bridge_log("    Sample objects [1..5] (early permanent):");
+    for (int idx = 1; idx <= 5; idx++) {
+        uintptr_t item_addr = chunk0 + (uintptr_t)idx * s;
+        uintptr_t obj_ptr   = seh_read_ptr((void*)(item_addr + off));
+        uintptr_t raw_w0    = seh_read_ptr((void*)(item_addr + 0));
+        bridge_log("      [%d] raw0=0x%llX obj*=0x%llX",
+                   idx,
+                   (unsigned long long)raw_w0,
+                   (unsigned long long)obj_ptr);
+    }
+}
+
+/*
  * Get object at index i. Returns UObjectBase* or NULL.
  * Implements UE4SS IndexToObject() chunk arithmetic.
  */
@@ -1030,18 +1120,33 @@ static void detect_fuobjectitem_stride()
     int best_stride  = g_fuobjectitem_stride;
     int best_obj_off = g_fuobjectitem_object_off;
 
-    bridge_log("  FUObjectItem detect: chunk0=0x%p ge_idx=%d",
-               (void*)chunk0, ge_idx);
+    /* Choose sample start: items 0..N are mostly null (ObjFirstGCIndex is
+     * typically 28000+, but many early slots are still empty).
+     * Sample near GEngine (ge_idx) if known, else near array midpoint.
+     * Items near num_elems-1 are the densest (recently allocated). */
+    int32_t num_elems_now = guobjectarray_num_elements();
+    int32_t sample_start = 0;
+    if (ge_idx > N_SAMPLE / 2)
+        sample_start = ge_idx - N_SAMPLE / 2;
+    else if (num_elems_now > N_SAMPLE * 2)
+        sample_start = num_elems_now - N_SAMPLE;  /* tail: densest region */
+
+    bridge_log("  FUObjectItem detect: chunk0=0x%p ge_idx=%d "
+               "sample_start=%d num=%d",
+               (void*)chunk0, ge_idx, sample_start, num_elems_now);
 
     for (int ci = 0; ci < N_CONFIGS; ci++) {
         int s   = configs[ci].stride;
         int off = configs[ci].obj_off;
 
-        /* Score: count items[0..N-1] with valid-looking Object* */
+        /* Score: count items[sample_start..sample_start+N-1] with valid Object*
+         * Only sample within chunk 0 (idx < 65536) to keep arithmetic simple. */
         int score = 0;
         for (int i = 0; i < N_SAMPLE; i++) {
+            int32_t idx = sample_start + i;
+            if (idx >= 65536) break;  /* stay within chunk 0 */
             uintptr_t ptr = seh_read_ptr(
-                (void*)(chunk0 + (uintptr_t)i * s + off));
+                (void*)(chunk0 + (uintptr_t)idx * s + off));
             /* packed: mask out low 3 tag bits before checking */
             if (s == 16) ptr &= ~(uintptr_t)0x7;
             if (ptr < 0x10000) continue;
@@ -1078,8 +1183,10 @@ static void detect_fuobjectitem_stride()
         }
     }
 
-    /* Heuristic fallback: take highest score if decent */
-    if (best_score >= N_SAMPLE / 3) {
+    /* Heuristic fallback: take highest score if decent.
+     * Threshold N/5 = 6/30 -- leaves room for sparse ranges while
+     * still rejecting noise (wrong config scores ~1-2). */
+    if (best_score >= N_SAMPLE / 5) {
         g_fuobjectitem_stride     = best_stride;
         g_fuobjectitem_object_off = best_obj_off;
         bridge_log("  FUObjectItem HEURISTIC: stride=%d object_off=0x%02X "
@@ -1582,7 +1689,11 @@ static bool find_uworld_via_worldlist()
                        (unsigned long long)outer,
                        (unsigned long long)outer_outer);
 
-            if (vcnt < 30) continue;
+            /* vcnt >= 1: we only require the vtable is readable.
+             * validate_function_ptr is strict about prologue bytes and
+             * may score optimized UWorld as vcnt=1. The outer chain
+             * (outer valid + outer.outer==null) is the real discriminator. */
+            if (vcnt < 1) continue;
             if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
             if (outer_outer != 0) continue;
 
