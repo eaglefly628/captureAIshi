@@ -1078,17 +1078,21 @@ static bool find_uworld_via_guobjectarray()
         if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
         if (fexec_vptr == vptr) continue;
 
-        /* Validate FExec vtable: 2-8 valid entries (FExec base has exactly 2: ~FExec + Exec) */
+        /* Secondary vtable must be FNetworkNotify (UWorld : UObject, FNetworkNotify).
+         * FNetworkNotify has ~5 virtuals: ~FNetworkNotify + 4 pure virtuals.
+         * FExec has exactly 2: ~FExec + Exec.
+         * We require >= 4 entries to exclude FExec objects (GEngine, UGameViewportClient,
+         * ULocalPlayer) which all have count == 2 and would otherwise pass this check. */
         void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
         void* fn1 = (void*)seh_read_ptr((void*)(fexec_vptr + 8));
         if (!validate_function_ptr(fn0) || !validate_function_ptr(fn1)) continue;
-        int fexec_cnt = 2;
-        for (int vi = 2; vi <= 8; vi++) {
+        int sec_cnt = 2;
+        for (int vi = 2; vi <= 10; vi++) {
             void* fn = (void*)seh_read_ptr((void*)(fexec_vptr + vi * 8));
             if (!validate_function_ptr(fn)) break;
-            fexec_cnt++;
+            sec_cnt++;
         }
-        if (fexec_cnt < 2 || fexec_cnt > 8) continue;
+        if (sec_cnt < 4 || sec_cnt > 10) continue;  /* FNetworkNotify: 4-10, not FExec: 2 */
 
         /* 3. Primary vtable has >= 30 entries (UWorld is large).
          *    50 was too strict -- stripped builds can have fewer virtuals.
@@ -1658,8 +1662,11 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* UWorld captured by FExec hooks from ULocalPlayer::Exec.
-     * NULL is accepted -- CVars and showflag work without it. */
+    /* Lazy UWorld scan: startup scan runs before map load so UWorld is not
+     * in GUObjectArray yet.  Re-scan here on first command after map load.
+     * FExec hook parameters also update g_world_ptr when the game calls Exec. */
+    if (!g_world_ptr && g_guobjectarray_found.load())
+        find_uworld_via_guobjectarray();
     void* world = g_world_ptr;
 
     /* Use GEngine's original Exec to avoid recursion.
