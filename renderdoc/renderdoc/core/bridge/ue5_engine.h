@@ -911,26 +911,42 @@ static bool validate_guobjectarray(void* candidate)
         return false;
     }
 
-    /* First FUObjectItem: probe Object at +0x10 (UE5.7) and +0x00 (classic).
-     * First item[0].Object is always a valid module or heap address (>0x10000). */
-    uintptr_t obj10 = seh_read_ptr((void*)(chunk0 + 0x10));
-    uintptr_t obj00 = seh_read_ptr((void*)(chunk0 + 0x00));
-    bridge_log("  GUA: item[0] @+0x10=0x%llX @+0x00=0x%llX",
-               (unsigned long long)obj10, (unsigned long long)obj00);
+    /* Probe Object* across multiple items and both known offsets.
+     * Index 0 is often a null/sentinel entry in UE5 -- do NOT require it valid.
+     * For each (stride, obj_off) in known configs, scan items 0..7 and count
+     * valid-looking pointers.  Accept if any config scores >= 2 hits. */
+    static const struct { int stride; int obj_off; } val_cfgs[] = {
+        {32, 0x10},   /* WITH_VERSE_VM / Development */
+        {24, 0x00},   /* Standard Shipping            */
+        {16, 0x00},   /* Packed                       */
+    };
+    const int N_VAL_ITEMS = 8;
+    bool any_ok = false;
 
-    bool ok10 = (obj10 >= 0x10000 && obj10 < 0x800000000000ULL);
-    bool ok00 = (obj00 >= 0x10000 && obj00 < 0x800000000000ULL);
+    for (int ci = 0; ci < 3; ci++) {
+        int s   = val_cfgs[ci].stride;
+        int off = val_cfgs[ci].obj_off;
+        int hits = 0;
+        for (int i = 0; i < N_VAL_ITEMS; i++) {
+            uintptr_t ptr = seh_read_ptr(
+                (void*)(chunk0 + (uintptr_t)i * s + off));
+            if (s == 16) ptr &= ~(uintptr_t)0x7;
+            if (ptr >= 0x10000 && ptr < 0x800000000000ULL) hits++;
+        }
+        bridge_log("  GUA probe: stride=%d off=0x%02X hits=%d/%d",
+                   s, off, hits, N_VAL_ITEMS);
+        if (hits >= 2) any_ok = true;
+    }
 
-    if (!ok10 && !ok00) {
-        bridge_log("  GUA FAIL: item[0].Object invalid at both +0x10 and +0x00");
+    if (!any_ok) {
+        bridge_log("  GUA FAIL: no (stride, obj_off) config gives >=2 valid "
+                   "Object* in first %d items", N_VAL_ITEMS);
         return false;
     }
 
-    bridge_log("  GUA OK: NumElements=%d Objects**=0x%llX chunk[0]=0x%llX "
-               "(item obj@+0x10: %s, @+0x00: %s)",
+    bridge_log("  GUA OK: NumElements=%d Objects**=0x%llX chunk[0]=0x%llX",
                num_elems, (unsigned long long)chunks_ptr,
-               (unsigned long long)chunk0,
-               ok10 ? "valid" : "bad", ok00 ? "valid" : "bad");
+               (unsigned long long)chunk0);
     return true;
 }
 
@@ -1528,24 +1544,23 @@ static bool find_uworld_via_worldlist()
                    num, max, (unsigned long long)fwc);
 
         /* --- Step 3: Scan FWorldContext for UWorld pointer ---
-         * ThisCurrentWorld is a TObjectPtr<UWorld> near the end of the struct.
-         * Walk every 8-byte-aligned word of FWorldContext looking for UWorld.
-         *
-         * Identification: UWorld inherits UObject + FNetworkNotify.
-         * FNetworkNotify secondary vtable offset is NOT 0x28 (that's GEngine/FExec).
-         * Do NOT check secondary vtable here -- we don't know its offset in UWorld.
-         * Instead: primary vtable in module + outer chain (UWorld->UPackage->null)
-         * is sufficient to uniquely identify UWorld among FWorldContext fields. */
-        for (int woff = 0; woff <= 0x1000; woff += 8) {
+         * Walk every 8-byte-aligned slot of FWorldContext (up to 0x2000 bytes).
+         * UWorld is identified by: primary vtable in module (>= 30 entries) +
+         * outer chain: UWorld.OuterPrivate -> valid heap, outer.OuterPrivate == null. */
+        int fwc_heap_ptrs = 0;   /* count of non-null heap ptrs seen (for diagnostics) */
+        int fwc_vtable_ok = 0;   /* heap ptrs that also have module vtable */
+        for (int woff = 0; woff <= 0x2000; woff += 8) {
             uintptr_t candidate = seh_read_ptr((void*)(fwc + woff));
             if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
             if (candidate >= mod_start && candidate < mod_end) continue;
             if (candidate == (uintptr_t)g_engine_ptr) continue;
             if (candidate == fwc) continue;
+            fwc_heap_ptrs++;
 
             /* Primary vtable must be in module image */
             uintptr_t vptr = seh_read_ptr((void*)candidate);
             if (vptr < mod_start || vptr >= mod_end) continue;
+            fwc_vtable_ok++;
 
             /* Primary vtable >= 30 entries (UWorld is a large class). */
             int vcnt = 0;
@@ -1554,16 +1569,21 @@ static bool find_uworld_via_worldlist()
                 if (!validate_function_ptr(fn)) break;
                 vcnt++;
             }
+
+            /* OuterPrivate at outer_off */
+            uintptr_t outer = seh_read_ptr((void*)(candidate + outer_off));
+            uintptr_t outer_outer = (outer >= 0x10000 && outer < 0x800000000000ULL)
+                ? seh_read_ptr((void*)(outer + outer_off)) : 0xDEAD;
+
+            bridge_log("  FWC+0x%03X: cand=0x%llX vptr=0x%llX vcnt=%d "
+                       "outer=0x%llX oo=0x%llX",
+                       woff, (unsigned long long)candidate,
+                       (unsigned long long)vptr, vcnt,
+                       (unsigned long long)outer,
+                       (unsigned long long)outer_outer);
+
             if (vcnt < 30) continue;
-
-            /* OuterPrivate at outer_off must be a valid heap ptr (UPackage). */
-            uintptr_t outer = seh_read_ptr(
-                (void*)(candidate + outer_off));
             if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
-
-            /* UPackage.OuterPrivate must be null (root package has no outer). */
-            uintptr_t outer_outer = seh_read_ptr(
-                (void*)(outer + outer_off));
             if (outer_outer != 0) continue;
 
             bridge_log("  UWorld found via WorldList: FWC+0x%X=0x%llX "
@@ -1574,8 +1594,9 @@ static bool find_uworld_via_worldlist()
             return true;
         }
 
-        bridge_log("  FWC at 0x%llX (GEngine+0x%X) found but UWorld scan failed",
-                   (unsigned long long)fwc, off);
+        bridge_log("  FWC at 0x%llX (GEngine+0x%X) scan done: "
+                   "heap_ptrs=%d vtable_ok=%d -- UWorld not found",
+                   (unsigned long long)fwc, off, fwc_heap_ptrs, fwc_vtable_ok);
     }
 
     bridge_log("  UWorld not found via WorldList scan");
