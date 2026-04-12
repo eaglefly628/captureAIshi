@@ -7,19 +7,10 @@ set PROJECT=D:\StackOBot\StackOBot.uproject
 :: ------------------------
 
 set GEN=%UE_ROOT%\Engine\Build\BatchFiles\GenerateProjectFiles.bat
-set BUILD=%UE_ROOT%\Engine\Build\BatchFiles\Build.bat
 
-echo === Step 1: Generate VS project files ===
-call "%GEN%" -project="%PROJECT%" -game
+echo === Generate VSCode project files ===
+call "%GEN%" -project="%PROJECT%" -game -VSCode
 echo.
 
-echo === Step 2: Build Editor ===
-"%BUILD%" StackOBotEditor Development Win64 -Project="%PROJECT%" -WaitMutex
-if errorlevel 1 (
-    echo BUILD FAILED
-    pause
-    exit /b 1
-)
-
-echo === Done! ===
+echo === Done! Open the folder in VSCode and build manually. ===
 pause
