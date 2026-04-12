@@ -11,6 +11,20 @@
 - [ ] **P0: 真实 UE5 游戏端到端验证** — 跑通一个游戏。
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [x] **P1: bridge-test 命令注入** (fixed by 主程序员) — 已加白名单。
+- [ ] **P1: find_fnamepool_global() backref 扫全模块太慢** (spotted by xiaoni review) —
+  `for (scan = mod_base; scan < mod_end - 8; scan += 8)` 扫整个模块（可能 300-600 MB），
+  调用 seh_read_ptr（含 __try/__except）37M-75M 次，理论延迟 3-8 秒。
+  Fix: 只扫 PAGE_READWRITE 的 committed 页（用 VirtualQuery 跳过 .text），或 cap 到首 64MB。
+- [ ] **P1: find_fnamepool_global() backref 无交叉验证** (spotted by xiaoni review) —
+  取模块里第一个等于 block0 的指针就认为是 FNamePool.Blocks[0]，可能误匹配 TLS 或 init 代码里的缓存指针。
+  Fix: 确认候选位置 `scan` == `g_fnamepool_global + 0x10`，并验证 Blocks[1] 为 null 或合法堆指针，以及 CurrentBlock (+0x08) 是小整数（< 128）。
+- [ ] **P2: fname_resolve 宽字符 null 终止位置错误** (spotted by xiaoni review) —
+  `out[n] = '\0'` 其中 n = wchar 数量，但 WideCharToMultiByte 可能写出超过 n 字节的 UTF-8。
+  非 ASCII 宽字符（如中文）会截断 multi-byte 序列（引擎类名全是 ASCII，暂时不触发，但不正确）。
+  Fix: `int bytes = WideCharToMultiByte(...); out[bytes > 0 ? bytes : 0] = '\0';`
+- [ ] **P2: log_guobjectarray_details 使用默认 stride 采样** (spotted by xiaoni review) —
+  在 detect_fuobjectitem_stride() 之前调用，此时 stride=32 off=0x10 是默认值，若实际 stride=24 则打印的 obj* 地址错误（有"may still be default"注释，但没有明显警告）。
+  Fix: 检测完 stride 后再调用，或在日志中加 "WARNING: stride not yet detected" 标注。
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员)
 - [x] **detect_fuobjectitem_stride 采样 items 0..29** (fixed d7b038c) -- now samples tail
 - [x] **WorldList vcnt>=30 拒绝 UWorld** (fixed d7b038c) -- now vcnt>=1
