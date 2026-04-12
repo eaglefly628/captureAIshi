@@ -1270,32 +1270,6 @@ static uintptr_t find_fnamepool_block0()
 }
 
 /*
- * fname_cmpidx_matches(cmp_idx, target)
- * Check if FName ComparisonIndex resolves to ASCII string 'target' in block 0.
- */
-static bool fname_cmpidx_matches(uint32_t cmp_idx, const char* target)
-{
-    if ((cmp_idx >> 16) != 0) return false;   /* block != 0, skip */
-
-    uintptr_t block0 = find_fnamepool_block0();
-    if (!block0) return false;
-
-    uintptr_t entry = block0 + ((cmp_idx & 0xFFFF) * 2); /* word_off -> byte_off */
-    int tlen = (int)strlen(target);
-
-    uint16_t hdr = 0;
-    __try { hdr = *(uint16_t*)entry; }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-
-    if ((hdr & 1) || (int)(hdr >> 1) != tlen) return false;
-
-    bool match = false;
-    __try { match = (memcmp((void*)(entry + 2), target, tlen) == 0); }
-    __except(EXCEPTION_EXECUTE_HANDLER) {}
-    return match;
-}
-
-/*
  * get_fname_cmpidx_for(target) -- walk block 0 entries to find ComparisonIndex.
  * Returns 0xFFFFFFFF if not found.
  */
