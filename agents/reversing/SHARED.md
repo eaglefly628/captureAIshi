@@ -57,7 +57,33 @@ Detection method (Dumper-7):
 
 Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
 
+## FName Resolution -- Current Status
+
+**Have:**
+- `get_fname_cmpidx_for(str)` -- string -> ComparisonIndex (block 0 only)
+- `fname_cmpidx_matches(idx, str)` -- index vs known string (block 0 only)
+- `find_objects_by_class_name(name, out, max)` -- batch class search
+- `find_first_object_by_class_name(name)` -- single result
+
+**Missing:**
+- `fname_resolve(uint32_t cmp_idx) -> string` -- arbitrary index to string
+  Needed for: enumerate unknown class names, general UObject inspection
+  Requires: full FNamePool (all blocks), not just block 0
+  Priority: P2 -- not needed for captureAIshi target classes
+
+**Coverage:** All standard engine class names are in FNamePool block 0:
+  PlayerController, PlayerCameraManager, DirectionalLight, PostProcessVolume,
+  SkeletalMeshComponent, FoliageInstancedStaticMesh, World, etc.
+  Game-specific classes may be in block 1+ (need multi-block support).
+
 ## Changelog (latest)
+
+### [v0.2.0] ed8ba05 -- xiaoni
+- `find_objects_by_class_name()` + `find_first_object_by_class_name()` added
+  Foundation for direct-memory camera control (find APlayerCameraManager -> write transforms)
+- Review: fixed two UWorld search bugs -- secondary vtable offset was using GEngine's FExec
+  offset (0x28) for UWorld's FNetworkNotify (wrong). Now: primary vtable>=30 + outer chain only.
+- `g_engine_ptr` guard removed from FName path in `find_uworld_via_guobjectarray()`
 
 ### [v0.2.0] fa65fba -- xiaoni
 - `find_uworld_via_guobjectarray()`: 主动扫 GUObjectArray 找 UWorld，结构指纹（无 RTTI/FName）
