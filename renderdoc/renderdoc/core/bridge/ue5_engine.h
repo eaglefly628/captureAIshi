@@ -854,7 +854,10 @@ static bool validate_guobjectarray(void* candidate)
 
     /* Objects** = p + GUOBJARRAY_OBJECTS_OFF */
     uintptr_t chunks_ptr = seh_read_ptr(p + GUOBJARRAY_OBJECTS_OFF);
-    if (chunks_ptr < 0x10000 || chunks_ptr >= 0x7F0000000000ULL) {
+    /* Accept heap addresses AND module/static addresses (0x7FF6... range).
+     * Some UE5 builds use a static chunk array in the module BSS section.
+     * Windows user-space limit is 0x800000000000 (128 TB). */
+    if (chunks_ptr < 0x10000 || chunks_ptr >= 0x800000000000ULL) {
         bridge_log("  GUObjectArray: Objects** invalid 0x%llX",
                    (unsigned long long)chunks_ptr);
         return false;
@@ -862,7 +865,7 @@ static bool validate_guobjectarray(void* candidate)
 
     /* Objects*[0] = first chunk must be readable */
     uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
-    if (chunk0 < 0x10000 || chunk0 >= 0x7F0000000000ULL) {
+    if (chunk0 < 0x10000 || chunk0 >= 0x800000000000ULL) {
         bridge_log("  GUObjectArray: Objects[0] invalid 0x%llX",
                    (unsigned long long)chunk0);
         return false;
@@ -918,38 +921,36 @@ static void detect_fuobjectitem_stride()
 {
     if (!g_engine_ptr || !g_guobjectarray) return;
 
-    int32_t ge_idx = 0;
-    __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
-    __except(EXCEPTION_EXECUTE_HANDLER) {
-        bridge_log("  FUObjectItem stride: could not read GEngine InternalIndex");
-        return;
-    }
+    /* Try InternalIndex at multiple UObjectBase offsets.
+     * Standard: vtable(+0) ObjectFlags(+8) InternalIndex(+0xC).
+     * Some builds reorder or add fields, so we probe +0x04..+0x18. */
+    static const int idx_offsets[] = {0x0C, 0x08, 0x10, 0x04, 0x14};
+    static const int strides[]     = {16, 24, 32, 20};
 
-    if (ge_idx < 0 || ge_idx >= 2000000) {
-        bridge_log("  FUObjectItem stride: GEngine InternalIndex=%d out of range", ge_idx);
-        return;
-    }
+    for (int io = 0; io < 5; io++) {
+        int32_t ge_idx = 0;
+        __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + idx_offsets[io]); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
 
-    bridge_log("  FUObjectItem stride probe: GEngine idx=%d ptr=0x%p",
-               ge_idx, g_engine_ptr);
+        if (ge_idx < 0 || ge_idx >= 2000000) continue;
 
-    static const int candidates[] = {16, 24, 32, 20};
-    for (int ci = 0; ci < 4; ci++) {
-        int s = candidates[ci];
-        /* Temporarily override stride for the probe */
-        int old = g_fuobjectitem_stride;
-        g_fuobjectitem_stride = s;
-        void* probe = guobjectarray_get(ge_idx);
-        g_fuobjectitem_stride = old;
-
-        bridge_log("  stride=%d -> guobjectarray_get(%d)=0x%p (want 0x%p)",
-                   s, ge_idx, probe, g_engine_ptr);
-
-        if (probe == g_engine_ptr) {
+        for (int si = 0; si < 4; si++) {
+            int s = strides[si];
+            int old = g_fuobjectitem_stride;
             g_fuobjectitem_stride = s;
-            bridge_log("  FUObjectItem stride CONFIRMED: %d bytes", s);
-            return;
+            void* probe = guobjectarray_get(ge_idx);
+            g_fuobjectitem_stride = old;
+
+            if (probe == g_engine_ptr) {
+                g_fuobjectitem_stride = s;
+                bridge_log("  FUObjectItem stride CONFIRMED: %d bytes "
+                           "(InternalIndex at obj+0x%02X idx=%d)",
+                           s, idx_offsets[io], ge_idx);
+                return;
+            }
         }
+        bridge_log("  stride probe obj+0x%02X idx=%d: no match",
+                   idx_offsets[io], ge_idx);
     }
 
     bridge_log("  FUObjectItem stride: auto-detect failed, keeping %d",
