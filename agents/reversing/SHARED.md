@@ -12,6 +12,8 @@
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [x] **P1: bridge-test 命令注入** (fixed by 主程序员) — 已加白名单。
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员)
+- [x] **detect_fuobjectitem_stride 采样 items 0..29** (fixed d7b038c) -- now samples tail
+- [x] **WorldList vcnt>=30 拒绝 UWorld** (fixed d7b038c) -- now vcnt>=1
 - [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员)
 - [ ] **P2: 增强 Pause** — UWorld::IsPaused 内存写入 fallback
 
@@ -77,6 +79,17 @@ Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
   Game-specific classes may be in block 1+ (need multi-block support).
 
 ## Changelog (latest)
+
+### [v0.2.0] d7b038c -- xiaoni
+- `detect_fuobjectitem_stride`: fixed sampling range -- was items 0..29 (score=7/30 fails),
+  now samples tail (num_elems-30..num_elems-1) when ge_idx unavailable. Heuristic threshold
+  N/3->N/5 so score=7 passes. Root cause: ObjFirstGCIndex=28286 means early slots are empty.
+- `find_uworld_via_worldlist`: vcnt>=30 -> vcnt>=1. validate_function_ptr strict on optimized
+  prologues gives UWorld vcnt=1. FWC+0x2C0 confirmed as UWorld by game log -- outer chain
+  is the real discriminator.
+- `log_guobjectarray_details()`: new -- logs ObjFirstGCIndex, NumElements, chunk[0] addr,
+  sample objects at [tail-5..tail] and [1..5]. Called after find_guobjectarray() for cross-
+  checking bridge view vs game BeginPlay output.
 
 ### [v0.2.0] ed8ba05 -- xiaoni
 - `find_objects_by_class_name()` + `find_first_object_by_class_name()` added
