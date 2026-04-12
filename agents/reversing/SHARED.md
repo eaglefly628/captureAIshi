@@ -29,6 +29,34 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 ### GEngine Scanner
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
+## FUObjectItem Stride -- Key Facts (do not guess, always detect)
+
+FUObjectItem size is determined by BUILD CONFIG, not engine version:
+
+| Config                         | stride | Object* off |
+|-------------------------------|--------|-------------|
+| UE_PACK_FUOBJECT_ITEM          | 0x10   | 0x00 (low bits = flags, mask &~7) |
+| Standard Shipping              | 0x18   | 0x00        |
+| Development/Debug or WITH_VERSE_VM | 0x20 | 0x10    |
+
+FChunkedFixedUObjectArray layout is FIXED since UE4.21 (all versions):
+  +0x00 Objects** (chunk pointer array)
+  +0x08 PreAllocatedObjects*
+  +0x10 MaxElements (int32)
+  +0x14 NumElements (int32)  <- at FUObjectArray+0x24 = GUOBJARRAY_NUMELEMS_OFF=36
+  +0x18 MaxChunks (int32)
+  +0x1C NumChunks (int32)
+PreAllocatedObjects is also a contiguous FUObjectItem array (2nd data source for stride detection).
+
+Detection method (Dumper-7):
+- chunk 0 has 65536 entries, always full in any shipped game
+- Try each (stride, obj_off) candidate against first 30 items in chunk 0
+- Count how many item.Object values are valid heap pointers (non-null + readable vtable)
+- Cross-validate with g_engine_ptr at GEngine.InternalIndex for definitive result
+- Implemented in detect_fuobjectitem_stride() -- called early, before GUObjectArray walk
+
+Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
+
 ## Changelog (latest)
 
 ### [v0.2.0] fa65fba -- xiaoni

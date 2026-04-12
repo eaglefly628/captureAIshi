@@ -108,64 +108,54 @@ static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 
 /*
  * GUObjectArray (FUObjectArray) is the master UObject registry.
- * Layout (UE5, x64 -- from UE source and UE4SS/UEPseudo):
  *
- * FUObjectArray:
+ * FUObjectArray (UE4.21+, all versions):
  *   +0   ObjFirstGCIndex         (int32)
  *   +4   ObjLastNonGCIndex       (int32)
  *   +8   MaxObjectsNotConsideredByGC (int32)
  *   +12  OpenForDisregardForGC   (bool, 1 byte + 3 pad)
- *   +16  ObjObjects (FChunkedFixedUObjectArray):
- *     +16  Objects** (chunk array pointer)
- *     +24  PreAllocatedObjects* (may be NULL)
- *     +32  MaxElements (int32)
- *     +36  NumElements (int32)
- *     +40  MaxChunks (int32)
- *     +44  NumChunks (int32)
+ *   +16  ObjObjects (FChunkedFixedUObjectArray, 0x20 bytes, FIXED since 4.21):
+ *     +0x00  Objects** (chunk pointer array)
+ *     +0x08  PreAllocatedObjects*
+ *     +0x10  MaxElements (int32)
+ *     +0x14  NumElements (int32)
+ *     +0x18  MaxChunks   (int32)
+ *     +0x1C  NumChunks   (int32)
  *
- * FUObjectItem (24 bytes):
- *   +0   Object (UObjectBase*)
- *   +8   Flags (int32)
- *   +12  ClusterRootIndex (int32)
- *   +16  SerialNumber (int32)
- *   +20  padding (int32)
+ * FUObjectItem size depends on BUILD CONFIG, NOT engine version:
+ *
+ *   0x10 (16B) -- UE_PACK_FUOBJECT_ITEM=1
+ *                 Object* at +0x00 (low bits hold flags)
+ *   0x18 (24B) -- Standard Shipping (default)
+ *                 Object* at +0x00, then Flags/ClusterRoot/Serial
+ *   0x20 (32B) -- Development/Debug OR WITH_VERSE_VM (UE5.4+)
+ *                 +0x00 FlagsAndRefCount (uint64)
+ *                 +0x08 RemoteId         (8 bytes)
+ *                 +0x10 Object*
+ *                 +0x18 extra fields
+ *
+ * ALWAYS detect stride at runtime (Dumper-7 method) -- do not hardcode.
+ * Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
  *
  * Access pattern (same as UE4SS IndexToObject):
- *   chunk_idx      = index >> 16   (= index / 65536)
- *   within_idx     = index & 0xFFFF
- *   item           = Objects[chunk_idx][within_idx]
- *   object         = item.Object  (at item + FUOBJECTITEM_OBJECT_OFF)
- *
- * FUObjectItem layout changed in UE5.4+:
- *   UE4 / UE5.0-5.3:  stride=24, Object at +0x00
- *   UE5.4-5.7:        stride=32, Object at +0x10
- *                        +0x00 FlagsAndRefCount (uint64)
- *                        +0x08 RemoteId         (int8 + 7B pad)
- *                        +0x10 Object           (UObject*)
- *                        +0x18 [extra fields]
- * Confirmed by VS debugger on UE5.7 / StackOBot:
- *   ObjObjects.Objects[0][0..2] at stride 0x20 (32), Object at +0x10.
+ *   chunk_idx  = index >> 16
+ *   within_idx = index & 0xFFFF
+ *   item_ptr   = Objects[chunk_idx] + within_idx * stride
+ *   object     = *(UObject**)(item_ptr + obj_off)
  */
 
-#define GUOBJARRAY_OBJECTS_OFF    16   /* FUObjectArray+0x10: TUObjectArray.Objects**     */
-#define GUOBJARRAY_NUMELEMS_OFF   36   /* FUObjectArray+0x24: TUObjectArray.NumElements    */
-                                       /* TUObjectArray: Objects**(8)+PreAlloc*(8)+        */
-                                       /*   MaxElems(4)+NumElems(4)+MaxChunks(4)+NumChunks */
-                                       /* => NumElems at TUObjectArray+0x14 = GUA+0x24=36  */
-#define FUOBJECTITEM_STRIDE       32   /* sizeof(FUObjectItem): 24 (UE4.21-5.6) or         */
-                                       /*   32 (UE5.7+ added FlagsAndRefCount+RemoteId).   */
-                                       /* Default=32 for UE5.7; auto-detected at runtime.  */
-#define FUOBJECTITEM_OBJECT_OFF   0x10 /* Object* offset in FUObjectItem:                  */
-                                       /*   0x00 (UE4.21-5.6, Object is first field),      */
-                                       /*   0x10 (UE5.7+, FlagsAndRefCount+RemoteId first) */
-                                       /* Default=0x10 for UE5.7; auto-detected.           */
+#define GUOBJARRAY_OBJECTS_OFF    16   /* FUObjectArray+0x10: FChunkedFixedUObjectArray.Objects** */
+#define GUOBJARRAY_NUMELEMS_OFF   36   /* FUObjectArray+0x24: FChunkedFixedUObjectArray.NumElements */
+                                       /* = FUObjectArray+0x10 + FChunkedFixed+0x14 = 16+20 = 36   */
+#define FUOBJECTITEM_STRIDE_DEFAULT    32  /* Development/Debug or WITH_VERSE_VM default */
+#define FUOBJECTITEM_OBJECT_OFF_DEFAULT 0x10 /* Object* offset for 0x20-byte layout      */
 #define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
 #define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
 
 static void*              g_guobjectarray = NULL;
 static std::atomic<bool>  g_guobjectarray_found{false};
-static int                g_fuobjectitem_stride     = FUOBJECTITEM_STRIDE;
-static int                g_fuobjectitem_object_off = FUOBJECTITEM_OBJECT_OFF;
+static int                g_fuobjectitem_stride     = FUOBJECTITEM_STRIDE_DEFAULT;
+static int                g_fuobjectitem_object_off = FUOBJECTITEM_OBJECT_OFF_DEFAULT;
 
 /* -- FExec multi-hook table ---------------------------------------- */
 
@@ -963,43 +953,31 @@ static void* guobjectarray_get(int32_t index)
         (void*)(chunks_ptr + (uintptr_t)chunk_idx * 8));
     if (!chunk) return NULL;
 
-    /* FUObjectItem::Object at g_fuobjectitem_object_off within the item.
-     * UE5.4+: stride=32, object at +0x10.
-     * UE4/early UE5: stride=24, object at +0x00. */
+    /* stride/obj_off detected at runtime by detect_fuobjectitem_stride() */
     uintptr_t item_addr = chunk + (uintptr_t)within_idx * g_fuobjectitem_stride;
     return (void*)seh_read_ptr((void*)(item_addr + g_fuobjectitem_object_off));
 }
 
 /*
- * Auto-detect FUObjectItem stride and Object offset.
+ * Detect sizeof(FUObjectItem) and Object* offset at runtime (Dumper-7 method).
  *
- * Method A (try-all combinations):
- *   InternalIndex is at GEngine+0x0C in the standard UObjectBase layout.
- *   We try all (stride, object_off) pairs and pick the one where
- *   read_ptr(chunk + ge_idx*stride + object_off) == g_engine_ptr.
+ * FUObjectItem size is determined by BUILD CONFIG, not engine version:
+ *   0x10 (16B) -- UE_PACK_FUOBJECT_ITEM: Object* low bits hold flags
+ *   0x18 (24B) -- Standard Shipping: Object* at +0x00
+ *   0x20 (32B) -- Development/Debug OR WITH_VERSE_VM: Object* at +0x10
  *
- * Method B (linear chunk scan -- definitive):
- *   Search for g_engine_ptr anywhere in the chunk byte-by-byte.
- *   Position P found -> stride = (P - obj_off) / ge_idx,
- *   where obj_off in {0x00, 0x08, 0x10, 0x18} satisfies (P - obj_off) % ge_idx == 0.
+ * Detection: chunk 0 holds 65536 FUObjectItem structs consecutively.
+ * For each (stride, obj_off) candidate, scan items[0..N-1].Object and
+ * count how many look like valid heap pointers (non-null, readable vtable).
+ * The winning combo has the highest score across 30 sampled items.
+ * Cross-validate against g_engine_ptr at GEngine.InternalIndex when available.
  *
- * Both run; Method B is definitive. Must be called AFTER both
- * g_engine_ptr and g_guobjectarray are set.
+ * Must be called after g_guobjectarray is set. g_engine_ptr is optional
+ * (used for cross-validation only -- gives definitive confirmation).
  */
 static void detect_fuobjectitem_stride()
 {
-    if (!g_engine_ptr || !g_guobjectarray) return;
-
-    /* GEngine.InternalIndex at +0x0C (standard UObjectBase) */
-    int32_t ge_idx = 0;
-    __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { ge_idx = 0; }
-
-    if (ge_idx <= 0 || ge_idx >= 2000000) {
-        bridge_log("  FUObjectItem detect: GEngine.InternalIndex=%d invalid",
-                   ge_idx);
-        return;
-    }
+    if (!g_guobjectarray) return;
 
     /* Get chunk 0 base */
     uintptr_t chunks_ptr = seh_read_ptr(
@@ -1010,54 +988,93 @@ static void detect_fuobjectitem_stride()
         return;
     }
 
-    /* --- Method A: try (stride, obj_off) combinations --- */
-    static const int strides[]  = {32, 24, 20, 16};
-    static const int obj_offs[] = {0x00, 0x08, 0x10, 0x18};
+    /*
+     * Known (stride, obj_off) configs:
+     *   (32, 0x10) -- WITH_VERSE_VM / Development [StackOBot confirmed]
+     *   (24, 0x00) -- Standard Shipping
+     *   (16, 0x00) -- Packed (UE_PACK_FUOBJECT_ITEM)
+     */
+    static const struct { int stride; int obj_off; } configs[] = {
+        {32, 0x10},
+        {24, 0x00},
+        {16, 0x00},
+    };
+    const int N_CONFIGS = 3;
+    const int N_SAMPLE  = 30;  /* items to sample from chunk 0 */
 
-    for (int si = 0; si < 4; si++) {
-        for (int oi = 0; oi < 4; oi++) {
-            uintptr_t item  = chunk0 + (uintptr_t)ge_idx * strides[si];
-            uintptr_t probe = seh_read_ptr((void*)(item + obj_offs[oi]));
-            if (probe == (uintptr_t)g_engine_ptr) {
-                g_fuobjectitem_stride     = strides[si];
-                g_fuobjectitem_object_off = obj_offs[oi];
-                bridge_log("  FUObjectItem stride=%d object_off=0x%02X "
-                           "(idx=%d, method A)",
-                           strides[si], obj_offs[oi], ge_idx);
-                return;
-            }
-        }
+    /* Optional: GEngine.InternalIndex for cross-validation */
+    int32_t ge_idx = 0;
+    if (g_engine_ptr) {
+        __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { ge_idx = 0; }
+        if (ge_idx <= 0 || ge_idx >= 2000000) ge_idx = 0;
     }
 
-    /* --- Method B: linear scan of chunk 0 for g_engine_ptr --- */
-    bridge_log("  FUObjectItem method A failed, trying linear scan...");
-    uintptr_t scan_start = chunk0 + (uintptr_t)ge_idx * 16; /* min stride */
-    uintptr_t scan_end   = chunk0 + (uintptr_t)ge_idx * 64; /* max stride */
+    int best_score   = -1;
+    int best_stride  = g_fuobjectitem_stride;
+    int best_obj_off = g_fuobjectitem_object_off;
 
-    for (uintptr_t p = scan_start; p <= scan_end; p += 8) {
-        uintptr_t val = seh_read_ptr((void*)p);
-        if (val != (uintptr_t)g_engine_ptr) continue;
+    bridge_log("  FUObjectItem detect: chunk0=0x%p ge_idx=%d",
+               (void*)chunk0, ge_idx);
 
-        uintptr_t rel = p - chunk0;  /* byte offset from chunk base */
-        /* Try object offsets: rel = ge_idx * stride + obj_off */
-        for (int oi = 0; oi < 4; oi++) {
-            uintptr_t numerator = rel - (uintptr_t)obj_offs[oi];
-            if (numerator % (uintptr_t)ge_idx != 0) continue;
-            int inferred_stride = (int)(numerator / ge_idx);
-            if (inferred_stride < 16 || inferred_stride > 64) continue;
-            if (inferred_stride % 8 != 0) continue;
+    for (int ci = 0; ci < N_CONFIGS; ci++) {
+        int s   = configs[ci].stride;
+        int off = configs[ci].obj_off;
 
-            g_fuobjectitem_stride     = inferred_stride;
-            g_fuobjectitem_object_off = obj_offs[oi];
-            bridge_log("  FUObjectItem stride=%d object_off=0x%02X "
-                       "(idx=%d, method B linear scan)",
-                       inferred_stride, obj_offs[oi], ge_idx);
+        /* Score: count items[0..N-1] with valid-looking Object* */
+        int score = 0;
+        for (int i = 0; i < N_SAMPLE; i++) {
+            uintptr_t ptr = seh_read_ptr(
+                (void*)(chunk0 + (uintptr_t)i * s + off));
+            /* packed: mask out low 3 tag bits before checking */
+            if (s == 16) ptr &= ~(uintptr_t)0x7;
+            if (ptr < 0x10000) continue;
+            uintptr_t vtbl = seh_read_ptr((void*)ptr);
+            if (vtbl >= 0x10000) score++;
+        }
+
+        /* Cross-validate with GEngine at its known InternalIndex */
+        bool engine_ok = false;
+        if (ge_idx > 0) {
+            uintptr_t probe = seh_read_ptr(
+                (void*)(chunk0 + (uintptr_t)ge_idx * s + off));
+            if (s == 16) probe &= ~(uintptr_t)0x7;
+            engine_ok = (probe == (uintptr_t)g_engine_ptr);
+        }
+
+        bridge_log("  [stride=%d off=0x%02X] score=%d/%d engine_match=%d",
+                   s, off, score, N_SAMPLE, (int)engine_ok);
+
+        /* Definitive: score > half AND engine confirmed */
+        if (engine_ok && score > N_SAMPLE / 2) {
+            g_fuobjectitem_stride     = s;
+            g_fuobjectitem_object_off = off;
+            bridge_log("  FUObjectItem CONFIRMED: stride=%d object_off=0x%02X "
+                       "(score=%d + engine cross-validated)",
+                       s, off, score);
             return;
         }
+
+        if (score > best_score) {
+            best_score   = score;
+            best_stride  = s;
+            best_obj_off = off;
+        }
     }
 
-    bridge_log("  FUObjectItem detect failed -- keeping stride=%d off=0x%02X",
-               g_fuobjectitem_stride, g_fuobjectitem_object_off);
+    /* Heuristic fallback: take highest score if decent */
+    if (best_score >= N_SAMPLE / 3) {
+        g_fuobjectitem_stride     = best_stride;
+        g_fuobjectitem_object_off = best_obj_off;
+        bridge_log("  FUObjectItem HEURISTIC: stride=%d object_off=0x%02X "
+                   "(score=%d -- no engine cross-validation)",
+                   best_stride, best_obj_off, best_score);
+    } else {
+        bridge_log("  FUObjectItem detect FAILED (best score=%d/%d) "
+                   "-- keeping stride=%d off=0x%02X",
+                   best_score, N_SAMPLE,
+                   g_fuobjectitem_stride, g_fuobjectitem_object_off);
+    }
 }
 
 static int32_t guobjectarray_num_elements()
