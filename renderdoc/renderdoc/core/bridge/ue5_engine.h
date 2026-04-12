@@ -1317,40 +1317,191 @@ static bool find_gengine_via_guobjectarray()
 /* ---- FName Pool Utilities ---------------------------------------- */
 
 /*
- * FNamePool (UE5) stores all strings in 256KB blocks.
- * FNameEntry (2-byte aligned):
- *   uint16 Header = (len << 1) | bIsWide
- *   char   AnsiName[len]
+ * FNamePool (UE5) block layout:
+ *   FNameEntry (2-byte aligned):
+ *     uint16 Header = (len << 1) | bIsWide
+ *     char/wchar_t Name[len]
  *
- * Block 0 always starts with FNameEntry{"None"} at byte 0.
- * All engine class/property names are registered at startup into block 0.
+ *   Block 0 starts with FNameEntry{"None"} at byte 0.
+ *   Engine class/property names are in block 0.
+ *   Game-specific names may be in block 1+.
  *
  * ComparisonIndex encoding:
- *   bits[31:16] = block_idx  (0 for all engine names)
+ *   bits[31:16] = block_idx
  *   bits[15: 0] = word_off   (byte_offset_in_block >> 1)
+ *
+ * Block size: word_off max = 0xFFFF -> max byte_off = 0x1FFFE = ~128KB.
+ * Actual allocation is typically 128KB (0x20000) per block.
+ * NOTE: previous code required >= 256KB which was WRONG and caused
+ * VirtualQuery scan to miss all blocks.
+ *
+ * FNamePool struct layout (UE5, MSVC x64, in module .bss):
+ *   +0x00  SRWLOCK Lock        (8 bytes)
+ *   +0x08  uint32  CurrentBlock
+ *   +0x0C  uint32  CurrentByteCursor
+ *   +0x10  uint8*  Blocks[8192]   (8192 pointers to 128KB heap blocks)
  */
 
-static uintptr_t g_fnamepool_block0 = 0; /* cached FNamePool block 0 base */
+#define FNAMEPOOL_BLOCKS_OFF  0x10   /* Blocks[] starts at FNamePool+0x10 */
+#define FNAMEPOOL_MAX_BLOCKS  8192
+#define FNAMEPOOL_BLOCK_BYTES (128 * 1024)  /* max usable bytes per block */
+
+/* "None" FNameEntry: header=0x0008 (len=4, ASCII) + "None" */
+static const uint8_t kFNameNone[] = {0x08, 0x00, 'N', 'o', 'n', 'e'};
+
+static uintptr_t g_fnamepool_block0 = 0; /* FNamePool block 0 base (heap) */
+static uintptr_t g_fnamepool_global = 0; /* FNamePool struct (module .bss) */
 
 /*
- * find_fnamepool_block0() -- scan committed heap for a 256KB+ region
- * starting with FNameEntry{"None"}: { 0x08, 0x00, 'N', 'o', 'n', 'e' }.
- * The entry at +6 must have a valid ASCII header (len 1-128).
- * Result cached in g_fnamepool_block0.
+ * fname_get_block(bi) -- return heap pointer for block index bi.
+ * Uses g_fnamepool_global (full Blocks[] array) when available,
+ * falls back to g_fnamepool_block0 for bi==0.
  */
-static uintptr_t find_fnamepool_block0()
+static uintptr_t fname_get_block(uint32_t bi)
 {
-    if (g_fnamepool_block0) return g_fnamepool_block0;
+    if (bi == 0 && g_fnamepool_block0)
+        return g_fnamepool_block0;
+    if (g_fnamepool_global && bi < FNAMEPOOL_MAX_BLOCKS)
+        return seh_read_ptr(
+            (void*)(g_fnamepool_global + FNAMEPOOL_BLOCKS_OFF + bi * 8));
+    return 0;
+}
 
-    static const uint8_t kNone[] = {0x08, 0x00, 'N', 'o', 'n', 'e'};
+/*
+ * fname_resolve(comp_idx, out, out_len) -- ComparisonIndex -> string.
+ * Works for any block (requires g_fnamepool_global for bi > 0).
+ * Returns true on success; out is null-terminated UTF-8.
+ */
+static bool fname_resolve(uint32_t comp_idx, char* out, int out_len)
+{
+    if (!out || out_len <= 1) return false;
+    out[0] = '\0';
+
+    uint32_t bi       = comp_idx >> 16;
+    uint32_t word_off = comp_idx & 0xFFFF;
+    uint32_t byte_off = word_off * 2;
+
+    uintptr_t block = fname_get_block(bi);
+    if (!block) return false;
+
+    uint16_t hdr = 0;
+    __try { hdr = *(uint16_t*)(block + byte_off); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+
+    bool is_wide = (hdr & 1) != 0;
+    int  len     = (int)(hdr >> 1);
+    if (len <= 0 || len >= 4096) return false;
+
+    int n = (len < out_len - 1) ? len : out_len - 1;
+    if (is_wide) {
+        __try {
+            WideCharToMultiByte(CP_UTF8, 0,
+                (const wchar_t*)(block + byte_off + 2),
+                n, out, out_len - 1, NULL, NULL);
+            out[n] = '\0';
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    } else {
+        __try { memcpy(out, (void*)(block + byte_off + 2), n); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+        out[n] = '\0';
+    }
+    return true;
+}
+
+/*
+ * find_fnamepool_global() -- locate FNamePool struct in module .bss.
+ *
+ * Method 1: Export symbol "GNamePool" or "?GNamePool@@3VFNamePool@@A".
+ *   The export IS the struct; validate by checking Blocks[0] points to
+ *   a heap region starting with "None".
+ *
+ * Method 2: After finding block0 via VirtualQuery, scan module data
+ *   for a pointer == block0. That pointer is FNamePool.Blocks[0]
+ *   at FNamePool+FNAMEPOOL_BLOCKS_OFF.
+ *
+ * Sets g_fnamepool_global and g_fnamepool_block0 on success.
+ */
+static uintptr_t find_fnamepool_global()
+{
+    if (g_fnamepool_global) return g_fnamepool_global;
+
+    /* Method 1: Export symbol */
+    static const char* exports[] = {
+        "GNamePool",
+        "?GNamePool@@3VFNamePool@@A",
+    };
+    for (int ei = 0; ei < 2; ei++) {
+        uintptr_t p = (uintptr_t)GetProcAddress(
+            GetModuleHandleA(NULL), exports[ei]);
+        if (!p) continue;
+
+        uintptr_t blk0 = seh_read_ptr((void*)(p + FNAMEPOOL_BLOCKS_OFF));
+        if (blk0 < 0x10000) continue;
+
+        bool ok = false;
+        __try { ok = (memcmp((void*)blk0, kFNameNone, sizeof(kFNameNone)) == 0); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+        if (!ok) continue;
+
+        g_fnamepool_global = p;
+        g_fnamepool_block0 = blk0;
+        bridge_log("  FNamePool global=0x%llX (export '%s') block0=0x%llX",
+                   (unsigned long long)p, exports[ei],
+                   (unsigned long long)blk0);
+        return p;
+    }
+
+    /* Method 2: block0 must already be found -- scan module for backref */
+    if (!g_fnamepool_block0) return 0;
 
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return 0;
     uintptr_t mod_base = (uintptr_t)rgn.base;
     uintptr_t mod_end  = mod_base + rgn.size;
 
+    /* Walk module 8 bytes at a time looking for ptr == block0.
+     * First match is almost certainly Blocks[0] at FNamePool+FNAMEPOOL_BLOCKS_OFF. */
+    for (uintptr_t scan = mod_base; scan < mod_end - 8; scan += 8) {
+        uintptr_t val = seh_read_ptr((void*)scan);
+        if (val != g_fnamepool_block0) continue;
+
+        uintptr_t pool_cand = scan - FNAMEPOOL_BLOCKS_OFF;
+        g_fnamepool_global  = pool_cand;
+        bridge_log("  FNamePool global=0x%llX (backref scan, Blocks[0]@0x%llX)",
+                   (unsigned long long)pool_cand, (unsigned long long)scan);
+        return pool_cand;
+    }
+
+    bridge_log("  FNamePool global: backref scan failed");
+    return 0;
+}
+
+/*
+ * find_fnamepool_block0() -- locate FNamePool block 0 in heap.
+ *
+ * Method 1: Export check via find_fnamepool_global() (also sets global).
+ * Method 2: VirtualQuery scan -- find committed readable region >= 64KB
+ *   that starts with the "None" FNameEntry.
+ *   BUG FIX: old code required >= 256KB but FNamePool blocks are 128KB,
+ *   so ALL blocks were filtered out. Now uses 64KB minimum.
+ */
+static uintptr_t find_fnamepool_block0()
+{
+    if (g_fnamepool_block0) return g_fnamepool_block0;
+
+    /* Method 1: try export (also finds global for multi-block support) */
+    if (find_fnamepool_global()) return g_fnamepool_block0;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return 0;
+    uintptr_t mod_base = (uintptr_t)rgn.base;
+    uintptr_t mod_end  = mod_base + rgn.size;
+
+    /* Method 2: VirtualQuery heap scan */
     MEMORY_BASIC_INFORMATION mbi = {};
     uintptr_t addr = 0x10000;
+    int regions_checked = 0;
 
     while (addr < 0x800000000000ULL) {
         if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi))) {
@@ -1360,40 +1511,50 @@ static uintptr_t find_fnamepool_block0()
         uintptr_t base = (uintptr_t)mbi.BaseAddress;
         uintptr_t end  = base + mbi.RegionSize;
 
+        /* FNamePool blocks are ~128KB; require >= 64KB to filter noise
+         * while still catching blocks smaller than our expectation. */
         bool skip = (mbi.State != MEM_COMMIT)
                  || !(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE
                                     | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))
                  || (base < mod_end && end > mod_base)   /* overlaps module */
-                 || mbi.RegionSize < (256 * 1024);        /* too small */
+                 || mbi.RegionSize < (64 * 1024);         /* < 64KB, too small */
 
         if (!skip) {
+            regions_checked++;
             bool match = false;
             uint16_t next_hdr = 0;
             __try {
-                match    = (memcmp((void*)base, kNone, sizeof(kNone)) == 0);
-                next_hdr = *(uint16_t*)(base + sizeof(kNone));
+                match    = (memcmp((void*)base, kFNameNone, sizeof(kFNameNone)) == 0);
+                next_hdr = *(uint16_t*)(base + sizeof(kFNameNone));
             }
             __except(EXCEPTION_EXECUTE_HANDLER) {}
 
             if (match) {
                 uint32_t next_len = next_hdr >> 1;
-                /* Next entry must be a short ASCII name (1-128 chars) */
-                if (next_len >= 1 && next_len <= 128 && (next_hdr & 1) == 0) {
+                /* Next entry: valid ASCII name (1-256 chars) or zero (end) */
+                if (next_hdr == 0 ||
+                    (next_len >= 1 && next_len <= 256 && (next_hdr & 1) == 0)) {
                     g_fnamepool_block0 = base;
-                    bridge_log("  FNamePool block0=0x%llX",
-                               (unsigned long long)base);
+                    bridge_log("  FNamePool block0=0x%llX "
+                               "(%d regions checked, regionSize=%zuKB)",
+                               (unsigned long long)base, regions_checked,
+                               mbi.RegionSize / 1024);
+                    /* Try to find pool global for multi-block support */
+                    find_fnamepool_global();
                     return base;
                 }
+                bridge_log("  FNamePool: 'None' at 0x%llX but next_hdr=0x%04X "
+                           "-- rejected", (unsigned long long)base, next_hdr);
             }
         }
         addr = end;
     }
-    bridge_log("  FNamePool block0: not found");
+    bridge_log("  FNamePool block0: not found (%d regions checked)", regions_checked);
     return 0;
 }
 
 /*
- * get_fname_cmpidx_for(target) -- walk block 0 entries to find ComparisonIndex.
+ * get_fname_cmpidx_for(target) -- walk block 0 to find ComparisonIndex.
  * Returns 0xFFFFFFFF if not found.
  */
 static uint32_t get_fname_cmpidx_for(const char* target)
@@ -1402,10 +1563,10 @@ static uint32_t get_fname_cmpidx_for(const char* target)
     if (!block0) return 0xFFFFFFFF;
 
     int tlen = (int)strlen(target);
-    uint16_t exp_hdr = (uint16_t)(tlen << 1); /* ASCII */
+    uint16_t exp_hdr = (uint16_t)(tlen << 1); /* ASCII, not wide */
 
     uintptr_t cursor  = block0;
-    uintptr_t blk_end = block0 + 256 * 1024;
+    uintptr_t blk_end = block0 + FNAMEPOOL_BLOCK_BYTES;
 
     while (cursor < blk_end - 2) {
         uint16_t hdr = 0;

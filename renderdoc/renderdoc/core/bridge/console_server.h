@@ -489,6 +489,30 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
                    "GEngine Method B unavailable, string xref only");
     }
 
+    /* Try FNamePool early -- it is stable from game startup and required
+     * for FName-based UWorld search (find_uworld_via_guobjectarray). */
+    {
+        uintptr_t blk0 = find_fnamepool_block0();
+        if (blk0) {
+            BRIDGE_LOG("FNamePool block0=0x%llX global=0x%llX",
+                       (unsigned long long)blk0,
+                       (unsigned long long)g_fnamepool_global);
+            /* Quick sanity: resolve "World" class name index */
+            uint32_t world_idx = get_fname_cmpidx_for("World");
+            BRIDGE_LOG("  FName('World') ComparisonIndex=0x%X%s",
+                       world_idx,
+                       world_idx == 0xFFFFFFFF ? " (NOT FOUND in block0)" : " OK");
+            if (world_idx != 0xFFFFFFFF) {
+                uint32_t engine_idx = get_fname_cmpidx_for("GameEngine");
+                uint32_t pkg_idx    = get_fname_cmpidx_for("Package");
+                BRIDGE_LOG("  FName('GameEngine')=0x%X FName('Package')=0x%X",
+                           engine_idx, pkg_idx);
+            }
+        } else {
+            BRIDGE_LOG("FNamePool block0: not found (will retry via GUObjectArray path)");
+        }
+    }
+
     const int poll_interval_ms = 2000;
     const int timeout_ms = 120000;
     int elapsed = 0;
