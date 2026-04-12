@@ -67,11 +67,15 @@ Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
 - `find_objects_by_class_name(name, out, max)` -- batch class search
 - `find_first_object_by_class_name(name)` -- single result
 
+**Also have (f135597):**
+- `fname_resolve(uint32_t comp_idx, char* out, int len)` -- any ComparisonIndex to string
+  Requires g_fnamepool_global (for block 1+); block 0 works standalone.
+- `find_fnamepool_global()` -- locates FNamePool struct in module .bss
+- `fname_get_block(bi)` -- get block heap pointer for any block index
+
 **Missing:**
-- `fname_resolve(uint32_t cmp_idx) -> string` -- arbitrary index to string
-  Needed for: enumerate unknown class names, general UObject inspection
-  Requires: full FNamePool (all blocks), not just block 0
-  Priority: P2 -- not needed for captureAIshi target classes
+- FNamePool block 1+ reliably found -- need g_fnamepool_global via export or backref.
+  Game-specific class names (block_idx > 0) still unresolvable without the global.
 
 **Coverage:** All standard engine class names are in FNamePool block 0:
   PlayerController, PlayerCameraManager, DirectionalLight, PostProcessVolume,
@@ -79,6 +83,17 @@ Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
   Game-specific classes may be in block 1+ (need multi-block support).
 
 ## Changelog (latest)
+
+### [v0.2.0] f135597 -- xiaoni
+- `find_fnamepool_block0()`: root cause found -- 256KB size filter is WRONG.
+  FNamePool blocks are 128KB (word_off max=0xFFFF, byte_off max=0x1FFFE). All
+  blocks were filtered by `mbi.RegionSize < 256KB`. Fixed to 64KB.
+- `find_fnamepool_global()`: new -- finds FNamePool struct in module .bss
+  via export symbol (GNamePool) or backref scan from block0. Enables block 1+.
+- `fname_resolve(comp_idx, out, out_len)`: new -- any ComparisonIndex -> string.
+  Uses g_fnamepool_global for block 1+, g_fnamepool_block0 for block 0.
+- Early FNamePool log in cs_engine_scan_thread: now logs block0/global addr and
+  FName("World"), FName("GameEngine") indices before GEngine search begins.
 
 ### [v0.2.0] d7b038c -- xiaoni
 - `detect_fuobjectitem_stride`: fixed sampling range -- was items 0..29 (score=7/30 fails),
