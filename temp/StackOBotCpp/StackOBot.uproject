@@ -1,0 +1,13 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{5B295065-421F-608B-148D-B29D64FD8432}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "StackOBot",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
