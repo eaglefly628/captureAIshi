@@ -1374,18 +1374,6 @@ static int find_objects_by_class_name(const char* class_name,
     return found;
 }
 
-/*
- * find_first_object_by_class_name(class_name)
- *
- * Convenience wrapper -- returns the first matching object or NULL.
- */
-static void* find_first_object_by_class_name(const char* class_name)
-{
-    void* result = NULL;
-    find_objects_by_class_name(class_name, &result, 1);
-    return result;
-}
-
 /* ---- UWorld via GUObjectArray + FName class comparison ---------- */
 
 /*
