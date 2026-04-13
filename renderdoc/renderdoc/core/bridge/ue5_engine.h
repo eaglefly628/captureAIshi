@@ -1123,8 +1123,14 @@ static void detect_fuobjectitem_stride()
     /* Choose sample start: items 0..N are mostly null (ObjFirstGCIndex is
      * typically 28000+, but many early slots are still empty).
      * Sample near GEngine (ge_idx) if known, else near array midpoint.
-     * Items near num_elems-1 are the densest (recently allocated). */
-    int32_t num_elems_now = guobjectarray_num_elements();
+     * Items near num_elems-1 are the densest (recently allocated).
+     * Read NumElements directly (guobjectarray_num_elements defined later). */
+    int32_t num_elems_now = 0;
+    __try {
+        num_elems_now = *(int32_t*)(
+            (uint8_t*)g_guobjectarray + GUOBJARRAY_NUMELEMS_OFF);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) { num_elems_now = 0; }
     int32_t sample_start = 0;
     if (ge_idx > N_SAMPLE / 2)
         sample_start = ge_idx - N_SAMPLE / 2;
