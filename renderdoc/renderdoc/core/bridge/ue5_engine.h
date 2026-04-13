@@ -2313,44 +2313,26 @@ static bool exec_console_command_internal(const char* cmd)
      * ULocalPlayer is found actively via GUObjectArray + FName scan.
      * Helper lambda: call LP Exec via its FExec subobject. */
     auto try_lp_exec = [&](void* lp_fexec_subobj) -> bool {
-        if (!lp_fexec_subobj) {
-            bridge_log("  LP-EXEC: fexec_subobj is NULL");
-            return false;
-        }
+        if (!lp_fexec_subobj) return false;
         uintptr_t lp_vtable = seh_read_ptr(lp_fexec_subobj);
-        if (!lp_vtable) {
-            bridge_log("  LP-EXEC: vtable read failed from 0x%p", lp_fexec_subobj);
-            return false;
-        }
+        if (!lp_vtable) return false;
 
         FExecExecFn lp_fn = nullptr;
-        bool from_hook_table = false;
 
         /* Look up in hook table first (use original if hooked) */
         for (int i = 0; i < g_fexec_hook_count; i++) {
             if (g_fexec_hook_table[i].vtable_base == lp_vtable) {
                 lp_fn = g_fexec_hook_table[i].original;
-                from_hook_table = true;
                 break;
             }
         }
 
         /* Fallback: vtable not hooked (FExec has only 2 entries, scan
          * requires >= 3), so vtable[1] is still the original Exec. */
-        if (!lp_fn) {
+        if (!lp_fn)
             lp_fn = (FExecExecFn)seh_read_ptr((void*)(lp_vtable + 8));
-        }
 
-        bridge_log("  LP-EXEC: obj=0x%p fexec=0x%p vtable=0x%llX fn=0x%p "
-                   "src=%s world=0x%p",
-                   g_localplayer_ptr, lp_fexec_subobj,
-                   (unsigned long long)lp_vtable, (void*)lp_fn,
-                   from_hook_table ? "hook_table" : "vtable[1]", world);
-
-        if (!lp_fn || !validate_function_ptr((void*)lp_fn)) {
-            bridge_log("  LP-EXEC: fn invalid or NULL");
-            return false;
-        }
+        if (!lp_fn || !validate_function_ptr((void*)lp_fn)) return false;
         bool lp_ret = false;
         bool lp_ok  = seh_call_fexec(lp_fn, lp_fexec_subobj,
                                       world, wcmd.data(), ar, &lp_ret);
@@ -2362,17 +2344,11 @@ static bool exec_console_command_internal(const char* cmd)
         return false;
     };
 
-    /* ULocalPlayer: FName+GUObjectArray scan (active, cold-start safe).
-     * If not found at startup, try once more here before giving up. */
     if (!g_localplayer_ptr) find_localplayer();
     if (g_localplayer_ptr) {
         uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
         void* lp_fexec = (uint8_t*)g_localplayer_ptr + fexec_off;
-        bridge_log("  LP path: ptr=0x%p fexec_off=0x%X fexec_subobj=0x%p",
-                   g_localplayer_ptr, (unsigned)fexec_off, lp_fexec);
         if (try_lp_exec(lp_fexec)) return true;
-    } else {
-        bridge_log("  LP path: g_localplayer_ptr is NULL");
     }
 
     bridge_log("  OK ret=0 (GEngine rejected, LocalPlayer not found)");
