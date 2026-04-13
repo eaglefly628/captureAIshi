@@ -177,6 +177,14 @@ static int                g_fexec_hook_count = 0;
 
 /* (passive g_localplayer_fexec removed: all object lookup via GUA+FName) */
 
+/* -- Debug break support -------------------------------------------
+ * When g_debug_break_armed is set (via __bridge_arm_break TCP command),
+ * bridge calls __debugbreak() at the next UWorld/LocalPlayer discovery.
+ * Attach WinDbg / x64dbg BEFORE arming, then trigger a rescan from the UI.
+ * One-shot: auto-disarms after the first break fires.
+ */
+static std::atomic<bool> g_debug_break_armed{false};
+
 /* -- SEH-safe helpers ---------------------------------------------- */
 
 /*
@@ -1501,6 +1509,12 @@ static bool find_uworld_via_guobjectarray()
         bridge_log("  UWorld FOUND via GUObjectArray FName: [%d] obj=0x%p outer=0x%llX",
                    i, obj, (unsigned long long)outer);
         g_world_ptr = obj;
+        /* If debug break is armed: fire INT3 so WinDbg/x64dbg catches us here.
+         * Disarms after firing (one-shot). Attach debugger BEFORE arming. */
+        if (g_debug_break_armed.exchange(false)) {
+            bridge_log("  DEBUG BREAK: UWorld found -- breaking into debugger");
+            __debugbreak();
+        }
         return true;
     }
 
@@ -1568,6 +1582,11 @@ static bool find_localplayer()
         g_localplayer_ptr = obj;
         bridge_log("  ULocalPlayer FOUND: [%d] obj=0x%p fexec_vptr=0x%llX",
                    i, obj, (unsigned long long)lp_fexec_v);
+        /* Fire debug break if armed (one-shot). */
+        if (g_debug_break_armed.exchange(false)) {
+            bridge_log("  DEBUG BREAK: LocalPlayer found -- breaking into debugger");
+            __debugbreak();
+        }
         return true;
     }
     bridge_log("  find_localplayer: not found in %d objects", num_elems);

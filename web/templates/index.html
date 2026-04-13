@@ -961,6 +961,9 @@ body {
   <button class="btn btn-accent" id="btnStart" onclick="startCapture()">&#9654;&#xFE0E; Start</button>
   <button class="btn btn-danger" id="btnStop" onclick="stopCapture()" style="display:none">&#9632;&#xFE0E; Stop</button>
   <button class="btn" id="btnDebug" onclick="toggleDebugPanel()" title="Bridge Debug">Debug</button>
+  <button class="btn" id="btnRescanUE" onclick="toolbarRescan()" title="Re-scan UWorld + LocalPlayer in UE5 (after map loads)">
+    <span id="rescanDot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#555;margin-right:5px;vertical-align:middle;transition:background 0.3s"></span>重新扫描 UE
+  </button>
   <div class="toolbar-sep"></div>
   <select class="sel" id="presetSelect" onchange="selectPresetById(this.value)">
     <option value="">Preset...</option>
@@ -2596,6 +2599,7 @@ pollSessions();pollCaptures();
       <button class="btn" onclick="bridgeCmd('ShowHUD 1')">HUD On</button>
       <button class="btn" onclick="bridgeCmd('pause')">Pause</button>
       <button class="btn" onclick="bridgeStatus()">Status</button>
+      <button class="btn" id="btnArmBreak" onclick="bridgeArmBreak()" title="Arm __debugbreak() in bridge -- fires on next UWorld/LP discovery. Attach WinDbg first.">Arm Break</button>
     </div>
     <div style="display:flex;gap:4px">
       <input id="debugCmdInput" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:monospace" placeholder="Custom command..." onkeydown="if(event.key==='Enter')bridgeCmd(this.value)">
@@ -2647,7 +2651,15 @@ function updateScanStatus(){
       document.getElementById('scanLP').innerHTML='<span style="color:#f84">LocalPlayer: ?</span>';
     });
 }
+function _setRescanDot(state){
+  // state: 'scanning'|'ok'|'partial'|'fail'|'idle'
+  var dot=document.getElementById('rescanDot');
+  if(!dot)return;
+  var colors={scanning:'#fa0',ok:'#4f4',partial:'#f80',fail:'#f44',idle:'#555'};
+  dot.style.background=colors[state]||'#555';
+}
 function bridgeRescan(){
+  _setRescanDot('scanning');
   document.getElementById('scanWorld').innerHTML='<span style="color:#fa0">UWorld: scanning...</span>';
   document.getElementById('scanLP').innerHTML='<span style="color:#fa0">LocalPlayer: scanning...</span>';
   debugAppend('> __bridge_rescan_objects');
@@ -2657,12 +2669,41 @@ function bridgeRescan(){
       document.getElementById('scanWorld').innerHTML=_scanBadge(d.uworld_found,'UWorld');
       document.getElementById('scanLP').innerHTML=_scanBadge(d.localplayer_found,'LocalPlayer');
       if(d.ok){
+        var both=d.uworld_found&&d.localplayer_found;
+        var either=d.uworld_found||d.localplayer_found;
+        _setRescanDot(both?'ok':either?'partial':'fail');
         var msg='Rescan: UWorld='+(d.uworld_found?d.world_ptr:'NOT FOUND')
                +' LocalPlayer='+(d.localplayer_found?d.localplayer_ptr:'NOT FOUND');
         debugAppend(msg);
       } else {
+        _setRescanDot('fail');
         debugAppend('ERROR: '+(d.error||'unknown'));
       }
+    })
+    .catch(e=>{_setRescanDot('fail');debugAppend('ERROR: '+e);});
+}
+function toolbarRescan(){
+  // Same as bridgeRescan but opens debug log if hidden
+  var p=document.getElementById('debugPanel');
+  if(p.style.display==='none'){
+    p.style.display='block';
+    updateScanStatus();
+  }
+  bridgeRescan();
+}
+var _breakArmed=false;
+function bridgeArmBreak(){
+  debugAppend('> __bridge_arm_break');
+  fetch('/api/bridge-test',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cmd:'__bridge_arm_break'})})
+    .then(r=>r.json())
+    .then(d=>{
+      _breakArmed=d.response==='armed';
+      var btn=document.getElementById('btnArmBreak');
+      if(btn) btn.style.background=_breakArmed?'#a00':'';
+      debugAppend(_breakArmed
+        ? 'Break ARMED -- attach WinDbg/x64dbg, then click Re-scan UE'
+        : 'Break disarmed');
     })
     .catch(e=>debugAppend('ERROR: '+e));
 }

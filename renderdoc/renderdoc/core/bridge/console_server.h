@@ -218,6 +218,20 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
+    /* Toggle __debugbreak() arm state.
+     * When armed, the next UWorld/LocalPlayer discovery fires INT3.
+     * Attach WinDbg/x64dbg to the game process BEFORE arming, then
+     * trigger a re-scan from the UI to catch the exact discovery moment.
+     * One-shot: auto-disarms after first break. */
+    if (cmd == "__bridge_arm_break") {
+        bool was = g_debug_break_armed.load();
+        g_debug_break_armed = !was;
+        bool now = g_debug_break_armed.load();
+        BRIDGE_LOG("Debug break: %s", now ? "ARMED (fire on next UWorld/LP find)" : "disarmed");
+        cs_reply(client, now ? "armed\n" : "disarmed\n");
+        return true;
+    }
+
     /* Re-scan UWorld + ULocalPlayer via GUObjectArray + FName comparison.
      * Call this after map load completes to refresh stale pointers.
      * Clears existing pointers before scanning so stale map references
