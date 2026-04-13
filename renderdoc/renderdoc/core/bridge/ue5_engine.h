@@ -1447,6 +1447,72 @@ static uint32_t get_fname_cmpidx_for(const char* target)
     return 0xFFFFFFFF;
 }
 
+/*
+ * resolve_fname(cmp_idx, buf, buf_size)
+ *
+ * Reverse lookup: ComparisonIndex -> ASCII string.
+ * Returns buf (always NUL-terminated). On failure returns "?".
+ */
+static const char* resolve_fname(uint32_t cmp_idx, char* buf, int buf_size)
+{
+    if (buf_size < 2) { if (buf_size > 0) buf[0] = '\0'; return buf; }
+    buf[0] = '?'; buf[1] = '\0';
+
+    uint32_t block_idx = cmp_idx >> 16;
+    uint32_t word_off  = cmp_idx & 0xFFFF;
+    uintptr_t block = fname_get_block(block_idx);
+    if (!block) return buf;
+
+    uintptr_t entry_addr = block + (uintptr_t)word_off * 2;
+    uint16_t hdr = 0;
+    __try { hdr = *(uint16_t*)entry_addr; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return buf; }
+
+    if (hdr == 0) return buf;
+    bool is_wide = (hdr & 1) != 0;
+    int  len     = fname_entry_len(hdr);
+    if (len < 1 || len > 512) return buf;
+
+    int copy_len = (len < buf_size - 1) ? len : (buf_size - 1);
+    if (!is_wide) {
+        __try { memcpy(buf, (void*)(entry_addr + 2), copy_len); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { buf[0] = '?'; buf[1] = '\0'; return buf; }
+    } else {
+        /* Wide -> ASCII lossy conversion */
+        __try {
+            wchar_t* ws = (wchar_t*)(entry_addr + 2);
+            for (int k = 0; k < copy_len; k++)
+                buf[k] = (char)(ws[k] & 0x7F);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { buf[0] = '?'; buf[1] = '\0'; return buf; }
+    }
+    buf[copy_len] = '\0';
+    return buf;
+}
+
+/* Helper: read an object's NamePrivate and ClassPrivate->NamePrivate as strings.
+ * Writes to name_buf and class_buf. */
+static void read_obj_names(void* obj, char* name_buf, int name_sz,
+                           char* class_buf, int class_sz)
+{
+    name_buf[0] = '\0'; class_buf[0] = '\0';
+
+    /* NamePrivate at UObjectBase+0x18, lo32 = ComparisonIndex */
+    uint32_t name_idx = 0;
+    __try { name_idx = *(uint32_t*)((uint8_t*)obj + 0x18); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { name_idx = 0xFFFFFFFF; }
+    if (name_idx != 0xFFFFFFFF) resolve_fname(name_idx, name_buf, name_sz);
+
+    /* ClassPrivate at UObjectBase+0x10 */
+    uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+    if (class_ptr >= 0x10000) {
+        uint32_t cls_name_idx = 0;
+        __try { cls_name_idx = *(uint32_t*)((uint8_t*)class_ptr + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { cls_name_idx = 0xFFFFFFFF; }
+        if (cls_name_idx != 0xFFFFFFFF) resolve_fname(cls_name_idx, class_buf, class_sz);
+    }
+}
+
 /* ---- UWorld cross-validation via GEngine pointer chain --------------- */
 
 /*
@@ -1577,10 +1643,14 @@ static bool find_uworld_via_guobjectarray()
         __try { obj_flags = *(uint32_t*)((uint8_t*)obj + 0x08); }
         __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
 
+        /* Read object name + class name for diagnostic logging */
+        char obj_name[128], cls_name[128];
+        read_obj_names(obj, obj_name, sizeof(obj_name), cls_name, sizeof(cls_name));
+
         /* Skip CDOs (RF_ClassDefaultObject = 0x10) */
         if (obj_flags & 0x10) {
-            bridge_log("  UWorld [%d] 0x%p: CDO (flags=0x%X) -- skipped",
-                       i, obj, obj_flags);
+            bridge_log("  UWorld [%d] 0x%p: CDO name='%s' class='%s' flags=0x%X -- skipped",
+                       i, obj, obj_name, cls_name, obj_flags);
             cdo_skipped++;
             continue;
         }
@@ -1592,8 +1662,15 @@ static bool find_uworld_via_guobjectarray()
         uintptr_t outer_outer = seh_read_ptr((uint8_t*)outer + 0x20);
         if (outer_outer != 0) continue;
 
-        bridge_log("  UWorld candidate #%d: [%d] obj=0x%p flags=0x%X outer=0x%llX",
-                   n_candidates, i, obj, obj_flags, (unsigned long long)outer);
+        /* Also read outer's name */
+        char outer_name[128], outer_cls[128];
+        read_obj_names((void*)outer, outer_name, sizeof(outer_name),
+                       outer_cls, sizeof(outer_cls));
+
+        bridge_log("  UWorld candidate #%d: [%d] obj=0x%p name='%s' class='%s' "
+                   "flags=0x%X outer=0x%llX outer_name='%s'",
+                   n_candidates, i, obj, obj_name, cls_name,
+                   obj_flags, (unsigned long long)outer, outer_name);
 
         if (n_candidates < 16) {
             candidates[n_candidates].index = i;
@@ -1724,9 +1801,14 @@ static bool find_localplayer()
         uint32_t obj_flags = 0;
         __try { obj_flags = *(uint32_t*)((uint8_t*)obj + 0x08); }
         __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+        /* Read names for diagnostic logging */
+        char obj_name[128], cls_name[128];
+        read_obj_names(obj, obj_name, sizeof(obj_name), cls_name, sizeof(cls_name));
+
         if (obj_flags & 0x10) {
-            bridge_log("  LocalPlayer [%d] 0x%p: CDO (flags=0x%X) -- skipped",
-                       i, obj, obj_flags);
+            bridge_log("  LocalPlayer [%d] 0x%p: CDO name='%s' class='%s' "
+                       "flags=0x%X -- skipped",
+                       i, obj, obj_name, cls_name, obj_flags);
             cdo_skipped++;
             continue;
         }
@@ -1739,23 +1821,25 @@ static bool find_localplayer()
         /* Check if OuterPrivate is a GameInstance.
          * ULocalPlayer.OuterPrivate -> UGameInstance (class FName check). */
         bool outer_is_gi = false;
-        if (gi_idx != 0xFFFFFFFF) {
-            uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
-            if (outer >= 0x10000 && outer < 0x800000000000ULL) {
-                uintptr_t outer_class = seh_read_ptr((void*)(outer + 0x10));
-                if (outer_class >= 0x10000) {
-                    uint32_t outer_class_name = 0;
-                    __try { outer_class_name = *(uint32_t*)((uint8_t*)outer_class + 0x18); }
-                    __except(EXCEPTION_EXECUTE_HANDLER) { outer_class_name = 0; }
-                    outer_is_gi = (outer_class_name == gi_idx);
-                }
+        char outer_cls_name[128] = {0};
+        uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
+        if (outer >= 0x10000 && outer < 0x800000000000ULL) {
+            uintptr_t outer_class = seh_read_ptr((void*)(outer + 0x10));
+            if (outer_class >= 0x10000) {
+                uint32_t outer_class_cmpidx = 0;
+                __try { outer_class_cmpidx = *(uint32_t*)((uint8_t*)outer_class + 0x18); }
+                __except(EXCEPTION_EXECUTE_HANDLER) { outer_class_cmpidx = 0; }
+                resolve_fname(outer_class_cmpidx, outer_cls_name, sizeof(outer_cls_name));
+                if (gi_idx != 0xFFFFFFFF)
+                    outer_is_gi = (outer_class_cmpidx == gi_idx);
             }
         }
 
-        bridge_log("  LocalPlayer candidate #%d: [%d] obj=0x%p flags=0x%X "
-                   "fexec_vptr=0x%llX outer_gi=%d",
-                   n_candidates, i, obj, obj_flags,
-                   (unsigned long long)lp_fexec_v, (int)outer_is_gi);
+        bridge_log("  LocalPlayer candidate #%d: [%d] obj=0x%p name='%s' "
+                   "class='%s' flags=0x%X fexec=0x%llX outer_class='%s' gi=%d",
+                   n_candidates, i, obj, obj_name, cls_name,
+                   obj_flags, (unsigned long long)lp_fexec_v,
+                   outer_cls_name, (int)outer_is_gi);
 
         if (n_candidates < 8) {
             candidates[n_candidates] = { i, obj, lp_fexec_v,
