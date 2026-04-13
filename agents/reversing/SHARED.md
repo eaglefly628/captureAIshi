@@ -24,6 +24,20 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] aea22c7 -- xiaoni
+- **Ordered gated init**: console_server.h startup rewritten as 7-step sequential
+  init. Gate 1=GUObjectArray (poll 120s), Gate 2=FNamePool (poll 60s), Gate 3=GEngine
+  (poll 120s). All are mandatory -- bridge aborts (FATAL log) if any gate times out.
+  Steps labeled [1/7]..[7/7] for clean log readability.
+- **Removed per-hook log noise**: install_fexec_hook_on no longer logs per hook.
+  64 individual log lines -> 1 summary "[5/7] FExec hooks: N installed".
+- **Removed lazy world scan**: exec_console_command_internal no longer calls
+  find_uworld_via_guobjectarray() lazily on each command. UWorld must be found
+  at startup (step [6/7]) or captured by FExec hook.
+- **Removed passive LocalPlayer fallback**: g_localplayer_fexec global and hook
+  capture removed entirely. ULocalPlayer is found ONLY via GUA+FName("LocalPlayer")
+  active scan. Single exec path: GEngine first, ULocalPlayer (FName) second.
+
 ### [v0.2.0] 951ee30 -- xiaoni
 - `find_localplayer()`: multi-block FName scan. 'LocalPlayer' confirmed in block 5+
   (not block 0). Old code returned 0xFFFFFFFF silently. Now searches blocks 0..CurrentBlock.
