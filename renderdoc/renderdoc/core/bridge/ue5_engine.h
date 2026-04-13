@@ -173,7 +173,7 @@ struct FExecHookEntry {
     FExecExecFn original;      /* saved original vtable[1] */
 };
 
-static FExecHookEntry     g_fexec_hook_table[16];
+static FExecHookEntry     g_fexec_hook_table[64];
 static int                g_fexec_hook_count = 0;
 
 /* -- SEH-safe helpers ---------------------------------------------- */
@@ -2128,9 +2128,8 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
                                    uintptr_t primary_vptr,
                                    uintptr_t mod_start, uintptr_t mod_end)
 {
-    if (g_fexec_hook_count >= 16) {
-        bridge_log("  FExec hook table full");
-        return false;
+    if (g_fexec_hook_count >= 64) {
+        return false;  /* table full -- caller should stop scanning */
     }
 
     /* Reject primary vtable */
@@ -2234,6 +2233,8 @@ static void scan_guobjectarray_for_fexec_hooks()
         if (install_fexec_hook_on(fexec_vptr, primary_vptr,
                                    mod_start, mod_end))
             hooked_new++;
+        else if (g_fexec_hook_count >= 64)
+            break;  /* table full, no point scanning further */
     }
 
     bridge_log("  GUObjectArray scan done: checked=%d, new_hooks=%d "
