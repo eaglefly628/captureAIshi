@@ -126,3 +126,66 @@ void ABotDebugGameMode::BeginPlay()
 
     volatile int bp = 0; (void)bp;
 }
+
+void ABotDebugGameMode::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    // One-shot test: fires once 3 seconds after BeginPlay.
+    // Tests the exact exec chain the bridge uses.
+    static float Elapsed = 0.0f;
+    static bool bFired = false;
+    Elapsed += DeltaSeconds;
+    if (bFired || Elapsed < 3.0f) return;
+    bFired = true;
+
+    UWorld* World = GetWorld();
+    UE_LOG(LogTemp, Warning, TEXT("=== BotDebug Tick exec test (t=%.1f) ==="), Elapsed);
+
+    // 1. GEngine->Exec with world (bridge primary path)
+    if (GEngine && World)
+    {
+        bool r1 = GEngine->Exec(World, TEXT("ToggleDebugCamera"), *GLog);
+        UE_LOG(LogTemp, Warning,
+            TEXT("GEngine->Exec('ToggleDebugCamera', World) ret=%d"), (int32)r1);
+
+        bool r2 = GEngine->Exec(World, TEXT("slomo 0.1"), *GLog);
+        UE_LOG(LogTemp, Warning,
+            TEXT("GEngine->Exec('slomo 0.1', World) ret=%d"), (int32)r2);
+
+        bool r3 = GEngine->Exec(World, TEXT("ShowHUD 0"), *GLog);
+        UE_LOG(LogTemp, Warning,
+            TEXT("GEngine->Exec('ShowHUD 0', World) ret=%d"), (int32)r3);
+    }
+
+    // 2. ULocalPlayer->Exec (bridge fallback path)
+    APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+    ULocalPlayer* LP = PC ? PC->GetLocalPlayer() : nullptr;
+    if (LP && World)
+    {
+        bool r4 = LP->Exec(World, TEXT("ToggleDebugCamera"), *GLog);
+        UE_LOG(LogTemp, Warning,
+            TEXT("ULocalPlayer->Exec('ToggleDebugCamera', World) ret=%d"), (int32)r4);
+
+        bool r5 = LP->Exec(World, TEXT("slomo 0.1"), *GLog);
+        UE_LOG(LogTemp, Warning,
+            TEXT("ULocalPlayer->Exec('slomo 0.1', World) ret=%d"), (int32)r5);
+
+        bool r6 = LP->Exec(World, TEXT("ShowHUD 0"), *GLog);
+        UE_LOG(LogTemp, Warning,
+            TEXT("ULocalPlayer->Exec('ShowHUD 0', World) ret=%d"), (int32)r6);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Tick test: PC=%p LP=%p World=%p"),
+            PC, LP, World);
+    }
+
+    // 3. ConsoleCommand via PC (highest-level path)
+    if (PC)
+    {
+        PC->ConsoleCommand(TEXT("ToggleDebugCamera"), true);
+        UE_LOG(LogTemp, Warning,
+            TEXT("PC->ConsoleCommand('ToggleDebugCamera') done"));
+    }
+}
