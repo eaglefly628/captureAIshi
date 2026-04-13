@@ -24,6 +24,14 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] 951ee30 -- xiaoni
+- `find_localplayer()`: multi-block FName scan. 'LocalPlayer' confirmed in block 5+
+  (not block 0). Old code returned 0xFFFFFFFF silently. Now searches blocks 0..CurrentBlock.
+- `g_localplayer_ptr`: new global set by find_localplayer(). exec fallback uses it
+  as primary path; g_localplayer_fexec (passive hook) is secondary.
+- console_server.h: find_localplayer() called eagerly after find_uworld_via_guobjectarray.
+- Log confirmed root cause: FNamePool CurrentBlock=30, LocalPlayer not in block 0.
+
 ### [v0.2.0] Fix stride detection + hook table + ULocalPlayer fallback -- xiaoni
 - **Root cause A: FUOBJECTITEM_STRIDE hardcoded 24** -- current branch rewrite removed runtime
   stride detection. StackOBot UE5.7 Dev uses stride=32, obj_off=0x08, so guobjectarray_get()
