@@ -93,6 +93,17 @@ Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
 
 ## Changelog (latest)
 
+### [v0.2.0] 7de8e46 -- xiaoni
+- `find_localplayer()`: scans GUObjectArray for object with class FName 'LocalPlayer'.
+  UWorld does NOT inherit FExec (inherits FNetworkNotify), so UWorld fallback was wrong.
+  ULocalPlayer::Exec routes to PlayerController->CheatManager for all gameplay commands.
+- `exec_console_command_internal`: after GEngine returns false, try ULocalPlayer::Exec.
+  Lazy re-scan in case LocalPlayer wasn't ready at init time.
+- Called from cs_engine_scan_thread after UWorld scan.
+- `main.py --wait-attach`: pause before teardown for debugger attach.
+- `temp/BotDebugGameMode.cpp`: added exec chain test via 3 paths (PC->ConsoleCommand,
+  GEngine->Exec(World), GEngine->Exec(nullptr)) with return value logging.
+
 ### [v0.2.0] ce573b4 -- xiaoni
 - `FUObjectItem stride (32, 0x08)`: game log confirmed sizeof=32 and Object* at +0x08 (not +0x10).
   Layout: WeakHandle(8) + Object*(8) + Flags(4) + ClusterRoot(4) + Serial(4) + Pad(4).
