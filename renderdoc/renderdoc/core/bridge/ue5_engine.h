@@ -2315,16 +2315,27 @@ static bool exec_console_command_internal(const char* cmd)
     auto try_lp_exec = [&](void* lp_fexec_subobj) -> bool {
         if (!lp_fexec_subobj) return false;
         uintptr_t lp_vtable = seh_read_ptr(lp_fexec_subobj);
-        FExecExecFn lp_orig = nullptr;
+        if (!lp_vtable) return false;
+
+        FExecExecFn lp_fn = nullptr;
+
+        /* Look up in hook table first (use original if hooked) */
         for (int i = 0; i < g_fexec_hook_count; i++) {
             if (g_fexec_hook_table[i].vtable_base == lp_vtable) {
-                lp_orig = g_fexec_hook_table[i].original;
+                lp_fn = g_fexec_hook_table[i].original;
                 break;
             }
         }
-        if (!lp_orig || !validate_function_ptr((void*)lp_orig)) return false;
+
+        /* Fallback: vtable not hooked (FExec has only 2 entries, scan
+         * requires >= 3), so vtable[1] is still the original Exec. */
+        if (!lp_fn) {
+            lp_fn = (FExecExecFn)seh_read_ptr((void*)(lp_vtable + 8));
+        }
+
+        if (!lp_fn || !validate_function_ptr((void*)lp_fn)) return false;
         bool lp_ret = false;
-        bool lp_ok  = seh_call_fexec(lp_orig, lp_fexec_subobj,
+        bool lp_ok  = seh_call_fexec(lp_fn, lp_fexec_subobj,
                                       world, wcmd.data(), ar, &lp_ret);
         if (lp_ok) {
             bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
