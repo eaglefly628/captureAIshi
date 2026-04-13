@@ -11,17 +11,12 @@
 - [ ] **P0: 真实 UE5 游戏端到端验证** — 跑通一个游戏。
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [x] **P1: bridge-test 命令注入** (fixed by 主程序员) — 已加白名单。
-- [ ] **P1: find_fnamepool_global() backref 扫全模块太慢** (spotted by xiaoni review) —
-  `for (scan = mod_base; scan < mod_end - 8; scan += 8)` 扫整个模块（可能 300-600 MB），
-  调用 seh_read_ptr（含 __try/__except）37M-75M 次，理论延迟 3-8 秒。
-  Fix: 只扫 PAGE_READWRITE 的 committed 页（用 VirtualQuery 跳过 .text），或 cap 到首 64MB。
-- [ ] **P1: find_fnamepool_global() backref 无交叉验证** (spotted by xiaoni review) —
-  取模块里第一个等于 block0 的指针就认为是 FNamePool.Blocks[0]，可能误匹配 TLS 或 init 代码里的缓存指针。
-  Fix: 确认候选位置 `scan` == `g_fnamepool_global + 0x10`，并验证 Blocks[1] 为 null 或合法堆指针，以及 CurrentBlock (+0x08) 是小整数（< 128）。
-- [ ] **P2: fname_resolve 宽字符 null 终止位置错误** (spotted by xiaoni review) —
-  `out[n] = '\0'` 其中 n = wchar 数量，但 WideCharToMultiByte 可能写出超过 n 字节的 UTF-8。
-  非 ASCII 宽字符（如中文）会截断 multi-byte 序列（引擎类名全是 ASCII，暂时不触发，但不正确）。
-  Fix: `int bytes = WideCharToMultiByte(...); out[bytes > 0 ? bytes : 0] = '\0';`
+- [x] **P1: find_fnamepool_global() backref 扫全模块太慢** (fixed ce573b4) —
+  Now uses VirtualQuery to iterate only PAGE_READWRITE regions (skips .text).
+- [x] **P1: find_fnamepool_global() backref 无交叉验证** (fixed ce573b4) —
+  Now validates CurrentBlock (+0x08) is small int (< 128) before accepting candidate.
+- [x] **P2: fname_resolve 宽字符 null 终止位置错误** (fixed ce573b4) —
+  Now uses WideCharToMultiByte return value: `out[bytes > 0 ? bytes : 0] = '\0';`
 - [ ] **P2: log_guobjectarray_details 使用默认 stride 采样** (spotted by xiaoni review) —
   在 detect_fuobjectitem_stride() 之前调用，此时 stride=32 off=0x10 是默认值，若实际 stride=24 则打印的 obj* 地址错误（有"may still be default"注释，但没有明显警告）。
   Fix: 检测完 stride 后再调用，或在日志中加 "WARNING: stride not yet detected" 标注。
@@ -97,6 +92,23 @@ Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
   Game-specific classes may be in block 1+ (need multi-block support).
 
 ## Changelog (latest)
+
+### [v0.2.0] ce573b4 -- xiaoni
+- `FUObjectItem stride (32, 0x08)`: game log confirmed sizeof=32 and Object* at +0x08 (not +0x10).
+  Layout: WeakHandle(8) + Object*(8) + Flags(4) + ClusterRoot(4) + Serial(4) + Pad(4).
+  Added (32, 0x08) as first candidate in detect_fuobjectitem_stride() and validate_guobjectarray().
+  Updated FUOBJECTITEM_OBJECT_OFF_DEFAULT from 0x10 to 0x08. N_CONFIGS: 3->4.
+- `FNamePool UE5 header format` (root cause of "not found" in 9824 regions):
+  UE4 header: len<<1 -- "None" pattern {0x08,0x00,'N','o','n','e'}
+  UE5 header: (len<<6)|(probeHash<<1)|bIsWide -- "None" pattern {hash*2,0x01,'N','o','n','e'}
+  Old code only searched UE4 pattern, so all UE5 blocks were skipped.
+  Replaced kFNameNone+memcmp with fname_block0_matches_none() that checks byte[1]==0x00 (UE4)
+  or byte[1]==0x01 (UE5, len=4 always gives high byte=1). Sets g_fname_header_shift (1 or 6).
+- `fname_entry_len(hdr)`: new helper replaces inline (hdr>>1) in get_fname_cmpidx_for and fname_resolve.
+  Uses g_fname_header_shift. Also removed probe-hash-dependent exact-header match in search.
+- `fname_resolve`: fixed wide-char null-term (use WideCharToMultiByte return value).
+- `find_fnamepool_global() backref`: now scans only PAGE_READWRITE regions via VirtualQuery.
+  Adds CurrentBlock sanity check (< 128) to reject false positives.
 
 ### [v0.2.0] f135597 -- xiaoni
 - `find_fnamepool_block0()`: root cause found -- 256KB size filter is WRONG.
