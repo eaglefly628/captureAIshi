@@ -71,10 +71,6 @@ static uintptr_t         g_engine_global_addr = 0;
 /* UWorld pointer -- captured as direct parameter by FExec hooks */
 static void*             g_world_ptr = nullptr;
 
-/* ULocalPlayer pointer -- for routing gameplay commands (slomo, ToggleDebugCamera, etc.)
- * ULocalPlayer::Exec routes to PlayerController -> CheatManager. */
-static void*             g_localplayer_ptr = nullptr;
-
 /* -- Exec function ------------------------------------------------- */
 
 /*
@@ -112,54 +108,53 @@ static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 
 /*
  * GUObjectArray (FUObjectArray) is the master UObject registry.
+ * Layout (UE5, x64 -- from UE source and UE4SS/UEPseudo):
  *
- * FUObjectArray (UE4.21+, all versions):
+ * FUObjectArray:
  *   +0   ObjFirstGCIndex         (int32)
  *   +4   ObjLastNonGCIndex       (int32)
  *   +8   MaxObjectsNotConsideredByGC (int32)
  *   +12  OpenForDisregardForGC   (bool, 1 byte + 3 pad)
- *   +16  ObjObjects (FChunkedFixedUObjectArray, 0x20 bytes, FIXED since 4.21):
- *     +0x00  Objects** (chunk pointer array)
- *     +0x08  PreAllocatedObjects*
- *     +0x10  MaxElements (int32)
- *     +0x14  NumElements (int32)
- *     +0x18  MaxChunks   (int32)
- *     +0x1C  NumChunks   (int32)
+ *   +16  ObjObjects (FChunkedFixedUObjectArray):
+ *     +16  Objects** (chunk array pointer)
+ *     +24  PreAllocatedObjects* (may be NULL)
+ *     +32  MaxElements (int32)
+ *     +36  NumElements (int32)
+ *     +40  MaxChunks (int32)
+ *     +44  NumChunks (int32)
  *
- * FUObjectItem size depends on BUILD CONFIG, NOT engine version:
- *
- *   0x10 (16B) -- UE_PACK_FUOBJECT_ITEM=1
- *                 Object* at +0x00 (low bits hold flags)
- *   0x18 (24B) -- Standard Shipping (default)
- *                 Object* at +0x00, then Flags/ClusterRoot/Serial
- *   0x20 (32B) -- Development/Debug OR WITH_VERSE_VM (UE5.4+)
- *                 +0x00 FlagsAndRefCount (uint64)
- *                 +0x08 RemoteId         (8 bytes)
- *                 +0x10 Object*
- *                 +0x18 extra fields
- *
- * ALWAYS detect stride at runtime (Dumper-7 method) -- do not hardcode.
- * Confirmed for StackOBot (Development, UE5.7): stride=0x20, Object at +0x10.
+ * FUObjectItem (24 bytes):
+ *   +0   Object (UObjectBase*)
+ *   +8   Flags (int32)
+ *   +12  ClusterRootIndex (int32)
+ *   +16  SerialNumber (int32)
+ *   +20  padding (int32)
  *
  * Access pattern (same as UE4SS IndexToObject):
- *   chunk_idx  = index >> 16
- *   within_idx = index & 0xFFFF
- *   item_ptr   = Objects[chunk_idx] + within_idx * stride
- *   object     = *(UObject**)(item_ptr + obj_off)
+ *   chunk_idx      = index >> 16   (= index / 65536)
+ *   within_idx     = index & 0xFFFF
+ *   item           = Objects[chunk_idx][within_idx]  -- 24-byte stride
+ *   object         = item.Object  (at item+0)
  */
 
-#define GUOBJARRAY_OBJECTS_OFF    16   /* FUObjectArray+0x10: FChunkedFixedUObjectArray.Objects** */
-#define GUOBJARRAY_NUMELEMS_OFF   36   /* FUObjectArray+0x24: FChunkedFixedUObjectArray.NumElements */
-                                       /* = FUObjectArray+0x10 + FChunkedFixed+0x14 = 16+20 = 36   */
-#define FUOBJECTITEM_STRIDE_DEFAULT    32  /* Development/Debug or WITH_VERSE_VM default */
-#define FUOBJECTITEM_OBJECT_OFF_DEFAULT 0x08 /* Object* offset -- confirmed UE5.7 Dev     */
+#define GUOBJARRAY_OBJECTS_OFF    16   /* &GUObjectArray.ObjObjects.Objects */
+#define GUOBJARRAY_NUMELEMS_OFF   36   /* &GUObjectArray.ObjObjects.NumElements */
 #define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
 #define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
 
+/*
+ * FUObjectItem size depends on BUILD CONFIG, NOT engine version:
+ *   0x18 (24B) -- Standard Shipping: Object*(8)+Flags(4)+ClusterRoot(4)+Serial(4)+Pad(4)
+ *   0x20 (32B) -- Development/Debug or WITH_VERSE_VM: +0x08=WeakHandle, +0x08=Object*
+ *   0x10 (16B) -- UE_PACK_FUOBJECT_ITEM: Object* in low bits (mask &~7)
+ * Detected at runtime via GEngine cross-validation.
+ * Confirmed: StackOBot UE5.7 Dev -> stride=32, obj_off=0x08
+ */
+static int g_fuobjectitem_stride    = 24;   /* default Shipping; detected in detect_fuobjectitem_stride() */
+static int g_fuobjectitem_object_off = 0;   /* Object* at start for stride=24; 0x08 for stride=32 */
+
 static void*              g_guobjectarray = NULL;
 static std::atomic<bool>  g_guobjectarray_found{false};
-static int                g_fuobjectitem_stride     = FUOBJECTITEM_STRIDE_DEFAULT;
-static int                g_fuobjectitem_object_off = FUOBJECTITEM_OBJECT_OFF_DEFAULT;
 
 /* -- FExec multi-hook table ---------------------------------------- */
 
@@ -179,6 +174,16 @@ struct FExecHookEntry {
 
 static FExecHookEntry     g_fexec_hook_table[64];
 static int                g_fexec_hook_count = 0;
+
+/* (passive g_localplayer_fexec removed: all object lookup via GUA+FName) */
+
+/* -- Debug break support -------------------------------------------
+ * When g_debug_break_armed is set (via __bridge_arm_break TCP command),
+ * bridge calls __debugbreak() at the next UWorld/LocalPlayer discovery.
+ * Attach WinDbg / x64dbg BEFORE arming, then trigger a rescan from the UI.
+ * One-shot: auto-disarms after the first break fires.
+ */
+static std::atomic<bool> g_debug_break_armed{false};
 
 /* -- SEH-safe helpers ---------------------------------------------- */
 
@@ -550,8 +555,6 @@ static bool find_gengine_via_offset(uintptr_t offset)
     return true;
 }
 
-static bool find_gengine_via_guobjectarray();  /* forward decl -- defined after GUA section */
-
 /*
  * Master GEngine finder -- dual method with cross-validation.
  *
@@ -693,7 +696,8 @@ static bool find_gengine()
  *
  * Strategy: try known offsets 40 and 48 first, then scan.
  */
-static bool validate_function_ptr(void* fn);  /* forward decl */
+static bool validate_function_ptr(void* fn);         /* forward decl */
+static bool find_gengine_via_guobjectarray();        /* forward decl */
 /* Try to find UE version string in the game module.
  * Looks for "++UE5+Release-X.Y" or "+Release-X.Y" ASCII pattern. */
 static void detect_ue_version_string()
@@ -845,15 +849,9 @@ static bool find_fexec_vtable()
  */
 
 /*
- * validate_guobjectarray() -- verbose structural validation of a candidate.
- *
- * Layout checked (FUObjectArray per user-confirmed UE5 struct):
- *   +0x10: TUObjectArray.Objects**        (GUOBJARRAY_OBJECTS_OFF = 16)
- *   +0x24: TUObjectArray.NumElements      (GUOBJARRAY_NUMELEMS_OFF = 36)
- *          = FUObjectArray+0x10+TUObjectArray.NumElements(+0x14)
- *          = 0x10 + 0x14 = 0x24 = 36 (TUObjectArray has PreAllocatedObjects* at +0x08)
- *
- * First FUObjectItem Object* probed at both +0x10 (UE5.7+) and +0x00 (classic).
+ * Validate a GUObjectArray candidate.
+ * Checks: NumElements in [1000, 5000000], Objects** valid, chunk[0] valid.
+ * Mirrors UE4SS's SetupGUObjectArrayAddress() sanity checks.
  */
 static bool validate_guobjectarray(void* candidate)
 {
@@ -861,188 +859,46 @@ static bool validate_guobjectarray(void* candidate)
 
     uint8_t* p = (uint8_t*)candidate;
 
-    /* Dump the first 64 bytes of the candidate for debugging */
-    bridge_log("  GUA candidate=0x%p: "
-               "[+0x00]=%llX [+0x08]=%llX [+0x10]=%llX [+0x18]=%llX "
-               "[+0x20]=%llX [+0x24]=%llX [+0x28]=%llX [+0x2C]=%llX",
-               candidate,
-               (unsigned long long)seh_read_ptr(p + 0x00),
-               (unsigned long long)seh_read_ptr(p + 0x08),
-               (unsigned long long)seh_read_ptr(p + 0x10),
-               (unsigned long long)seh_read_ptr(p + 0x18),
-               (unsigned long long)seh_read_ptr(p + 0x20),
-               (unsigned long long)seh_read_ptr(p + 0x24),
-               (unsigned long long)seh_read_ptr(p + 0x28),
-               (unsigned long long)seh_read_ptr(p + 0x2C));
-
-    /* TUObjectArray.NumElements at FUObjectArray+0x24 */
+    /* NumElements = p + GUOBJARRAY_NUMELEMS_OFF */
     int32_t num_elems = 0;
     __try { num_elems = *(int32_t*)(p + GUOBJARRAY_NUMELEMS_OFF); }
-    __except(EXCEPTION_EXECUTE_HANDLER) {
-        bridge_log("  GUA: NumElements read fault");
-        return false;
-    }
-    bridge_log("  GUA: NumElements@+0x%X=%d, MaxElements@+0x%X=%d, "
-               "NumChunks@+0x%X=%d",
-               GUOBJARRAY_NUMELEMS_OFF, num_elems,
-               GUOBJARRAY_NUMELEMS_OFF - 4,
-               (int)seh_read_ptr(p + GUOBJARRAY_NUMELEMS_OFF - 4) & 0xFFFFFFFF,
-               GUOBJARRAY_NUMELEMS_OFF + 8,
-               (int)seh_read_ptr(p + GUOBJARRAY_NUMELEMS_OFF + 8) & 0xFFFFFFFF);
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 
     if (num_elems < 1000 || num_elems > 5000000) {
-        bridge_log("  GUA FAIL: NumElements=%d not in [1000, 5M]", num_elems);
+        bridge_log("  GUObjectArray: NumElements=%d out of [1000,5M]",
+                   num_elems);
         return false;
     }
 
-    /* TUObjectArray.Objects** at FUObjectArray+0x10 */
+    /* Objects** = p + GUOBJARRAY_OBJECTS_OFF */
     uintptr_t chunks_ptr = seh_read_ptr(p + GUOBJARRAY_OBJECTS_OFF);
-    bridge_log("  GUA: Objects**=0x%llX", (unsigned long long)chunks_ptr);
-    if (chunks_ptr < 0x10000 || chunks_ptr >= 0x800000000000ULL) {
-        bridge_log("  GUA FAIL: Objects** out of valid range");
+    if (chunks_ptr < 0x10000 || chunks_ptr >= 0x7F0000000000ULL) {
+        bridge_log("  GUObjectArray: Objects** invalid 0x%llX",
+                   (unsigned long long)chunks_ptr);
         return false;
     }
 
-    /* TUObjectArray.PreAllocatedObjects* at FUObjectArray+0x18 (debug only) */
-    uintptr_t prealloc = seh_read_ptr(p + 0x18);
-    bridge_log("  GUA: PreAllocatedObjects*=0x%llX", (unsigned long long)prealloc);
-
-    /* Objects[0] = pointer to first chunk */
+    /* Objects*[0] = first chunk must be readable */
     uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
-    bridge_log("  GUA: chunk[0]=0x%llX", (unsigned long long)chunk0);
-    if (chunk0 < 0x10000 || chunk0 >= 0x800000000000ULL) {
-        bridge_log("  GUA FAIL: chunk[0] invalid");
+    if (chunk0 < 0x10000 || chunk0 >= 0x7F0000000000ULL) {
+        bridge_log("  GUObjectArray: Objects[0] invalid 0x%llX",
+                   (unsigned long long)chunk0);
         return false;
     }
 
-    /* Probe Object* across multiple items and both known offsets.
-     * Index 0 is often a null/sentinel entry in UE5 -- do NOT require it valid.
-     * For each (stride, obj_off) in known configs, scan items 0..7 and count
-     * valid-looking pointers.  Accept if any config scores >= 2 hits. */
-    static const struct { int stride; int obj_off; } val_cfgs[] = {
-        {32, 0x08},   /* WITH_VERSE_VM Dev: WeakHandle(8)+Object*(8)  */
-        {32, 0x10},   /* Alt 32B layout: Object* at higher offset      */
-        {24, 0x00},   /* Standard Shipping: Object*(8)+Flags(4)+...    */
-        {16, 0x00},   /* Packed (UE_PACK_FUOBJECT_ITEM)                */
-    };
-    const int N_VAL_ITEMS = 8;
-    bool any_ok = false;
-
-    for (int ci = 0; ci < 4; ci++) {
-        int s   = val_cfgs[ci].stride;
-        int off = val_cfgs[ci].obj_off;
-        int hits = 0;
-        for (int i = 0; i < N_VAL_ITEMS; i++) {
-            uintptr_t ptr = seh_read_ptr(
-                (void*)(chunk0 + (uintptr_t)i * s + off));
-            if (s == 16) ptr &= ~(uintptr_t)0x7;
-            if (ptr >= 0x10000 && ptr < 0x800000000000ULL) hits++;
-        }
-        bridge_log("  GUA probe: stride=%d off=0x%02X hits=%d/%d",
-                   s, off, hits, N_VAL_ITEMS);
-        if (hits >= 2) any_ok = true;
-    }
-
-    if (!any_ok) {
-        bridge_log("  GUA FAIL: no (stride, obj_off) config gives >=2 valid "
-                   "Object* in first %d items", N_VAL_ITEMS);
+    /* First FUObjectItem in chunk0: Object* at +0 must look valid */
+    uintptr_t first_obj = seh_read_ptr((void*)chunk0);
+    if (first_obj < 0x10000) {
+        bridge_log("  GUObjectArray: first object 0x%llX invalid",
+                   (unsigned long long)first_obj);
         return false;
     }
 
-    bridge_log("  GUA OK: NumElements=%d Objects**=0x%llX chunk[0]=0x%llX",
+    bridge_log("  GUObjectArray valid: %d objects, "
+               "Objects**=0x%llX, chunk[0]=0x%llX",
                num_elems, (unsigned long long)chunks_ptr,
                (unsigned long long)chunk0);
     return true;
-}
-
-/*
- * log_guobjectarray_details() -- verbose dump for cross-checking with game.
- *
- * Prints the FUObjectArray header fields (ObjFirstGCIndex, NumElements, etc.),
- * chunk 0 address, and a sample of object pointers near the tail of the array.
- * Call this immediately after find_guobjectarray() succeeds so the user can
- * compare the bridge's view with the game's own BeginPlay log output.
- */
-static void log_guobjectarray_details()
-{
-    if (!g_guobjectarray) return;
-    uint8_t* p = (uint8_t*)g_guobjectarray;
-
-    /* FUObjectArray header fields (UE4.21+ fixed layout) */
-    int32_t first_gc_idx    = 0;
-    int32_t last_nongc_idx  = 0;
-    int32_t max_not_gc      = 0;
-    int32_t max_elems       = 0;
-    int32_t num_elems       = 0;
-    int32_t max_chunks      = 0;
-    int32_t num_chunks      = 0;
-    uintptr_t chunks_ptr    = 0;
-    uintptr_t prealloc_ptr  = 0;
-
-    __try {
-        first_gc_idx   = *(int32_t*)(p + 0x00);
-        last_nongc_idx = *(int32_t*)(p + 0x04);
-        max_not_gc     = *(int32_t*)(p + 0x08);
-        /* +0x0C: OpenForDisregardForGC (bool, skip) */
-        chunks_ptr     = *(uintptr_t*)(p + 0x10);
-        prealloc_ptr   = *(uintptr_t*)(p + 0x18);
-        max_elems      = *(int32_t*)(p + 0x20);
-        num_elems      = *(int32_t*)(p + 0x24);
-        max_chunks     = *(int32_t*)(p + 0x28);
-        num_chunks     = *(int32_t*)(p + 0x2C);
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER) {
-        bridge_log("  GUA details: read fault");
-        return;
-    }
-
-    bridge_log("  GUA details @ 0x%p:", p);
-    bridge_log("    ObjFirstGCIndex=%d ObjLastNonGCIndex=%d MaxNotGC=%d",
-               first_gc_idx, last_nongc_idx, max_not_gc);
-    bridge_log("    Objects**=0x%llX PreAllocated*=0x%llX",
-               (unsigned long long)chunks_ptr, (unsigned long long)prealloc_ptr);
-    bridge_log("    MaxElements=%d NumElements=%d MaxChunks=%d NumChunks=%d",
-               max_elems, num_elems, max_chunks, num_chunks);
-
-    /* Chunk 0 address */
-    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
-    bridge_log("    Chunk[0]=0x%llX", (unsigned long long)chunk0);
-
-    if (!chunk0) return;
-
-    /* Sample objects near the tail (highest density -- recently allocated).
-     * Print index, raw item bytes, and the Object* for each of 5 items.
-     * Use the current detected stride (may still be default). */
-    int s   = g_fuobjectitem_stride;
-    int off = g_fuobjectitem_object_off;
-    int start_idx = (num_elems > 5) ? num_elems - 5 : 0;
-    bridge_log("    Sample objects [%d..%d] stride=%d off=0x%02X:",
-               start_idx, start_idx + 4, s, off);
-
-    for (int i = 0; i < 5; i++) {
-        int32_t idx = start_idx + i;
-        if (idx >= 65536) break;  /* stay within chunk 0 bounds */
-        uintptr_t item_addr = chunk0 + (uintptr_t)idx * s;
-        uintptr_t obj_ptr   = seh_read_ptr((void*)(item_addr + off));
-        uintptr_t raw_w0    = seh_read_ptr((void*)(item_addr + 0));
-        bridge_log("      [%d] item=0x%llX raw0=0x%llX obj*=0x%llX",
-                   idx,
-                   (unsigned long long)item_addr,
-                   (unsigned long long)raw_w0,
-                   (unsigned long long)obj_ptr);
-    }
-
-    /* Also sample a few early permanent objects (idx 1..5) for comparison */
-    bridge_log("    Sample objects [1..5] (early permanent):");
-    for (int idx = 1; idx <= 5; idx++) {
-        uintptr_t item_addr = chunk0 + (uintptr_t)idx * s;
-        uintptr_t obj_ptr   = seh_read_ptr((void*)(item_addr + off));
-        uintptr_t raw_w0    = seh_read_ptr((void*)(item_addr + 0));
-        bridge_log("      [%d] raw0=0x%llX obj*=0x%llX",
-                   idx,
-                   (unsigned long long)raw_w0,
-                   (unsigned long long)obj_ptr);
-    }
 }
 
 /*
@@ -1064,154 +920,11 @@ static void* guobjectarray_get(int32_t index)
         (void*)(chunks_ptr + (uintptr_t)chunk_idx * 8));
     if (!chunk) return NULL;
 
-    /* stride/obj_off detected at runtime by detect_fuobjectitem_stride() */
     uintptr_t item_addr = chunk + (uintptr_t)within_idx * g_fuobjectitem_stride;
-    return (void*)seh_read_ptr((void*)(item_addr + g_fuobjectitem_object_off));
-}
-
-/*
- * Detect sizeof(FUObjectItem) and Object* offset at runtime (Dumper-7 method).
- *
- * FUObjectItem size is determined by BUILD CONFIG, not engine version:
- *   0x10 (16B) -- UE_PACK_FUOBJECT_ITEM: Object* low bits hold flags
- *   0x18 (24B) -- Standard Shipping: Object* at +0x00
- *   0x20 (32B) -- Development/Debug OR WITH_VERSE_VM: Object* at +0x10
- *
- * Detection: chunk 0 holds 65536 FUObjectItem structs consecutively.
- * For each (stride, obj_off) candidate, scan items[0..N-1].Object and
- * count how many look like valid heap pointers (non-null, readable vtable).
- * The winning combo has the highest score across 30 sampled items.
- * Cross-validate against g_engine_ptr at GEngine.InternalIndex when available.
- *
- * Must be called after g_guobjectarray is set. g_engine_ptr is optional
- * (used for cross-validation only -- gives definitive confirmation).
- */
-static void detect_fuobjectitem_stride()
-{
-    if (!g_guobjectarray) return;
-
-    /* Get chunk 0 base */
-    uintptr_t chunks_ptr = seh_read_ptr(
-        (uint8_t*)g_guobjectarray + GUOBJARRAY_OBJECTS_OFF);
-    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
-    if (!chunk0) {
-        bridge_log("  FUObjectItem detect: chunk0 not readable");
-        return;
-    }
-
-    /*
-     * Known (stride, obj_off) configs:
-     *   (32, 0x08) -- WITH_VERSE_VM Dev: WeakHandle(8)+Object*(8)+Flags(4)+...
-     *                 [StackOBot UE5.7 Dev confirmed: sizeof=32, raw+0x08=Object*]
-     *   (32, 0x10) -- Alt 32B layout (Object* shifted further)
-     *   (24, 0x00) -- Standard Shipping: Object*(8)+Flags(4)+ClusterRoot(4)+Serial(4)+Pad(4)
-     *   (16, 0x00) -- Packed (UE_PACK_FUOBJECT_ITEM): Object* in low bits of first qword
-     */
-    static const struct { int stride; int obj_off; } configs[] = {
-        {32, 0x08},
-        {32, 0x10},
-        {24, 0x00},
-        {16, 0x00},
-    };
-    const int N_CONFIGS = 4;
-    const int N_SAMPLE  = 30;  /* items to sample from chunk 0 */
-
-    /* Optional: GEngine.InternalIndex for cross-validation */
-    int32_t ge_idx = 0;
-    if (g_engine_ptr) {
-        __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
-        __except(EXCEPTION_EXECUTE_HANDLER) { ge_idx = 0; }
-        if (ge_idx <= 0 || ge_idx >= 2000000) ge_idx = 0;
-    }
-
-    int best_score   = -1;
-    int best_stride  = g_fuobjectitem_stride;
-    int best_obj_off = g_fuobjectitem_object_off;
-
-    /* Choose sample start: items 0..N are mostly null (ObjFirstGCIndex is
-     * typically 28000+, but many early slots are still empty).
-     * Sample near GEngine (ge_idx) if known, else near array midpoint.
-     * Items near num_elems-1 are the densest (recently allocated).
-     * Read NumElements directly (guobjectarray_num_elements defined later). */
-    int32_t num_elems_now = 0;
-    __try {
-        num_elems_now = *(int32_t*)(
-            (uint8_t*)g_guobjectarray + GUOBJARRAY_NUMELEMS_OFF);
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER) { num_elems_now = 0; }
-    int32_t sample_start = 0;
-    if (ge_idx > N_SAMPLE / 2)
-        sample_start = ge_idx - N_SAMPLE / 2;
-    else if (num_elems_now > N_SAMPLE * 2)
-        sample_start = num_elems_now - N_SAMPLE;  /* tail: densest region */
-
-    bridge_log("  FUObjectItem detect: chunk0=0x%p ge_idx=%d "
-               "sample_start=%d num=%d",
-               (void*)chunk0, ge_idx, sample_start, num_elems_now);
-
-    for (int ci = 0; ci < N_CONFIGS; ci++) {
-        int s   = configs[ci].stride;
-        int off = configs[ci].obj_off;
-
-        /* Score: count items[sample_start..sample_start+N-1] with valid Object*
-         * Only sample within chunk 0 (idx < 65536) to keep arithmetic simple. */
-        int score = 0;
-        for (int i = 0; i < N_SAMPLE; i++) {
-            int32_t idx = sample_start + i;
-            if (idx >= 65536) break;  /* stay within chunk 0 */
-            uintptr_t ptr = seh_read_ptr(
-                (void*)(chunk0 + (uintptr_t)idx * s + off));
-            /* packed: mask out low 3 tag bits before checking */
-            if (s == 16) ptr &= ~(uintptr_t)0x7;
-            if (ptr < 0x10000) continue;
-            uintptr_t vtbl = seh_read_ptr((void*)ptr);
-            if (vtbl >= 0x10000) score++;
-        }
-
-        /* Cross-validate with GEngine at its known InternalIndex */
-        bool engine_ok = false;
-        if (ge_idx > 0) {
-            uintptr_t probe = seh_read_ptr(
-                (void*)(chunk0 + (uintptr_t)ge_idx * s + off));
-            if (s == 16) probe &= ~(uintptr_t)0x7;
-            engine_ok = (probe == (uintptr_t)g_engine_ptr);
-        }
-
-        bridge_log("  [stride=%d off=0x%02X] score=%d/%d engine_match=%d",
-                   s, off, score, N_SAMPLE, (int)engine_ok);
-
-        /* Definitive: score > half AND engine confirmed */
-        if (engine_ok && score > N_SAMPLE / 2) {
-            g_fuobjectitem_stride     = s;
-            g_fuobjectitem_object_off = off;
-            bridge_log("  FUObjectItem CONFIRMED: stride=%d object_off=0x%02X "
-                       "(score=%d + engine cross-validated)",
-                       s, off, score);
-            return;
-        }
-
-        if (score > best_score) {
-            best_score   = score;
-            best_stride  = s;
-            best_obj_off = off;
-        }
-    }
-
-    /* Heuristic fallback: take highest score if decent.
-     * Threshold N/5 = 6/30 -- leaves room for sparse ranges while
-     * still rejecting noise (wrong config scores ~1-2). */
-    if (best_score >= N_SAMPLE / 5) {
-        g_fuobjectitem_stride     = best_stride;
-        g_fuobjectitem_object_off = best_obj_off;
-        bridge_log("  FUObjectItem HEURISTIC: stride=%d object_off=0x%02X "
-                   "(score=%d -- no engine cross-validation)",
-                   best_stride, best_obj_off, best_score);
-    } else {
-        bridge_log("  FUObjectItem detect FAILED (best score=%d/%d) "
-                   "-- keeping stride=%d off=0x%02X",
-                   best_score, N_SAMPLE,
-                   g_fuobjectitem_stride, g_fuobjectitem_object_off);
-    }
+    uintptr_t obj = seh_read_ptr((void*)(item_addr + g_fuobjectitem_object_off));
+    /* Packed layout: low 3 bits hold flags; mask before returning */
+    if (g_fuobjectitem_stride == 16) obj &= ~(uintptr_t)7;
+    return (void*)obj;
 }
 
 static int32_t guobjectarray_num_elements()
@@ -1223,6 +936,56 @@ static int32_t guobjectarray_num_elements()
     }
     __except(EXCEPTION_EXECUTE_HANDLER) { n = 0; }
     return n;
+}
+
+/*
+ * detect_fuobjectitem_stride() -- determine FUObjectItem stride at runtime.
+ *
+ * Cross-validates using GEngine.InternalIndex (at UObjectBase+0x0C).
+ * Must be called after both g_guobjectarray and g_engine_ptr are set.
+ *
+ * Configs tested:
+ *   (24, 0x00) -- Standard Shipping (default)
+ *   (32, 0x08) -- Development / WITH_VERSE_VM [StackOBot UE5.7 confirmed]
+ *   (32, 0x10) -- Alt 32B layout
+ *   (16, 0x00) -- UE_PACK_FUOBJECT_ITEM
+ */
+static void detect_fuobjectitem_stride()
+{
+    if (!g_guobjectarray || !g_engine_ptr) return;
+
+    uintptr_t chunks_ptr = seh_read_ptr((uint8_t*)g_guobjectarray + GUOBJARRAY_OBJECTS_OFF);
+    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
+    if (!chunk0) { bridge_log("  stride detect: chunk0 not readable"); return; }
+
+    int32_t ge_idx = 0;
+    __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+    if (ge_idx <= 0 || ge_idx >= 2000000) {
+        bridge_log("  stride detect: GEngine.InternalIndex=%d invalid", ge_idx);
+        return;
+    }
+
+    static const struct { int stride; int obj_off; } cfgs[] = {
+        {24, 0x00}, {32, 0x08}, {32, 0x10}, {16, 0x00},
+    };
+    for (int ci = 0; ci < 4; ci++) {
+        int s = cfgs[ci].stride, off = cfgs[ci].obj_off;
+        uintptr_t probe = seh_read_ptr(
+            (void*)(chunk0 + (uintptr_t)ge_idx * s + off));
+        if (s == 16) probe &= ~(uintptr_t)7;
+        if (probe == (uintptr_t)g_engine_ptr) {
+            g_fuobjectitem_stride    = s;
+            g_fuobjectitem_object_off = off;
+            bridge_log("  FUObjectItem CONFIRMED: stride=%d obj_off=0x%02X "
+                       "(GEngine idx=%d cross-validated)", s, off, ge_idx);
+            return;
+        }
+        bridge_log("  FUObjectItem probe stride=%d off=0x%02X -> 0x%llX (need 0x%llX)",
+                   s, off, (unsigned long long)probe, (unsigned long long)(uintptr_t)g_engine_ptr);
+    }
+    bridge_log("  FUObjectItem detect FAILED -- keeping stride=%d off=0x%02X",
+               g_fuobjectitem_stride, g_fuobjectitem_object_off);
 }
 
 /*
@@ -1264,24 +1027,10 @@ static bool find_gengine_via_guobjectarray()
         uintptr_t vptr = seh_read_ptr(obj);
         if (vptr < mod_start || vptr >= mod_end) continue;
 
-        /* Find FExec secondary vtable. Try both known offsets:
-         *   +0x28 = standard UE5 (FName = 8 bytes, sizeof(UObjectBase)=40)
-         *   +0x30 = WITH_CASE_PRESERVING_NAME (FName = 12 bytes, sizeof=48)
-         * This function runs before find_fexec_vtable(), so g_fexec_offset=0. */
-        static const uintptr_t fexec_candidates[] = { 0x28, 0x30 };
-        uintptr_t fexec_vptr = 0;
-        for (int ci = 0; ci < 2; ci++) {
-            uintptr_t candidate = seh_read_ptr((uint8_t*)obj + fexec_candidates[ci]);
-            if (candidate >= mod_start && candidate < mod_end && candidate != vptr) {
-                void* f0 = (void*)seh_read_ptr((void*)candidate);
-                void* f1 = (void*)seh_read_ptr((void*)(candidate + 8));
-                if (validate_function_ptr(f0) && validate_function_ptr(f1)) {
-                    fexec_vptr = candidate;
-                    break;
-                }
-            }
-        }
-        if (!fexec_vptr) continue;
+        /* Must have FExec secondary vtable at +0x28 */
+        uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + 0x28);
+        if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
+        if (fexec_vptr == vptr) continue;
 
         /* Validate FExec vtable has 3-8 entries */
         void* fn0 = (void*)seh_read_ptr((void*)fexec_vptr);
@@ -1294,7 +1043,7 @@ static bool find_gengine_via_guobjectarray()
             if (!validate_function_ptr(fn)) break;
             fexec_cnt++;
         }
-        if (fexec_cnt < 2 || fexec_cnt > 8) continue;
+        if (fexec_cnt < 3 || fexec_cnt > 8) continue;
 
         /* Count primary vtable entries -- GEngine wins with 80+ */
         int vcnt = 0;
@@ -1326,699 +1075,6 @@ static bool find_gengine_via_guobjectarray()
     g_engine_found = true;
     /* g_engine_global_addr not available via this method */
     return true;
-}
-
-/* ---- FName Pool Utilities ---------------------------------------- */
-
-/*
- * FNamePool (UE5) block layout:
- *   FNameEntry (2-byte aligned):
- *     uint16 Header = (len << 1) | bIsWide
- *     char/wchar_t Name[len]
- *
- *   Block 0 starts with FNameEntry{"None"} at byte 0.
- *   Engine class/property names are in block 0.
- *   Game-specific names may be in block 1+.
- *
- * ComparisonIndex encoding:
- *   bits[31:16] = block_idx
- *   bits[15: 0] = word_off   (byte_offset_in_block >> 1)
- *
- * Block size: word_off max = 0xFFFF -> max byte_off = 0x1FFFE = ~128KB.
- * Actual allocation is typically 128KB (0x20000) per block.
- * NOTE: previous code required >= 256KB which was WRONG and caused
- * VirtualQuery scan to miss all blocks.
- *
- * FNamePool struct layout (UE5, MSVC x64, in module .bss):
- *   +0x00  SRWLOCK Lock        (8 bytes)
- *   +0x08  uint32  CurrentBlock
- *   +0x0C  uint32  CurrentByteCursor
- *   +0x10  uint8*  Blocks[8192]   (8192 pointers to 128KB heap blocks)
- */
-
-#define FNAMEPOOL_BLOCKS_OFF  0x10   /* Blocks[] starts at FNamePool+0x10 */
-#define FNAMEPOOL_MAX_BLOCKS  8192
-#define FNAMEPOOL_BLOCK_BYTES (128 * 1024)  /* max usable bytes per block */
-
-/*
- * FNameEntry header format differs between engine versions:
- *
- *   UE4 (UE4.23+):    header = (len << 1) | bIsWide
- *                     "None" header = 0x0008, bytes = {0x08, 0x00}
- *
- *   UE5:              header = (len << 6) | (probeHash << 1) | bIsWide
- *                     "None" header = 0x0100|(hash<<1), bytes = {hash*2, 0x01}
- *                     bIsWide   = bit 0
- *                     probeHash = bits 1-5 (5-bit, hash of lowercase name)
- *                     Len       = bits 6-15 (10-bit)
- *
- * g_fname_header_shift: 1 for UE4, 6 for UE5. Auto-detected on block0 find.
- */
-static int       g_fname_header_shift = 1;  /* default UE4; updated on find */
-static uintptr_t g_fnamepool_block0   = 0;  /* FNamePool block 0 base (heap) */
-static uintptr_t g_fnamepool_global   = 0;  /* FNamePool struct (module .bss) */
-
-/* fname_entry_len(): extract name length from a raw uint16 header */
-static inline int fname_entry_len(uint16_t hdr)
-{
-    return (int)(hdr >> g_fname_header_shift);
-}
-
-/* fname_block0_matches_none(): check if addr looks like the start of FNamePool
- * block 0 (first entry = "None") in either UE4 or UE5 header format.
- * Sets g_fname_header_shift to the detected format. */
-static bool fname_block0_matches_none(uintptr_t addr)
-{
-    uint8_t b0, b1, b2, b3, b4, b5;
-    __try {
-        b0 = *(uint8_t*)(addr + 0);
-        b1 = *(uint8_t*)(addr + 1);
-        b2 = *(uint8_t*)(addr + 2);
-        b3 = *(uint8_t*)(addr + 3);
-        b4 = *(uint8_t*)(addr + 4);
-        b5 = *(uint8_t*)(addr + 5);
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-
-    if (b2 != 'N' || b3 != 'o' || b4 != 'n' || b5 != 'e') return false;
-    if (b0 & 1) return false; /* bIsWide must be 0 */
-
-    /* UE4: header = 0x0008 -- len field in bits 15-1, len=4 => byte1=0x00,byte0=0x08 */
-    if (b1 == 0x00 && b0 == 0x08) {
-        g_fname_header_shift = 1;
-        return true;
-    }
-    /* UE5: header = 0x0100|(hash<<1) -- len field in bits 15-6, len=4 => byte1=0x01 */
-    if (b1 == 0x01) {
-        g_fname_header_shift = 6;
-        return true;
-    }
-    return false;
-}
-
-/*
- * fname_get_block(bi) -- return heap pointer for block index bi.
- * Uses g_fnamepool_global (full Blocks[] array) when available,
- * falls back to g_fnamepool_block0 for bi==0.
- */
-static uintptr_t fname_get_block(uint32_t bi)
-{
-    if (bi == 0 && g_fnamepool_block0)
-        return g_fnamepool_block0;
-    if (g_fnamepool_global && bi < FNAMEPOOL_MAX_BLOCKS)
-        return seh_read_ptr(
-            (void*)(g_fnamepool_global + FNAMEPOOL_BLOCKS_OFF + bi * 8));
-    return 0;
-}
-
-/*
- * fname_resolve(comp_idx, out, out_len) -- ComparisonIndex -> string.
- * Works for any block (requires g_fnamepool_global for bi > 0).
- * Returns true on success; out is null-terminated UTF-8.
- */
-static bool fname_resolve(uint32_t comp_idx, char* out, int out_len)
-{
-    if (!out || out_len <= 1) return false;
-    out[0] = '\0';
-
-    uint32_t bi       = comp_idx >> 16;
-    uint32_t word_off = comp_idx & 0xFFFF;
-    uint32_t byte_off = word_off * 2;
-
-    uintptr_t block = fname_get_block(bi);
-    if (!block) return false;
-
-    uint16_t hdr = 0;
-    __try { hdr = *(uint16_t*)(block + byte_off); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-
-    bool is_wide = (hdr & 1) != 0;
-    int  len     = fname_entry_len(hdr);  /* shift=1 (UE4) or 6 (UE5) */
-    if (len <= 0 || len >= 4096) return false;
-
-    int n = (len < out_len - 1) ? len : out_len - 1;
-    if (is_wide) {
-        int bytes = 0;
-        __try {
-            bytes = WideCharToMultiByte(CP_UTF8, 0,
-                (const wchar_t*)(block + byte_off + 2),
-                n, out, out_len - 1, NULL, NULL);
-        }
-        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-        out[bytes > 0 ? bytes : 0] = '\0';
-    } else {
-        __try { memcpy(out, (void*)(block + byte_off + 2), n); }
-        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-        out[n] = '\0';
-    }
-    return true;
-}
-
-/*
- * find_fnamepool_global() -- locate FNamePool struct in module .bss.
- *
- * Method 1: Export symbol "GNamePool" or "?GNamePool@@3VFNamePool@@A".
- *   The export IS the struct; validate by checking Blocks[0] points to
- *   a heap region starting with "None".
- *
- * Method 2: After finding block0 via VirtualQuery, scan module data
- *   for a pointer == block0. That pointer is FNamePool.Blocks[0]
- *   at FNamePool+FNAMEPOOL_BLOCKS_OFF.
- *
- * Sets g_fnamepool_global and g_fnamepool_block0 on success.
- */
-static uintptr_t find_fnamepool_global()
-{
-    if (g_fnamepool_global) return g_fnamepool_global;
-
-    /* Method 1: Export symbol */
-    static const char* exports[] = {
-        "GNamePool",
-        "?GNamePool@@3VFNamePool@@A",
-    };
-    for (int ei = 0; ei < 2; ei++) {
-        uintptr_t p = (uintptr_t)GetProcAddress(
-            GetModuleHandleA(NULL), exports[ei]);
-        if (!p) continue;
-
-        uintptr_t blk0 = seh_read_ptr((void*)(p + FNAMEPOOL_BLOCKS_OFF));
-        if (blk0 < 0x10000) continue;
-
-        if (!fname_block0_matches_none(blk0)) continue;
-
-        g_fnamepool_global = p;
-        g_fnamepool_block0 = blk0;
-        bridge_log("  FNamePool global=0x%llX (export '%s') block0=0x%llX fmt=%s",
-                   (unsigned long long)p, exports[ei],
-                   (unsigned long long)blk0,
-                   g_fname_header_shift == 6 ? "UE5" : "UE4");
-        return p;
-    }
-
-    /* Method 2: block0 must already be found -- scan module for backref */
-    if (!g_fnamepool_block0) return 0;
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return 0;
-    uintptr_t mod_base = (uintptr_t)rgn.base;
-    uintptr_t mod_end  = mod_base + rgn.size;
-
-    /* Walk module PAGE_READWRITE regions looking for ptr == block0.
-     * Skip .text (PAGE_EXECUTE_READ) -- FNamePool is a global in .bss/.data.
-     * This avoids scanning 300-600MB of code pages (~75M seh_read_ptr calls). */
-    {
-        uintptr_t cur = mod_base;
-        while (cur < mod_end) {
-            MEMORY_BASIC_INFORMATION mbi2 = {};
-            if (!VirtualQuery((void*)cur, &mbi2, sizeof(mbi2))) { cur += 0x1000; continue; }
-            uintptr_t rgn_base = (uintptr_t)mbi2.BaseAddress;
-            uintptr_t rgn_end  = rgn_base + mbi2.RegionSize;
-            if (rgn_end > mod_end) rgn_end = mod_end;
-
-            /* Only scan committed, writable (data/bss) pages */
-            bool writable = (mbi2.State == MEM_COMMIT) &&
-                (mbi2.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
-                                  PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
-            if (writable) {
-                for (uintptr_t scan = rgn_base; scan < rgn_end - 8; scan += 8) {
-                    uintptr_t val = seh_read_ptr((void*)scan);
-                    if (val != g_fnamepool_block0) continue;
-
-                    /* Validate: pool+0x08 (CurrentBlock) should be small int < 128 */
-                    uintptr_t pool_cand = scan - FNAMEPOOL_BLOCKS_OFF;
-                    int32_t cur_blk = 0;
-                    __try { cur_blk = *(int32_t*)(pool_cand + 0x08); }
-                    __except(EXCEPTION_EXECUTE_HANDLER) { cur_blk = 9999; }
-
-                    if (cur_blk < 0 || cur_blk >= 128) continue; /* not a FNamePool */
-
-                    g_fnamepool_global = pool_cand;
-                    bridge_log("  FNamePool global=0x%llX (backref scan, "
-                               "Blocks[0]@0x%llX, CurrentBlock=%d)",
-                               (unsigned long long)pool_cand,
-                               (unsigned long long)scan, cur_blk);
-                    return pool_cand;
-                }
-            }
-            cur = rgn_end;
-        }
-    }
-
-    bridge_log("  FNamePool global: backref scan failed");
-    return 0;
-}
-
-/*
- * find_fnamepool_block0() -- locate FNamePool block 0 in heap.
- *
- * Method 1: Export check via find_fnamepool_global() (also sets global).
- * Method 2: VirtualQuery scan -- find committed readable region >= 64KB
- *   that starts with the "None" FNameEntry.
- *   BUG FIX: old code required >= 256KB but FNamePool blocks are 128KB,
- *   so ALL blocks were filtered out. Now uses 64KB minimum.
- */
-static uintptr_t find_fnamepool_block0()
-{
-    if (g_fnamepool_block0) return g_fnamepool_block0;
-
-    /* Method 1: try export (also finds global for multi-block support) */
-    if (find_fnamepool_global()) return g_fnamepool_block0;
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return 0;
-    uintptr_t mod_base = (uintptr_t)rgn.base;
-    uintptr_t mod_end  = mod_base + rgn.size;
-
-    /* Method 2: VirtualQuery heap scan */
-    MEMORY_BASIC_INFORMATION mbi = {};
-    uintptr_t addr = 0x10000;
-    int regions_checked = 0;
-
-    while (addr < 0x800000000000ULL) {
-        if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi))) {
-            addr += 0x10000;
-            continue;
-        }
-        uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        uintptr_t end  = base + mbi.RegionSize;
-
-        /* FNamePool blocks are ~128KB; require >= 64KB to filter noise
-         * while still catching blocks smaller than our expectation. */
-        bool skip = (mbi.State != MEM_COMMIT)
-                 || !(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE
-                                    | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))
-                 || (base < mod_end && end > mod_base)   /* overlaps module */
-                 || mbi.RegionSize < (64 * 1024);         /* < 64KB, too small */
-
-        if (!skip) {
-            regions_checked++;
-            if (fname_block0_matches_none(base)) {
-                /* Cross-check: next entry after "None" (6 bytes) should be valid */
-                uint16_t next_hdr = 0;
-                __try { next_hdr = *(uint16_t*)(base + 6); }
-                __except(EXCEPTION_EXECUTE_HANDLER) {}
-
-                int next_len = fname_entry_len(next_hdr);
-                /* Accept if next entry is zero-terminator or valid short ASCII name */
-                if (next_hdr == 0 ||
-                    (next_len >= 1 && next_len <= 256 && (next_hdr & 1) == 0)) {
-                    g_fnamepool_block0 = base;
-                    bridge_log("  FNamePool block0=0x%llX fmt=%s "
-                               "(%d regions checked, regionSize=%zuKB)",
-                               (unsigned long long)base,
-                               g_fname_header_shift == 6 ? "UE5" : "UE4",
-                               regions_checked, mbi.RegionSize / 1024);
-                    /* Try to find pool global for multi-block support */
-                    find_fnamepool_global();
-                    return base;
-                }
-                bridge_log("  FNamePool: 'None' at 0x%llX but next_hdr=0x%04X "
-                           "(len=%d) -- rejected",
-                           (unsigned long long)base, next_hdr, next_len);
-            }
-        }
-        addr = end;
-    }
-    bridge_log("  FNamePool block0: not found (%d regions checked)", regions_checked);
-    return 0;
-}
-
-/*
- * get_fname_cmpidx_for(target) -- walk block 0 to find ComparisonIndex.
- * Returns 0xFFFFFFFF if not found.
- */
-static uint32_t get_fname_cmpidx_for(const char* target)
-{
-    uintptr_t block0 = find_fnamepool_block0();
-    if (!block0) return 0xFFFFFFFF;
-
-    int tlen = (int)strlen(target);
-
-    uintptr_t cursor  = block0;
-    uintptr_t blk_end = block0 + FNAMEPOOL_BLOCK_BYTES;
-
-    while (cursor < blk_end - 2) {
-        uint16_t hdr = 0;
-        __try { hdr = *(uint16_t*)cursor; }
-        __except(EXCEPTION_EXECUTE_HANDLER) { break; }
-
-        if (hdr == 0) break;
-        bool is_wide = (hdr & 1) != 0;
-        int  len     = fname_entry_len(hdr);  /* shift=1 (UE4) or 6 (UE5) */
-        if (len < 1 || len > 512) break;
-
-        /* In UE5, probe hash occupies bits 1-5 so we can't check exact header.
-         * Match on length + content only (bIsWide=0 already checked). */
-        if (!is_wide && len == tlen) {
-            bool match = false;
-            __try { match = (memcmp((void*)(cursor + 2), target, tlen) == 0); }
-            __except(EXCEPTION_EXECUTE_HANDLER) {}
-            if (match) {
-                uint32_t byte_off = (uint32_t)(cursor - block0);
-                return byte_off >> 1;   /* block_idx=0, word_off = byte_off/2 */
-            }
-        }
-
-        int entry_bytes = 2 + (is_wide ? len * 2 : len);
-        entry_bytes = (entry_bytes + 1) & ~1;  /* 2-byte aligned */
-        cursor += (uintptr_t)entry_bytes;
-    }
-    return 0xFFFFFFFF;
-}
-
-/* ---- UWorld via GUObjectArray + FName class comparison ---------- */
-
-/*
- * find_uworld_via_guobjectarray()
- *
- * Preferred: FName-based class lookup.
- *   For each GUObjectArray item, read ClassPrivate.NamePrivate and compare
- *   ComparisonIndex against FName("World"). ClassPrivate at obj+0x10,
- *   NamePrivate at ClassPrivate+0x18 (FName lo32 = ComparisonIndex).
- *   Apply outer chain check: UWorld->UPackage->null.
- *
- * Fallback: vtable fingerprint (if FNamePool unavailable).
- *   FNetworkNotify secondary vtable (4-10 entries) + primary >= 30 entries.
- *
- * Requires: g_guobjectarray_found && g_engine_found.
- * stride/object_off set by detect_fuobjectitem_stride() before this call.
- */
-static bool find_uworld_via_guobjectarray()
-{
-    if (!g_guobjectarray_found || !g_guobjectarray) return false;
-    /* g_engine_ptr is NOT required for the FName path (only for vtable fallback).
-     * OuterPrivate is fixed at UObjectBase+0x20 regardless of g_fexec_offset. */
-
-    int32_t num_elems = guobjectarray_num_elements();
-    bridge_log("=== UWorld scan via GUObjectArray (%d objects, "
-               "stride=%d off=0x%02X) ===",
-               num_elems, g_fuobjectitem_stride, g_fuobjectitem_object_off);
-
-    /* OuterPrivate at UObjectBase+0x20 (always -- part of fixed UObjectBase layout) */
-    uintptr_t outer_off = 0x20;
-
-    /* --- FName-based search (preferred) --- */
-    uint32_t world_idx = get_fname_cmpidx_for("World");
-    if (world_idx != 0xFFFFFFFF) {
-        /* Cross-validate: resolve the index back to a string.
-         * Confirms FNamePool parsing is correct, and gives fname_resolve
-         * a call site (suppresses C4505 unused-function warning). */
-        char resolved[64];
-        if (fname_resolve(world_idx, resolved, sizeof(resolved)))
-            bridge_log("  FName('World') idx=0x%X resolved='%s' -- FName class search",
-                       world_idx, resolved);
-        else
-            bridge_log("  FName('World') idx=0x%X (resolve failed) -- FName class search",
-                       world_idx);
-
-        int class_matches = 0;
-
-        for (int32_t i = 0; i < num_elems; i++) {
-            if (i > 0 && (i % 10000) == 0)
-                bridge_log("  FName scan progress: %d/%d, class_matches=%d",
-                           i, num_elems, class_matches);
-
-            void* obj = guobjectarray_get(i);
-            if (!obj || (uintptr_t)obj < 0x10000) continue;
-            if ((uintptr_t)obj >= 0x800000000000ULL) continue;
-
-            /* ClassPrivate at UObjectBase+0x10 */
-            uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
-            if (class_ptr < 0x10000) continue;
-
-            /* UClass.NamePrivate lo32 = ComparisonIndex */
-            uint64_t name_raw = seh_read_ptr((uint8_t*)class_ptr + 0x18);
-            uint32_t cmp_idx  = (uint32_t)(name_raw & 0xFFFFFFFF);
-            if (cmp_idx != world_idx) continue;
-
-            class_matches++;
-            bridge_log("  FName class match: idx=%d obj=0x%p -- outer chain check",
-                       i, obj);
-
-            /* Outer chain: UWorld.OuterPrivate (at outer_off) != null */
-            uintptr_t outer = seh_read_ptr((uint8_t*)obj + outer_off);
-            bridge_log("    outer_off=0x%llX outer=0x%llX",
-                       (unsigned long long)outer_off, (unsigned long long)outer);
-            if (outer < 0x10000 || outer >= 0x800000000000ULL) {
-                bridge_log("    SKIP: outer invalid");
-                continue;
-            }
-
-            /* UPackage.OuterPrivate must be null (root object) */
-            uintptr_t outer_outer = seh_read_ptr((uint8_t*)outer + outer_off);
-            bridge_log("    outer.outer=0x%llX", (unsigned long long)outer_outer);
-            if (outer_outer != 0) {
-                bridge_log("    SKIP: outer.outer != null (not root UPackage)");
-                continue;
-            }
-
-            bridge_log("  UWorld found via FName: idx=%d obj=0x%p outer=0x%llX",
-                       i, obj, (unsigned long long)outer);
-            g_world_ptr = obj;
-            return true;
-        }
-
-        bridge_log("  UWorld not found via FName (%d objects, %d class matches)",
-                   num_elems, class_matches);
-        return false;
-    }
-
-    /* --- Vtable fingerprint fallback --- */
-    bridge_log("  FNamePool N/A -- vtable fingerprint fallback");
-    if (!g_engine_ptr) {
-        bridge_log("  vtable fallback skipped: g_engine_ptr not found yet");
-        return false;
-    }
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start   = (uintptr_t)rgn.base;
-    uintptr_t mod_end     = mod_start + rgn.size;
-    uintptr_t engine_vptr = seh_read_ptr(g_engine_ptr);
-
-    /* UWorld identification: primary vtable >= 30 entries + outer chain.
-     * Do NOT use secondary vtable offset -- UWorld's FNetworkNotify is at an
-     * unknown offset (not 0x28, which is GEngine's FExec). */
-    for (int32_t i = 0; i < num_elems; i++) {
-        void* obj = guobjectarray_get(i);
-        if (!obj || (uintptr_t)obj < 0x10000) continue;
-        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
-
-        uintptr_t vptr = seh_read_ptr(obj);
-        if (vptr < mod_start || vptr >= mod_end) continue;
-        if (vptr == engine_vptr) continue;  /* skip GEngine itself */
-
-        int vcnt = 0;
-        for (int vi = 0; vi < 256; vi++) {
-            void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
-            if (!validate_function_ptr(fn)) break;
-            vcnt++;
-        }
-        if (vcnt < 30) continue;
-
-        uintptr_t outer = seh_read_ptr((uint8_t*)obj + outer_off);
-        if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
-        if (seh_read_ptr((uint8_t*)outer + outer_off) != 0) continue;
-
-        bridge_log("  UWorld found via vtable fallback: idx=%d obj=0x%p "
-                   "(vcnt=%d outer=0x%llX)", i, obj, vcnt, (unsigned long long)outer);
-        g_world_ptr = obj;
-        return true;
-    }
-
-    bridge_log("  UWorld not found (GUObjectArray vtable scan)");
-    return false;
-}
-
-/*
- * find_uworld_via_worldlist()
- *
- * Locate UWorld by scanning GEngine for its WorldList field.
- * Does NOT require GUObjectArray -- works even when GUObjectArray
- * pattern matching fails (e.g. stripped/LTCG builds).
- *
- * UEngine::WorldList is TIndirectArray<FWorldContext>.
- * TIndirectArray<T> is TArray<T*> internally:
- *   +0x00  FWorldContext** Data   (pointer to array of FWorldContext*)
- *   +0x08  int32           Num    (element count)
- *   +0x0C  int32           Max    (capacity)
- *
- * In a standalone game, WorldList always has exactly Num=1.
- * FWorldContext[+0x00] = TEnumAsByte<EWorldType> = uint8 = 1 (Game).
- *
- * Confirmed for UE5.7 standalone:
- *   WorldList at GEngine+0x1250, Num=1, Max=4.
- *   FWorldContext::ThisCurrentWorld holds UWorld* at the end of struct.
- *
- * Strategy:
- *   1. Scan GEngine+0..+0x6000 step 8 for TIndirectArray pattern.
- *   2. Validate FWorldContext: Data[0] valid heap ptr, WorldType==1.
- *   3. Scan FWorldContext for UWorld: FNetworkNotify secondary vtable
- *      (4-10 entries), primary vtable >= 30, outer chain World->Pkg->null.
- */
-static bool find_uworld_via_worldlist()
-{
-    if (!g_engine_ptr) return false;
-
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-    uintptr_t mod_start = (uintptr_t)rgn.base;
-    uintptr_t mod_end   = mod_start + rgn.size;
-
-    /* OuterPrivate is at UObjectBase+0x20 (fixed in all UE versions).
-     * Do not derive from g_fexec_offset -- that's GEngine's FExec offset, not UWorld's. */
-    const uintptr_t outer_off = 0x20;
-
-    uintptr_t eng = (uintptr_t)g_engine_ptr;
-    bridge_log("=== UWorld scan via GEngine WorldList ===");
-
-    for (int off = 0; off <= 0x6000; off += 8) {
-        uintptr_t slot = eng + off;
-
-        /* --- Step 1: Check TIndirectArray layout at GEngine+off ---
-         * Read Data* at +0 (must be heap), then Num/Max packed in next 8B. */
-        uintptr_t data_ptr = seh_read_ptr((void*)slot);
-        if (data_ptr < 0x10000 || data_ptr >= 0x800000000000ULL) continue;
-        /* Data* must not point inside GEngine itself */
-        if (data_ptr >= eng && data_ptr < eng + 0x10000) continue;
-        /* Data* must not be in the module image (vtable or code section) */
-        if (data_ptr >= mod_start && data_ptr < mod_end) continue;
-
-        /* Num(lo32) and Max(hi32) are packed in bytes +8..+15 */
-        uintptr_t num_max = seh_read_ptr((void*)(slot + 8));
-        int32_t num = (int32_t)(num_max & 0xFFFFFFFFULL);
-        int32_t max = (int32_t)(num_max >> 32);
-
-        if (num != 1) continue;          /* standalone always has exactly 1 */
-        if (max < 1 || max > 16) continue;
-
-        /* --- Step 2: Validate FWorldContext pointer ---
-         * Data[0] is FWorldContext* (TIndirectArray stores pointers-to-elements). */
-        uintptr_t fwc = seh_read_ptr((void*)data_ptr);
-        if (fwc < 0x10000 || fwc >= 0x800000000000ULL) continue;
-        if (fwc >= mod_start && fwc < mod_end) continue;
-        if (fwc >= eng && fwc < eng + 0x10000) continue;
-
-        /* FWorldContext[+0x00] = TEnumAsByte<EWorldType> = uint8.
-         * EWorldType::Game == 1.  Read as low byte of the first 8-byte word. */
-        uintptr_t first8 = seh_read_ptr((void*)fwc);
-        uint8_t world_type = (uint8_t)(first8 & 0xFF);
-        if (world_type != 1) continue;   /* not a Game world context */
-
-        bridge_log("  WorldList candidate GEngine+0x%X: Data=0x%llX "
-                   "Num=%d Max=%d FWC=0x%llX",
-                   off, (unsigned long long)data_ptr,
-                   num, max, (unsigned long long)fwc);
-
-        /* --- Step 3: Scan FWorldContext for UWorld pointer ---
-         * Walk every 8-byte-aligned slot of FWorldContext (up to 0x2000 bytes).
-         * UWorld is identified by: primary vtable in module (>= 30 entries) +
-         * outer chain: UWorld.OuterPrivate -> valid heap, outer.OuterPrivate == null. */
-        int fwc_heap_ptrs = 0;   /* count of non-null heap ptrs seen (for diagnostics) */
-        int fwc_vtable_ok = 0;   /* heap ptrs that also have module vtable */
-        for (int woff = 0; woff <= 0x2000; woff += 8) {
-            uintptr_t candidate = seh_read_ptr((void*)(fwc + woff));
-            if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
-            if (candidate >= mod_start && candidate < mod_end) continue;
-            if (candidate == (uintptr_t)g_engine_ptr) continue;
-            if (candidate == fwc) continue;
-            fwc_heap_ptrs++;
-
-            /* Primary vtable must be in module image */
-            uintptr_t vptr = seh_read_ptr((void*)candidate);
-            if (vptr < mod_start || vptr >= mod_end) continue;
-            fwc_vtable_ok++;
-
-            /* Primary vtable >= 30 entries (UWorld is a large class). */
-            int vcnt = 0;
-            for (int vi = 0; vi < 256; vi++) {
-                void* fn = (void*)seh_read_ptr((void*)(vptr + vi * 8));
-                if (!validate_function_ptr(fn)) break;
-                vcnt++;
-            }
-
-            /* OuterPrivate at outer_off */
-            uintptr_t outer = seh_read_ptr((void*)(candidate + outer_off));
-            uintptr_t outer_outer = (outer >= 0x10000 && outer < 0x800000000000ULL)
-                ? seh_read_ptr((void*)(outer + outer_off)) : 0xDEAD;
-
-            bridge_log("  FWC+0x%03X: cand=0x%llX vptr=0x%llX vcnt=%d "
-                       "outer=0x%llX oo=0x%llX",
-                       woff, (unsigned long long)candidate,
-                       (unsigned long long)vptr, vcnt,
-                       (unsigned long long)outer,
-                       (unsigned long long)outer_outer);
-
-            /* vcnt >= 1: we only require the vtable is readable.
-             * validate_function_ptr is strict about prologue bytes and
-             * may score optimized UWorld as vcnt=1. The outer chain
-             * (outer valid + outer.outer==null) is the real discriminator. */
-            if (vcnt < 1) continue;
-            if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
-            if (outer_outer != 0) continue;
-
-            bridge_log("  UWorld found via WorldList: FWC+0x%X=0x%llX "
-                       "(vcnt=%d outer=0x%llX)",
-                       woff, (unsigned long long)candidate,
-                       vcnt, (unsigned long long)outer);
-            g_world_ptr = (void*)candidate;
-            return true;
-        }
-
-        bridge_log("  FWC at 0x%llX (GEngine+0x%X) scan done: "
-                   "heap_ptrs=%d vtable_ok=%d -- UWorld not found",
-                   (unsigned long long)fwc, off, fwc_heap_ptrs, fwc_vtable_ok);
-    }
-
-    bridge_log("  UWorld not found via WorldList scan");
-    return false;
-}
-
-/*
- * find_localplayer() -- locate ULocalPlayer in GUObjectArray.
- *
- * ULocalPlayer inherits FExec. Its Exec(UWorld*, Cmd, Ar) routes to
- * APlayerController::Exec -> UCheatManager, which handles gameplay
- * commands (ToggleDebugCamera, slomo, Teleport, SetViewLocation, etc.).
- *
- * Detection: scan GUObjectArray for an object whose class FName matches
- * "LocalPlayer" (ComparisonIndex found via find_fnamepool_block0).
- * ClassPrivate at UObjectBase+0x10, ClassPrivate.NamePrivate at +0x18.
- */
-static bool find_localplayer()
-{
-    if (g_localplayer_ptr) return true;
-    if (!g_guobjectarray_found) return false;
-
-    uint32_t lp_idx = get_fname_cmpidx_for("LocalPlayer");
-    if (lp_idx == 0xFFFFFFFF) {
-        bridge_log("  find_localplayer: FName('LocalPlayer') not found in pool");
-        return false;
-    }
-    bridge_log("  find_localplayer: FName('LocalPlayer')=0x%X scanning...", lp_idx);
-
-    int32_t num_elems = guobjectarray_num_elements();
-    for (int32_t i = 0; i < num_elems; i++) {
-        void* obj = guobjectarray_get(i);
-        if (!obj || (uintptr_t)obj < 0x10000) continue;
-        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
-
-        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
-        if (!class_ptr || class_ptr < 0x10000) continue;
-
-        uintptr_t name_lo = 0;
-        __try { name_lo = *(uint32_t*)(class_ptr + 0x18); }
-        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
-
-        if ((name_lo & 0xFFFFFFFF) != (lp_idx & 0xFFFFFFFF)) continue;
-
-        /* Found a ULocalPlayer instance */
-        g_localplayer_ptr = obj;
-        bridge_log("  ULocalPlayer found: idx=%d obj=0x%p", i, obj);
-        return true;
-    }
-    bridge_log("  find_localplayer: not found in %d objects", num_elems);
-    return false;
 }
 
 /*
@@ -2161,6 +1217,382 @@ static bool find_guobjectarray()
     return false;
 }
 
+/* ---- FName Pool Utilities ---------------------------------------- */
+
+/*
+ * FNamePool (UE5) block layout:
+ *   FNameEntry header (uint16):
+ *     UE4: (len << 1) | bIsWide
+ *     UE5: (len << 6) | (probeHash << 1) | bIsWide
+ *   Followed by char[len] or wchar_t[len].
+ *
+ * ComparisonIndex encoding:
+ *   bits[31:16] = block_idx
+ *   bits[15: 0] = word_off   (byte_offset_in_block / 2)
+ *
+ * FNamePool struct (UE5, MSVC x64, in module .bss):
+ *   +0x00  SRWLOCK Lock        (8 bytes)
+ *   +0x08  uint32  CurrentBlock
+ *   +0x0C  uint32  CurrentByteCursor
+ *   +0x10  uint8*  Blocks[8192]   (8192 pointers to 128KB heap blocks)
+ *
+ * Block size: word_off max = 0xFFFF -> max byte_off = 0x1FFFE = ~128KB.
+ */
+
+#define FNAMEPOOL_BLOCKS_OFF  0x10
+#define FNAMEPOOL_MAX_BLOCKS  8192
+#define FNAMEPOOL_BLOCK_BYTES (128 * 1024)
+
+static int       g_fname_header_shift = 1;  /* 1=UE4, 6=UE5; set on block0 find */
+static uintptr_t g_fnamepool_block0   = 0;  /* FNamePool block 0 heap base */
+static uintptr_t g_fnamepool_global   = 0;  /* FNamePool struct in module .bss */
+
+/* Extract name length from raw uint16 header */
+static inline int fname_entry_len(uint16_t hdr)
+{
+    return (int)(hdr >> g_fname_header_shift);
+}
+
+/* Check if addr is FNamePool block 0 (starts with FNameEntry "None").
+ * Detects UE4 vs UE5 header format and sets g_fname_header_shift. */
+static bool fname_block0_matches_none(uintptr_t addr)
+{
+    uint8_t b0, b1, b2, b3, b4, b5;
+    __try {
+        b0 = *(uint8_t*)(addr + 0); b1 = *(uint8_t*)(addr + 1);
+        b2 = *(uint8_t*)(addr + 2); b3 = *(uint8_t*)(addr + 3);
+        b4 = *(uint8_t*)(addr + 4); b5 = *(uint8_t*)(addr + 5);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+
+    if (b2 != 'N' || b3 != 'o' || b4 != 'n' || b5 != 'e') return false;
+    if (b0 & 1) return false;  /* bIsWide must be 0 */
+    /* UE4: header=0x0008 -> b1==0x00, b0==0x08 */
+    if (b1 == 0x00 && b0 == 0x08) { g_fname_header_shift = 1; return true; }
+    /* UE5: header=(4<<6)|(hash<<1) -> b1==0x01 (high byte of len field) */
+    if (b1 == 0x01) { g_fname_header_shift = 6; return true; }
+    return false;
+}
+
+/* Return heap pointer for FNamePool block bi. */
+static uintptr_t fname_get_block(uint32_t bi)
+{
+    if (bi == 0 && g_fnamepool_block0) return g_fnamepool_block0;
+    if (g_fnamepool_global && bi < FNAMEPOOL_MAX_BLOCKS)
+        return seh_read_ptr(
+            (void*)(g_fnamepool_global + FNAMEPOOL_BLOCKS_OFF + bi * 8));
+    return 0;
+}
+
+/* Locate FNamePool struct in module .bss (for multi-block access).
+ * Method 1: export symbol "GNamePool". Method 2: backref scan from block0. */
+static uintptr_t find_fnamepool_global()
+{
+    if (g_fnamepool_global) return g_fnamepool_global;
+
+    /* Method 1: export */
+    static const char* exports[] = {"GNamePool","?GNamePool@@3VFNamePool@@A"};
+    for (int ei = 0; ei < 2; ei++) {
+        uintptr_t p = (uintptr_t)GetProcAddress(GetModuleHandleA(NULL), exports[ei]);
+        if (!p) continue;
+        uintptr_t blk0 = seh_read_ptr((void*)(p + FNAMEPOOL_BLOCKS_OFF));
+        if (blk0 < 0x10000) continue;
+        if (!fname_block0_matches_none(blk0)) continue;
+        g_fnamepool_global = p;
+        g_fnamepool_block0 = blk0;
+        bridge_log("  FNamePool global=0x%llX (export '%s') block0=0x%llX fmt=%s",
+                   (unsigned long long)p, exports[ei],
+                   (unsigned long long)blk0,
+                   g_fname_header_shift == 6 ? "UE5" : "UE4");
+        return p;
+    }
+
+    /* Method 2: backref scan -- scan PAGE_READWRITE module regions for ptr==block0 */
+    if (!g_fnamepool_block0) return 0;
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return 0;
+    uintptr_t mod_base = (uintptr_t)rgn.base;
+    uintptr_t mod_end  = mod_base + rgn.size;
+
+    uintptr_t cur = mod_base;
+    while (cur < mod_end) {
+        MEMORY_BASIC_INFORMATION mbi2 = {};
+        if (!VirtualQuery((void*)cur, &mbi2, sizeof(mbi2))) { cur += 0x1000; continue; }
+        uintptr_t rb = (uintptr_t)mbi2.BaseAddress;
+        uintptr_t re = rb + mbi2.RegionSize;
+        if (re > mod_end) re = mod_end;
+        bool writable = (mbi2.State == MEM_COMMIT) &&
+            (mbi2.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                              PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+        if (writable) {
+            for (uintptr_t scan = rb; scan < re - 8; scan += 8) {
+                if (seh_read_ptr((void*)scan) != g_fnamepool_block0) continue;
+                uintptr_t pool_cand = scan - FNAMEPOOL_BLOCKS_OFF;
+                int32_t cur_blk = 0;
+                __try { cur_blk = *(int32_t*)(pool_cand + 0x08); }
+                __except(EXCEPTION_EXECUTE_HANDLER) { cur_blk = 9999; }
+                if (cur_blk < 0 || cur_blk >= 128) continue;
+                g_fnamepool_global = pool_cand;
+                bridge_log("  FNamePool global=0x%llX (backref, CurrentBlock=%d)",
+                           (unsigned long long)pool_cand, cur_blk);
+                return pool_cand;
+            }
+        }
+        cur = re;
+    }
+    bridge_log("  FNamePool global: not found");
+    return 0;
+}
+
+/* Locate FNamePool block 0.
+ * Method 1: export (also sets global). Method 2: VirtualQuery heap scan. */
+static uintptr_t find_fnamepool_block0()
+{
+    if (g_fnamepool_block0) return g_fnamepool_block0;
+    if (find_fnamepool_global()) return g_fnamepool_block0;
+
+    MEMORY_BASIC_INFORMATION mbi = {};
+    uintptr_t addr = 0x10000;
+    int checked = 0;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return 0;
+    uintptr_t mod_base = (uintptr_t)rgn.base;
+    uintptr_t mod_end  = mod_base + rgn.size;
+
+    while (addr < 0x800000000000ULL) {
+        if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi)))
+            { addr += 0x10000; continue; }
+        uintptr_t base = (uintptr_t)mbi.BaseAddress;
+        uintptr_t end  = base + mbi.RegionSize;
+        bool skip = (mbi.State != MEM_COMMIT)
+            || !(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE
+                                | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))
+            || (base < mod_end && end > mod_base)  /* overlaps module */
+            || mbi.RegionSize < (64 * 1024);        /* < 64KB */
+        if (!skip) {
+            checked++;
+            if (fname_block0_matches_none(base)) {
+                uint16_t next_hdr = 0;
+                __try { next_hdr = *(uint16_t*)(base + 6); }
+                __except(EXCEPTION_EXECUTE_HANDLER) {}
+                int next_len = fname_entry_len(next_hdr);
+                if (next_hdr == 0 || (next_len >= 1 && next_len <= 256 && !(next_hdr & 1))) {
+                    g_fnamepool_block0 = base;
+                    bridge_log("  FNamePool block0=0x%llX fmt=%s (%d regions checked)",
+                               (unsigned long long)base,
+                               g_fname_header_shift == 6 ? "UE5" : "UE4", checked);
+                    find_fnamepool_global();
+                    return base;
+                }
+            }
+        }
+        addr = end;
+    }
+    bridge_log("  FNamePool block0: not found (%d regions)", checked);
+    return 0;
+}
+
+/*
+ * get_fname_cmpidx_for(target) -- search all FNamePool blocks for a name.
+ * Returns full ComparisonIndex ((block_idx << 16) | word_off), or 0xFFFFFFFF.
+ * Block 0 = engine names; block 1+ = game-specific names (need g_fnamepool_global).
+ */
+static uint32_t get_fname_cmpidx_for(const char* target)
+{
+    uintptr_t block0 = find_fnamepool_block0();
+    if (!block0) return 0xFFFFFFFF;
+
+    int tlen = (int)strlen(target);
+
+    /* How many blocks to search */
+    uint32_t max_block = 0;
+    if (g_fnamepool_global) {
+        int32_t cur_blk = 0;
+        __try { cur_blk = *(int32_t*)(g_fnamepool_global + 0x08); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { cur_blk = 0; }
+        if (cur_blk >= 0 && cur_blk < (int32_t)FNAMEPOOL_MAX_BLOCKS)
+            max_block = (uint32_t)cur_blk;
+    }
+
+    for (uint32_t bi = 0; bi <= max_block; bi++) {
+        uintptr_t block = (bi == 0) ? block0 : fname_get_block(bi);
+        if (!block) continue;
+        uintptr_t cursor  = block;
+        uintptr_t blk_end = block + FNAMEPOOL_BLOCK_BYTES;
+        while (cursor < blk_end - 2) {
+            uint16_t hdr = 0;
+            __try { hdr = *(uint16_t*)cursor; }
+            __except(EXCEPTION_EXECUTE_HANDLER) { break; }
+            if (hdr == 0) break;
+            bool is_wide = (hdr & 1) != 0;
+            int  len     = fname_entry_len(hdr);
+            if (len < 1 || len > 512) break;
+            if (!is_wide && len == tlen) {
+                bool match = false;
+                __try { match = (memcmp((void*)(cursor + 2), target, tlen) == 0); }
+                __except(EXCEPTION_EXECUTE_HANDLER) {}
+                if (match)
+                    return (bi << 16) | (uint32_t)((cursor - block) >> 1);
+            }
+            int entry_bytes = 2 + (is_wide ? len * 2 : len);
+            cursor += (uintptr_t)((entry_bytes + 1) & ~1);
+        }
+    }
+    return 0xFFFFFFFF;
+}
+
+/* ---- UWorld via GUObjectArray + FName -------------------------------- */
+
+/*
+ * find_uworld_via_guobjectarray()
+ *
+ * For each GUObjectArray entry:
+ *   1. Read obj->ClassPrivate (UObjectBase+0x10)
+ *   2. Read ClassPrivate->NamePrivate lo32 = ComparisonIndex
+ *   3. Compare against FName("World")
+ *   4. Validate outer chain: obj->OuterPrivate (UObjectBase+0x20) is non-null
+ *      (= UPackage), and UPackage->OuterPrivate == null (root object).
+ *
+ * Requires: g_guobjectarray_found, FNamePool found (find_fnamepool_block0).
+ */
+static bool find_uworld_via_guobjectarray()
+{
+    if (!g_guobjectarray_found || !g_guobjectarray) return false;
+
+    uint32_t world_idx = get_fname_cmpidx_for("World");
+    if (world_idx == 0xFFFFFFFF) {
+        bridge_log("  find_uworld: FName('World') not found in FNamePool");
+        return false;
+    }
+    bridge_log("  find_uworld: FName('World')=0x%X -- scanning %d objects",
+               world_idx, guobjectarray_num_elements());
+
+    int32_t num_elems  = guobjectarray_num_elements();
+    int     class_hits = 0;
+
+    for (int32_t i = 0; i < num_elems; i++) {
+        if (i > 0 && (i % 50000) == 0)
+            bridge_log("  find_uworld progress: %d/%d hits=%d", i, num_elems, class_hits);
+
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
+
+        /* ClassPrivate at UObjectBase+0x10 */
+        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+        if (class_ptr < 0x10000) continue;
+
+        /* UClass.NamePrivate lo32 = ComparisonIndex */
+        uint32_t cmp_idx = 0;
+        __try { cmp_idx = *(uint32_t*)((uint8_t*)class_ptr + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        if (cmp_idx != world_idx) continue;
+        class_hits++;
+
+        /* OuterPrivate at UObjectBase+0x20 */
+        uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
+        if (outer < 0x10000 || outer >= 0x800000000000ULL) {
+            bridge_log("  UWorld candidate [%d] 0x%p: outer invalid 0x%llX",
+                       i, obj, (unsigned long long)outer);
+            continue;
+        }
+        /* outer (UPackage) must be a root: its OuterPrivate == null */
+        uintptr_t outer_outer = seh_read_ptr((uint8_t*)outer + 0x20);
+        if (outer_outer != 0) {
+            bridge_log("  UWorld candidate [%d] 0x%p: outer.outer=0x%llX (not root)",
+                       i, obj, (unsigned long long)outer_outer);
+            continue;
+        }
+
+        bridge_log("  UWorld FOUND via GUObjectArray FName: [%d] obj=0x%p outer=0x%llX",
+                   i, obj, (unsigned long long)outer);
+        g_world_ptr = obj;
+        /* If debug break is armed: fire INT3 so WinDbg/x64dbg catches us here.
+         * Disarms after firing (one-shot). Attach debugger BEFORE arming. */
+        if (g_debug_break_armed.exchange(false)) {
+            bridge_log("  DEBUG BREAK: UWorld found -- breaking into debugger");
+            __debugbreak();
+        }
+        return true;
+    }
+
+    bridge_log("  UWorld not found via GUObjectArray (%d objects, %d class matches)",
+               num_elems, class_hits);
+    return false;
+}
+
+/* ---- ULocalPlayer via GUObjectArray + FName ------------------------- */
+
+/* ULocalPlayer object pointer. Set by find_localplayer().
+ * Used to route gameplay commands (slomo, ToggleDebugCamera, etc.) via
+ * ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager. */
+static void* g_localplayer_ptr = nullptr;
+
+/*
+ * find_localplayer() -- scan GUObjectArray for an object whose class
+ * FName matches "LocalPlayer" (multi-block search, handles block 5+).
+ *
+ * ClassPrivate at UObjectBase+0x10, NamePrivate at ClassPrivate+0x18.
+ * ComparisonIndex is the full 32-bit value (block<<16 | word_off).
+ * After finding the object, verify it has FExec at g_fexec_offset by
+ * reading its secondary vtable.
+ */
+static bool find_localplayer()
+{
+    if (g_localplayer_ptr) return true;
+    if (!g_guobjectarray_found) return false;
+
+    uint32_t lp_idx = get_fname_cmpidx_for("LocalPlayer");
+    if (lp_idx == 0xFFFFFFFF) {
+        bridge_log("  find_localplayer: FName('LocalPlayer') not found "
+                   "(FNamePool has %s)",
+                   g_fnamepool_global ? "global" : "block0 only");
+        return false;
+    }
+    bridge_log("  find_localplayer: FName('LocalPlayer')=0x%X (block=%d word=0x%X)",
+               lp_idx, lp_idx >> 16, lp_idx & 0xFFFF);
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+
+    int32_t num_elems = guobjectarray_num_elements();
+    for (int32_t i = 0; i < num_elems; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
+
+        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+        if (class_ptr < 0x10000) continue;
+
+        uint32_t cmp_idx = 0;
+        __try { cmp_idx = *(uint32_t*)((uint8_t*)class_ptr + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        if (cmp_idx != lp_idx) continue;
+
+        /* Confirm FExec secondary vtable at g_fexec_offset */
+        uintptr_t fexec_off  = g_fexec_offset ? g_fexec_offset : 0x28;
+        uintptr_t lp_fexec_v = seh_read_ptr((uint8_t*)obj + fexec_off);
+        if (lp_fexec_v < mod_start || lp_fexec_v >= mod_end) continue;
+
+        g_localplayer_ptr = obj;
+        bridge_log("  ULocalPlayer FOUND: [%d] obj=0x%p fexec_vptr=0x%llX",
+                   i, obj, (unsigned long long)lp_fexec_v);
+        /* Fire debug break if armed (one-shot). */
+        if (g_debug_break_armed.exchange(false)) {
+            bridge_log("  DEBUG BREAK: LocalPlayer found -- breaking into debugger");
+            __debugbreak();
+        }
+        return true;
+    }
+    bridge_log("  find_localplayer: not found in %d objects", num_elems);
+    return false;
+}
+
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
 
 /*
@@ -2180,7 +1612,8 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
                                    uintptr_t mod_start, uintptr_t mod_end)
 {
     if (g_fexec_hook_count >= 64) {
-        return false;  /* table full -- caller should stop scanning */
+        /* Silent: table full, stop scanning */
+        return false;
     }
 
     /* Reject primary vtable */
@@ -2212,11 +1645,6 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
     e.vtable_base = fexec_vtable;
     e.slot        = slot;
     e.original    = orig;
-
-    bridge_log("  FExec hook installed: vtable=0x%llX "
-               "original=0x%p slot=%d",
-               (unsigned long long)fexec_vtable, (void*)orig,
-               g_fexec_hook_count - 1);
     return true;
 }
 
@@ -2257,10 +1685,8 @@ static void scan_guobjectarray_for_fexec_hooks()
 
         checked++;
 
-        /* Use g_fexec_offset detected by find_fexec_vtable() on GEngine.
-         * This handles both standard layout (+0x28) and WITH_CASE_PRESERVING_NAME
-         * layout (+0x30) transparently. */
-        uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
+        /* Check for FExec vtable at UE4SS default offset 0x28 (= 40) */
+        uintptr_t fexec_off = 0x28;
         uintptr_t fexec_vptr = seh_read_ptr((uint8_t*)obj + fexec_off);
         if (fexec_vptr < mod_start || fexec_vptr >= mod_end) continue;
         if (fexec_vptr == primary_vptr) continue;  /* skip primary */
@@ -2278,14 +1704,12 @@ static void scan_guobjectarray_for_fexec_hooks()
             if (!validate_function_ptr(fn)) break;
             vcnt++;
         }
-        if (vcnt < 2 || vcnt > 8) continue;
+        if (vcnt < 3 || vcnt > 8) continue;
 
         /* This object has a valid FExec vtable -- hook it */
         if (install_fexec_hook_on(fexec_vptr, primary_vptr,
                                    mod_start, mod_end))
             hooked_new++;
-        else if (g_fexec_hook_count >= 64)
-            break;  /* table full, no point scanning further */
     }
 
     bridge_log("  GUObjectArray scan done: checked=%d, new_hooks=%d "
@@ -2553,14 +1977,6 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Lazy UWorld scan: startup scan runs before map load so UWorld may not
-     * exist yet.  Re-scan here on first command after map load.
-     * Priority: WorldList scan (no GUObjectArray needed) -> GUObjectArray fallback.
-     * FExec hook parameters also update g_world_ptr when the game calls Exec. */
-    if (!g_world_ptr) {
-        if (!find_uworld_via_worldlist() && g_guobjectarray_found.load())
-            find_uworld_via_guobjectarray();
-    }
     void* world = g_world_ptr;
 
     /* Use GEngine's original Exec to avoid recursion.
@@ -2572,6 +1988,16 @@ static bool exec_console_command_internal(const char* cmd)
     bool cmd_ret = false;
     bool call_ok = seh_call_fexec(exec_fn, this_fexec,
                                    world, wcmd.data(), ar, &cmd_ret);
+
+    /* If crash with a world pointer, the pointer may be stale (map reload).
+     * Clear it and retry with NULL -- CVars/stat work without world. */
+    if (!call_ok && world) {
+        bridge_log("  RETRY: GEngine crashed (world=0x%p stale?), retrying null", world);
+        g_world_ptr = nullptr;
+        world = nullptr;
+        call_ok = seh_call_fexec(exec_fn, this_fexec,
+                                  nullptr, wcmd.data(), ar, &cmd_ret);
+    }
     if (!call_ok) {
         bridge_log("  ERROR: GEngine FExec::Exec crashed");
         return false;
@@ -2582,39 +2008,41 @@ static bool exec_console_command_internal(const char* cmd)
         return true;
     }
 
-    /* GEngine returned false -- gameplay commands (ToggleDebugCamera, slomo,
-     * Teleport, SetViewLocation, ShowHUD, etc.) are NOT handled by
-     * UEngine::Exec in UE5.7.  Route via ULocalPlayer::Exec instead:
-     *   ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager
-     * NOTE: UWorld does NOT inherit FExec (inherits FNetworkNotify instead),
-     * so UWorld fallback was incorrect and silently did nothing. */
-    if (!g_localplayer_ptr)
-        find_localplayer();
-
-    if (g_localplayer_ptr) {
-        void* lp_fexec = (uint8_t*)g_localplayer_ptr + g_fexec_offset;
-        uintptr_t lp_vptr = seh_read_ptr(lp_fexec);
-
-        ModuleRegion rgn;
-        if (get_main_module(rgn) &&
-            lp_vptr >= (uintptr_t)rgn.base &&
-            lp_vptr < (uintptr_t)rgn.base + rgn.size)
-        {
-            FExecExecFn lp_exec_fn = (FExecExecFn)seh_read_ptr((void*)(lp_vptr + 8));
-            if (lp_exec_fn && validate_function_ptr((void*)lp_exec_fn)) {
-                bool lp_ret = false;
-                bool lp_ok  = seh_call_fexec(lp_exec_fn, lp_fexec,
-                                              world, wcmd.data(), ar, &lp_ret);
-                if (lp_ok) {
-                    bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
-                    return lp_ret;
-                }
-                bridge_log("  ERROR: ULocalPlayer FExec::Exec crashed");
+    /* GEngine returned false -- gameplay commands route via ULocalPlayer::Exec.
+     * ULocalPlayer is found actively via GUObjectArray + FName scan.
+     * Helper lambda: call LP Exec via its FExec subobject. */
+    auto try_lp_exec = [&](void* lp_fexec_subobj) -> bool {
+        if (!lp_fexec_subobj) return false;
+        uintptr_t lp_vtable = seh_read_ptr(lp_fexec_subobj);
+        FExecExecFn lp_orig = nullptr;
+        for (int i = 0; i < g_fexec_hook_count; i++) {
+            if (g_fexec_hook_table[i].vtable_base == lp_vtable) {
+                lp_orig = g_fexec_hook_table[i].original;
+                break;
             }
         }
+        if (!lp_orig || !validate_function_ptr((void*)lp_orig)) return false;
+        bool lp_ret = false;
+        bool lp_ok  = seh_call_fexec(lp_orig, lp_fexec_subobj,
+                                      world, wcmd.data(), ar, &lp_ret);
+        if (lp_ok) {
+            bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
+            return true;
+        }
+        bridge_log("  ERROR: ULocalPlayer FExec crashed");
+        return false;
+    };
+
+    /* ULocalPlayer: FName+GUObjectArray scan (active, cold-start safe).
+     * If not found at startup, try once more here before giving up. */
+    if (!g_localplayer_ptr) find_localplayer();
+    if (g_localplayer_ptr) {
+        uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
+        void* lp_fexec = (uint8_t*)g_localplayer_ptr + fexec_off;
+        if (try_lp_exec(lp_fexec)) return true;
     }
 
-    bridge_log("  OK ret=0 (no handler found)");
+    bridge_log("  OK ret=0 (GEngine rejected, LocalPlayer not found)");
     return false;
 }
 

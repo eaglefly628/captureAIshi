@@ -343,6 +343,31 @@ def run_capture(args):
         else:
             logging.debug("[UI] UI hiding disabled (no_hide_ui={})".format(args.no_hide_ui))
 
+        # ── UE object readiness gate ──
+        # Wait for UWorld + LocalPlayer before starting capture.
+        # Bridge finds these via GUObjectArray+FName scan after map load.
+        # Click "Re-scan UE" in the Debug panel after the game's map is loaded.
+        if hasattr(driver, 'wait_for_objects_ready'):
+            poll_interval = 2.0
+            gate_timeout = 600.0  # 10 min; user clicks Re-scan to unblock
+            elapsed = 0.0
+            logging.info(
+                "[GATE] Waiting for UWorld + LocalPlayer "
+                "(click 'Re-scan UE' in Debug panel after map loads)"
+            )
+            while elapsed < gate_timeout:
+                if stop_event is not None and stop_event.is_set():
+                    logging.info("[GATE] Stop requested, aborting capture.")
+                    break
+                if driver.is_objects_ready():
+                    logging.info(f"[GATE] Engine objects ready after {elapsed:.0f}s, starting capture.")
+                    break
+                import time as _time_gate
+                _time_gate.sleep(poll_interval)
+                elapsed += poll_interval
+            else:
+                logging.warning("[GATE] Timed out waiting for engine objects. Proceeding anyway.")
+
         frames_ok = 0
         frames_no_rgb = 0
         frames_no_depth = 0
