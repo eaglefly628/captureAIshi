@@ -2579,6 +2579,13 @@ pollSessions();pollCaptures();
     <span style="color:#888;font-size:11px">click to close</span>
   </div>
   <div style="padding:10px 12px">
+    <!-- Scan status row -->
+    <div id="scanStatusRow" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 8px;background:#0f0f23;border-radius:4px;font-size:11px">
+      <span style="color:#aaa">UE Objects:</span>
+      <span id="scanWorld" style="color:#555">UWorld: --</span>
+      <span id="scanLP" style="color:#555">LocalPlayer: --</span>
+      <button class="btn btn-accent" onclick="bridgeRescan()" style="margin-left:auto;font-size:11px;height:22px;padding:0 10px" title="Re-scan UWorld + LocalPlayer after map load">Re-scan UE</button>
+    </div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
       <button class="btn" onclick="bridgeCmd('slomo 0.1')" title="Slow motion">Slow-Mo</button>
       <button class="btn" onclick="bridgeCmd('slomo 1')" title="Normal speed">Normal</button>
@@ -2623,6 +2630,49 @@ function bridgeCmd(cmd){
 function bridgeStatus(){
   bridgeCmd('__bridge_status');
 }
+function _scanBadge(found, label){
+  return found
+    ? '<span style="color:#4f4">'+label+': OK</span>'
+    : '<span style="color:#f44">'+label+': --</span>';
+}
+function updateScanStatus(){
+  fetch('/api/bridge/scan_status')
+    .then(r=>r.json())
+    .then(d=>{
+      document.getElementById('scanWorld').innerHTML=_scanBadge(d.uworld_found,'UWorld');
+      document.getElementById('scanLP').innerHTML=_scanBadge(d.localplayer_found,'LocalPlayer');
+    })
+    .catch(()=>{
+      document.getElementById('scanWorld').innerHTML='<span style="color:#f84">UWorld: ?</span>';
+      document.getElementById('scanLP').innerHTML='<span style="color:#f84">LocalPlayer: ?</span>';
+    });
+}
+function bridgeRescan(){
+  document.getElementById('scanWorld').innerHTML='<span style="color:#fa0">UWorld: scanning...</span>';
+  document.getElementById('scanLP').innerHTML='<span style="color:#fa0">LocalPlayer: scanning...</span>';
+  debugAppend('> __bridge_rescan_objects');
+  fetch('/api/bridge/rescan',{method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      document.getElementById('scanWorld').innerHTML=_scanBadge(d.uworld_found,'UWorld');
+      document.getElementById('scanLP').innerHTML=_scanBadge(d.localplayer_found,'LocalPlayer');
+      if(d.ok){
+        var msg='Rescan: UWorld='+(d.uworld_found?d.world_ptr:'NOT FOUND')
+               +' LocalPlayer='+(d.localplayer_found?d.localplayer_ptr:'NOT FOUND');
+        debugAppend(msg);
+      } else {
+        debugAppend('ERROR: '+(d.error||'unknown'));
+      }
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+// Refresh scan status whenever debug panel is opened
+var _origToggleDebug=toggleDebugPanel;
+toggleDebugPanel=function(){
+  _origToggleDebug();
+  var p=document.getElementById('debugPanel');
+  if(p.style.display!=='none') updateScanStatus();
+};
 </script>
 </body>
 </html>

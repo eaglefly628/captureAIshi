@@ -182,7 +182,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "fexec_exec=0x%p fexec_offset=%d "
             "fexec_hooks=%d "
             "guobjectarray_found=%d guobjectarray=0x%p "
-            "world_ptr=0x%p "
+            "world_ptr=0x%p localplayer_ptr=0x%p "
+            "uworld_found=%d localplayer_found=%d "
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
@@ -192,7 +193,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             (void*)g_fexec_exec, (int)g_fexec_offset,
             g_fexec_hook_count,
             (int)g_guobjectarray_found.load(), g_guobjectarray,
-            g_world_ptr,
+            g_world_ptr, g_localplayer_ptr,
+            g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
@@ -213,6 +215,25 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         g_engine_found = false; g_engine_ptr = NULL;
         g_fexec_exec = NULL; g_fexec_offset = 0;
         cs_reply(client, find_gengine() ? "ok\n" : "not_found\n");
+        return true;
+    }
+
+    /* Re-scan UWorld + ULocalPlayer via GUObjectArray + FName comparison.
+     * Call this after map load completes to refresh stale pointers.
+     * Clears existing pointers before scanning so stale map references
+     * are not kept if the new scan fails. */
+    if (cmd == "__bridge_rescan_objects") {
+        g_world_ptr = nullptr;
+        g_localplayer_ptr = nullptr;
+        find_uworld_via_guobjectarray();
+        find_localplayer();
+        char rbuf[256];
+        snprintf(rbuf, sizeof(rbuf),
+                 "uworld_found=%d localplayer_found=%d "
+                 "world_ptr=0x%p localplayer_ptr=0x%p\n",
+                 g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
+                 g_world_ptr, g_localplayer_ptr);
+        cs_reply(client, rbuf);
         return true;
     }
 

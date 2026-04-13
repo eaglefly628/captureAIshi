@@ -107,24 +107,75 @@ def capture_status():
         })
 
 
+def _bridge_send(cmd: str, port: int = 9998, timeout: float = 35.0) -> str:
+    """One-shot: connect to bridge, send cmd, return response, close."""
+    import socket as _sock
+    s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.connect(("127.0.0.1", port))
+    s.sendall((cmd + "\n").encode("utf-8"))
+    resp = s.recv(4096).decode("utf-8", errors="replace")
+    s.close()
+    return resp.strip()
+
+
 @app.route("/api/bridge-test", methods=["POST"])
 def bridge_test():
     """Send __bridge_test to the bridge for visual verification.
     Also supports custom commands via JSON body {"cmd": "slomo 0.1"}."""
-    import socket as _sock
     cmd = "__bridge_test"
     body = request.get_json(silent=True)
     if body and body.get("cmd"):
         cmd = body["cmd"]
-    port = 9998
     try:
-        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-        s.settimeout(8)
-        s.connect(("127.0.0.1", port))
-        s.sendall((cmd + "\n").encode("utf-8"))
-        resp = s.recv(4096).decode("utf-8", errors="replace")
-        s.close()
-        return jsonify({"ok": True, "response": resp.strip(), "cmd": cmd})
+        resp = _bridge_send(cmd, timeout=35.0)
+        return jsonify({"ok": True, "response": resp, "cmd": cmd})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/bridge/scan_status", methods=["GET"])
+def bridge_scan_status():
+    """Query current UWorld + LocalPlayer scan state from bridge."""
+    try:
+        raw = _bridge_send("__bridge_status", timeout=5.0)
+        status = {}
+        for pair in raw.split():
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                status[k] = v
+        return jsonify({
+            "ok": True,
+            "uworld_found": status.get("uworld_found") == "1",
+            "localplayer_found": status.get("localplayer_found") == "1",
+            "world_ptr": status.get("world_ptr", "0x0"),
+            "localplayer_ptr": status.get("localplayer_ptr", "0x0"),
+            "engine_found": status.get("engine_found") == "1",
+            "gamethread_dispatch": status.get("gamethread_dispatch") == "1",
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/bridge/rescan", methods=["POST"])
+def bridge_rescan():
+    """Trigger UWorld + LocalPlayer re-scan in the bridge.
+    Call this after map load. Bridge clears stale pointers and rescans."""
+    try:
+        raw = _bridge_send("__bridge_rescan_objects", timeout=35.0)
+        result = {}
+        for pair in raw.split():
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                result[k] = v
+        return jsonify({
+            "ok": True,
+            "uworld_found": result.get("uworld_found") == "1",
+            "localplayer_found": result.get("localplayer_found") == "1",
+            "world_ptr": result.get("world_ptr", "0x0"),
+            "localplayer_ptr": result.get("localplayer_ptr", "0x0"),
+            "raw": raw,
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
