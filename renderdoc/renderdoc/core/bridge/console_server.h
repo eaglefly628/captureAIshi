@@ -238,6 +238,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
      * are not kept if the new scan fails. */
     if (cmd == "__bridge_rescan_objects") {
         g_world_ptr = nullptr;
+        g_world_from_gua = false;
         g_localplayer_ptr = nullptr;
         find_uworld_via_guobjectarray();
         find_localplayer();

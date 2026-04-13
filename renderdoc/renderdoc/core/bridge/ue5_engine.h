@@ -68,8 +68,12 @@ static std::atomic<bool> g_engine_found{false};
 /* Address of the GEngine global variable itself (not the pointer value) */
 static uintptr_t         g_engine_global_addr = 0;
 
-/* UWorld pointer -- captured as direct parameter by FExec hooks */
+/* UWorld pointer -- set by GUObjectArray scan or captured by FExec hooks.
+ * g_world_from_gua: true when g_world_ptr was set by the GUA scan
+ * (reliable). When true, FExec hooks do NOT overwrite it -- the hook
+ * captures many different pointers per second, most of which are wrong. */
 static void*             g_world_ptr = nullptr;
+static bool              g_world_from_gua = false;
 
 /* -- Exec function ------------------------------------------------- */
 
@@ -1443,6 +1447,76 @@ static uint32_t get_fname_cmpidx_for(const char* target)
     return 0xFFFFFFFF;
 }
 
+/* ---- UWorld cross-validation via GEngine pointer chain --------------- */
+
+/*
+ * cross_validate_world(candidate)
+ *
+ * Verify that a UWorld candidate is reachable from GEngine's member chain.
+ * Scans up to 3 levels of indirection, which covers:
+ *   Level 1: GEngine+X == candidate  (direct pointer member)
+ *   Level 2: GEngine+X -> obj+Y == candidate  (e.g. GameViewport->World)
+ *   Level 3: GEngine+X -> obj+Y -> obj2+Z == candidate  (WorldList path:
+ *            GEngine->WorldList.Data[i] -> FWorldContext->ThisCurrentWorld)
+ *
+ * Returns true if the candidate is confirmed reachable from GEngine.
+ */
+static bool cross_validate_world(void* candidate)
+{
+    if (!candidate || !g_engine_ptr) return false;
+
+    uint8_t* eng = (uint8_t*)g_engine_ptr;
+    uintptr_t target = (uintptr_t)candidate;
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+
+    /* Level 1: direct member in GEngine */
+    for (int off = 48; off < 8192; off += 8) {
+        uintptr_t val = seh_read_ptr(eng + off);
+        if (val == target) {
+            bridge_log("    XVAL: GEngine+0x%X == UWorld 0x%p (direct)", off, candidate);
+            return true;
+        }
+    }
+
+    /* Level 2 + 3: indirect */
+    for (int off = 48; off < 8192; off += 8) {
+        uintptr_t val = seh_read_ptr(eng + off);
+        if (val < 0x10000 || val >= 0x7F0000000000ULL) continue;
+        if (val == target) continue;  /* already checked */
+        /* Skip module-range pointers (vtable/code, not data) */
+        if (val >= mod_start && val < mod_end) continue;
+
+        /* Level 2: scan sub-object (e.g. GameViewport) */
+        for (int sub = 0; sub < 1024; sub += 8) {
+            uintptr_t sv = seh_read_ptr((void*)(val + sub));
+            if (sv == target) {
+                bridge_log("    XVAL: GEngine+0x%X -> +0x%X == UWorld 0x%p (2-level)",
+                           off, sub, candidate);
+                return true;
+            }
+
+            /* Level 3: one more hop (covers WorldList indirection) */
+            if (sv < 0x10000 || sv >= 0x7F0000000000ULL) continue;
+            if (sv >= mod_start && sv < mod_end) continue;
+            for (int sub2 = 0; sub2 < 512; sub2 += 8) {
+                uintptr_t sv2 = seh_read_ptr((void*)(sv + sub2));
+                if (sv2 == target) {
+                    bridge_log("    XVAL: GEngine+0x%X -> +0x%X -> +0x%X == "
+                               "UWorld 0x%p (3-level/WorldList)",
+                               off, sub, sub2, candidate);
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 /* ---- UWorld via GUObjectArray + FName -------------------------------- */
 
 /*
@@ -1466,11 +1540,17 @@ static bool find_uworld_via_guobjectarray()
         bridge_log("  find_uworld: FName('World') not found in FNamePool");
         return false;
     }
+    int32_t num_elems = guobjectarray_num_elements();
     bridge_log("  find_uworld: FName('World')=0x%X -- scanning %d objects",
-               world_idx, guobjectarray_num_elements());
+               world_idx, num_elems);
 
-    int32_t num_elems  = guobjectarray_num_elements();
-    int     class_hits = 0;
+    /* Collect non-CDO UWorld candidates.
+     * RF_ClassDefaultObject = 0x10 in ObjectFlags (UObjectBase+0x08). */
+    struct UWorldCandidate { int32_t index; void* obj; uintptr_t outer; uint32_t flags; };
+    UWorldCandidate candidates[16];
+    int n_candidates = 0;
+    int class_hits = 0;
+    int cdo_skipped = 0;
 
     for (int32_t i = 0; i < num_elems; i++) {
         if (i > 0 && (i % 50000) == 0)
@@ -1492,36 +1572,86 @@ static bool find_uworld_via_guobjectarray()
         if (cmp_idx != world_idx) continue;
         class_hits++;
 
+        /* ObjectFlags at UObjectBase+0x08 */
+        uint32_t obj_flags = 0;
+        __try { obj_flags = *(uint32_t*)((uint8_t*)obj + 0x08); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        /* Skip CDOs (RF_ClassDefaultObject = 0x10) */
+        if (obj_flags & 0x10) {
+            bridge_log("  UWorld [%d] 0x%p: CDO (flags=0x%X) -- skipped",
+                       i, obj, obj_flags);
+            cdo_skipped++;
+            continue;
+        }
+
         /* OuterPrivate at UObjectBase+0x20 */
         uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
-        if (outer < 0x10000 || outer >= 0x800000000000ULL) {
-            bridge_log("  UWorld candidate [%d] 0x%p: outer invalid 0x%llX",
-                       i, obj, (unsigned long long)outer);
-            continue;
-        }
+        if (outer < 0x10000 || outer >= 0x800000000000ULL) continue;
         /* outer (UPackage) must be a root: its OuterPrivate == null */
         uintptr_t outer_outer = seh_read_ptr((uint8_t*)outer + 0x20);
-        if (outer_outer != 0) {
-            bridge_log("  UWorld candidate [%d] 0x%p: outer.outer=0x%llX (not root)",
-                       i, obj, (unsigned long long)outer_outer);
-            continue;
-        }
+        if (outer_outer != 0) continue;
 
-        bridge_log("  UWorld FOUND via GUObjectArray FName: [%d] obj=0x%p outer=0x%llX",
-                   i, obj, (unsigned long long)outer);
-        g_world_ptr = obj;
-        /* If debug break is armed: fire INT3 so WinDbg/x64dbg catches us here.
-         * Disarms after firing (one-shot). Attach debugger BEFORE arming. */
-        if (g_debug_break_armed.exchange(false)) {
-            bridge_log("  DEBUG BREAK: UWorld found -- breaking into debugger");
-            __debugbreak();
+        bridge_log("  UWorld candidate #%d: [%d] obj=0x%p flags=0x%X outer=0x%llX",
+                   n_candidates, i, obj, obj_flags, (unsigned long long)outer);
+
+        if (n_candidates < 16) {
+            candidates[n_candidates].index = i;
+            candidates[n_candidates].obj   = obj;
+            candidates[n_candidates].outer = outer;
+            candidates[n_candidates].flags = obj_flags;
+            n_candidates++;
+        } else {
+            for (int j = 0; j < 15; j++) candidates[j] = candidates[j + 1];
+            candidates[15] = { i, obj, outer, obj_flags };
         }
-        return true;
     }
 
-    bridge_log("  UWorld not found via GUObjectArray (%d objects, %d class matches)",
-               num_elems, class_hits);
-    return false;
+    bridge_log("  find_uworld: %d non-CDO candidates, %d CDO skipped, "
+               "%d total class hits",
+               n_candidates, cdo_skipped, class_hits);
+
+    if (n_candidates == 0) {
+        bridge_log("  UWorld not found via GUObjectArray (%d objects)", num_elems);
+        return false;
+    }
+
+    /* --- Selection: cross-validate against GEngine's pointer chain ---
+     * The active game UWorld is always reachable from GEngine (via WorldList
+     * or GameViewport). CDOs and template worlds are NOT referenced. */
+    void* best = nullptr;
+    int best_idx = -1;
+
+    if (g_engine_ptr) {
+        for (int c = 0; c < n_candidates; c++) {
+            if (cross_validate_world(candidates[c].obj)) {
+                best = candidates[c].obj;
+                best_idx = candidates[c].index;
+                bridge_log("  UWorld [%d] 0x%p CONFIRMED by GEngine cross-validation",
+                           candidates[c].index, candidates[c].obj);
+                /* Don't break -- keep scanning to find the last confirmed
+                 * (highest index, most recently created). */
+            }
+        }
+    }
+
+    /* Fallback: if cross-validation didn't confirm any (GEngine not found,
+     * or WorldList layout unrecognized), pick the last non-CDO candidate. */
+    if (!best) {
+        best = candidates[n_candidates - 1].obj;
+        best_idx = candidates[n_candidates - 1].index;
+        bridge_log("  UWorld [%d] 0x%p selected (fallback: last non-CDO candidate)",
+                   best_idx, best);
+    }
+
+    g_world_ptr = best;
+    g_world_from_gua = true;
+
+    if (g_debug_break_armed.exchange(false)) {
+        bridge_log("  DEBUG BREAK: UWorld found -- breaking into debugger");
+        __debugbreak();
+    }
+    return true;
 }
 
 /* ---- ULocalPlayer via GUObjectArray + FName ------------------------- */
@@ -1555,10 +1685,25 @@ static bool find_localplayer()
     bridge_log("  find_localplayer: FName('LocalPlayer')=0x%X (block=%d word=0x%X)",
                lp_idx, lp_idx >> 16, lp_idx & 0xFFFF);
 
+    /* Look up "GameInstance" FName for outer validation.
+     * The real LocalPlayer's OuterPrivate is a UGameInstance whose class
+     * FName is "GameInstance" (or a subclass). CDO's outer is the UPackage. */
+    uint32_t gi_idx = get_fname_cmpidx_for("GameInstance");
+    bridge_log("  find_localplayer: FName('GameInstance')=0x%X",
+               gi_idx);
+
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
     uintptr_t mod_start = (uintptr_t)rgn.base;
     uintptr_t mod_end   = mod_start + rgn.size;
+
+    struct LPCandidate {
+        int32_t index; void* obj; uintptr_t fexec_vptr;
+        uint32_t flags; bool outer_is_gi;
+    };
+    LPCandidate candidates[8];
+    int n_candidates = 0;
+    int cdo_skipped = 0;
 
     int32_t num_elems = guobjectarray_num_elements();
     for (int32_t i = 0; i < num_elems; i++) {
@@ -1575,23 +1720,89 @@ static bool find_localplayer()
 
         if (cmp_idx != lp_idx) continue;
 
+        /* ObjectFlags at UObjectBase+0x08 -- skip CDOs */
+        uint32_t obj_flags = 0;
+        __try { obj_flags = *(uint32_t*)((uint8_t*)obj + 0x08); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (obj_flags & 0x10) {
+            bridge_log("  LocalPlayer [%d] 0x%p: CDO (flags=0x%X) -- skipped",
+                       i, obj, obj_flags);
+            cdo_skipped++;
+            continue;
+        }
+
         /* Confirm FExec secondary vtable at g_fexec_offset */
         uintptr_t fexec_off  = g_fexec_offset ? g_fexec_offset : 0x28;
         uintptr_t lp_fexec_v = seh_read_ptr((uint8_t*)obj + fexec_off);
         if (lp_fexec_v < mod_start || lp_fexec_v >= mod_end) continue;
 
-        g_localplayer_ptr = obj;
-        bridge_log("  ULocalPlayer FOUND: [%d] obj=0x%p fexec_vptr=0x%llX",
-                   i, obj, (unsigned long long)lp_fexec_v);
-        /* Fire debug break if armed (one-shot). */
-        if (g_debug_break_armed.exchange(false)) {
-            bridge_log("  DEBUG BREAK: LocalPlayer found -- breaking into debugger");
-            __debugbreak();
+        /* Check if OuterPrivate is a GameInstance.
+         * ULocalPlayer.OuterPrivate -> UGameInstance (class FName check). */
+        bool outer_is_gi = false;
+        if (gi_idx != 0xFFFFFFFF) {
+            uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
+            if (outer >= 0x10000 && outer < 0x800000000000ULL) {
+                uintptr_t outer_class = seh_read_ptr((void*)(outer + 0x10));
+                if (outer_class >= 0x10000) {
+                    uint32_t outer_class_name = 0;
+                    __try { outer_class_name = *(uint32_t*)((uint8_t*)outer_class + 0x18); }
+                    __except(EXCEPTION_EXECUTE_HANDLER) { outer_class_name = 0; }
+                    outer_is_gi = (outer_class_name == gi_idx);
+                }
+            }
         }
-        return true;
+
+        bridge_log("  LocalPlayer candidate #%d: [%d] obj=0x%p flags=0x%X "
+                   "fexec_vptr=0x%llX outer_gi=%d",
+                   n_candidates, i, obj, obj_flags,
+                   (unsigned long long)lp_fexec_v, (int)outer_is_gi);
+
+        if (n_candidates < 8) {
+            candidates[n_candidates] = { i, obj, lp_fexec_v,
+                                         obj_flags, outer_is_gi };
+            n_candidates++;
+        } else {
+            for (int j = 0; j < 7; j++) candidates[j] = candidates[j + 1];
+            candidates[7] = { i, obj, lp_fexec_v, obj_flags, outer_is_gi };
+        }
     }
-    bridge_log("  find_localplayer: not found in %d objects", num_elems);
-    return false;
+
+    bridge_log("  find_localplayer: %d non-CDO candidates, %d CDO skipped",
+               n_candidates, cdo_skipped);
+
+    if (n_candidates == 0) {
+        bridge_log("  find_localplayer: not found in %d objects", num_elems);
+        return false;
+    }
+
+    /* Selection: prefer candidate whose outer is a GameInstance.
+     * Among those, take the last (most recently created). */
+    int best_c = -1;
+    for (int c = n_candidates - 1; c >= 0; c--) {
+        if (candidates[c].outer_is_gi) {
+            best_c = c;
+            break;
+        }
+    }
+    /* Fallback: last non-CDO candidate. */
+    if (best_c < 0) {
+        best_c = n_candidates - 1;
+        bridge_log("  LocalPlayer: no GameInstance outer found, "
+                   "using last non-CDO candidate");
+    }
+
+    LPCandidate& best = candidates[best_c];
+    g_localplayer_ptr = best.obj;
+    bridge_log("  ULocalPlayer SELECTED: [%d] obj=0x%p fexec=0x%llX "
+               "outer_gi=%d (%d candidates)",
+               best.index, best.obj, (unsigned long long)best.fexec_vptr,
+               (int)best.outer_is_gi, n_candidates);
+
+    if (g_debug_break_armed.exchange(false)) {
+        bridge_log("  DEBUG BREAK: LocalPlayer found -- breaking into debugger");
+        __debugbreak();
+    }
+    return true;
 }
 
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
@@ -1736,13 +1947,17 @@ static void scan_guobjectarray_for_fexec_hooks()
 static bool __fastcall hooked_fexec_exec(
     void* this_fexec, void* world, const wchar_t* cmd, void* ar)
 {
-    /* Capture UWorld -- only accept valid heap pointers */
-    if (world && (uintptr_t)world > 0x10000 &&
+    /* Capture UWorld from Exec parameter -- only as a FALLBACK when the
+     * GUObjectArray scan has not found it yet.  The GUA scan is reliable
+     * (validates class FName + outer chain); the hook sees many different
+     * pointers per frame, most of which are NOT the real game UWorld. */
+    if (!g_world_from_gua &&
+        world && (uintptr_t)world > 0x10000 &&
         (uintptr_t)world < 0x7F0000000000ULL)
     {
         if (g_world_ptr != world) {
             g_world_ptr = world;
-            bridge_log("HOOK: UWorld captured 0x%p (this_fexec=0x%p)",
+            bridge_log("HOOK: UWorld captured 0x%p (this_fexec=0x%p) [fallback]",
                        world, this_fexec);
         }
     }
@@ -1995,6 +2210,7 @@ static bool exec_console_command_internal(const char* cmd)
     if (!call_ok && world) {
         bridge_log("  RETRY: GEngine crashed (world=0x%p stale?), retrying null", world);
         g_world_ptr = nullptr;
+        g_world_from_gua = false;
         world = nullptr;
         call_ok = seh_call_fexec(exec_fn, this_fexec,
                                   nullptr, wcmd.data(), ar, &cmd_ret);
