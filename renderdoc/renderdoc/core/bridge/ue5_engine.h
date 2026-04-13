@@ -2519,13 +2519,55 @@ static bool exec_console_command_internal(const char* cmd)
         exec_fn = g_fexec_hook_table[0].original;
 
     bool cmd_ret = false;
-    if (seh_call_fexec(exec_fn, this_fexec,
-                        world, wcmd.data(), ar, &cmd_ret)) {
-        bridge_log("  OK ret=%d", (int)cmd_ret);
-        return cmd_ret;
+    bool call_ok = seh_call_fexec(exec_fn, this_fexec,
+                                   world, wcmd.data(), ar, &cmd_ret);
+    if (!call_ok) {
+        bridge_log("  ERROR: GEngine FExec::Exec crashed");
+        return false;
     }
 
-    bridge_log("  ERROR: FExec::Exec crashed");
+    if (cmd_ret) {
+        bridge_log("  OK ret=1 (GEngine)");
+        return true;
+    }
+
+    /* GEngine returned false -- gameplay commands (ToggleDebugCamera, slomo,
+     * Teleport, SetViewLocation, etc.) are NOT routed by UEngine::Exec to
+     * the world in UE5.7; they need UWorld::Exec directly.
+     * UWorld also inherits FExec; its secondary vtable is at the same offset
+     * as GEngine's (g_fexec_offset = sizeof(UObject) = 40 or 48). */
+    if (world) {
+        void* world_fexec_subobj = (uint8_t*)world + g_fexec_offset;
+        uintptr_t world_fexec_vptr = seh_read_ptr(world_fexec_subobj);
+
+        ModuleRegion rgn;
+        if (get_main_module(rgn)) {
+            uintptr_t mod_start = (uintptr_t)rgn.base;
+            uintptr_t mod_end   = mod_start + rgn.size;
+
+            if (world_fexec_vptr >= mod_start && world_fexec_vptr < mod_end) {
+                /* vtable[1] = Exec -- same layout as GEngine's FExec vtable */
+                FExecExecFn world_exec_fn = (FExecExecFn)seh_read_ptr(
+                    (void*)(world_fexec_vptr + 8));
+
+                if (world_exec_fn && validate_function_ptr((void*)world_exec_fn)) {
+                    bool world_ret = false;
+                    bool world_ok  = seh_call_fexec(world_exec_fn,
+                                                     world_fexec_subobj,
+                                                     world, wcmd.data(), ar,
+                                                     &world_ret);
+                    if (world_ok) {
+                        bridge_log("  OK ret=%d (UWorld fallback)", (int)world_ret);
+                        return world_ret;
+                    }
+                    bridge_log("  ERROR: UWorld FExec::Exec crashed");
+                    return false;
+                }
+            }
+        }
+    }
+
+    bridge_log("  OK ret=0 (GEngine only, no UWorld fallback)");
     return false;
 }
 
