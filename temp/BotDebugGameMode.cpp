@@ -84,10 +84,10 @@ void ABotDebugGameMode::BeginPlay()
 
         // Test: call slomo 0.5 directly through the PlayerController
         // Set breakpoint here to step into ConsoleCommand and trace routing.
-        bool bResult = PC->ConsoleCommand(TEXT("slomo 0.5"), true);
+        FString CmdResult = PC->ConsoleCommand(TEXT("slomo 0.5"), true);
         UE_LOG(LogTemp, Warning,
-            TEXT("ConsoleCommand('slomo 0.5') ret=%d  (1=handled, 0=not handled)"),
-            (int32)bResult);
+            TEXT("ConsoleCommand('slomo 0.5') result='%s'"),
+            *CmdResult);
 
         // Test via ULocalPlayer::Exec directly -- this is what bridge now does
         // as fallback when GEngine->Exec returns false.
