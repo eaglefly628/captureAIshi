@@ -26,10 +26,9 @@ void ABotDebugGameMode::BeginPlay()
     int32 WorldIdx  = GUObjectArray.ObjectToIndex(World);
     int32 EngineIdx = GEngine ? GUObjectArray.ObjectToIndex(GEngine) : -1;
     UE_LOG(LogTemp, Warning,
-        TEXT("GUObjectArray  addr=%p  num=%d  ObjFirstGCIndex=%d"),
+        TEXT("GUObjectArray  addr=%p  num=%d"),
         &GUObjectArray,
-        GUObjectArray.GetObjectArrayNum(),
-        GUObjectArray.ObjFirstGCIndex);
+        GUObjectArray.GetObjectArrayNum());
     UE_LOG(LogTemp, Warning,
         TEXT("  World  InternalIndex=%d"), WorldIdx);
     UE_LOG(LogTemp, Warning,
@@ -49,7 +48,8 @@ void ABotDebugGameMode::BeginPlay()
             *reinterpret_cast<const uint64*>(B + 0x08),
             *reinterpret_cast<const uint64*>(B + 0x10));
         UE_LOG(LogTemp, Warning,
-            TEXT("  Item->Object=%p  (should == UWorld ptr)"), Item->Object);
+            TEXT("  Item->GetObjectPtr()=%p  (should == UWorld ptr)"),
+            Item->GetObjectPtr());
     }
 
     // --- Chunk[0] base (bridge compares its Chunk[0] against this) ---
@@ -58,7 +58,7 @@ void ABotDebugGameMode::BeginPlay()
 
     // --- UWorld class FName ComparisonIndex (what bridge searches in FNamePool) ---
     FName WorldClassName = World->GetClass()->GetFName();
-    uint32 CmpIdx = WorldClassName.GetComparisonIndex().Value;
+    uint32 CmpIdx = WorldClassName.GetComparisonIndex().ToUnstableInt();
     UE_LOG(LogTemp, Warning,
         TEXT("UWorld class FName: '%s'  ComparisonIndex=0x%08X (block=%d word_off=%d)"),
         *WorldClassName.ToString(),
