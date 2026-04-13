@@ -503,6 +503,12 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         if (!find_fexec_vtable())
             BRIDGE_LOG("WARNING: FExec not found, commands will fail");
 
+        /* Detect FUObjectItem stride using GEngine cross-validation.
+         * Must run after GEngine is found and GUObjectArray is valid.
+         * Stride=24 is standard Shipping; stride=32 is Development/WITH_VERSE_VM. */
+        if (g_guobjectarray_found)
+            detect_fuobjectitem_stride();
+
         /* Install FExec hooks on GEngine AND all FExec objects in
          * GUObjectArray (including ULocalPlayer).  When any FExec::Exec
          * fires with a non-NULL UWorld, we capture it automatically. */

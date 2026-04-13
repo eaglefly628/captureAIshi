@@ -139,9 +139,19 @@ static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 
 #define GUOBJARRAY_OBJECTS_OFF    16   /* &GUObjectArray.ObjObjects.Objects */
 #define GUOBJARRAY_NUMELEMS_OFF   36   /* &GUObjectArray.ObjObjects.NumElements */
-#define FUOBJECTITEM_STRIDE       24   /* sizeof(FUObjectItem) */
 #define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
 #define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
+
+/*
+ * FUObjectItem size depends on BUILD CONFIG, NOT engine version:
+ *   0x18 (24B) -- Standard Shipping: Object*(8)+Flags(4)+ClusterRoot(4)+Serial(4)+Pad(4)
+ *   0x20 (32B) -- Development/Debug or WITH_VERSE_VM: +0x08=WeakHandle, +0x08=Object*
+ *   0x10 (16B) -- UE_PACK_FUOBJECT_ITEM: Object* in low bits (mask &~7)
+ * Detected at runtime via GEngine cross-validation.
+ * Confirmed: StackOBot UE5.7 Dev -> stride=32, obj_off=0x08
+ */
+static int g_fuobjectitem_stride    = 24;   /* default Shipping; detected in detect_fuobjectitem_stride() */
+static int g_fuobjectitem_object_off = 0;   /* Object* at start for stride=24; 0x08 for stride=32 */
 
 static void*              g_guobjectarray = NULL;
 static std::atomic<bool>  g_guobjectarray_found{false};
@@ -162,8 +172,14 @@ struct FExecHookEntry {
     FExecExecFn original;      /* saved original vtable[1] */
 };
 
-static FExecHookEntry     g_fexec_hook_table[16];
+static FExecHookEntry     g_fexec_hook_table[64];
 static int                g_fexec_hook_count = 0;
+
+/* FExec subobject pointer of the first non-GEngine FExec captured by the hook.
+ * Typically ULocalPlayer. Set in hooked_fexec_exec on first non-GEngine call.
+ * Used to route gameplay cmds (slomo, ToggleDebugCamera, etc.) via
+ * ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager. */
+static void* g_localplayer_fexec = nullptr;
 
 /* -- SEH-safe helpers ---------------------------------------------- */
 
@@ -900,9 +916,11 @@ static void* guobjectarray_get(int32_t index)
         (void*)(chunks_ptr + (uintptr_t)chunk_idx * 8));
     if (!chunk) return NULL;
 
-    /* FUObjectItem::Object at offset 0 within the item */
-    uintptr_t item_addr = chunk + (uintptr_t)within_idx * FUOBJECTITEM_STRIDE;
-    return (void*)seh_read_ptr((void*)item_addr);
+    uintptr_t item_addr = chunk + (uintptr_t)within_idx * g_fuobjectitem_stride;
+    uintptr_t obj = seh_read_ptr((void*)(item_addr + g_fuobjectitem_object_off));
+    /* Packed layout: low 3 bits hold flags; mask before returning */
+    if (g_fuobjectitem_stride == 16) obj &= ~(uintptr_t)7;
+    return (void*)obj;
 }
 
 static int32_t guobjectarray_num_elements()
@@ -914,6 +932,56 @@ static int32_t guobjectarray_num_elements()
     }
     __except(EXCEPTION_EXECUTE_HANDLER) { n = 0; }
     return n;
+}
+
+/*
+ * detect_fuobjectitem_stride() -- determine FUObjectItem stride at runtime.
+ *
+ * Cross-validates using GEngine.InternalIndex (at UObjectBase+0x0C).
+ * Must be called after both g_guobjectarray and g_engine_ptr are set.
+ *
+ * Configs tested:
+ *   (24, 0x00) -- Standard Shipping (default)
+ *   (32, 0x08) -- Development / WITH_VERSE_VM [StackOBot UE5.7 confirmed]
+ *   (32, 0x10) -- Alt 32B layout
+ *   (16, 0x00) -- UE_PACK_FUOBJECT_ITEM
+ */
+static void detect_fuobjectitem_stride()
+{
+    if (!g_guobjectarray || !g_engine_ptr) return;
+
+    uintptr_t chunks_ptr = seh_read_ptr((uint8_t*)g_guobjectarray + GUOBJARRAY_OBJECTS_OFF);
+    uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
+    if (!chunk0) { bridge_log("  stride detect: chunk0 not readable"); return; }
+
+    int32_t ge_idx = 0;
+    __try { ge_idx = *(int32_t*)((uint8_t*)g_engine_ptr + 0x0C); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+    if (ge_idx <= 0 || ge_idx >= 2000000) {
+        bridge_log("  stride detect: GEngine.InternalIndex=%d invalid", ge_idx);
+        return;
+    }
+
+    static const struct { int stride; int obj_off; } cfgs[] = {
+        {24, 0x00}, {32, 0x08}, {32, 0x10}, {16, 0x00},
+    };
+    for (int ci = 0; ci < 4; ci++) {
+        int s = cfgs[ci].stride, off = cfgs[ci].obj_off;
+        uintptr_t probe = seh_read_ptr(
+            (void*)(chunk0 + (uintptr_t)ge_idx * s + off));
+        if (s == 16) probe &= ~(uintptr_t)7;
+        if (probe == (uintptr_t)g_engine_ptr) {
+            g_fuobjectitem_stride    = s;
+            g_fuobjectitem_object_off = off;
+            bridge_log("  FUObjectItem CONFIRMED: stride=%d obj_off=0x%02X "
+                       "(GEngine idx=%d cross-validated)", s, off, ge_idx);
+            return;
+        }
+        bridge_log("  FUObjectItem probe stride=%d off=0x%02X -> 0x%llX (need 0x%llX)",
+                   s, off, (unsigned long long)probe, (unsigned long long)(uintptr_t)g_engine_ptr);
+    }
+    bridge_log("  FUObjectItem detect FAILED -- keeping stride=%d off=0x%02X",
+               g_fuobjectitem_stride, g_fuobjectitem_object_off);
 }
 
 /*
@@ -1163,8 +1231,8 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
                                    uintptr_t primary_vptr,
                                    uintptr_t mod_start, uintptr_t mod_end)
 {
-    if (g_fexec_hook_count >= 16) {
-        bridge_log("  FExec hook table full");
+    if (g_fexec_hook_count >= 64) {
+        /* Silent: table full, stop scanning */
         return false;
     }
 
@@ -1300,6 +1368,19 @@ static bool __fastcall hooked_fexec_exec(
             g_world_ptr = world;
             bridge_log("HOOK: UWorld captured 0x%p (this_fexec=0x%p)",
                        world, this_fexec);
+        }
+    }
+
+    /* Capture ULocalPlayer FExec subobject: the first non-GEngine FExec object
+     * that calls us with a valid world.  Used as fallback exec path for
+     * gameplay commands (slomo, ToggleDebugCamera, etc.) that GEngine ignores. */
+    if (!g_localplayer_fexec && g_engine_ptr && g_fexec_offset) {
+        void* engine_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
+        if (this_fexec != engine_fexec &&
+            world && (uintptr_t)world > 0x10000) {
+            g_localplayer_fexec = this_fexec;
+            bridge_log("HOOK: LocalPlayer FExec subobject captured 0x%p",
+                       this_fexec);
         }
     }
 
@@ -1545,13 +1626,61 @@ static bool exec_console_command_internal(const char* cmd)
         exec_fn = g_fexec_hook_table[0].original;
 
     bool cmd_ret = false;
-    if (seh_call_fexec(exec_fn, this_fexec,
-                        world, wcmd.data(), ar, &cmd_ret)) {
-        bridge_log("  OK ret=%d", (int)cmd_ret);
-        return cmd_ret;
+    bool call_ok = seh_call_fexec(exec_fn, this_fexec,
+                                   world, wcmd.data(), ar, &cmd_ret);
+
+    /* If crash with a world pointer, the pointer may be stale (map reload).
+     * Clear it and retry with NULL -- CVars/stat work without world. */
+    if (!call_ok && world) {
+        bridge_log("  RETRY: GEngine crashed (world=0x%p stale?), retrying null", world);
+        g_world_ptr = nullptr;
+        world = nullptr;
+        call_ok = seh_call_fexec(exec_fn, this_fexec,
+                                  nullptr, wcmd.data(), ar, &cmd_ret);
+    }
+    if (!call_ok) {
+        bridge_log("  ERROR: GEngine FExec::Exec crashed");
+        return false;
     }
 
-    bridge_log("  ERROR: FExec::Exec crashed");
+    if (cmd_ret) {
+        bridge_log("  OK ret=1 (GEngine)");
+        return true;
+    }
+
+    /* GEngine returned false for this command.
+     * Gameplay commands (slomo, ToggleDebugCamera, Teleport, ShowHUD, etc.)
+     * are NOT handled by UEngine::Exec in UE5 -- they route via
+     * ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager.
+     *
+     * g_localplayer_fexec is captured from hooked_fexec_exec on the first
+     * call where this_fexec != GEngine's FExec subobject.
+     * We look up its vtable in the hook table to get the original function. */
+    if (g_localplayer_fexec) {
+        uintptr_t lp_vtable = seh_read_ptr(g_localplayer_fexec);
+        FExecExecFn lp_orig = nullptr;
+        for (int i = 0; i < g_fexec_hook_count; i++) {
+            if (g_fexec_hook_table[i].vtable_base == lp_vtable) {
+                lp_orig = g_fexec_hook_table[i].original;
+                break;
+            }
+        }
+        if (lp_orig && validate_function_ptr((void*)lp_orig)) {
+            bool lp_ret = false;
+            bool lp_ok  = seh_call_fexec(lp_orig, g_localplayer_fexec,
+                                          world, wcmd.data(), ar, &lp_ret);
+            if (lp_ok) {
+                bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
+                return lp_ret;
+            }
+            bridge_log("  ERROR: ULocalPlayer FExec crashed");
+        } else {
+            bridge_log("  ULocalPlayer: vtable 0x%llX not in hook table",
+                       (unsigned long long)seh_read_ptr(g_localplayer_fexec));
+        }
+    }
+
+    bridge_log("  OK ret=0 (no handler found)");
     return false;
 }
 
