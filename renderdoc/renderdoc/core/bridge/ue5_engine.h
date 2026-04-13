@@ -1635,8 +1635,16 @@ static bool find_uworld_via_guobjectarray()
     /* --- FName-based search (preferred) --- */
     uint32_t world_idx = get_fname_cmpidx_for("World");
     if (world_idx != 0xFFFFFFFF) {
-        bridge_log("  FName('World') idx=0x%X -- using FName class search",
-                   world_idx);
+        /* Cross-validate: resolve the index back to a string.
+         * Confirms FNamePool parsing is correct, and gives fname_resolve
+         * a call site (suppresses C4505 unused-function warning). */
+        char resolved[64];
+        if (fname_resolve(world_idx, resolved, sizeof(resolved)))
+            bridge_log("  FName('World') idx=0x%X resolved='%s' -- FName class search",
+                       world_idx, resolved);
+        else
+            bridge_log("  FName('World') idx=0x%X (resolve failed) -- FName class search",
+                       world_idx);
 
         int class_matches = 0;
 
