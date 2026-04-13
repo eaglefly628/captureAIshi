@@ -470,90 +470,118 @@ static HANDLE cs_engine_scan_handle = NULL;
  */
 static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 {
-    BRIDGE_LOG("GEngine scan thread started");
-
-    /* Wait for game to finish initial loading before scanning.
-     * Scanning too early (while DRM unpacks or sections load)
-     * causes intermittent crashes at entry 3 of string search. */
-    BRIDGE_LOG("Waiting 5s for game to stabilize...");
+    BRIDGE_LOG("Engine scan thread started, waiting 5s for game to stabilize...");
     Sleep(5000);
 
-    /* Find GUObjectArray FIRST so GEngine finder can use it as fallback.
-     * GUObjectArray is present from very early in game startup. */
-    if (find_guobjectarray())
-        BRIDGE_LOG("GUObjectArray found: 0x%p (%d objects)",
+    /* === Gate 1: GUObjectArray (mandatory) ===
+     * All object discovery goes through GUObjectArray.  No GUObjectArray = no
+     * UWorld, no LocalPlayer, no commands.  Poll until found or timeout. */
+    {
+        const int poll_ms = 2000, gate_timeout_ms = 120000;
+        int elapsed = 0;
+        while (!find_guobjectarray() && elapsed < gate_timeout_ms) {
+            Sleep(poll_ms);
+            elapsed += poll_ms;
+            if (elapsed % 10000 == 0)
+                BRIDGE_LOG("Waiting for GUObjectArray... (%ds)", elapsed / 1000);
+        }
+        if (!g_guobjectarray_found) {
+            BRIDGE_LOG("FATAL: GUObjectArray not found after %ds -- bridge disabled",
+                       gate_timeout_ms / 1000);
+            return 0;
+        }
+        BRIDGE_LOG("[1/7] GUObjectArray: 0x%p (%d objects)",
                    g_guobjectarray, guobjectarray_num_elements());
-    else
-        BRIDGE_LOG("NOTE: GUObjectArray not found -- "
-                   "GEngine Method B unavailable, string xref only");
-
-    const int poll_interval_ms = 2000;
-    const int timeout_ms = 120000;
-    int elapsed = 0;
-    while (!find_gengine() && elapsed < timeout_ms) {
-        Sleep(poll_interval_ms);
-        elapsed += poll_interval_ms;
-        if (elapsed % 10000 == 0)
-            BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
     }
-    if (g_engine_found) {
-        BRIDGE_LOG("GEngine found after %ds", elapsed / 1000);
 
-        /* Find FExec secondary vtable for console command execution */
-        if (!find_fexec_vtable())
-            BRIDGE_LOG("WARNING: FExec not found, commands will fail");
-
-        /* Detect FUObjectItem stride using GEngine cross-validation.
-         * Must run after GEngine is found and GUObjectArray is valid.
-         * Stride=24 is standard Shipping; stride=32 is Development/WITH_VERSE_VM. */
-        if (g_guobjectarray_found)
-            detect_fuobjectitem_stride();
-
-        /* Install FExec hooks on GEngine AND all FExec objects in
-         * GUObjectArray (including ULocalPlayer).  When any FExec::Exec
-         * fires with a non-NULL UWorld, we capture it automatically. */
-        if (install_all_fexec_hooks())
-            BRIDGE_LOG("FExec hooks active (%d total) -- "
-                       "UWorld will be captured from game calls",
-                       g_fexec_hook_count);
-        else
-            BRIDGE_LOG("WARNING: No FExec hooks installed");
-
-        /* Eagerly find UWorld via GUObjectArray + FName("World") comparison.
-         * This works at cold start (before game calls FExec) and is the
-         * foundation for finding any UObject (actors, components, etc.)
-         * by class FName in the future. */
-        if (g_guobjectarray_found) {
-            if (find_uworld_via_guobjectarray())
-                BRIDGE_LOG("UWorld found via GUObjectArray FName scan: 0x%p",
-                           g_world_ptr);
-            else
-                BRIDGE_LOG("UWorld not found yet -- will retry on first command");
-
-            /* Find ULocalPlayer via FName("LocalPlayer") multi-block scan.
-             * ULocalPlayer::Exec routes gameplay commands (slomo, ToggleDebugCamera,
-             * Teleport, etc.) to APlayerController -> UCheatManager.
-             * 'LocalPlayer' is in FNamePool block 5+ (not block 0), so requires
-             * g_fnamepool_global to be set (done in find_fnamepool_block0). */
-            if (find_localplayer())
-                BRIDGE_LOG("ULocalPlayer found: 0x%p", g_localplayer_ptr);
-            else
-                BRIDGE_LOG("NOTE: ULocalPlayer not found -- gameplay commands "
-                           "will fall back to passive hook capture");
+    /* === Gate 2: FNamePool (mandatory) ===
+     * All class/object identification uses FName ComparisonIndex comparison.
+     * No FNamePool = can't identify UWorld, LocalPlayer, or any actor.
+     * Must be found before proceeding to object scans. */
+    {
+        const int poll_ms = 1000, gate_timeout_ms = 60000;
+        int elapsed = 0;
+        while (!find_fnamepool_block0() && elapsed < gate_timeout_ms) {
+            Sleep(poll_ms);
+            elapsed += poll_ms;
+            if (elapsed % 5000 == 0)
+                BRIDGE_LOG("Waiting for FNamePool... (%ds)", elapsed / 1000);
         }
-
-        /* Wait a bit for the game window to be created, then install
-         * the WndProc hook for game-thread command dispatch. */
-        for (int retry = 0; retry < 20; retry++) {
-            Sleep(500);
-            if (setup_gamethread_dispatch())
-                break;
-            if (retry % 4 == 3)
-                BRIDGE_LOG("Waiting for game window... (%ds)",
-                           (retry + 1) / 2);
+        if (!g_fnamepool_block0) {
+            BRIDGE_LOG("FATAL: FNamePool not found after %ds -- bridge disabled",
+                       gate_timeout_ms / 1000);
+            return 0;
         }
-    } else {
-        BRIDGE_LOG("WARNING: GEngine not found after %ds", timeout_ms / 1000);
+        /* Read CurrentBlock for diagnostics */
+        int32_t cur_blk = 0;
+        if (g_fnamepool_global)
+            __try { cur_blk = *(int32_t*)(g_fnamepool_global + 0x08); }
+            __except(EXCEPTION_EXECUTE_HANDLER) { cur_blk = -1; }
+        BRIDGE_LOG("[2/7] FNamePool: block0=0x%llX fmt=%s blocks=%d global=0x%llX",
+                   (unsigned long long)g_fnamepool_block0,
+                   g_fname_header_shift == 6 ? "UE5" : "UE4",
+                   cur_blk,
+                   (unsigned long long)g_fnamepool_global);
+    }
+
+    /* === Gate 3: GEngine (string xref, poll) ===
+     * GEngine is the exception to the FNamePool rule -- it's located via
+     * string cross-reference, NOT FNamePool.  All other objects use GUA+FName. */
+    {
+        const int poll_ms = 2000, gate_timeout_ms = 120000;
+        int elapsed = 0;
+        while (!find_gengine() && elapsed < gate_timeout_ms) {
+            Sleep(poll_ms);
+            elapsed += poll_ms;
+            if (elapsed % 10000 == 0)
+                BRIDGE_LOG("Waiting for GEngine... (%ds)", elapsed / 1000);
+        }
+        if (!g_engine_found) {
+            BRIDGE_LOG("FATAL: GEngine not found after %ds -- bridge disabled",
+                       gate_timeout_ms / 1000);
+            return 0;
+        }
+        BRIDGE_LOG("[3/7] GEngine: 0x%p", g_engine_ptr);
+    }
+
+    /* === Step 4: FUObjectItem stride (GEngine cross-validation) === */
+    detect_fuobjectitem_stride();
+
+    /* === Step 5: FExec vtable === */
+    if (!find_fexec_vtable()) {
+        BRIDGE_LOG("FATAL: FExec vtable not found -- commands disabled");
+        return 0;
+    }
+    BRIDGE_LOG("[4/7] FExec vtable at GEngine+0x%llX", (unsigned long long)g_fexec_offset);
+
+    /* === Step 6: FExec hooks (GEngine + GUObjectArray scan) === */
+    install_all_fexec_hooks();
+    BRIDGE_LOG("[5/7] FExec hooks: %d installed", g_fexec_hook_count);
+
+    /* === Step 7: UWorld via GUObjectArray + FName("World") ===
+     * Active scan -- works at cold start without waiting for game to call FExec. */
+    if (find_uworld_via_guobjectarray())
+        BRIDGE_LOG("[6/7] UWorld: 0x%p", g_world_ptr);
+    else
+        BRIDGE_LOG("[6/7] UWorld: not found yet (FExec hook will capture on first game call)");
+
+    /* === Step 8: ULocalPlayer via GUObjectArray + FName("LocalPlayer") ===
+     * 'LocalPlayer' is in FNamePool block 5+ (not block 0).
+     * Multi-block search using g_fnamepool_global handles this correctly. */
+    if (find_localplayer())
+        BRIDGE_LOG("[7/7] ULocalPlayer: 0x%p", g_localplayer_ptr);
+    else
+        BRIDGE_LOG("[7/7] ULocalPlayer: not found -- gameplay cmds (slomo, camera) will fail");
+
+    /* === Game-thread dispatch ===
+     * UE5 requires console commands on the game thread.
+     * WndProc subclass delivers commands via PostMessage. */
+    for (int retry = 0; retry < 20; retry++) {
+        Sleep(500);
+        if (setup_gamethread_dispatch())
+            break;
+        if (retry % 4 == 3)
+            BRIDGE_LOG("Waiting for game window... (%ds)", (retry + 1) / 2);
     }
 
     return 0;

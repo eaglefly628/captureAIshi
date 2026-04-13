@@ -175,11 +175,7 @@ struct FExecHookEntry {
 static FExecHookEntry     g_fexec_hook_table[64];
 static int                g_fexec_hook_count = 0;
 
-/* FExec subobject pointer of the first non-GEngine FExec captured by the hook.
- * Typically ULocalPlayer. Set in hooked_fexec_exec on first non-GEngine call.
- * Used to route gameplay cmds (slomo, ToggleDebugCamera, etc.) via
- * ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager. */
-static void* g_localplayer_fexec = nullptr;
+/* (passive g_localplayer_fexec removed: all object lookup via GUA+FName) */
 
 /* -- SEH-safe helpers ---------------------------------------------- */
 
@@ -1630,11 +1626,6 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
     e.vtable_base = fexec_vtable;
     e.slot        = slot;
     e.original    = orig;
-
-    bridge_log("  FExec hook installed: vtable=0x%llX "
-               "original=0x%p slot=%d",
-               (unsigned long long)fexec_vtable, (void*)orig,
-               g_fexec_hook_count - 1);
     return true;
 }
 
@@ -1733,19 +1724,6 @@ static bool __fastcall hooked_fexec_exec(
             g_world_ptr = world;
             bridge_log("HOOK: UWorld captured 0x%p (this_fexec=0x%p)",
                        world, this_fexec);
-        }
-    }
-
-    /* Capture ULocalPlayer FExec subobject: the first non-GEngine FExec object
-     * that calls us with a valid world.  Used as fallback exec path for
-     * gameplay commands (slomo, ToggleDebugCamera, etc.) that GEngine ignores. */
-    if (!g_localplayer_fexec && g_engine_ptr && g_fexec_offset) {
-        void* engine_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
-        if (this_fexec != engine_fexec &&
-            world && (uintptr_t)world > 0x10000) {
-            g_localplayer_fexec = this_fexec;
-            bridge_log("HOOK: LocalPlayer FExec subobject captured 0x%p",
-                       this_fexec);
         }
     }
 
@@ -1980,11 +1958,6 @@ static bool exec_console_command_internal(const char* cmd)
     void* ar = get_output_device();
     void* this_fexec = (uint8_t*)g_engine_ptr + g_fexec_offset;
 
-    /* Lazy UWorld scan: FExec hooks capture UWorld passively (game must call
-     * FExec first).  If world is still null, try active GUObjectArray scan
-     * using FName("World") comparison -- works immediately at cold start. */
-    if (!g_world_ptr && g_guobjectarray_found.load())
-        find_uworld_via_guobjectarray();
     void* world = g_world_ptr;
 
     /* Use GEngine's original Exec to avoid recursion.
@@ -2017,10 +1990,8 @@ static bool exec_console_command_internal(const char* cmd)
     }
 
     /* GEngine returned false -- gameplay commands route via ULocalPlayer::Exec.
-     * Primary: g_localplayer_ptr found by FName scan (find_localplayer).
-     * Fallback: g_localplayer_fexec captured passively from hook callback. */
-
-    /* Helper lambda-equivalent: try calling LP Exec via a given FExec subobj */
+     * ULocalPlayer is found actively via GUObjectArray + FName scan.
+     * Helper lambda: call LP Exec via its FExec subobject. */
     auto try_lp_exec = [&](void* lp_fexec_subobj) -> bool {
         if (!lp_fexec_subobj) return false;
         uintptr_t lp_vtable = seh_read_ptr(lp_fexec_subobj);
@@ -2043,7 +2014,8 @@ static bool exec_console_command_internal(const char* cmd)
         return false;
     };
 
-    /* Primary: FName-found ULocalPlayer */
+    /* ULocalPlayer: FName+GUObjectArray scan (active, cold-start safe).
+     * If not found at startup, try once more here before giving up. */
     if (!g_localplayer_ptr) find_localplayer();
     if (g_localplayer_ptr) {
         uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
@@ -2051,12 +2023,7 @@ static bool exec_console_command_internal(const char* cmd)
         if (try_lp_exec(lp_fexec)) return true;
     }
 
-    /* Fallback: passively captured FExec subobject from hook callback */
-    if (g_localplayer_fexec && g_localplayer_fexec != (void*)((uint8_t*)g_localplayer_ptr + (g_fexec_offset ? g_fexec_offset : 0x28))) {
-        if (try_lp_exec(g_localplayer_fexec)) return true;
-    }
-
-    bridge_log("  OK ret=0 (no handler found)");
+    bridge_log("  OK ret=0 (GEngine rejected, LocalPlayer not found)");
     return false;
 }
 
