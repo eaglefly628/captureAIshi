@@ -331,6 +331,24 @@ def run_capture(args):
             except Exception as e:
                 logging.warning(f"[DRIVER] Failed to enable debug camera: {e}")
 
+        # ── Debug-scan mode: skip capture, keep process alive ──
+        if getattr(args, 'debug_scan', False):
+            logging.info(
+                "[DEBUG-SCAN] Bridge connected. Capture loop SKIPPED. "
+                "Use Web UI to inspect scan status, send test commands, "
+                "and click Re-scan UE. Press Ctrl+C to exit."
+            )
+            try:
+                while True:
+                    if stop_event is not None and stop_event.is_set():
+                        logging.info("[DEBUG-SCAN] Stop requested.")
+                        break
+                    import time as _time_ds
+                    _time_ds.sleep(1.0)
+            except KeyboardInterrupt:
+                logging.info("[DEBUG-SCAN] Interrupted by user.")
+            return  # skip to finally block for teardown
+
         # Attempt to hide UI before capture loop (console-based hiding)
         ui_method = None
         if ui_hider:
@@ -565,7 +583,7 @@ def run_capture(args):
         raise
     finally:
         # Debug: pause before teardown so a debugger can be attached
-        if args.wait_attach:
+        if getattr(args, 'wait_attach', False):
             logging.info(
                 "[DEBUG] --wait-attach: capture done. "
                 "Attach debugger to game/renderdoc process now, then press Enter to continue teardown."
@@ -713,6 +731,11 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Generate poses only, no capture")
 
     # Debug
+    parser.add_argument(
+        "--debug-scan", action="store_true",
+        help="Launch game + connect driver, but skip the capture loop. "
+             "Keeps process alive so the Web UI can debug the bridge scan.",
+    )
     parser.add_argument(
         "--wait-attach", action="store_true",
         help="After capture completes (before teardown), wait for Enter key. "

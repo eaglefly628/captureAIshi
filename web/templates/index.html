@@ -980,6 +980,7 @@ body {
   <div class="toolbar-sep"></div>
   <label class="tog"><input type="checkbox" id="clean_start" checked><div class="track"></div>Clean</label>
   <label class="tog"><input type="checkbox" id="dry_run"><div class="track"></div>Dry</label>
+  <label class="tog"><input type="checkbox" id="debug_scan"><div class="track"></div>Scan</label>
   <div class="toolbar-spacer"></div>
   <div id="statusBadge" class="badge badge-idle"><div class="dot"></div><span id="statusText">Idle</span></div>
 </div>
@@ -1384,7 +1385,7 @@ function applyParams(p) {
   document.getElementById('launch_windowed').checked=p.launch_windowed!==false;
   document.getElementById('launch_log').checked=!!p.launch_log;
   syncResPreset();
-  document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run;
+  document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run; document.getElementById('debug_scan').checked=!!p.debug_scan;
   document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
   if(p.fov!=null) document.getElementById('fov').value=p.fov;
   if(p.aspect!=null) document.getElementById('aspect').value=p.aspect;
@@ -1407,7 +1408,7 @@ function getFormData() {
     grabber:val('grabber'), target_exe:val('target_exe'),
     launch_resx:pi('launch_resx'), launch_resy:pi('launch_resy'), launch_windowed:cb('launch_windowed'), launch_log:cb('launch_log'),
     renderdoc_path:val('renderdoc_path'), no_hide_ui:cb('no_hide_ui'),
-    output_dir:val('output_dir'), dry_run:cb('dry_run'), clean_start:cb('clean_start'),
+    output_dir:val('output_dir'), dry_run:cb('dry_run'), debug_scan:cb('debug_scan'), clean_start:cb('clean_start'),
     streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
     fov:pf('fov'), aspect:pf('aspect'),
   };

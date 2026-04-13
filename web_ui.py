@@ -872,6 +872,7 @@ def _build_args(data: dict) -> Namespace:
     args.renderdoc_path = str(data.get("renderdoc_path", "")) or "renderdoccmd"
     args.no_hide_ui = bool(data.get("no_hide_ui", False))
     args.dry_run = bool(data.get("dry_run", False))
+    args.debug_scan = bool(data.get("debug_scan", False))
 
     # Streaming / LOD management
     args.streaming = bool(data.get("streaming", True))
