@@ -24,6 +24,17 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] 711d8eb -- xiaoni
+- `__bridge_rescan_objects` TCP command: clears g_world_ptr/g_localplayer_ptr,
+  re-runs find_uworld + find_localplayer, returns `uworld_found= localplayer_found=`
+- `__bridge_status` extended with `uworld_found= localplayer_found= localplayer_ptr=`
+- `drivers/ue5_console.py`: scan_status(), rescan_objects(), is_objects_ready(),
+  wait_for_objects_ready() (polls 2s interval, up to 10 min)
+- `web_ui.py`: /api/bridge/scan_status GET, /api/bridge/rescan POST
+- `web/templates/index.html`: Debug panel scan status row (UWorld/LP indicators)
+  + "Re-scan UE" button; auto-refreshes on panel open
+- `main.py`: pre-capture gate: polls is_objects_ready() until ready or stop
+
 ### [v0.2.0] aea22c7 -- xiaoni
 - **Ordered gated init**: console_server.h startup rewritten as 7-step sequential
   init. Gate 1=GUObjectArray (poll 120s), Gate 2=FNamePool (poll 60s), Gate 3=GEngine
