@@ -567,6 +567,8 @@ static bool find_gengine_via_offset(uintptr_t offset)
  * If both succeed but differ         -> prefer A (has global addr).
  * If only one of A/B succeeds        -> use it as-is.
  */
+static bool find_gengine_via_guobjectarray();  /* forward decl -- used in Method B below */
+
 static bool find_gengine()
 {
     /* Method 0: env var / TCP override (highest priority) */
@@ -697,7 +699,6 @@ static bool find_gengine()
  * Strategy: try known offsets 40 and 48 first, then scan.
  */
 static bool validate_function_ptr(void* fn);         /* forward decl */
-static bool find_gengine_via_guobjectarray();        /* forward decl */
 /* Try to find UE version string in the game module.
  * Looks for "++UE5+Release-X.Y" or "+Release-X.Y" ASCII pattern. */
 static void detect_ue_version_string()
