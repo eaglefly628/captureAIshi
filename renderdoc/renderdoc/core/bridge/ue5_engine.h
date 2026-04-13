@@ -148,7 +148,7 @@ static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 #define GUOBJARRAY_NUMELEMS_OFF   36   /* FUObjectArray+0x24: FChunkedFixedUObjectArray.NumElements */
                                        /* = FUObjectArray+0x10 + FChunkedFixed+0x14 = 16+20 = 36   */
 #define FUOBJECTITEM_STRIDE_DEFAULT    32  /* Development/Debug or WITH_VERSE_VM default */
-#define FUOBJECTITEM_OBJECT_OFF_DEFAULT 0x10 /* Object* offset for 0x20-byte layout      */
+#define FUOBJECTITEM_OBJECT_OFF_DEFAULT 0x08 /* Object* offset -- confirmed UE5.7 Dev     */
 #define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
 #define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
 
@@ -916,14 +916,15 @@ static bool validate_guobjectarray(void* candidate)
      * For each (stride, obj_off) in known configs, scan items 0..7 and count
      * valid-looking pointers.  Accept if any config scores >= 2 hits. */
     static const struct { int stride; int obj_off; } val_cfgs[] = {
-        {32, 0x10},   /* WITH_VERSE_VM / Development */
-        {24, 0x00},   /* Standard Shipping            */
-        {16, 0x00},   /* Packed                       */
+        {32, 0x08},   /* WITH_VERSE_VM Dev: WeakHandle(8)+Object*(8)  */
+        {32, 0x10},   /* Alt 32B layout: Object* at higher offset      */
+        {24, 0x00},   /* Standard Shipping: Object*(8)+Flags(4)+...    */
+        {16, 0x00},   /* Packed (UE_PACK_FUOBJECT_ITEM)                */
     };
     const int N_VAL_ITEMS = 8;
     bool any_ok = false;
 
-    for (int ci = 0; ci < 3; ci++) {
+    for (int ci = 0; ci < 4; ci++) {
         int s   = val_cfgs[ci].stride;
         int off = val_cfgs[ci].obj_off;
         int hits = 0;
@@ -1096,16 +1097,19 @@ static void detect_fuobjectitem_stride()
 
     /*
      * Known (stride, obj_off) configs:
-     *   (32, 0x10) -- WITH_VERSE_VM / Development [StackOBot confirmed]
-     *   (24, 0x00) -- Standard Shipping
-     *   (16, 0x00) -- Packed (UE_PACK_FUOBJECT_ITEM)
+     *   (32, 0x08) -- WITH_VERSE_VM Dev: WeakHandle(8)+Object*(8)+Flags(4)+...
+     *                 [StackOBot UE5.7 Dev confirmed: sizeof=32, raw+0x08=Object*]
+     *   (32, 0x10) -- Alt 32B layout (Object* shifted further)
+     *   (24, 0x00) -- Standard Shipping: Object*(8)+Flags(4)+ClusterRoot(4)+Serial(4)+Pad(4)
+     *   (16, 0x00) -- Packed (UE_PACK_FUOBJECT_ITEM): Object* in low bits of first qword
      */
     static const struct { int stride; int obj_off; } configs[] = {
+        {32, 0x08},
         {32, 0x10},
         {24, 0x00},
         {16, 0x00},
     };
-    const int N_CONFIGS = 3;
+    const int N_CONFIGS = 4;
     const int N_SAMPLE  = 30;  /* items to sample from chunk 0 */
 
     /* Optional: GEngine.InternalIndex for cross-validation */
@@ -1352,11 +1356,61 @@ static bool find_gengine_via_guobjectarray()
 #define FNAMEPOOL_MAX_BLOCKS  8192
 #define FNAMEPOOL_BLOCK_BYTES (128 * 1024)  /* max usable bytes per block */
 
-/* "None" FNameEntry: header=0x0008 (len=4, ASCII) + "None" */
-static const uint8_t kFNameNone[] = {0x08, 0x00, 'N', 'o', 'n', 'e'};
+/*
+ * FNameEntry header format differs between engine versions:
+ *
+ *   UE4 (UE4.23+):    header = (len << 1) | bIsWide
+ *                     "None" header = 0x0008, bytes = {0x08, 0x00}
+ *
+ *   UE5:              header = (len << 6) | (probeHash << 1) | bIsWide
+ *                     "None" header = 0x0100|(hash<<1), bytes = {hash*2, 0x01}
+ *                     bIsWide   = bit 0
+ *                     probeHash = bits 1-5 (5-bit, hash of lowercase name)
+ *                     Len       = bits 6-15 (10-bit)
+ *
+ * g_fname_header_shift: 1 for UE4, 6 for UE5. Auto-detected on block0 find.
+ */
+static int       g_fname_header_shift = 1;  /* default UE4; updated on find */
+static uintptr_t g_fnamepool_block0   = 0;  /* FNamePool block 0 base (heap) */
+static uintptr_t g_fnamepool_global   = 0;  /* FNamePool struct (module .bss) */
 
-static uintptr_t g_fnamepool_block0 = 0; /* FNamePool block 0 base (heap) */
-static uintptr_t g_fnamepool_global = 0; /* FNamePool struct (module .bss) */
+/* fname_entry_len(): extract name length from a raw uint16 header */
+static inline int fname_entry_len(uint16_t hdr)
+{
+    return (int)(hdr >> g_fname_header_shift);
+}
+
+/* fname_block0_matches_none(): check if addr looks like the start of FNamePool
+ * block 0 (first entry = "None") in either UE4 or UE5 header format.
+ * Sets g_fname_header_shift to the detected format. */
+static bool fname_block0_matches_none(uintptr_t addr)
+{
+    uint8_t b0, b1, b2, b3, b4, b5;
+    __try {
+        b0 = *(uint8_t*)(addr + 0);
+        b1 = *(uint8_t*)(addr + 1);
+        b2 = *(uint8_t*)(addr + 2);
+        b3 = *(uint8_t*)(addr + 3);
+        b4 = *(uint8_t*)(addr + 4);
+        b5 = *(uint8_t*)(addr + 5);
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+
+    if (b2 != 'N' || b3 != 'o' || b4 != 'n' || b5 != 'e') return false;
+    if (b0 & 1) return false; /* bIsWide must be 0 */
+
+    /* UE4: header = 0x0008 -- len field in bits 15-1, len=4 => byte1=0x00,byte0=0x08 */
+    if (b1 == 0x00 && b0 == 0x08) {
+        g_fname_header_shift = 1;
+        return true;
+    }
+    /* UE5: header = 0x0100|(hash<<1) -- len field in bits 15-6, len=4 => byte1=0x01 */
+    if (b1 == 0x01) {
+        g_fname_header_shift = 6;
+        return true;
+    }
+    return false;
+}
 
 /*
  * fname_get_block(bi) -- return heap pointer for block index bi.
@@ -1395,18 +1449,19 @@ static bool fname_resolve(uint32_t comp_idx, char* out, int out_len)
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 
     bool is_wide = (hdr & 1) != 0;
-    int  len     = (int)(hdr >> 1);
+    int  len     = fname_entry_len(hdr);  /* shift=1 (UE4) or 6 (UE5) */
     if (len <= 0 || len >= 4096) return false;
 
     int n = (len < out_len - 1) ? len : out_len - 1;
     if (is_wide) {
+        int bytes = 0;
         __try {
-            WideCharToMultiByte(CP_UTF8, 0,
+            bytes = WideCharToMultiByte(CP_UTF8, 0,
                 (const wchar_t*)(block + byte_off + 2),
                 n, out, out_len - 1, NULL, NULL);
-            out[n] = '\0';
         }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+        out[bytes > 0 ? bytes : 0] = '\0';
     } else {
         __try { memcpy(out, (void*)(block + byte_off + 2), n); }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -1445,16 +1500,14 @@ static uintptr_t find_fnamepool_global()
         uintptr_t blk0 = seh_read_ptr((void*)(p + FNAMEPOOL_BLOCKS_OFF));
         if (blk0 < 0x10000) continue;
 
-        bool ok = false;
-        __try { ok = (memcmp((void*)blk0, kFNameNone, sizeof(kFNameNone)) == 0); }
-        __except(EXCEPTION_EXECUTE_HANDLER) {}
-        if (!ok) continue;
+        if (!fname_block0_matches_none(blk0)) continue;
 
         g_fnamepool_global = p;
         g_fnamepool_block0 = blk0;
-        bridge_log("  FNamePool global=0x%llX (export '%s') block0=0x%llX",
+        bridge_log("  FNamePool global=0x%llX (export '%s') block0=0x%llX fmt=%s",
                    (unsigned long long)p, exports[ei],
-                   (unsigned long long)blk0);
+                   (unsigned long long)blk0,
+                   g_fname_header_shift == 6 ? "UE5" : "UE4");
         return p;
     }
 
@@ -1466,17 +1519,45 @@ static uintptr_t find_fnamepool_global()
     uintptr_t mod_base = (uintptr_t)rgn.base;
     uintptr_t mod_end  = mod_base + rgn.size;
 
-    /* Walk module 8 bytes at a time looking for ptr == block0.
-     * First match is almost certainly Blocks[0] at FNamePool+FNAMEPOOL_BLOCKS_OFF. */
-    for (uintptr_t scan = mod_base; scan < mod_end - 8; scan += 8) {
-        uintptr_t val = seh_read_ptr((void*)scan);
-        if (val != g_fnamepool_block0) continue;
+    /* Walk module PAGE_READWRITE regions looking for ptr == block0.
+     * Skip .text (PAGE_EXECUTE_READ) -- FNamePool is a global in .bss/.data.
+     * This avoids scanning 300-600MB of code pages (~75M seh_read_ptr calls). */
+    {
+        uintptr_t cur = mod_base;
+        while (cur < mod_end) {
+            MEMORY_BASIC_INFORMATION mbi2 = {};
+            if (!VirtualQuery((void*)cur, &mbi2, sizeof(mbi2))) { cur += 0x1000; continue; }
+            uintptr_t rgn_base = (uintptr_t)mbi2.BaseAddress;
+            uintptr_t rgn_end  = rgn_base + mbi2.RegionSize;
+            if (rgn_end > mod_end) rgn_end = mod_end;
 
-        uintptr_t pool_cand = scan - FNAMEPOOL_BLOCKS_OFF;
-        g_fnamepool_global  = pool_cand;
-        bridge_log("  FNamePool global=0x%llX (backref scan, Blocks[0]@0x%llX)",
-                   (unsigned long long)pool_cand, (unsigned long long)scan);
-        return pool_cand;
+            /* Only scan committed, writable (data/bss) pages */
+            bool writable = (mbi2.State == MEM_COMMIT) &&
+                (mbi2.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                                  PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+            if (writable) {
+                for (uintptr_t scan = rgn_base; scan < rgn_end - 8; scan += 8) {
+                    uintptr_t val = seh_read_ptr((void*)scan);
+                    if (val != g_fnamepool_block0) continue;
+
+                    /* Validate: pool+0x08 (CurrentBlock) should be small int < 128 */
+                    uintptr_t pool_cand = scan - FNAMEPOOL_BLOCKS_OFF;
+                    int32_t cur_blk = 0;
+                    __try { cur_blk = *(int32_t*)(pool_cand + 0x08); }
+                    __except(EXCEPTION_EXECUTE_HANDLER) { cur_blk = 9999; }
+
+                    if (cur_blk < 0 || cur_blk >= 128) continue; /* not a FNamePool */
+
+                    g_fnamepool_global = pool_cand;
+                    bridge_log("  FNamePool global=0x%llX (backref scan, "
+                               "Blocks[0]@0x%llX, CurrentBlock=%d)",
+                               (unsigned long long)pool_cand,
+                               (unsigned long long)scan, cur_blk);
+                    return pool_cand;
+                }
+            }
+            cur = rgn_end;
+        }
     }
 
     bridge_log("  FNamePool global: backref scan failed");
@@ -1527,30 +1608,29 @@ static uintptr_t find_fnamepool_block0()
 
         if (!skip) {
             regions_checked++;
-            bool match = false;
-            uint16_t next_hdr = 0;
-            __try {
-                match    = (memcmp((void*)base, kFNameNone, sizeof(kFNameNone)) == 0);
-                next_hdr = *(uint16_t*)(base + sizeof(kFNameNone));
-            }
-            __except(EXCEPTION_EXECUTE_HANDLER) {}
+            if (fname_block0_matches_none(base)) {
+                /* Cross-check: next entry after "None" (6 bytes) should be valid */
+                uint16_t next_hdr = 0;
+                __try { next_hdr = *(uint16_t*)(base + 6); }
+                __except(EXCEPTION_EXECUTE_HANDLER) {}
 
-            if (match) {
-                uint32_t next_len = next_hdr >> 1;
-                /* Next entry: valid ASCII name (1-256 chars) or zero (end) */
+                int next_len = fname_entry_len(next_hdr);
+                /* Accept if next entry is zero-terminator or valid short ASCII name */
                 if (next_hdr == 0 ||
                     (next_len >= 1 && next_len <= 256 && (next_hdr & 1) == 0)) {
                     g_fnamepool_block0 = base;
-                    bridge_log("  FNamePool block0=0x%llX "
+                    bridge_log("  FNamePool block0=0x%llX fmt=%s "
                                "(%d regions checked, regionSize=%zuKB)",
-                               (unsigned long long)base, regions_checked,
-                               mbi.RegionSize / 1024);
+                               (unsigned long long)base,
+                               g_fname_header_shift == 6 ? "UE5" : "UE4",
+                               regions_checked, mbi.RegionSize / 1024);
                     /* Try to find pool global for multi-block support */
                     find_fnamepool_global();
                     return base;
                 }
                 bridge_log("  FNamePool: 'None' at 0x%llX but next_hdr=0x%04X "
-                           "-- rejected", (unsigned long long)base, next_hdr);
+                           "(len=%d) -- rejected",
+                           (unsigned long long)base, next_hdr, next_len);
             }
         }
         addr = end;
@@ -1569,7 +1649,6 @@ static uint32_t get_fname_cmpidx_for(const char* target)
     if (!block0) return 0xFFFFFFFF;
 
     int tlen = (int)strlen(target);
-    uint16_t exp_hdr = (uint16_t)(tlen << 1); /* ASCII, not wide */
 
     uintptr_t cursor  = block0;
     uintptr_t blk_end = block0 + FNAMEPOOL_BLOCK_BYTES;
@@ -1581,10 +1660,12 @@ static uint32_t get_fname_cmpidx_for(const char* target)
 
         if (hdr == 0) break;
         bool is_wide = (hdr & 1) != 0;
-        int  len     = (int)(hdr >> 1);
+        int  len     = fname_entry_len(hdr);  /* shift=1 (UE4) or 6 (UE5) */
         if (len < 1 || len > 512) break;
 
-        if (!is_wide && len == tlen && hdr == exp_hdr) {
+        /* In UE5, probe hash occupies bits 1-5 so we can't check exact header.
+         * Match on length + content only (bIsWide=0 already checked). */
+        if (!is_wide && len == tlen) {
             bool match = false;
             __try { match = (memcmp((void*)(cursor + 2), target, tlen) == 0); }
             __except(EXCEPTION_EXECUTE_HANDLER) {}
