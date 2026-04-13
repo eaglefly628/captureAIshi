@@ -47,9 +47,6 @@ void ABotDebugGameMode::BeginPlay()
             *reinterpret_cast<const uint64*>(B + 0x00),
             *reinterpret_cast<const uint64*>(B + 0x08),
             *reinterpret_cast<const uint64*>(B + 0x10));
-        UE_LOG(LogTemp, Warning,
-            TEXT("  Item->GetObjectPtr()=%p  (should == UWorld ptr)"),
-            Item->GetObjectPtr());
     }
 
     // --- Chunk[0] base (bridge compares its Chunk[0] against this) ---
