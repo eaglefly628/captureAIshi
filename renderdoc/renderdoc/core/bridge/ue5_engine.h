@@ -1513,6 +1513,71 @@ static bool find_uworld_via_guobjectarray()
     return false;
 }
 
+/* ---- ULocalPlayer via GUObjectArray + FName ------------------------- */
+
+/* ULocalPlayer object pointer. Set by find_localplayer().
+ * Used to route gameplay commands (slomo, ToggleDebugCamera, etc.) via
+ * ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager. */
+static void* g_localplayer_ptr = nullptr;
+
+/*
+ * find_localplayer() -- scan GUObjectArray for an object whose class
+ * FName matches "LocalPlayer" (multi-block search, handles block 5+).
+ *
+ * ClassPrivate at UObjectBase+0x10, NamePrivate at ClassPrivate+0x18.
+ * ComparisonIndex is the full 32-bit value (block<<16 | word_off).
+ * After finding the object, verify it has FExec at g_fexec_offset by
+ * reading its secondary vtable.
+ */
+static bool find_localplayer()
+{
+    if (g_localplayer_ptr) return true;
+    if (!g_guobjectarray_found) return false;
+
+    uint32_t lp_idx = get_fname_cmpidx_for("LocalPlayer");
+    if (lp_idx == 0xFFFFFFFF) {
+        bridge_log("  find_localplayer: FName('LocalPlayer') not found "
+                   "(FNamePool has %s)",
+                   g_fnamepool_global ? "global" : "block0 only");
+        return false;
+    }
+    bridge_log("  find_localplayer: FName('LocalPlayer')=0x%X (block=%d word=0x%X)",
+               lp_idx, lp_idx >> 16, lp_idx & 0xFFFF);
+
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return false;
+    uintptr_t mod_start = (uintptr_t)rgn.base;
+    uintptr_t mod_end   = mod_start + rgn.size;
+
+    int32_t num_elems = guobjectarray_num_elements();
+    for (int32_t i = 0; i < num_elems; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
+
+        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+        if (class_ptr < 0x10000) continue;
+
+        uint32_t cmp_idx = 0;
+        __try { cmp_idx = *(uint32_t*)((uint8_t*)class_ptr + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        if (cmp_idx != lp_idx) continue;
+
+        /* Confirm FExec secondary vtable at g_fexec_offset */
+        uintptr_t fexec_off  = g_fexec_offset ? g_fexec_offset : 0x28;
+        uintptr_t lp_fexec_v = seh_read_ptr((uint8_t*)obj + fexec_off);
+        if (lp_fexec_v < mod_start || lp_fexec_v >= mod_end) continue;
+
+        g_localplayer_ptr = obj;
+        bridge_log("  ULocalPlayer FOUND: [%d] obj=0x%p fexec_vptr=0x%llX",
+                   i, obj, (unsigned long long)lp_fexec_v);
+        return true;
+    }
+    bridge_log("  find_localplayer: not found in %d objects", num_elems);
+    return false;
+}
+
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
 
 /*
@@ -1951,16 +2016,14 @@ static bool exec_console_command_internal(const char* cmd)
         return true;
     }
 
-    /* GEngine returned false for this command.
-     * Gameplay commands (slomo, ToggleDebugCamera, Teleport, ShowHUD, etc.)
-     * are NOT handled by UEngine::Exec in UE5 -- they route via
-     * ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager.
-     *
-     * g_localplayer_fexec is captured from hooked_fexec_exec on the first
-     * call where this_fexec != GEngine's FExec subobject.
-     * We look up its vtable in the hook table to get the original function. */
-    if (g_localplayer_fexec) {
-        uintptr_t lp_vtable = seh_read_ptr(g_localplayer_fexec);
+    /* GEngine returned false -- gameplay commands route via ULocalPlayer::Exec.
+     * Primary: g_localplayer_ptr found by FName scan (find_localplayer).
+     * Fallback: g_localplayer_fexec captured passively from hook callback. */
+
+    /* Helper lambda-equivalent: try calling LP Exec via a given FExec subobj */
+    auto try_lp_exec = [&](void* lp_fexec_subobj) -> bool {
+        if (!lp_fexec_subobj) return false;
+        uintptr_t lp_vtable = seh_read_ptr(lp_fexec_subobj);
         FExecExecFn lp_orig = nullptr;
         for (int i = 0; i < g_fexec_hook_count; i++) {
             if (g_fexec_hook_table[i].vtable_base == lp_vtable) {
@@ -1968,19 +2031,29 @@ static bool exec_console_command_internal(const char* cmd)
                 break;
             }
         }
-        if (lp_orig && validate_function_ptr((void*)lp_orig)) {
-            bool lp_ret = false;
-            bool lp_ok  = seh_call_fexec(lp_orig, g_localplayer_fexec,
-                                          world, wcmd.data(), ar, &lp_ret);
-            if (lp_ok) {
-                bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
-                return lp_ret;
-            }
-            bridge_log("  ERROR: ULocalPlayer FExec crashed");
-        } else {
-            bridge_log("  ULocalPlayer: vtable 0x%llX not in hook table",
-                       (unsigned long long)seh_read_ptr(g_localplayer_fexec));
+        if (!lp_orig || !validate_function_ptr((void*)lp_orig)) return false;
+        bool lp_ret = false;
+        bool lp_ok  = seh_call_fexec(lp_orig, lp_fexec_subobj,
+                                      world, wcmd.data(), ar, &lp_ret);
+        if (lp_ok) {
+            bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
+            return true;
         }
+        bridge_log("  ERROR: ULocalPlayer FExec crashed");
+        return false;
+    };
+
+    /* Primary: FName-found ULocalPlayer */
+    if (!g_localplayer_ptr) find_localplayer();
+    if (g_localplayer_ptr) {
+        uintptr_t fexec_off = g_fexec_offset ? g_fexec_offset : 0x28;
+        void* lp_fexec = (uint8_t*)g_localplayer_ptr + fexec_off;
+        if (try_lp_exec(lp_fexec)) return true;
+    }
+
+    /* Fallback: passively captured FExec subobject from hook callback */
+    if (g_localplayer_fexec && g_localplayer_fexec != (void*)((uint8_t*)g_localplayer_ptr + (g_fexec_offset ? g_fexec_offset : 0x28))) {
+        if (try_lp_exec(g_localplayer_fexec)) return true;
     }
 
     bridge_log("  OK ret=0 (no handler found)");

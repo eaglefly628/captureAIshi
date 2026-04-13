@@ -529,6 +529,17 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
                            g_world_ptr);
             else
                 BRIDGE_LOG("UWorld not found yet -- will retry on first command");
+
+            /* Find ULocalPlayer via FName("LocalPlayer") multi-block scan.
+             * ULocalPlayer::Exec routes gameplay commands (slomo, ToggleDebugCamera,
+             * Teleport, etc.) to APlayerController -> UCheatManager.
+             * 'LocalPlayer' is in FNamePool block 5+ (not block 0), so requires
+             * g_fnamepool_global to be set (done in find_fnamepool_block0). */
+            if (find_localplayer())
+                BRIDGE_LOG("ULocalPlayer found: 0x%p", g_localplayer_ptr);
+            else
+                BRIDGE_LOG("NOTE: ULocalPlayer not found -- gameplay commands "
+                           "will fall back to passive hook capture");
         }
 
         /* Wait a bit for the game window to be created, then install
