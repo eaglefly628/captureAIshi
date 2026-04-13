@@ -2020,6 +2020,9 @@ static bool find_localplayer()
     bridge_log("  find_localplayer: not found in %d objects", num_elems);
     return false;
 }
+
+/*
+ * Find GUObjectArray.
  *
  * Strategy 1: Export symbol lookup.
  *   Many UE5 games export "?GUObjectArray@@3VFUObjectArray@@A".
