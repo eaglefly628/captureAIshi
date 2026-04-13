@@ -24,6 +24,14 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] 373cf2b -- xiaoni
+- **Toolbar '重新扫描 UE' button**: visible at all times, colored dot (gray/green/orange/red),
+  opens debug panel + triggers rescan in one click. No longer buried in debug panel.
+- **Arm Break mechanism**: g_debug_break_armed atomic toggle via __bridge_arm_break command.
+  find_uworld + find_localplayer each fire __debugbreak() (one-shot) when armed.
+  Workflow: attach WinDbg -> Arm Break -> Re-scan UE -> debugger catches at discovery.
+- **Debug panel 'Arm Break' button**: turns red when armed, shows attach-debugger instructions.
+
 ### [v0.2.0] 711d8eb -- xiaoni
 - `__bridge_rescan_objects` TCP command: clears g_world_ptr/g_localplayer_ptr,
   re-runs find_uworld + find_localplayer, returns `uworld_found= localplayer_found=`
