@@ -539,6 +539,17 @@ def run_capture(args):
         logging.error(f"[CAPTURE] Unexpected error: {e}\n{traceback.format_exc()}")
         raise
     finally:
+        # Debug: pause before teardown so a debugger can be attached
+        if args.wait_attach:
+            logging.info(
+                "[DEBUG] --wait-attach: capture done. "
+                "Attach debugger to game/renderdoc process now, then press Enter to continue teardown."
+            )
+            try:
+                input()
+            except EOFError:
+                pass
+
         # Restore UI
         if ui_hider:
             try:
@@ -675,6 +686,13 @@ def main():
     # Output
     parser.add_argument("--output-dir", type=str, default="./output")
     parser.add_argument("--dry-run", action="store_true", help="Generate poses only, no capture")
+
+    # Debug
+    parser.add_argument(
+        "--wait-attach", action="store_true",
+        help="After capture completes (before teardown), wait for Enter key. "
+             "Use to attach a debugger to the game or renderdoc process.",
+    )
 
     # Logging
     parser.add_argument("--verbose", "-v", action="store_true")

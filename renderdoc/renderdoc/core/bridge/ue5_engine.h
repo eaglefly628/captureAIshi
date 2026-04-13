@@ -71,6 +71,10 @@ static uintptr_t         g_engine_global_addr = 0;
 /* UWorld pointer -- captured as direct parameter by FExec hooks */
 static void*             g_world_ptr = nullptr;
 
+/* ULocalPlayer pointer -- for routing gameplay commands (slomo, ToggleDebugCamera, etc.)
+ * ULocalPlayer::Exec routes to PlayerController -> CheatManager. */
+static void*             g_localplayer_ptr = nullptr;
+
 /* -- Exec function ------------------------------------------------- */
 
 /*
@@ -1971,7 +1975,51 @@ static bool find_uworld_via_worldlist()
 }
 
 /*
- * Find GUObjectArray.
+ * find_localplayer() -- locate ULocalPlayer in GUObjectArray.
+ *
+ * ULocalPlayer inherits FExec. Its Exec(UWorld*, Cmd, Ar) routes to
+ * APlayerController::Exec -> UCheatManager, which handles gameplay
+ * commands (ToggleDebugCamera, slomo, Teleport, SetViewLocation, etc.).
+ *
+ * Detection: scan GUObjectArray for an object whose class FName matches
+ * "LocalPlayer" (ComparisonIndex found via find_fnamepool_block0).
+ * ClassPrivate at UObjectBase+0x10, ClassPrivate.NamePrivate at +0x18.
+ */
+static bool find_localplayer()
+{
+    if (g_localplayer_ptr) return true;
+    if (!g_guobjectarray_found) return false;
+
+    uint32_t lp_idx = get_fname_cmpidx_for("LocalPlayer");
+    if (lp_idx == 0xFFFFFFFF) {
+        bridge_log("  find_localplayer: FName('LocalPlayer') not found in pool");
+        return false;
+    }
+    bridge_log("  find_localplayer: FName('LocalPlayer')=0x%X scanning...", lp_idx);
+
+    int32_t num_elems = guobjectarray_num_elements();
+    for (int32_t i = 0; i < num_elems; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
+
+        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+        if (!class_ptr || class_ptr < 0x10000) continue;
+
+        uintptr_t name_lo = 0;
+        __try { name_lo = *(uint32_t*)(class_ptr + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        if ((name_lo & 0xFFFFFFFF) != (lp_idx & 0xFFFFFFFF)) continue;
+
+        /* Found a ULocalPlayer instance */
+        g_localplayer_ptr = obj;
+        bridge_log("  ULocalPlayer found: idx=%d obj=0x%p", i, obj);
+        return true;
+    }
+    bridge_log("  find_localplayer: not found in %d objects", num_elems);
+    return false;
+}
  *
  * Strategy 1: Export symbol lookup.
  *   Many UE5 games export "?GUObjectArray@@3VFUObjectArray@@A".
@@ -2532,42 +2580,38 @@ static bool exec_console_command_internal(const char* cmd)
     }
 
     /* GEngine returned false -- gameplay commands (ToggleDebugCamera, slomo,
-     * Teleport, SetViewLocation, etc.) are NOT routed by UEngine::Exec to
-     * the world in UE5.7; they need UWorld::Exec directly.
-     * UWorld also inherits FExec; its secondary vtable is at the same offset
-     * as GEngine's (g_fexec_offset = sizeof(UObject) = 40 or 48). */
-    if (world) {
-        void* world_fexec_subobj = (uint8_t*)world + g_fexec_offset;
-        uintptr_t world_fexec_vptr = seh_read_ptr(world_fexec_subobj);
+     * Teleport, SetViewLocation, ShowHUD, etc.) are NOT handled by
+     * UEngine::Exec in UE5.7.  Route via ULocalPlayer::Exec instead:
+     *   ULocalPlayer::Exec -> APlayerController::Exec -> UCheatManager
+     * NOTE: UWorld does NOT inherit FExec (inherits FNetworkNotify instead),
+     * so UWorld fallback was incorrect and silently did nothing. */
+    if (!g_localplayer_ptr)
+        find_localplayer();
+
+    if (g_localplayer_ptr) {
+        void* lp_fexec = (uint8_t*)g_localplayer_ptr + g_fexec_offset;
+        uintptr_t lp_vptr = seh_read_ptr(lp_fexec);
 
         ModuleRegion rgn;
-        if (get_main_module(rgn)) {
-            uintptr_t mod_start = (uintptr_t)rgn.base;
-            uintptr_t mod_end   = mod_start + rgn.size;
-
-            if (world_fexec_vptr >= mod_start && world_fexec_vptr < mod_end) {
-                /* vtable[1] = Exec -- same layout as GEngine's FExec vtable */
-                FExecExecFn world_exec_fn = (FExecExecFn)seh_read_ptr(
-                    (void*)(world_fexec_vptr + 8));
-
-                if (world_exec_fn && validate_function_ptr((void*)world_exec_fn)) {
-                    bool world_ret = false;
-                    bool world_ok  = seh_call_fexec(world_exec_fn,
-                                                     world_fexec_subobj,
-                                                     world, wcmd.data(), ar,
-                                                     &world_ret);
-                    if (world_ok) {
-                        bridge_log("  OK ret=%d (UWorld fallback)", (int)world_ret);
-                        return world_ret;
-                    }
-                    bridge_log("  ERROR: UWorld FExec::Exec crashed");
-                    return false;
+        if (get_main_module(rgn) &&
+            lp_vptr >= (uintptr_t)rgn.base &&
+            lp_vptr < (uintptr_t)rgn.base + rgn.size)
+        {
+            FExecExecFn lp_exec_fn = (FExecExecFn)seh_read_ptr((void*)(lp_vptr + 8));
+            if (lp_exec_fn && validate_function_ptr((void*)lp_exec_fn)) {
+                bool lp_ret = false;
+                bool lp_ok  = seh_call_fexec(lp_exec_fn, lp_fexec,
+                                              world, wcmd.data(), ar, &lp_ret);
+                if (lp_ok) {
+                    bridge_log("  OK ret=%d (ULocalPlayer)", (int)lp_ret);
+                    return lp_ret;
                 }
+                bridge_log("  ERROR: ULocalPlayer FExec::Exec crashed");
             }
         }
     }
 
-    bridge_log("  OK ret=0 (GEngine only, no UWorld fallback)");
+    bridge_log("  OK ret=0 (no handler found)");
     return false;
 }
 

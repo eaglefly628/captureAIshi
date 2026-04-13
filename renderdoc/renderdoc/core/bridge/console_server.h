@@ -558,6 +558,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
             BRIDGE_LOG("NOTE: UWorld not found yet -- will be captured "
                        "from FExec hook parameters when game calls Exec.");
 
+        /* Find ULocalPlayer for gameplay command routing.
+         * ULocalPlayer::Exec -> PlayerController -> CheatManager.
+         * Lazy fallback also runs inside exec_console_command_internal. */
+        if (find_localplayer())
+            BRIDGE_LOG("ULocalPlayer found: 0x%p", g_localplayer_ptr);
+        else
+            BRIDGE_LOG("NOTE: ULocalPlayer not found -- "
+                       "gameplay commands may not route correctly.");
+
         /* Wait a bit for the game window to be created, then install
          * the WndProc hook for game-thread command dispatch. */
         for (int retry = 0; retry < 20; retry++) {

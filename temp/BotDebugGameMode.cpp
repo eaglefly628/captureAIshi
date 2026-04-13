@@ -3,6 +3,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "UObject/Package.h"
+#include "GameFramework/PlayerController.h"
 
 void ABotDebugGameMode::BeginPlay()
 {
@@ -62,6 +63,49 @@ void ABotDebugGameMode::BeginPlay()
         CmpIdx,
         CmpIdx >> 16,
         CmpIdx & 0xFFFF);
+
+    // --- LocalPlayer FName + exec chain test ---
+    // This mirrors what the bridge does: find LocalPlayer FName index,
+    // then verify gameplay command routing works via ConsoleCommand.
+    APlayerController* PC = World->GetFirstPlayerController();
+    if (PC)
+    {
+        ULocalPlayer* LP = PC->GetLocalPlayer();
+        FName LPClassName = PC->GetClass()->GetFName();
+        uint32 LPClassIdx = LPClassName.GetComparisonIndex().ToUnstableInt();
+        UE_LOG(LogTemp, Warning,
+            TEXT("=== Exec chain debug ==="));
+        UE_LOG(LogTemp, Warning,
+            TEXT("PlayerController ptr=%p  class='%s'  CmpIdx=0x%08X"),
+            PC, *LPClassName.ToString(), LPClassIdx);
+        UE_LOG(LogTemp, Warning,
+            TEXT("LocalPlayer ptr=%p"), LP);
+
+        // Test: call slomo 0.5 directly through the PlayerController
+        // Set breakpoint here to step into ConsoleCommand and trace routing.
+        bool bResult = PC->ConsoleCommand(TEXT("slomo 0.5"), true);
+        UE_LOG(LogTemp, Warning,
+            TEXT("ConsoleCommand('slomo 0.5') ret=%d  (1=handled, 0=not handled)"),
+            (int32)bResult);
+
+        // Test via GEngine->Exec with world (what bridge does via FExec::Exec)
+        if (GEngine)
+        {
+            bool bEngineResult = GEngine->Exec(World, TEXT("slomo 0.5"), *GLog);
+            UE_LOG(LogTemp, Warning,
+                TEXT("GEngine->Exec('slomo 0.5', World) ret=%d"),
+                (int32)bEngineResult);
+
+            bool bNoWorldResult = GEngine->Exec(nullptr, TEXT("slomo 0.5"), *GLog);
+            UE_LOG(LogTemp, Warning,
+                TEXT("GEngine->Exec('slomo 0.5', nullptr) ret=%d"),
+                (int32)bNoWorldResult);
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("PlayerController: null at BeginPlay"));
+    }
 
     volatile int bp = 0; (void)bp;
 }
