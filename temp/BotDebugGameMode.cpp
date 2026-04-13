@@ -4,6 +4,7 @@
 #include "Engine/World.h"
 #include "UObject/Package.h"
 #include "GameFramework/PlayerController.h"
+#include "Engine/LocalPlayer.h"
 
 void ABotDebugGameMode::BeginPlay()
 {
@@ -88,7 +89,23 @@ void ABotDebugGameMode::BeginPlay()
             TEXT("ConsoleCommand('slomo 0.5') ret=%d  (1=handled, 0=not handled)"),
             (int32)bResult);
 
-        // Test via GEngine->Exec with world (what bridge does via FExec::Exec)
+        // Test via ULocalPlayer::Exec directly -- this is what bridge now does
+        // as fallback when GEngine->Exec returns false.
+        // ULocalPlayer::Exec(UWorld*, TCHAR*, FOutputDevice&) routes to
+        //   APlayerController::Exec -> UCheatManager
+        if (LP)
+        {
+            bool bLPResult = LP->Exec(World, TEXT("slomo 0.5"), *GLog);
+            UE_LOG(LogTemp, Warning,
+                TEXT("ULocalPlayer->Exec('slomo 0.5') ret=%d  <- bridge fallback path"),
+                (int32)bLPResult);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ULocalPlayer->Exec: LP is null"));
+        }
+
+        // Test via GEngine->Exec with world (what bridge does via FExec::Exec primary)
         if (GEngine)
         {
             bool bEngineResult = GEngine->Exec(World, TEXT("slomo 0.5"), *GLog);
