@@ -210,7 +210,7 @@ static const UEVersionLayout k_layout_ue57 = {
     0x18,  0x20,  0x28,                  /* Rotation doubles */
     0x30,                                /* FOV float */
     0x360,                               /* cam_pov_direct_off: VERIFIED StackOBot */
-    0x2A0, 0x500, 8,                     /* PCM probe range (extended; pass2 sweeps 0x100..0x800) */
+    0x388, 0x398, 8,                     /* PCM in PC: VERIFIED PC+0x390 (StackOBot, pass2 xval) */
 };
 
 /* UE5.3-5.6 -- INFERRED (FField era2, LWC, shipping stride=24)
@@ -2834,6 +2834,41 @@ static void validate_engine_viewport_chain()
                    g_ue_layout->uengine_gvc_off);
         return;
     }
+
+    /* Detect TObjectPtr encoding: if GVC is inside the game binary it is an
+     * encoded handle (UE5.4+ TObjectPtr dynamic resolution), not a real heap ptr.
+     * Fall back to LP->ViewportClient (+0x78) which always stores a raw pointer. */
+    ModuleRegion rgn;
+    bool in_binary = false;
+    if (get_main_module(rgn)) {
+        uintptr_t mod_lo = (uintptr_t)rgn.base;
+        uintptr_t mod_hi = mod_lo + rgn.size;
+        in_binary = (gvc >= mod_lo && gvc < mod_hi);
+    }
+    if (in_binary) {
+        bridge_log("  GVC chain: GEngine+0x%X=0x%p is in binary range "
+                   "(TObjectPtr-encoded), trying LP+0x78 fallback",
+                   g_ue_layout->uengine_gvc_off, (void*)gvc);
+        if (!g_localplayer_ptr) {
+            bridge_log("  GVC chain: no LP available for GVC fallback");
+            return;
+        }
+        uintptr_t lp_gvc = seh_read_ptr((uint8_t*)g_localplayer_ptr +
+                                         g_ue_layout->ulp_vc_off);
+        bool lp_valid = (lp_gvc >= 0x10000 && lp_gvc < 0x800000000000ULL);
+        bool lp_in_bin = lp_valid &&
+                         (lp_gvc >= (uintptr_t)rgn.base &&
+                          lp_gvc < (uintptr_t)rgn.base + rgn.size);
+        if (!lp_valid || lp_in_bin) {
+            bridge_log("  GVC chain: LP+0x78=0x%p invalid or also in binary, "
+                       "cannot resolve GVC", (void*)lp_gvc);
+            return;
+        }
+        bridge_log("  GVC chain: LP+0x78=0x%p (heap, authoritative -- overrides GEngine field)",
+                   (void*)lp_gvc);
+        gvc = lp_gvc;
+    }
+
     g_gvc_ptr = gvc;  /* save for LP cross-check in cross_validate_camera */
 
     uintptr_t gvc_world = seh_read_ptr((void*)(gvc + g_ue_layout->ugvc_world_off));
