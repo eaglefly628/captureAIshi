@@ -2,11 +2,12 @@
 
 ## Active TODO
 
-- [ ] **P0: 真实 UE5 游戏端到端验证** — renderdoccmd → bridge 9998 → GEngine → Exec → camera → capture → export。跑通一个游戏。
+- [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find, confirm scan fallback finds POV.
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
 - [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — camera toggle 后改轮询。
 - [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
+- [ ] **P2: g_gvc_ptr binary-address bug** — GEngine+0x200 for StackOBot returns 0x7FF4... (binary/DLL range, not heap). LP+0x78 gives correct heap GVC. Need to use LP GVC as authoritative, or TObjectPtr decode for GVC field.
 
 ## [v0.2.0] UUU / UE4SS Camera Research
 
@@ -49,7 +50,16 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni
+### [v0.2.0] 6879265 -- xiaoni
+- **find_cam_pov_scan()**: FField reflection fallback. When CameraCachePrivate is not reflected
+  (StackOBot: FField chain ends after 1 prop "PCOwner"), scans manager+0x200..+0x900 in 4-byte
+  steps for valid 7-float FMinimalViewInfo pattern (FOV[1,179], Pitch[-91,91], all finite).
+  Logs all candidates; picks first valid. Added forward declaration.
+- **GVC world locking**: set g_world_from_gua=true in all three paths (adopt/confirm/mismatch)
+  inside validate_engine_viewport_chain(). Prevents FExec sublevel-world spam after GVC confirms.
+- **ffield_find_offset_era() verbose logging**: walked counter, AV log, chain-end log.
+
+### [v0.2.0] (previously pending) -- xiaoni
 - **UUU/UE4SS camera research**: confirmed background 60Hz POV write is industry standard (same as UUU).
   `UpdateCamera` is NOT virtual, vtable hook not applicable. Race condition fix = use timestop.
 - **Fix: duplicate `g_camera_override` declaration** (ue5_engine.h:2120) -- second `static std::atomic<bool>
