@@ -2361,6 +2361,13 @@ static bool write_camera_mem(const CameraMemState& s)
 #define UPLAYER_PC_OFFSET   0x30  /* APlayerController* */
 #define UENGINE_GVC_OFFSET  0x200 /* UGameViewportClient* */
 #define GVC_WORLD_OFFSET    0x78  /* UWorld* inside GameViewportClient */
+/* ULocalPlayer::ViewportClient = +0x78 (UE4SS MemberVarLayout_5_07 confirmed).
+ * DISTINCT from GVC_WORLD_OFFSET: this is LP->GVC, not GVC->World. */
+#define ULP_VC_OFFSET       0x78  /* UGameViewportClient* inside ULocalPlayer */
+
+/* Saved GVC pointer (set by validate_engine_viewport_chain, reused by
+ * cross_validate_camera LP cross-check). */
+static uintptr_t g_gvc_ptr = 0;
 
 /*
  * get_playercontroller() -- read APlayerController* from ULocalPlayer.
@@ -2463,6 +2470,7 @@ static void validate_engine_viewport_chain()
                    UENGINE_GVC_OFFSET);
         return;
     }
+    g_gvc_ptr = gvc;  /* save for LP cross-check in cross_validate_camera */
 
     uintptr_t gvc_world = seh_read_ptr((void*)(gvc + GVC_WORLD_OFFSET));
     bridge_log("  GVC chain: GameViewport=0x%p  GVC->World=0x%p  "
@@ -2495,50 +2503,187 @@ static void validate_engine_viewport_chain()
 }
 
 /*
- * cross_validate_camera() -- run both paths and pick best result.
+ * verify_lp_via_gvc() -- cross-check g_localplayer_ptr using saved GVC.
+ *
+ * ULocalPlayer::ViewportClient = +0x78 (UE4SS MemberVarLayout_5_07).
+ * If LP->ViewportClient == g_gvc_ptr, the LP pointer is independently
+ * confirmed via the GEngine render chain.
+ */
+static bool verify_lp_via_gvc()
+{
+    if (!g_localplayer_ptr || !g_gvc_ptr) return false;
+
+    uintptr_t lp_gvc = seh_read_ptr((uint8_t*)g_localplayer_ptr + ULP_VC_OFFSET);
+    if (lp_gvc == g_gvc_ptr) {
+        bridge_log("  LP cross-check: LP+0x78->GVC=0x%p == g_gvc_ptr CONFIRMED",
+                   (void*)lp_gvc);
+        return true;
+    }
+    bridge_log("  LP cross-check: LP+0x78->GVC=0x%p != g_gvc_ptr=0x%p MISMATCH "
+               "(stale LP or GVC?)",
+               (void*)lp_gvc, (void*)g_gvc_ptr);
+    return false;
+}
+
+/*
+ * find_camera_manager_uuu_style() -- UUU-style fixed-offset probe.
+ *
+ * UUU uses chain: GEngine->GameViewport->LocalPlayer->PlayerController,
+ * then reads PlayerCameraManager at a game-specific fixed offset from PC.
+ * The commonly cited value is PC+0x2A8 for UE5 games, but the actual
+ * offset shifts upward with each UE5 minor version as new members are added
+ * to APlayerController before PlayerCameraManager.
+ *
+ * Known observed offsets (UE4SS PDB / community reports):
+ *   UE4.27:   ~0x2A0
+ *   UE5.00-5.03: ~0x2A8
+ *   UE5.04-5.05: ~0x2E0-0x300
+ *   UE5.06-5.07: ~0x300-0x360
+ *
+ * We probe 8 candidates in 8-byte steps covering the full range.
+ * Used ONLY for cross-validation; Path B (FField reflection) is authoritative.
+ *
+ * Returns the first valid-looking CameraManager pointer, or nullptr.
+ * Logs all candidates found.
+ */
+static void* find_camera_manager_uuu_style()
+{
+    void* pc = get_playercontroller();
+    if (!pc) {
+        bridge_log("  cam_uuu_probe: no PlayerController");
+        return nullptr;
+    }
+
+    /* Probe range: 0x2A0 to 0x380 in 8-byte steps */
+    static const int32_t PROBE_OFFS[] = {
+        0x2A0, 0x2A8, 0x2B0, 0x2C0, 0x2D0, 0x2E0,
+        0x2F0, 0x300, 0x310, 0x320, 0x330, 0x340,
+        0x350, 0x360, 0x370, 0x380
+    };
+    static const int NUM_PROBES = 16;
+
+    void* best = nullptr;
+    for (int i = 0; i < NUM_PROBES; i++) {
+        uintptr_t candidate = 0;
+        __try { candidate = *(uintptr_t*)((uint8_t*)pc + PROBE_OFFS[i]); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
+
+        /* Must have a valid vtable */
+        uintptr_t vt = 0;
+        __try { vt = *(uintptr_t*)candidate; }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (vt < 0x10000) continue;
+
+        /* Must have a valid UClass pointer at +0x10 */
+        uintptr_t cls = 0;
+        __try { cls = *(uintptr_t*)(candidate + 0x10); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (cls < 0x10000) continue;
+
+        /* Check class FName for "Camera" substring */
+        uint32_t cls_fname = 0;
+        __try { cls_fname = *(uint32_t*)(cls + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        char cls_name[64] = {0};
+        resolve_fname(cls_fname, cls_name, sizeof(cls_name));
+
+        bool looks_like_cam = (strstr(cls_name, "Camera") != nullptr ||
+                               strstr(cls_name, "camera") != nullptr);
+        bridge_log("  cam_uuu_probe: PC+0x%X=0x%p class='%s'%s",
+                   PROBE_OFFS[i], (void*)candidate, cls_name,
+                   looks_like_cam ? " <-- CAMERA" : "");
+
+        if (looks_like_cam && !best) {
+            best = (void*)candidate;
+        }
+    }
+
+    if (!best)
+        bridge_log("  cam_uuu_probe: no camera-class pointer found in PC[0x2A0..0x380]");
+    return best;
+}
+
+/*
+ * cross_validate_camera() -- run all four paths and pick best result.
  *
  * Called after find_camera_manager() (Path A, GUObjectArray FName scan)
  * and find_localplayer() are complete.
  *
- * Runs Path B (LP chain) and compares with g_camera_manager_ptr.
- * Also runs Path C (GEngine render viewport) for world sanity.
+ * Path A: GUObjectArray FName scan (g_camera_manager_ptr)
+ * Path B: LP -> PC -> FField property reflection (find_camera_manager_via_lp)
+ * Path C: GEngine -> GVC -> World sanity (validate_engine_viewport_chain)
+ *         + LP -> GVC cross-check (verify_lp_via_gvc)
+ * Path D: LP -> PC -> fixed-offset probe scan (find_camera_manager_uuu_style)
+ *         mirrors UUU's approach; used for comparison only.
+ *
+ * Priority: B > A > D (FField runtime reflection is most reliable).
  */
 static void cross_validate_camera()
 {
-    /* Path C: render viewport world sanity check */
+    /* Path C: render viewport world sanity + save g_gvc_ptr */
     validate_engine_viewport_chain();
 
-    /* Path B: LP -> PC -> CameraManager pointer walk */
-    void* cam_lp = find_camera_manager_via_lp();
+    /* Path C cont: LP -> GVC cross-check (verifies g_localplayer_ptr) */
+    verify_lp_via_gvc();
 
-    if (!cam_lp && !g_camera_manager_ptr) {
-        bridge_log("  camera cross-val: BOTH paths failed -- no camera control");
+    /* Path B: LP -> PC -> FField reflection for PlayerCameraManager offset */
+    void* cam_b = find_camera_manager_via_lp();
+
+    /* Path D: LP -> PC -> fixed-offset probe (UUU-style) */
+    void* cam_d = find_camera_manager_uuu_style();
+
+    /* Summarize all four paths */
+    bridge_log("  camera cross-val summary: "
+               "A(FName)=0x%p  B(FField)=0x%p  D(UUU-probe)=0x%p",
+               g_camera_manager_ptr, cam_b, cam_d);
+
+    /* Agreement check: flag if UUU-probe disagrees with FField */
+    if (cam_d && cam_b && cam_d != cam_b) {
+        bridge_log("  camera cross-val: B!=D -- FField and UUU-probe disagree "
+                   "(FField wins; UUU offset may be wrong for this UE version)");
+    } else if (cam_d && cam_b && cam_d == cam_b) {
+        bridge_log("  camera cross-val: B==D -- FField and UUU-probe AGREE 0x%p",
+                   cam_b);
+    }
+
+    /* Priority for g_camera_manager_ptr: B > A > D */
+    if (!cam_b && !g_camera_manager_ptr) {
+        if (cam_d) {
+            bridge_log("  camera cross-val: A+B failed, using D(UUU-probe)=0x%p "
+                       "(fallback only)", cam_d);
+            g_camera_manager_ptr = cam_d;
+        } else {
+            bridge_log("  camera cross-val: ALL paths failed -- no camera control");
+        }
         return;
     }
 
-    if (!g_camera_manager_ptr && cam_lp) {
-        bridge_log("  camera cross-val: only LP chain found 0x%p "
-                   "(FName scan missed BP subclass) -- using LP result", cam_lp);
-        g_camera_manager_ptr = cam_lp;
+    if (!g_camera_manager_ptr && cam_b) {
+        bridge_log("  camera cross-val: A(FName) missed, using B(FField)=0x%p "
+                   "(BP subclass?)", cam_b);
+        g_camera_manager_ptr = cam_b;
         return;
     }
 
-    if (g_camera_manager_ptr && !cam_lp) {
-        bridge_log("  camera cross-val: only FName scan found 0x%p "
-                   "(LP chain failed) -- keeping scan result", g_camera_manager_ptr);
+    if (g_camera_manager_ptr && !cam_b) {
+        bridge_log("  camera cross-val: B(FField) failed, keeping A(FName)=0x%p",
+                   g_camera_manager_ptr);
         return;
     }
 
-    /* Both found */
-    if (cam_lp == g_camera_manager_ptr) {
-        bridge_log("  camera cross-val: CONFIRMED -- both paths agree "
-                   "on 0x%p", g_camera_manager_ptr);
+    /* Both A and B found */
+    if (cam_b == g_camera_manager_ptr) {
+        bridge_log("  camera cross-val: CONFIRMED -- A==B==0x%p%s",
+                   g_camera_manager_ptr,
+                   (cam_d == cam_b) ? " (D also agrees)" : "");
     } else {
-        bridge_log("  camera cross-val: MISMATCH! "
-                   "FName-scan=0x%p  LP-chain=0x%p  "
-                   "-- preferring LP chain (game-agnostic)",
-                   g_camera_manager_ptr, cam_lp);
-        g_camera_manager_ptr = cam_lp;
+        bridge_log("  camera cross-val: A!=B MISMATCH: "
+                   "A(FName)=0x%p  B(FField)=0x%p  -- preferring B (game-agnostic)",
+                   g_camera_manager_ptr, cam_b);
+        g_camera_manager_ptr = cam_b;
         g_cam_pov_ptr = nullptr; /* invalidate: camera manager changed */
     }
 }

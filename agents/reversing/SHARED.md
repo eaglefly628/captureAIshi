@@ -57,6 +57,16 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 - **Path + mem integration**: camera path tick now writes directly to `g_cam_override_state` +
   `write_camera_mem()` when `g_cam_pov_ptr` is available, falling back to console commands otherwise.
   Camera path no longer requires DebugCamera when direct memory path is active.
+- **Path D (UUU-style fixed-offset probe)**: `find_camera_manager_uuu_style()` -- probes PC at 16
+  offsets (0x2A0-0x380, 8-byte steps) and checks class FName for "Camera" substring. Covers full
+  UE5.00-5.07 range (offset drifts upward each minor version). Used for cross-validation only;
+  Path B (FField) is authoritative.
+- **LP -> GVC cross-check**: `verify_lp_via_gvc()` -- confirms `g_localplayer_ptr` by reading
+  `LP+0x78` (ULocalPlayer::ViewportClient) and comparing with `g_gvc_ptr` saved from GVC chain.
+  Stable UE5 offset: UE4SS MemberVarLayout_5_07 confirmed ViewportClient=0x78.
+- `g_gvc_ptr` global saves GVC from `validate_engine_viewport_chain()` for reuse.
+- `cross_validate_camera()` now runs ALL four paths (A/B/C/D) and logs agreement/disagreement.
+  Priority B > A > D. Logs B==D or B!=D to confirm/deny UUU's claimed PCM offset for this game.
 
 ### [v0.2.0] a0fe8c3 -- xiaoni
 - **Direct FMinimalViewInfo camera override** (complete implementation):
