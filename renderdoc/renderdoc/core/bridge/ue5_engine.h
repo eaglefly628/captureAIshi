@@ -2149,23 +2149,41 @@ static bool find_camera_manager()
                n_candidates, cdo_skipped);
 
     if (n_candidates == 0) {
-        bridge_log("  find_camera_manager: not found in %d objects", num_elems);
+        bridge_log("  find_camera_manager: not found in %d objects -- "
+                   "PCM may not be spawned yet; call __cam_mem_find after game loads",
+                   num_elems);
         return false;
     }
 
-    /* Selection: prefer candidate whose outer is a PlayerController.
-     * Among those, take the last (most recently created). */
+    /* Log all candidates so cross-validation decisions are traceable */
+    for (int c = 0; c < n_candidates; c++) {
+        bridge_log("  find_camera_manager: candidate[%d] idx=%d obj=0x%p "
+                   "class='%s' outer_pc=%d",
+                   c, candidates[c].index, candidates[c].obj,
+                   candidates[c].class_name, (int)candidates[c].outer_is_pc);
+    }
+
+    /* Selection priority:
+     *   1. Candidate whose Outer is a PlayerController (authoritative).
+     *      Among those, prefer the FIRST (lowest GUA index = oldest).
+     *   2. If no outer_is_pc: take the FIRST non-CDO candidate.
+     *      Rationale: original game PCM is created at spawn time (low index).
+     *      Debug camera PCMs (ToggleDebugCamera -> ADebugCameraController) are
+     *      created later (higher index).  Taking the OLDEST avoids accidentally
+     *      picking a debug/temp PCM.  cross_validate_camera() (Path D) will
+     *      override this with the PC-referenced manager if they differ. */
     int best_c = -1;
-    for (int c = n_candidates - 1; c >= 0; c--) {
+    for (int c = 0; c < n_candidates; c++) {
         if (candidates[c].outer_is_pc) {
             best_c = c;
-            break;
+            break;  /* take first (oldest) PC-outer candidate */
         }
     }
     if (best_c < 0) {
-        best_c = n_candidates - 1;
+        best_c = 0;  /* first (oldest) non-CDO; D will override if wrong */
         bridge_log("  CameraManager: no PlayerController outer found, "
-                   "using last non-CDO candidate");
+                   "using first (oldest) non-CDO candidate -- "
+                   "cross_validate_camera Path-D will correct if needed");
     }
 
     PCMCandidate& best = candidates[best_c];
