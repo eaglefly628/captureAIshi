@@ -6,7 +6,7 @@
 - [ ] **P0: Path D 逆向补全** — pass 2 now scans PC+[0x100..0x800] for exact manager ptr. On next run, log "PC+0xXXX == Path-A manager [XVAL OK]" -- update k_layout_ue57.pc_pcm_start/end to that discovered offset.
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
-- [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — camera toggle 后改轮询。
+- [x] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — fixed: replaced with cam_read() FOV poll.
 - [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
 - [ ] **P2: g_gvc_ptr binary-address bug** — GEngine+0x200 for StackOBot returns 0x7FF4... (binary/DLL range, not heap). LP+0x78 gives correct heap GVC. Need to use LP GVC as authoritative, or TObjectPtr decode for GVC field.
 
@@ -50,6 +50,23 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] a403a51 -- xiaoni
+- **Fix crash: Path D "CameraManager" filter** (was "Camera"):
+  After `ToggleDebugCamera`, `LP+0x30` -> `DebugCameraController`.
+  Path D was finding `DebugCameraHUD` (class contains "Camera") at
+  `DebugCameraController+0x388`. cross_validate switched to DebugCameraHUD.
+  Camera tick thread then wrote LWC doubles into DebugCameraHUD memory at
+  +0x360 (valid heap, no AV), corrupting internal HUD data -> fatal crash.
+  Fix: both pass 1 and pass 2 of `find_camera_manager_uuu_style()` now
+  require "CameraManager" substring. APlayerCameraManager and all BP subclasses
+  match; HUDs, components, controllers do not.
+- **Fix: FOV validation before A->D switch** in `cross_validate_camera()`:
+  Before switching from A (FName-found) to D (PC-direct), read D's direct-offset
+  FOV and validate it is in [1,179] and finite. If invalid, keep A.
+  Defense-in-depth against future false positives from Path D.
+- Root cause of fatal error confirmed: writing to wrong UObject (DebugCameraHUD)
+  at camera POV offsets = silent memory corruption + crash seconds later.
 
 ### [v0.2.0] 738ea13 -- xiaoni
 - **Fix: GVC TObjectPtr encoding** (g_gvc_ptr binary-address P2 bug):
