@@ -210,7 +210,7 @@ static const UEVersionLayout k_layout_ue57 = {
     0x18,  0x20,  0x28,                  /* Rotation doubles */
     0x30,                                /* FOV float */
     0x360,                               /* cam_pov_direct_off: VERIFIED StackOBot */
-    0x2A0, 0x380, 8,                     /* PCM probe range */
+    0x2A0, 0x500, 8,                     /* PCM probe range (extended; pass2 sweeps 0x100..0x800) */
 };
 
 /* UE5.3-5.6 -- INFERRED (FField era2, LWC, shipping stride=24)
@@ -2921,7 +2921,7 @@ static void* find_camera_manager_uuu_style()
         return nullptr;
     }
 
-    /* Probe range from layout: pc_pcm_start..pc_pcm_end, step pc_pcm_step */
+    /* Pass 1: layout-defined range, FName class check (UUU-style) */
     bridge_log("  cam_uuu_probe: PC=0x%p range [0x%X..0x%X] step=%d (%s)",
                pc, g_ue_layout->pc_pcm_start, g_ue_layout->pc_pcm_end,
                g_ue_layout->pc_pcm_step, g_ue_layout->name);
@@ -2967,9 +2967,77 @@ static void* find_camera_manager_uuu_style()
         }
     }
 
-    if (!best)
-        bridge_log("  cam_uuu_probe: no camera-class pointer found in PC[0x%X..0x%X]",
-                   g_ue_layout->pc_pcm_start, g_ue_layout->pc_pcm_end);
+    if (best) return best;
+
+    bridge_log("  cam_uuu_probe: FName probe found nothing in [0x%X..0x%X]",
+               g_ue_layout->pc_pcm_start, g_ue_layout->pc_pcm_end);
+
+    /*
+     * Pass 2: direct pointer scan.
+     *
+     * If Path A already found g_camera_manager_ptr, scan the entire PC object
+     * (offsets 0x100..0x800, step 8) for that exact address.  This cross-
+     * validates Path A and discovers the actual PC::PlayerCameraManager field
+     * offset even when the FName probe failed (wrong range, TObjectPtr, etc.).
+     *
+     * This scan also catches any valid-looking camera manager pointer even
+     * when Path A has not run yet, by applying the same class-FName check
+     * over the full 0x100..0x800 sweep.
+     */
+    bridge_log("  cam_uuu_probe: pass 2 -- full sweep PC+[0x100..0x800] step=8");
+
+    uintptr_t known_mgr = (uintptr_t)g_camera_manager_ptr;
+
+    for (int32_t probe = 0x100; probe <= 0x800; probe += 8) {
+        uintptr_t candidate = 0;
+        __try { candidate = *(uintptr_t*)((uint8_t*)pc + probe); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
+
+        /* If we have a known manager from Path A, direct match is definitive */
+        if (known_mgr && candidate == known_mgr) {
+            bridge_log("  cam_uuu_probe: XVAL -- PC+0x%X == Path-A manager 0x%p "
+                       "(exact ptr match, cross-validation SUCCESS)",
+                       probe, (void*)candidate);
+            /* Update layout pc_pcm_start/end so future FName probes hit this offset.
+             * Not strictly needed since we return the pointer, but useful for logs. */
+            return (void*)candidate;
+        }
+
+        /* No known manager yet: apply class FName check over full range */
+        if (!known_mgr) {
+            uintptr_t vt = 0;
+            __try { vt = *(uintptr_t*)candidate; }
+            __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+            if (vt < 0x10000) continue;
+
+            uintptr_t cls = 0;
+            __try { cls = *(uintptr_t*)(candidate + 0x10); }
+            __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+            if (cls < 0x10000) continue;
+
+            uint32_t cls_fname = 0;
+            __try { cls_fname = *(uint32_t*)(cls + 0x18); }
+            __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+            char cls_name[64] = {0};
+            resolve_fname(cls_fname, cls_name, sizeof(cls_name));
+
+            if (strstr(cls_name, "Camera") || strstr(cls_name, "camera")) {
+                bridge_log("  cam_uuu_probe: pass2 PC+0x%X=0x%p class='%s' <-- CAMERA",
+                           probe, (void*)candidate, cls_name);
+                if (!best) best = (void*)candidate;
+            }
+        }
+    }
+
+    if (!best && !known_mgr)
+        bridge_log("  cam_uuu_probe: full sweep found no camera-class pointer");
+    if (!best && known_mgr)
+        bridge_log("  cam_uuu_probe: XVAL FAIL -- Path-A manager 0x%p "
+                   "not found anywhere in PC+[0x100..0x800]",
+                   (void*)known_mgr);
     return best;
 }
 
@@ -3007,7 +3075,12 @@ static void cross_validate_camera()
                "A(FName)=0x%p  B(FField)=0x%p  D(UUU-probe)=0x%p",
                g_camera_manager_ptr, cam_b, cam_d);
 
-    /* Agreement check: flag if UUU-probe disagrees with FField */
+    /* Agreement checks */
+    if (cam_d && g_camera_manager_ptr && cam_d == g_camera_manager_ptr) {
+        /* Path D pass-2 direct scan confirmed Path A -- this is the key validation */
+        bridge_log("  camera cross-val: A==D -- Path-A FName result confirmed by "
+                   "Path-D direct ptr scan 0x%p  [XVAL OK]", cam_d);
+    }
     if (cam_d && cam_b && cam_d != cam_b) {
         bridge_log("  camera cross-val: B!=D -- FField and UUU-probe disagree "
                    "(FField wins; UUU offset may be wrong for this UE version)");
