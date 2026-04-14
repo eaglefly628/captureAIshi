@@ -22,5 +22,17 @@ copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Engine\WorldContext.h" "
 echo Copying World.h...
 copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Engine\World.h" "%DEST%\World.h"
 
+echo Copying PlayerCameraManager.h...
+copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Camera\PlayerCameraManager.h" "%DEST%\PlayerCameraManager.h"
+
+echo Copying CameraTypes.h...
+copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Camera\CameraTypes.h" "%DEST%\CameraTypes.h"
+
+echo Copying PlayerController.h...
+copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\GameFramework\PlayerController.h" "%DEST%\PlayerController.h"
+
+echo Copying LocalPlayer.h...
+copy /Y "%UE_ROOT%\Engine\Source\Runtime\Engine\Classes\Engine\LocalPlayer.h" "%DEST%\LocalPlayer.h"
+
 echo Done. Files in: %DEST%
 pause
