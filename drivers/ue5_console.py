@@ -331,26 +331,36 @@ class UE5ConsoleDriver(CameraDriver):
 
         logger.debug(
             f"[UE5] Pipeline pos=({pose.position[0]:.2f}, {pose.position[1]:.2f}, {pose.position[2]:.2f}) "
-            f"→ UE5 pos=({ue_pos[0]:.2f}, {ue_pos[1]:.2f}, {ue_pos[2]:.2f})"
+            f"-> UE5 pos=({ue_pos[0]:.2f}, {ue_pos[1]:.2f}, {ue_pos[2]:.2f})"
         )
         logger.debug(
             f"[UE5] Pipeline rot=({pose.rotation[0]:.1f}, {pose.rotation[1]:.1f}, {pose.rotation[2]:.1f}) "
-            f"→ UE5 rot=({ue_rot[0]:.1f}, {ue_rot[1]:.1f}, {ue_rot[2]:.1f})"
+            f"-> UE5 rot=({ue_rot[0]:.1f}, {ue_rot[1]:.1f}, {ue_rot[2]:.1f})"
         )
 
-        self.send_command(
-            f"SetViewLocation {ue_pos[0]:.2f} {ue_pos[1]:.2f} {ue_pos[2]:.2f}"
-        )
-        self.send_command(
-            f"SetViewRotation {ue_rot[0]:.2f} {ue_rot[1]:.2f} {ue_rot[2]:.2f}"
-        )
+        fov = pose.fov if pose.fov > 0.0 else 90.0
 
-        if pose.fov != 90.0:
-            self.send_command(f"FOV {pose.fov:.1f}")
+        if self._is_bridge:
+            # Bridge: write directly to APlayerCameraManager::CameraCachePrivate.POV
+            # at 60 Hz. More reliable than console commands -- works without debug camera.
+            self.cam_write(
+                ue_pos[0], ue_pos[1], ue_pos[2],
+                ue_rot[0], ue_rot[1], ue_rot[2],
+                fov,
+            )
+        else:
+            # UUU / fallback: use console commands (debug camera must be active)
+            self.send_command(
+                f"SetViewLocation {ue_pos[0]:.2f} {ue_pos[1]:.2f} {ue_pos[2]:.2f}"
+            )
+            self.send_command(
+                f"SetViewRotation {ue_rot[0]:.2f} {ue_rot[1]:.2f} {ue_rot[2]:.2f}"
+            )
+            if pose.fov != 90.0:
+                self.send_command(f"FOV {pose.fov:.1f}")
 
-        # Wait for UE5 to process camera commands before capture
-        # 0.1s is too short — UE5 needs time to apply view changes
-        settle = max(self.settle_time, 0.3)
+        # Wait for UE5 to process camera change before capture
+        settle = max(self.settle_time, 0.1)
         time.sleep(settle)
 
     def update_streaming(self, pose: CameraPose) -> None:
@@ -441,7 +451,16 @@ class UE5ConsoleDriver(CameraDriver):
     def enable_debug_camera(self) -> None:
         """Toggle the debug camera mode and configure rendering for capture."""
         self.send_command("ToggleDebugCamera")
-        time.sleep(0.5)
+        # Poll until camera FOV is readable (confirms debug camera is active)
+        # rather than a fixed sleep.
+        if self._is_bridge:
+            for _ in range(20):
+                time.sleep(0.05)
+                pos = self.cam_read()
+                if pos["fov"] > 1.0:
+                    break
+        else:
+            time.sleep(0.5)
         self._configure_rendering_for_capture()
 
     def _configure_rendering_for_capture(self) -> None:
@@ -513,3 +532,177 @@ class UE5ConsoleDriver(CameraDriver):
                 self.send_command(cmd)
             except Exception as e:
                 logger.debug(f"[RENDER] Restore '{cmd}' skipped: {e}")
+
+    # ------------------------------------------------------------------
+    # Camera memory control (bridge only)
+    # ------------------------------------------------------------------
+
+    def _send_recv(self, command: str, timeout: float = 3.0) -> str:
+        """Send a bridge command and return the response string."""
+        if not self._socket:
+            raise RuntimeError("Not connected")
+        self._socket.sendall((command + "\n").encode("utf-8"))
+        self._socket.settimeout(timeout)
+        chunks = []
+        try:
+            while True:
+                chunk = self._socket.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                # Bridge replies end with \n; stop once we have at least one line
+                if b"\n" in chunk:
+                    break
+        except socket.timeout:
+            pass
+        return b"".join(chunks).decode("utf-8", errors="replace").strip()
+
+    def cam_find(self) -> bool:
+        """Trigger a camera POV scan (__cam_mem_find).
+
+        Returns True if cam_pov_found=1 in the response.
+        """
+        if not self._is_bridge:
+            return False
+        resp = self._send_recv("__cam_mem_find", timeout=10.0)
+        logger.info(f"[CAM] cam_find: {resp}")
+        return "cam_pov_found=1" in resp
+
+    def cam_read(self) -> dict:
+        """Read current camera position from game memory (__cam_mem_read).
+
+        Returns dict with keys x, y, z, pitch, yaw, roll, fov.
+        All values are 0.0 on failure.
+        """
+        empty = {"x": 0.0, "y": 0.0, "z": 0.0,
+                 "pitch": 0.0, "yaw": 0.0, "roll": 0.0, "fov": 90.0}
+        if not self._is_bridge:
+            return empty
+        resp = self._send_recv("__cam_mem_read")
+        # Response: "x=... y=... z=... pitch=... yaw=... roll=... fov=..."
+        result = dict(empty)
+        for token in resp.split():
+            if "=" in token:
+                k, v = token.split("=", 1)
+                if k in result:
+                    try:
+                        result[k] = float(v)
+                    except ValueError:
+                        pass
+        logger.debug(
+            f"[CAM] read: xyz=({result['x']:.1f},{result['y']:.1f},{result['z']:.1f}) "
+            f"pyr=({result['pitch']:.1f},{result['yaw']:.1f},{result['roll']:.1f}) "
+            f"fov={result['fov']:.1f}"
+        )
+        return result
+
+    def cam_write(self, x: float, y: float, z: float,
+                  pitch: float, yaw: float, roll: float,
+                  fov: float = 90.0) -> bool:
+        """Write camera position directly to game memory (__cam_mem_write).
+
+        Coordinates are in UE5 space (Z-up, centimeters).
+        Returns True on success.
+        """
+        if not self._is_bridge:
+            return False
+        cmd = f"__cam_mem_write {x:.3f} {y:.3f} {z:.3f} {pitch:.3f} {yaw:.3f} {roll:.3f} {fov:.3f}"
+        resp = self._send_recv(cmd)
+        ok = resp.startswith("ok")
+        if not ok:
+            logger.warning(f"[CAM] cam_write failed: {resp}")
+        return ok
+
+    def cam_on(self) -> bool:
+        """Enable the 60 Hz camera memory override tick."""
+        if not self._is_bridge:
+            return False
+        resp = self._send_recv("__cam_mem_on")
+        return resp.startswith("ok")
+
+    def cam_off(self) -> bool:
+        """Disable the 60 Hz camera memory override tick."""
+        if not self._is_bridge:
+            return False
+        resp = self._send_recv("__cam_mem_off")
+        return resp.startswith("ok")
+
+    # ------------------------------------------------------------------
+    # Camera path control (bridge only)
+    # ------------------------------------------------------------------
+
+    def path_clear(self) -> bool:
+        """Clear all keyframes from the camera path."""
+        if not self._is_bridge:
+            return False
+        return self._send_recv("__path_clear").startswith("ok")
+
+    def path_add(self, x: float, y: float, z: float,
+                 pitch: float, yaw: float, roll: float,
+                 fov: float = 90.0, duration: float = 2.0) -> bool:
+        """Add a keyframe to the camera path.
+
+        Args:
+            x, y, z: Position in UE5 space (centimeters, Z-up).
+            pitch, yaw, roll: Rotation in degrees.
+            fov: Horizontal FOV in degrees (default 90).
+            duration: Time in seconds to travel from previous keyframe to this one.
+        """
+        if not self._is_bridge:
+            return False
+        cmd = (f"__path_add {x:.3f} {y:.3f} {z:.3f} "
+               f"{pitch:.3f} {yaw:.3f} {roll:.3f} "
+               f"{fov:.3f} {duration:.3f}")
+        return self._send_recv(cmd).startswith("ok")
+
+    def path_play(self, speed: float = 1.0) -> bool:
+        """Start playing the camera path.
+
+        The 60 Hz tick thread in the bridge will smoothly interpolate
+        (Catmull-Rom + SLERP) through the keyframes and write each
+        interpolated pose directly to camera memory.
+
+        Args:
+            speed: Playback speed multiplier (1.0 = normal speed).
+        """
+        if not self._is_bridge:
+            return False
+        cmd = f"__path_play {speed:.3f}"
+        return self._send_recv(cmd).startswith("ok")
+
+    def path_stop(self) -> bool:
+        """Stop camera path playback."""
+        if not self._is_bridge:
+            return False
+        return self._send_recv("__path_stop").startswith("ok")
+
+    def path_info(self) -> dict:
+        """Return keyframe count, total duration, and playback state."""
+        empty = {"keyframes": 0, "total_duration": 0.0, "playing": False}
+        if not self._is_bridge:
+            return empty
+        resp = self._send_recv("__path_info")
+        result = dict(empty)
+        for token in resp.split():
+            if "=" in token:
+                k, v = token.split("=", 1)
+                if k == "keyframes":
+                    try:
+                        result["keyframes"] = int(v)
+                    except ValueError:
+                        pass
+                elif k == "total_duration":
+                    try:
+                        result["total_duration"] = float(v)
+                    except ValueError:
+                        pass
+                elif k == "playing":
+                    result["playing"] = v == "1"
+        return result
+
+    def path_list(self) -> str:
+        """Return raw keyframe list string from the bridge."""
+        if not self._is_bridge:
+            return ""
+        return self._send_recv("__path_list")
+
