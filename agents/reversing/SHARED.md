@@ -50,6 +50,20 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] d37d007 + 5a050ec -- xiaoni
+- **CRITICAL FIX: FMinimalViewInfo double layout (UE5 LWC)**:
+  UE5 FVector/FRotator are double (8B each), not float. All camera read/write was
+  using wrong offsets and types. Fixed:
+  - CameraMemState: x/y/z/pitch/yaw/roll now double
+  - g_cam_pov_is_lwc flag: set when POV found, used in read/write/scan
+  - find_cam_pov(): tries 3 POV-in-cache offsets (+0x08 LWC, +0x10 SIMD-float, +0x04)
+    with matching FOV offsets (+0x30 LWC, +0x18 float)
+  - find_cam_pov_scan(): split into find_cam_pov_scan_pass(is_lwc).
+    LWC pass (step=8, doubles) tried first; float pass (step=4) as fallback.
+  - read/write_camera_mem(): branch on g_cam_pov_is_lwc
+- **docs/ue_memory_layout.md**: New reference document covering all memory offsets
+  used by bridge DLL across UE4/UE5, with verification status per game.
+
 ### [v0.2.0] 6879265 -- xiaoni
 - **find_cam_pov_scan()**: FField reflection fallback. When CameraCachePrivate is not reflected
   (StackOBot: FField chain ends after 1 prop "PCOwner"), scans manager+0x200..+0x900 in 4-byte
