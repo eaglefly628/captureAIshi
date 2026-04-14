@@ -2117,7 +2117,7 @@ struct CameraMemState {
     float fov;
 };
 static CameraMemState g_cam_override_state = {0,0,0, 0,0,0, 90.0f};
-static std::atomic<bool> g_camera_override{false};
+/* g_camera_override declared at top of file (line ~294) -- single definition */
 
 /*
  * ffield_find_offset() -- walk UClass::ChildProperties FField chain

@@ -8,6 +8,31 @@
 - [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — camera toggle 后改轮询。
 - [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
 
+## [v0.2.0] UUU / UE4SS Camera Research
+
+**UUU (Universal Unreal Engine Unlocker) approach:**
+- AOB scan for GEngine (not GUObjectArray) -- narrower but works
+- PlayerController via GEngine->GameViewport->LocalPlayer->PlayerController chain
+- APlayerCameraManager via PlayerController at a fixed offset (~0x2A8 UE5.x)
+- Free camera: background thread writes Location/Rotation/FOV to CameraCachePrivate.POV at ~60Hz
+- `UpdateCamera(float)` on APlayerCameraManager is NOT a C++ virtual -- CANNOT vtable-hook it
+- UUU's approach is identical to ours (background write). Our GUObjectArray+FName scan is more robust.
+
+**UE4SS community approach:**
+- Lua `RegisterHook("Function /Script/Engine.Actor.CalcCamera", ...)` hooks UFUNCTION (slow, Lua overhead)
+- `RegisterHook` on PlayerTick to set actor location per-tick (BP-level, not as direct as POV write)
+- `PlayerController.PlayerCameraManager` via FField reflection (same as our ffield_find_offset)
+- `ULocalPlayer::GetViewPoint(FMinimalViewInfo&)` IS virtual (UE4SS template line 1226-1227)
+  and is called by renderer before FSceneView construction -- possible hook point (no race condition)
+  but vtable index calculation requires counting full AActor+UPlayer+ULocalPlayer chain (~100+ entries)
+
+**Conclusion: current 60Hz write approach is correct and industry-standard.**
+Race condition fix = use timestop (g_paused) before capture sequence. With game paused,
+UpdateCamera stops running, our write wins trivially. No vtable hook needed for offline capture.
+
+**Compile fix:** duplicate `static std::atomic<bool> g_camera_override` at ue5_engine.h:294 and 2120
+-- removed second declaration (would cause C++ redefinition error).
+
 ## [v0.2.0] Bridge DLL Architecture
 
 Bridge DLL (`3rdparty/bridge/`): TCP 9998, GEngine string-xref scan, Exec() vtable, Camera path (Catmull-Rom + SLERP), timestop, HUD toggle, hotsampling.
@@ -23,6 +48,15 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] (pending push) -- xiaoni
+- **UUU/UE4SS camera research**: confirmed background 60Hz POV write is industry standard (same as UUU).
+  `UpdateCamera` is NOT virtual, vtable hook not applicable. Race condition fix = use timestop.
+- **Fix: duplicate `g_camera_override` declaration** (ue5_engine.h:2120) -- second `static std::atomic<bool>
+  g_camera_override{false}` removed; would cause C++ redefinition error at compile time.
+- **Path + mem integration**: camera path tick now writes directly to `g_cam_override_state` +
+  `write_camera_mem()` when `g_cam_pov_ptr` is available, falling back to console commands otherwise.
+  Camera path no longer requires DebugCamera when direct memory path is active.
 
 ### [v0.2.0] a0fe8c3 -- xiaoni
 - **Direct FMinimalViewInfo camera override** (complete implementation):

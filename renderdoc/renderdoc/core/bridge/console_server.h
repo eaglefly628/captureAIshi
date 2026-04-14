@@ -131,10 +131,25 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
             InterpolatedCamera cam;
             bool still = g_camera_path.tick(dt, cam);
             cam = cs_apply_smoothing(cam);
-            set_camera_location(cam.pos.x, cam.pos.y, cam.pos.z);
-            set_camera_rotation(cam.pitch, cam.yaw, cam.roll);
-            if (cam.fov > 0.0f && cam.fov != g_camera.fov)
-                set_fov(cam.fov);
+            /* Primary: write directly to FMinimalViewInfo if available.
+             * This is what UUU does: background-thread POV override.
+             * No race with UpdateCamera because we write AFTER it. */
+            if (g_cam_pov_ptr) {
+                g_cam_override_state.x     = cam.pos.x;
+                g_cam_override_state.y     = cam.pos.y;
+                g_cam_override_state.z     = cam.pos.z;
+                g_cam_override_state.pitch = cam.pitch;
+                g_cam_override_state.yaw   = cam.yaw;
+                g_cam_override_state.roll  = cam.roll;
+                if (cam.fov > 0.0f) g_cam_override_state.fov = cam.fov;
+                write_camera_mem(g_cam_override_state);
+            } else {
+                /* Fallback: console commands (requires DebugCamera active) */
+                set_camera_location(cam.pos.x, cam.pos.y, cam.pos.z);
+                set_camera_rotation(cam.pitch, cam.yaw, cam.roll);
+                if (cam.fov > 0.0f && cam.fov != g_camera.fov)
+                    set_fov(cam.fov);
+            }
             if (!still)
                 BRIDGE_LOG("Camera path playback ended");
         }
