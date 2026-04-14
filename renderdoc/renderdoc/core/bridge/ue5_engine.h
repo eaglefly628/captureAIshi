@@ -2143,10 +2143,15 @@ static int32_t ffield_find_offset_era(void* child_props_ptr,
                                       int32_t offset_off)
 {
     void* field = child_props_ptr;
+    int walked = 0;
     for (int limit = 1024; field && limit > 0; limit--) {
         uint32_t fname_idx = 0;
         __try { fname_idx = *(uint32_t*)((uint8_t*)field + name_off); }
-        __except(EXCEPTION_EXECUTE_HANDLER) { break; }
+        __except(EXCEPTION_EXECUTE_HANDLER) {
+            bridge_log("  ffield_era(name+0x%X): AV at field=0x%p after %d props",
+                       name_off, field, walked);
+            break;
+        }
 
         if (fname_idx == prop_fname_idx) {
             int32_t off = -1;
@@ -2155,8 +2160,13 @@ static int32_t ffield_find_offset_era(void* child_props_ptr,
             return off;
         }
 
+        walked++;
         uintptr_t next = seh_read_ptr((uint8_t*)field + next_off);
-        if (!next || next == (uintptr_t)field) break;
+        if (!next || next == (uintptr_t)field) {
+            bridge_log("  ffield_era(name+0x%X): chain end after %d props (next=%s)",
+                       name_off, walked, !next ? "null" : "self-loop");
+            break;
+        }
         field = (void*)next;
     }
     return -1;
@@ -2209,6 +2219,9 @@ static int32_t ffield_find_offset(void* uclass_or_ustruct,
     }
     return off;
 }
+
+/* forward declaration: defined after find_cam_pov() */
+static bool find_cam_pov_scan();
 
 /*
  * find_cam_pov() -- locate FMinimalViewInfo inside g_camera_manager_ptr.
@@ -2273,8 +2286,8 @@ static bool find_cam_pov()
 
     if (cc_off < 0) {
         bridge_log("  find_cam_pov: CameraCachePrivate property not found "
-                   "in UClass chain");
-        return false;
+                   "in UClass chain -- trying memory scan fallback");
+        return find_cam_pov_scan();
     }
 
     /* FCameraCacheEntry::POV at +0x10 (float TimeStamp + 12 bytes padding).
@@ -2319,6 +2332,88 @@ static bool find_cam_pov()
     g_cam_pov_ptr = pov_candidate;
     bridge_log("  FMinimalViewInfo confirmed at 0x%p (FOV=%.1f deg)",
                g_cam_pov_ptr, fov_val);
+    return true;
+}
+
+/*
+ * find_cam_pov_scan() -- fallback when FField reflection fails.
+ *
+ * In some UE5 builds CameraCachePrivate is not reflected (no UPROPERTY),
+ * so ffield_find_offset returns -1.  Instead, scan the APlayerCameraManager
+ * object for a 7-float sequence that looks like FMinimalViewInfo:
+ *   +0x00 Location.X  (finite float, any value)
+ *   +0x04 Location.Y
+ *   +0x08 Location.Z
+ *   +0x0C Rotation.Pitch  (in [-90, 90])
+ *   +0x10 Rotation.Yaw    (in [-360, 360])
+ *   +0x14 Rotation.Roll   (in [-360, 360])
+ *   +0x18 FOV             (in [1, 179])
+ *
+ * Scans manager+0x200 .. manager+0x900 in 4-byte steps.
+ * Logs ALL candidates found (for diagnostics).
+ * Picks the first valid candidate that also has a finite Location.
+ */
+static bool find_cam_pov_scan()
+{
+    if (!g_camera_manager_ptr) return false;
+
+    bridge_log("  find_cam_pov_scan: FField failed -- scanning manager "
+               "[+0x200..+0x900] in 4-byte steps");
+
+    uint8_t* mgr = (uint8_t*)g_camera_manager_ptr;
+    const int32_t SCAN_START = 0x200;
+    const int32_t SCAN_END   = 0x900;
+
+    int found_count = 0;
+    uint8_t* best   = nullptr;
+
+    for (int32_t off = SCAN_START; off <= SCAN_END; off += 4) {
+        uint8_t* pov = mgr + off;
+
+        float fov = 0.0f, pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+        __try {
+            x     = *(float*)(pov + 0x00);
+            y     = *(float*)(pov + 0x04);
+            z     = *(float*)(pov + 0x08);
+            pitch = *(float*)(pov + 0x0C);
+            yaw   = *(float*)(pov + 0x10);
+            roll  = *(float*)(pov + 0x14);
+            fov   = *(float*)(pov + 0x18);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        /* FOV check: strict range to avoid false positives */
+        if (fov < 1.0f || fov > 179.0f) continue;
+
+        /* Rotation validity */
+        if (pitch < -91.0f || pitch > 91.0f) continue;
+        if (yaw   < -360.0f || yaw  > 360.0f) continue;
+        if (roll  < -360.0f || roll > 360.0f) continue;
+
+        /* No NaN/Inf anywhere in the 7-float block */
+        if (!isfinite(x) || !isfinite(y) || !isfinite(z)) continue;
+        if (!isfinite(pitch) || !isfinite(yaw) || !isfinite(roll)) continue;
+
+        found_count++;
+        bridge_log("  cam_scan candidate #%d at manager+0x%X: "
+                   "xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f",
+                   found_count, off, x, y, z, pitch, yaw, roll, fov);
+
+        if (!best) best = pov;  /* take first valid candidate */
+    }
+
+    if (!best) {
+        bridge_log("  find_cam_pov_scan: no candidate found -- "
+                   "game may be in loading screen (FOV/Rotation are 0)");
+        return false;
+    }
+
+    g_cam_pov_ptr = best;
+    bridge_log("  FMinimalViewInfo SCAN found at 0x%p (manager+0x%X). "
+               "Run __cam_mem_find again after level loads if wrong.",
+               g_cam_pov_ptr,
+               (int32_t)(g_cam_pov_ptr - (uint8_t*)g_camera_manager_ptr));
     return true;
 }
 
@@ -2521,26 +2616,29 @@ static void validate_engine_viewport_chain()
                (void*)gvc, (void*)gvc_world, g_world_ptr);
 
     if (!g_world_ptr) {
-        /* GVC chain found a world we didn't -- use it */
+        /* GVC chain found a world we didn't -- use it and lock it */
         if (gvc_world >= 0x10000 && gvc_world < 0x800000000000ULL) {
-            bridge_log("  GVC chain: adopting world 0x%p from render path",
+            bridge_log("  GVC chain: adopting world 0x%p from render path (locked)",
                        (void*)gvc_world);
             g_world_ptr = (void*)gvc_world;
+            g_world_from_gua = true;  /* lock: prevent FExec hook spam */
         }
         return;
     }
 
     if (gvc_world == (uintptr_t)g_world_ptr) {
         bridge_log("  GVC chain: World CONFIRMED (render path == g_world_ptr)");
+        g_world_from_gua = true;  /* re-lock each time we confirm */
     } else {
         bridge_log("  GVC chain: World MISMATCH -- render=0x%p stored=0x%p "
                    "(map change? stale pointer?)",
                    (void*)gvc_world, g_world_ptr);
-        /* Prefer the render-path world: it's what's actually being drawn */
+        /* Prefer the render-path world: it's what's actually being drawn.
+         * Set g_world_from_gua=true to prevent FExec sublevel spam. */
         if (gvc_world >= 0x10000 && gvc_world < 0x800000000000ULL) {
-            bridge_log("  GVC chain: updating g_world_ptr -> 0x%p", (void*)gvc_world);
+            bridge_log("  GVC chain: updating g_world_ptr -> 0x%p (locked)", (void*)gvc_world);
             g_world_ptr = (void*)gvc_world;
-            g_world_from_gua = false;
+            g_world_from_gua = true;
         }
     }
 }
