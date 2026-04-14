@@ -51,6 +51,16 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] 738ea13 -- xiaoni
+- **Fix: GVC TObjectPtr encoding** (g_gvc_ptr binary-address P2 bug):
+  `GEngine+0x200` on StackOBot UE5.7 returns `0x7FF3E2BA9DF8` (inside game binary),
+  which is a TObjectPtr-encoded handle, not a heap object pointer.
+  Fix: `validate_engine_viewport_chain()` now checks if GVC is in `[module_base,
+  module_base+size)`. If yes, falls back to `LP+ulp_vc_off` (always raw pointer,
+  confirmed UE4SS layout). LP cross-check will now pass.
+- **k_layout_ue57 pc_pcm range**: updated to 0x388-0x398 (VERIFIED: PC+0x390 from
+  Path D pass-2 run, A==D [XVAL OK]).
+
 ### [v0.2.0] 152fc53 -- xiaoni
 - **Path D: direct ptr scan fallback for UUU cross-validation**:
   `find_camera_manager_uuu_style()` now has two passes:

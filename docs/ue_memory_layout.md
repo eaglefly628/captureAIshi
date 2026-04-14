@@ -134,18 +134,18 @@ Path D (fixed-offset probe) is cross-validation only.
 
 ## 10. Verification Status by Game
 
-| Game | UE Version | LWC | FUObjectItem stride | obj_off | Camera found | GUObjectArray scan | FField | POV scan | Notes |
-|------|------------|-----|---------------------|---------|-------------|--------------------|---------| ---------|-------|
-| StackOBot | UE5.7 Dev | yes | 32 | 0x08 | Path A (FName) | Pat-D (SplitFiction/LEA-RCX) | fails (PCOwner only) | LWC-double, manager+0x360 VERIFIED | cam_pov_direct_off=0x360 confirmed via ToggleDebugCamera; CachEntry+0x358 |
+| Game | UE Version | LWC | FUObjectItem stride | obj_off | Camera found | GUObjectArray scan | FField | POV scan | PC::PCM offset | Notes |
+|------|------------|-----|---------------------|---------|-------------|--------------------|---------| ---------|----------------|-------|
+| StackOBot | UE5.7 Dev | yes | 32 | 0x08 | A(FName)+D(XVAL) | Pat-D (SplitFiction/LEA-RCX) | fails (PCOwner only) | LWC-double, manager+0x360 | PC+0x390 VERIFIED | cam_pov_direct_off=0x360 (ToggleDebugCamera); A==D [XVAL OK] PC+0x390; GEngine+0x200 is TObjectPtr-encoded (use LP+0x78 for GVC) |
 
 *Add rows here as games are validated.*
 
 ---
 
-## 11. UE5.7 Archived Configuration (StackOBot baseline, 2026-04-14)
+## 11. UE5.7 Archived Configuration (StackOBot baseline, 2026-04-14, updated 2026-04-14)
 
 This is the confirmed working configuration for UE5.7 Shipping/Dev builds
-as of bridge commit d37d007. Use as reference when adding new UE5.7 games.
+as of bridge commit 738ea13. Use as reference when adding new UE5.7 games.
 
 ```
 FUObjectArray:
@@ -173,14 +173,18 @@ FMinimalViewInfo layout:
   FOV       at POV+0x30 (float)
 
 UPlayer::PlayerController:  LP+0x30
-ULocalPlayer::ViewportClient: LP+0x78
-UEngine::GameViewport:      GEngine+0x200 (TObjectPtr -- may need decode)
+ULocalPlayer::ViewportClient: LP+0x78 (AUTHORITATIVE -- always raw ptr)
+UEngine::GameViewport:      GEngine+0x200 -- TObjectPtr-ENCODED on UE5.7
+                            (returns 0x7FF... binary-range addr, NOT heap)
+                            USE LP+0x78 instead (bridge now auto-detects)
 UGameViewportClient::World: GVC+0x78
 
 APlayerCameraManager location:
   Path A (GUObjectArray FName scan):  CONFIRMED working
-  Path D (PC fixed-offset probe):     FAILS (PlayerCameraManager not at 0x2A0-0x380)
-  Path B (FField on APlayerController): FAILS (same FField chain truncation)
+  Path D pass-2 (direct ptr scan PC+[0x100..0x800]):
+    CONFIRMED at PC+0x390 -- A==D [XVAL OK]
+    (pass-1 FName probe missed because 0x390 > old range 0x2A0-0x380)
+  Path B (FField on APlayerController): FAILS (FField chain truncation)
 ```
 
 ---
@@ -190,5 +194,6 @@ APlayerCameraManager location:
 - [ ] UE4.27 game -- float layout, stride=24, POV at FCameraCacheEntry+0x10, FOV at +0x18
 - [ ] UE5.0-5.2 -- LWC introduced, FField era 1 (Next=+0x20, Name=+0x28, Offset_Internal=+0x4C)
 - [ ] UE5.3 -- FField era 2 change (Next=+0x18, Name=+0x20, Offset_Internal=+0x44)
-- [ ] UE5.4 -- TObjectPtr encoding in UEngine::GameViewport field
+- [x] UE5.4+ -- TObjectPtr encoding in UEngine::GameViewport field: bridge auto-detects
+      (checks if GVC is in binary range, falls back to LP+0x78 if so)
 - [x] UE5.7 -- StackOBot, archived above
