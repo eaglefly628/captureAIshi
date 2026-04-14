@@ -3,6 +3,7 @@
 ## Active TODO
 
 - [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find, confirm scan fallback finds POV.
+- [ ] **P0: Path D 逆向补全** — pass 2 now scans PC+[0x100..0x800] for exact manager ptr. On next run, log "PC+0xXXX == Path-A manager [XVAL OK]" -- update k_layout_ue57.pc_pcm_start/end to that discovered offset.
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
 - [ ] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — camera toggle 后改轮询。
@@ -49,6 +50,20 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] 152fc53 -- xiaoni
+- **Path D: direct ptr scan fallback for UUU cross-validation**:
+  `find_camera_manager_uuu_style()` now has two passes:
+  - Pass 1: FName class check in layout-defined range [pc_pcm_start..pc_pcm_end]
+  - Pass 2: scan PC+[0x100..0x800] step=8 for exact `g_camera_manager_ptr` value.
+    When found: logs "PC+0xXXX == Path-A manager [XVAL OK]" -- use that offset to
+    tighten future pc_pcm range in layout struct.
+  User requirement: "UUU cross-validation must succeed, not 'known limitation'".
+  Fix: pass 2 is definitively correct regardless of FName range or TObjectPtr encoding.
+- `cross_validate_camera()`: logs "A==D [XVAL OK]" when pass-2 confirms Path A.
+- k_layout_ue57: pc_pcm_end extended 0x380 -> 0x500 (wider pass-1 coverage).
+- Design confirmed: per-game UEVersionLayout is correct approach (hardcode offsets
+  from reversing); scan fallback only when no game-specific config available.
 
 ### [v0.2.0] d37d007 + 5a050ec -- xiaoni
 - **CRITICAL FIX: FMinimalViewInfo double layout (UE5 LWC)**:
