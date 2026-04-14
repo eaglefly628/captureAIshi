@@ -134,18 +134,58 @@ Path D (fixed-offset probe) is cross-validation only.
 
 ## 10. Verification Status by Game
 
-| Game | UE Version | LWC | FUObjectItem stride | Camera found | Notes |
-|------|------------|-----|---------------------|-------------|-------|
-| StackOBot | UE5.7 Dev | yes | 32, obj_off=0x08 | Path A (FName scan) | FField chain ends after PCOwner; scan fallback needed |
+| Game | UE Version | LWC | FUObjectItem stride | obj_off | Camera found | GUObjectArray scan | FField | POV scan | Notes |
+|------|------------|-----|---------------------|---------|-------------|--------------------|---------| ---------|-------|
+| StackOBot | UE5.7 Dev | yes | 32 | 0x08 | Path A (FName) | Pat-D (SplitFiction/LEA-RCX) | fails (PCOwner only) | LWC-double | GVC via LP+0x78; GEngine+0x200 may be TObjectPtr |
 
 *Add rows here as games are validated.*
 
 ---
 
+## 11. UE5.7 Archived Configuration (StackOBot baseline, 2026-04-14)
+
+This is the confirmed working configuration for UE5.7 Shipping/Dev builds
+as of bridge commit d37d007. Use as reference when adding new UE5.7 games.
+
+```
+FUObjectArray:
+  Stride:      32 bytes
+  Object off:  +0x08
+  Scan:        Pat-D (SplitFiction / LEA-RCX xref pattern)
+
+FNamePool:
+  Block search: blocks 0..CurrentBlock (LocalPlayer in block 5+)
+
+FField chain:
+  Era:   UE5.03-5.07  (Next=+0x18, Name=+0x20, Offset_Internal=+0x44)
+  ChildProperties in UStruct: +0x50
+  Status: CameraCachePrivate NOT found in chain (chain ends at PCOwner)
+  Workaround: find_cam_pov_scan_pass(is_lwc=true)
+
+FMinimalViewInfo layout:
+  Type:  LWC double  (g_cam_pov_is_lwc = true)
+  FCameraCacheEntry::POV at +0x08
+  Location  at POV+0x00 (3 x double)
+  Rotation  at POV+0x18 (3 x double)
+  FOV       at POV+0x30 (float)
+
+UPlayer::PlayerController:  LP+0x30
+ULocalPlayer::ViewportClient: LP+0x78
+UEngine::GameViewport:      GEngine+0x200 (TObjectPtr -- may need decode)
+UGameViewportClient::World: GVC+0x78
+
+APlayerCameraManager location:
+  Path A (GUObjectArray FName scan):  CONFIRMED working
+  Path D (PC fixed-offset probe):     CONFIRMED working (cross-validates A)
+  Path B (FField on APlayerController): FAILS (same FField chain issue)
+```
+
+---
+
 ## TODO: Versions to Validate
 
-- [ ] UE4.27 game (float layout, stride=24) -- confirm FCameraCacheEntry POV at +0x10
-- [ ] UE5.0-5.2 (LWC first version, FField era 1)
-- [ ] UE5.3 (FField era 2 change)
-- [ ] UE5.4 (TObjectPtr encoding in GVC field)
-- [ ] UE5.7 (StackOBot) -- IN PROGRESS
+- [ ] UE4.27 game -- float layout, stride=24, POV at FCameraCacheEntry+0x10, FOV at +0x18
+- [ ] UE5.0-5.2 -- LWC introduced, FField era 1 (Next=+0x20, Name=+0x28, Offset_Internal=+0x4C)
+- [ ] UE5.3 -- FField era 2 change (Next=+0x18, Name=+0x20, Offset_Internal=+0x44)
+- [ ] UE5.4 -- TObjectPtr encoding in UEngine::GameViewport field
+- [x] UE5.7 -- StackOBot, archived above
