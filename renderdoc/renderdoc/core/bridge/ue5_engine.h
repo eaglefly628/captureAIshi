@@ -189,7 +189,8 @@ struct UEVersionLayout {
     int  pc_pcm_step;            /* probe step (always 8) */
 };
 
-/* UE5.7 -- CONFIRMED StackOBot UE5.7 Dev (stride=32, LWC doubles) */
+/* UE5.7 -- CONFIRMED StackOBot UE5.7 Dev (stride=32, LWC doubles)
+ * CameraCachePrivate at manager+0x358 (POV=manager+0x360, scan-confirmed) */
 static const UEVersionLayout k_layout_ue57 = {
     "UE5.7",
     32,   0x08,                          /* FUObjectItem stride=32, obj at +0x08 */
@@ -2483,7 +2484,8 @@ static bool find_cam_pov_scan_pass(bool is_lwc)
     const int32_t step       = is_lwc ? 8 : 4;
 
     int found_count = 0;
-    uint8_t* best   = nullptr;
+    uint8_t* best_nz = nullptr;  /* first candidate with real (non-zero) xyz */
+    uint8_t* best_z  = nullptr;  /* first candidate with any valid xyz */
 
     for (int32_t off = SCAN_START; off <= SCAN_END; off += step) {
         uint8_t* pov = mgr + off;
@@ -2520,25 +2522,40 @@ static bool find_cam_pov_scan_pass(bool is_lwc)
             pitch = fp; yaw = fy2; roll = fr;
         }
 
-        if (fov < 1.0f || fov > 179.0f) continue;
-        if (pitch < -91.0 || pitch > 91.0) continue;
-        if (yaw   < -360.0 || yaw  > 360.0) continue;
-        if (roll  < -360.0 || roll > 360.0) continue;
+        /* Strict validation: reject NaN/Inf in all fields */
+        if (!isfinite(fov)   || fov < 1.0f || fov > 179.0f) continue;
+        if (!isfinite(pitch) || pitch < -91.0 || pitch > 91.0) continue;
+        if (!isfinite(yaw)   || yaw  < -360.0 || yaw  > 360.0) continue;
+        if (!isfinite(roll)  || roll < -360.0 || roll > 360.0) continue;
         if (!isfinite(px) || !isfinite(py) || !isfinite(pz)) continue;
-        if (!isfinite(pitch) || !isfinite(yaw) || !isfinite(roll)) continue;
+
+        /* Prefer candidates with real (non-zero) world position.
+         * Zero-xyz candidates are likely uninitialized cache entries or
+         * default-constructed structs that accidentally pass float checks. */
+        bool has_real_pos = (fabs(px) > 1.0 || fabs(py) > 1.0 || fabs(pz) > 1.0);
 
         found_count++;
         bridge_log("  cam_scan(%s) #%d at manager+0x%X: "
-                   "xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f",
+                   "xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f%s",
                    is_lwc ? "LWC" : "float",
                    found_count, off,
                    (float)px, (float)py, (float)pz,
-                   (float)pitch, (float)yaw, (float)roll, fov);
+                   (float)pitch, (float)yaw, (float)roll, fov,
+                   has_real_pos ? " <-- REAL POS" : "");
 
-        if (!best) best = pov;
+        if (has_real_pos && !best_nz) best_nz = pov;   /* first with real position */
+        if (!best_z) best_z = pov;                     /* first valid (any position) */
     }
 
+    uint8_t* best = best_nz ? best_nz : best_z;
     if (!best) return false;
+
+    if (best_nz)
+        bridge_log("  cam_scan: selected non-zero-pos candidate (manager+0x%X)",
+                   (int32_t)(best - (uint8_t*)g_camera_manager_ptr));
+    else
+        bridge_log("  cam_scan: no real-pos candidate; using first valid (manager+0x%X)",
+                   (int32_t)(best - (uint8_t*)g_camera_manager_ptr));
 
     g_cam_pov_ptr    = best;
     g_cam_pov_is_lwc = is_lwc;
@@ -3403,7 +3420,9 @@ static bool exec_console_command_internal(const char* cmd)
     if (!call_ok && world) {
         bridge_log("  RETRY: GEngine crashed (world=0x%p stale?), retrying null", world);
         g_world_ptr = nullptr;
-        g_world_from_gua = false;
+        /* Keep g_world_from_gua=true: do NOT unlock the FExec hook here.
+         * Unlocking causes sublevel worlds to flood g_world_ptr.
+         * GVC chain re-check on next __bridge_rescan will re-acquire. */
         world = nullptr;
         call_ok = seh_call_fexec(exec_fn, this_fexec,
                                   nullptr, wcmd.data(), ar, &cmd_ret);
