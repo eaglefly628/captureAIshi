@@ -693,7 +693,7 @@ class UE5ConsoleDriver(CameraDriver):
                         pass
                 elif k == "total_duration":
                     try:
-                        result["total_duration"] = float(v)
+                        result["total_duration"] = float(v.rstrip("s"))
                     except ValueError:
                         pass
                 elif k == "playing":

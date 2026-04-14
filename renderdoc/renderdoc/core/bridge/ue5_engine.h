@@ -3112,9 +3112,15 @@ static void cross_validate_camera()
 
     /* Agreement checks */
     if (cam_d && g_camera_manager_ptr && cam_d == g_camera_manager_ptr) {
-        /* Path D pass-2 direct scan confirmed Path A -- this is the key validation */
-        bridge_log("  camera cross-val: A==D -- Path-A FName result confirmed by "
-                   "Path-D direct ptr scan 0x%p  [XVAL OK]", cam_d);
+        bridge_log("  camera cross-val: A==D -- FName result confirmed by "
+                   "PC direct-ref scan 0x%p  [XVAL OK]", cam_d);
+    } else if (cam_d && g_camera_manager_ptr && cam_d != g_camera_manager_ptr) {
+        bridge_log("  camera cross-val: A!=D WARNING -- "
+                   "FName picked 0x%p but PC+0x%X refs 0x%p  "
+                   "(multiple PCM instances; D is authoritative)",
+                   g_camera_manager_ptr,
+                   g_ue_layout->pc_pcm_start,   /* printed as hint only */
+                   cam_d);
     }
     if (cam_d && cam_b && cam_d != cam_b) {
         bridge_log("  camera cross-val: B!=D -- FField and UUU-probe disagree "
@@ -3124,11 +3130,18 @@ static void cross_validate_camera()
                    cam_b);
     }
 
-    /* Priority for g_camera_manager_ptr: B > A > D */
+    /*
+     * Priority for g_camera_manager_ptr: B > D > A
+     *
+     * Path D (PC direct-ref) is preferred over Path A (last-non-CDO heuristic)
+     * when they disagree.  PC+offset is authoritative: it is the manager the
+     * PlayerController actually calls UpdateCamera() on.  Path A's "last non-CDO"
+     * heuristic fails when multiple PCM instances exist (e.g. after seamless
+     * travel: old PCM lingers, new PCM at higher GUA index gets selected).
+     */
     if (!cam_b && !g_camera_manager_ptr) {
         if (cam_d) {
-            bridge_log("  camera cross-val: A+B failed, using D(UUU-probe)=0x%p "
-                       "(fallback only)", cam_d);
+            bridge_log("  camera cross-val: A+B failed, using D(PC-ref)=0x%p", cam_d);
             g_camera_manager_ptr = cam_d;
         } else {
             bridge_log("  camera cross-val: ALL paths failed -- no camera control");
@@ -3143,24 +3156,34 @@ static void cross_validate_camera()
         return;
     }
 
-    if (g_camera_manager_ptr && !cam_b) {
-        bridge_log("  camera cross-val: B(FField) failed, keeping A(FName)=0x%p",
-                   g_camera_manager_ptr);
+    if (cam_b) {
+        /* B is authoritative when available */
+        if (cam_b != g_camera_manager_ptr) {
+            bridge_log("  camera cross-val: A!=B -- using B(FField)=0x%p "
+                       "(overrides FName heuristic)", cam_b);
+            g_camera_manager_ptr = cam_b;
+            g_cam_pov_ptr = nullptr;
+        } else {
+            bridge_log("  camera cross-val: CONFIRMED -- A==B==0x%p%s",
+                       g_camera_manager_ptr,
+                       (cam_d == cam_b) ? " (D also agrees)" : "");
+        }
         return;
     }
 
-    /* Both A and B found */
-    if (cam_b == g_camera_manager_ptr) {
-        bridge_log("  camera cross-val: CONFIRMED -- A==B==0x%p%s",
-                   g_camera_manager_ptr,
-                   (cam_d == cam_b) ? " (D also agrees)" : "");
-    } else {
-        bridge_log("  camera cross-val: A!=B MISMATCH: "
-                   "A(FName)=0x%p  B(FField)=0x%p  -- preferring B (game-agnostic)",
-                   g_camera_manager_ptr, cam_b);
-        g_camera_manager_ptr = cam_b;
-        g_cam_pov_ptr = nullptr; /* invalidate: camera manager changed */
+    /* B failed; A found something. Prefer D over A when they disagree. */
+    if (cam_d && cam_d != g_camera_manager_ptr) {
+        bridge_log("  camera cross-val: A!=D (no B) -- "
+                   "switching to D(PC-ref)=0x%p (was A=%0xp)",
+                   cam_d, g_camera_manager_ptr);
+        g_camera_manager_ptr = cam_d;
+        g_cam_pov_ptr = nullptr; /* invalidate: manager changed */
+        return;
     }
+
+    bridge_log("  camera cross-val: B failed, keeping A(FName)=0x%p%s",
+               g_camera_manager_ptr,
+               (!cam_d) ? " (D also failed)" : " (A==D)");
 }
 
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
