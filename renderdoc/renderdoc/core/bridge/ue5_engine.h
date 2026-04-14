@@ -2167,17 +2167,46 @@ static int32_t ffield_find_offset(void* uclass_or_ustruct,
 {
     /* UStruct::ChildProperties is at +0x50 (UE4SS PDB verified, UE5.00-5.07) */
     uintptr_t child_props = seh_read_ptr((uint8_t*)uclass_or_ustruct + 0x50);
-    if (!child_props || child_props < 0x10000) return -1;
+    if (!child_props || child_props < 0x10000) {
+        bridge_log("  ffield: class=0x%p ChildProperties@+0x50=null/invalid",
+                   uclass_or_ustruct);
+        return -1;
+    }
+
+    /* Log first property to diagnose FField era misdetection */
+    uint32_t first_fname_5x = 0, first_fname_4x = 0;
+    __try { first_fname_5x = *(uint32_t*)((uint8_t*)child_props + 0x20); } /* UE5.03+ name */
+    __except(EXCEPTION_EXECUTE_HANDLER) {}
+    __try { first_fname_4x = *(uint32_t*)((uint8_t*)child_props + 0x28); } /* UE5.00-5.02 name */
+    __except(EXCEPTION_EXECUTE_HANDLER) {}
+    char n5[32]={0}, n4[32]={0};
+    resolve_fname(first_fname_5x, n5, sizeof(n5));
+    resolve_fname(first_fname_4x, n4, sizeof(n4));
+    bridge_log("  ffield: class=0x%p children=0x%llX "
+               "first_prop_5x='%s'(0x%X) first_prop_4x='%s'(0x%X)",
+               uclass_or_ustruct, (unsigned long long)child_props,
+               n5, first_fname_5x, n4, first_fname_4x);
+
     void* fp = (void*)child_props;
 
     /* Try UE5.03+ layout first (most common current target) */
     int32_t off = ffield_find_offset_era(fp, prop_fname_idx,
                                          0x18, 0x20, 0x44);
-    if (off >= 0) return off;
+    if (off >= 0) {
+        bridge_log("  ffield: found at 0x%X via UE5.03+ era (next=0x18,name=0x20,off=0x44)",
+                   off);
+        return off;
+    }
 
     /* Fall back to UE5.00-5.02 layout */
     off = ffield_find_offset_era(fp, prop_fname_idx,
                                   0x20, 0x28, 0x4C);
+    if (off >= 0) {
+        bridge_log("  ffield: found at 0x%X via UE5.00-02 era (next=0x20,name=0x28,off=0x4C)",
+                   off);
+    } else {
+        bridge_log("  ffield: property 0x%X not found in either FField era", prop_fname_idx);
+    }
     return off;
 }
 
@@ -2199,8 +2228,17 @@ static bool find_cam_pov()
     /* Get UClass of the camera manager */
     void* uclass = (void*)seh_read_ptr((uint8_t*)g_camera_manager_ptr + 0x10);
     if (!uclass || (uintptr_t)uclass < 0x10000) {
-        bridge_log("  find_cam_pov: invalid UClass pointer");
+        bridge_log("  find_cam_pov: invalid UClass pointer at mgr+0x10");
         return false;
+    }
+    {
+        char cls_name[64] = {0};
+        uint32_t cls_fname = 0;
+        __try { cls_fname = *(uint32_t*)((uint8_t*)uclass + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+        resolve_fname(cls_fname, cls_name, sizeof(cls_name));
+        bridge_log("  find_cam_pov: manager=0x%p class=0x%p('%s')",
+                   g_camera_manager_ptr, uclass, cls_name);
     }
 
     /* Resolve FName for the property we're searching */
@@ -2216,16 +2254,21 @@ static bool find_cam_pov()
     void* cls = uclass;
     char cls_name[64];
     for (int depth = 0; cls && depth < 16 && cc_off < 0; depth++) {
+        resolve_fname(*(uint32_t*)((uint8_t*)cls + 0x18), cls_name, sizeof(cls_name));
+        bridge_log("  find_cam_pov: [depth %d] searching class '%s'(0x%p)",
+                   depth, cls_name, cls);
         cc_off = ffield_find_offset(cls, cc_fname);
         if (cc_off >= 0) {
-            resolve_fname(*(uint32_t*)((uint8_t*)cls + 0x18), cls_name, sizeof(cls_name));
             bridge_log("  find_cam_pov: CameraCachePrivate at offset 0x%X "
-                       "(found in class '%s')",
-                       cc_off, cls_name);
+                       "(found in class '%s', depth=%d)",
+                       cc_off, cls_name, depth);
             break;
         }
         cls = (void*)seh_read_ptr((uint8_t*)cls + 0x40); /* SuperStruct */
-        if ((uintptr_t)cls < 0x10000) break;
+        if ((uintptr_t)cls < 0x10000) {
+            bridge_log("  find_cam_pov: SuperStruct chain ended at depth %d", depth);
+            break;
+        }
     }
 
     if (cc_off < 0) {
@@ -3059,6 +3102,8 @@ static bool exec_console_command(const char* cmd)
  */
 static bool exec_console_command_internal(const char* cmd)
 {
+    bridge_log("EXEC: '%s'  (engine=0x%p world=0x%p lp=0x%p)",
+               cmd, g_engine_ptr, g_world_ptr, g_localplayer_ptr);
     if (!g_fexec_exec) {
         bridge_log("  [SKIP] FExec::Exec not available");
         return false;

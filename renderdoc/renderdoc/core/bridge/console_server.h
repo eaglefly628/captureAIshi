@@ -196,6 +196,10 @@ static int cs_parse_floats(const char* str, float* out, int max_count) {
 
 static bool cs_route_command(SOCKET client, const std::string& cmd)
 {
+    /* Log every command except high-frequency polling */
+    if (cmd != "__bridge_ping" && cmd != "__bridge_status")
+        BRIDGE_LOG("CMD>> %s", cmd.c_str());
+
     if (cmd == "__bridge_ping") { cs_reply(client, "pong\n"); return true; }
 
     if (cmd == "__bridge_status") {
@@ -315,11 +319,16 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 
     /* Find FMinimalViewInfo pointer on demand (e.g. after map load) */
     if (cmd == "__cam_mem_find") {
+        BRIDGE_LOG("=== __cam_mem_find: starting full camera scan ===");
+        BRIDGE_LOG("  LP=0x%p  World=0x%p  GEngine=0x%p",
+                   g_localplayer_ptr, g_world_ptr, g_engine_ptr);
         g_cam_pov_ptr = nullptr;          /* force re-scan */
         g_camera_manager_ptr = nullptr;   /* re-run all paths */
         find_camera_manager();            /* Path A: FName scan */
-        cross_validate_camera();          /* Paths B+C: LP chain + render */
+        cross_validate_camera();          /* Paths B+C+D: LP chain + render + UUU probe */
         bool ok = find_cam_pov();
+        BRIDGE_LOG("=== __cam_mem_find done: mgr=0x%p pov=0x%p ok=%d ===",
+                   g_camera_manager_ptr, g_cam_pov_ptr, (int)ok);
         char buf[128];
         if (ok)
             snprintf(buf, sizeof(buf), "ok pov=0x%p\n", g_cam_pov_ptr);
@@ -338,6 +347,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         }
         CameraMemState st;
         if (read_camera_mem(st)) {
+            BRIDGE_LOG("  cam_read: xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f",
+                       st.x, st.y, st.z, st.pitch, st.yaw, st.roll, st.fov);
             char buf[192];
             snprintf(buf, sizeof(buf),
                      "x=%.4f y=%.4f z=%.4f "
@@ -382,6 +393,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         g_cam_override_state = st;
         g_camera_override = true;
         bool ok = write_camera_mem(st);
+        BRIDGE_LOG("  cam_write: xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f -> %s",
+                   st.x, st.y, st.z, st.pitch, st.yaw, st.roll, st.fov,
+                   ok ? "ok" : "FAILED");
         cs_reply(client, ok ? "ok\n" : "error: write_failed\n");
         return true;
     }
@@ -748,14 +762,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
      * Path C: GEngine+0x200 -> GameViewport -> World (render path sanity).
      *
      * cross_validate_camera() runs all three and picks the best result. */
+    BRIDGE_LOG("--- Step 8: APlayerCameraManager (4-path cross-validation) ---");
     find_camera_manager(); /* Path A: GUObjectArray FName scan */
-    cross_validate_camera(); /* Paths B+C: LP chain + GVC render validation */
+    cross_validate_camera(); /* Paths B+C+D: LP chain + GVC render + UUU-probe */
     if (g_camera_manager_ptr)
-        BRIDGE_LOG("[8/9] APlayerCameraManager: 0x%p (cross-validated)",
+        BRIDGE_LOG("[8/9] APlayerCameraManager: 0x%p (cross-validated A/B/C/D)",
                    g_camera_manager_ptr);
     else
         BRIDGE_LOG("[8/9] APlayerCameraManager: not found -- "
-                   "direct camera override unavailable");
+                   "direct camera override unavailable (try __cam_mem_find after level load)");
 
     /* === Step 10: FMinimalViewInfo pointer via UClass property reflection ===
      * find_cam_pov() walks UClass::ChildProperties to get CameraCachePrivate
