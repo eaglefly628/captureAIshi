@@ -258,7 +258,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         g_cam_pov_ptr = nullptr;
         find_uworld_via_guobjectarray();
         find_localplayer();
-        find_camera_manager();
+        find_camera_manager();   /* Path A: GUObjectArray FName scan */
+        cross_validate_camera(); /* Paths B+C: LP chain + render viewport */
         find_cam_pov();
         char rbuf[448];
         snprintf(rbuf, sizeof(rbuf),
@@ -300,10 +301,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     /* Find FMinimalViewInfo pointer on demand (e.g. after map load) */
     if (cmd == "__cam_mem_find") {
         g_cam_pov_ptr = nullptr;          /* force re-scan */
-        if (!g_camera_manager_ptr) {
-            g_camera_manager_ptr = nullptr;
-            find_camera_manager();
-        }
+        g_camera_manager_ptr = nullptr;   /* re-run all paths */
+        find_camera_manager();            /* Path A: FName scan */
+        cross_validate_camera();          /* Paths B+C: LP chain + render */
         bool ok = find_cam_pov();
         char buf[128];
         if (ok)
@@ -724,13 +724,22 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
     else
         BRIDGE_LOG("[7/7] ULocalPlayer: not found -- gameplay cmds (slomo, camera) will fail");
 
-    /* === Step 9: APlayerCameraManager via GUObjectArray + FName ===
-     * Used for direct FMinimalViewInfo memory write (camera override).
-     * Depends on GUObjectArray and FNamePool being ready. */
-    if (find_camera_manager())
-        BRIDGE_LOG("[8/8] APlayerCameraManager: 0x%p", g_camera_manager_ptr);
+    /* === Step 9: APlayerCameraManager (two paths + cross-validation) ===
+     *
+     * Path A: GUObjectArray FName scan for "PlayerCameraManager" /
+     *         "BP_PlayerCameraManager_C" (may miss game-specific subclasses).
+     * Path B: ULocalPlayer+0x30 -> APlayerController -> FField reflection
+     *         for "PlayerCameraManager" property (game-agnostic).
+     * Path C: GEngine+0x200 -> GameViewport -> World (render path sanity).
+     *
+     * cross_validate_camera() runs all three and picks the best result. */
+    find_camera_manager(); /* Path A: GUObjectArray FName scan */
+    cross_validate_camera(); /* Paths B+C: LP chain + GVC render validation */
+    if (g_camera_manager_ptr)
+        BRIDGE_LOG("[8/9] APlayerCameraManager: 0x%p (cross-validated)",
+                   g_camera_manager_ptr);
     else
-        BRIDGE_LOG("[8/8] APlayerCameraManager: not found -- "
+        BRIDGE_LOG("[8/9] APlayerCameraManager: not found -- "
                    "direct camera override unavailable");
 
     /* === Step 10: FMinimalViewInfo pointer via UClass property reflection ===

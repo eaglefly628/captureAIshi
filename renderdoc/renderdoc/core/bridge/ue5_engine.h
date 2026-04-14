@@ -2325,6 +2325,224 @@ static bool write_camera_mem(const CameraMemState& s)
     }
 }
 
+/* ---- Camera cross-validation: LP chain + GEngine render path ------- *
+ *
+ * Strategy (user design):
+ *   Path A -- GUObjectArray FName scan:
+ *     Scan for class FName "PlayerCameraManager" / "BP_PlayerCameraManager_C".
+ *     Problem: BP subclass name varies per game.
+ *
+ *   Path B -- LocalPlayer -> PlayerController pointer walk:
+ *     g_localplayer_ptr + 0x30 -> APlayerController*
+ *     FField reflection on PC's UClass -> PlayerCameraManager field offset
+ *     Read APlayerCameraManager* from that offset.
+ *     Advantage: game-agnostic, works with any PC/PCM subclass name.
+ *
+ *   Path C -- GEngine render viewport sanity check:
+ *     GEngine (UGameEngine) + 0x200 -> UGameViewportClient* (stable UE5)
+ *     UGameViewportClient + 0x78 -> UWorld*
+ *     Compare with g_world_ptr to confirm GEngine is correct.
+ *
+ * Cross-validation rule:
+ *   Both A and B found, same address -> CONFIRMED, high confidence.
+ *   Only B found (LP chain) -> use B; A scan found wrong object (wrong FName).
+ *   Only A found -> keep A, log warning.
+ *   Neither -> no camera control.
+ *
+ * UPlayer::PlayerController offset derivation (UE4SS PDB, all UE5):
+ *   UObjectBase: 0x28 bytes
+ *   FExec secondary vptr: +0x28 (= g_fexec_offset, 8 bytes)
+ *   PlayerController (TObjectPtr<APlayerController>): +0x30
+ *   CurrentNetSpeed: +0x38  <- first listed field in UE4SS template
+ *
+ * UEngine::GameViewport (UGameViewportClient*): +0x200 (stable UE5.00-5.07)
+ * UGameViewportClient::World (UWorld*): +0x78 (stable UE5.00-5.07)
+ */
+#define UPLAYER_PC_OFFSET   0x30  /* APlayerController* */
+#define UENGINE_GVC_OFFSET  0x200 /* UGameViewportClient* */
+#define GVC_WORLD_OFFSET    0x78  /* UWorld* inside GameViewportClient */
+
+/*
+ * get_playercontroller() -- read APlayerController* from ULocalPlayer.
+ * UPlayer::PlayerController is at +0x30 (stable across all UE5).
+ * Returns nullptr if ULocalPlayer not found or pointer invalid.
+ */
+static void* get_playercontroller()
+{
+    if (!g_localplayer_ptr) return nullptr;
+    uintptr_t pc = seh_read_ptr((uint8_t*)g_localplayer_ptr + UPLAYER_PC_OFFSET);
+    if (pc < 0x10000 || pc >= 0x800000000000ULL) return nullptr;
+    return (void*)pc;
+}
+
+/*
+ * find_camera_manager_via_lp() -- walk LocalPlayer -> PlayerController
+ * -> FField reflection to find PlayerCameraManager.
+ *
+ * This is game-agnostic: it uses the actual APlayerController* in memory
+ * (not FName scan), so it works regardless of subclass name.
+ */
+static void* find_camera_manager_via_lp()
+{
+    void* pc = get_playercontroller();
+    if (!pc) {
+        bridge_log("  cam_via_lp: PlayerController not found (LP+0x30 null)");
+        return nullptr;
+    }
+
+    char pc_name[128] = {0}, pc_cls[128] = {0};
+    read_obj_names(pc, pc_name, sizeof(pc_name), pc_cls, sizeof(pc_cls));
+    bridge_log("  cam_via_lp: PlayerController=0x%p name='%s' class='%s'",
+               pc, pc_name, pc_cls);
+
+    /* Resolve FName for PlayerCameraManager property */
+    uint32_t pcm_fname = get_fname_cmpidx_for("PlayerCameraManager");
+    if (pcm_fname == 0xFFFFFFFF) {
+        bridge_log("  cam_via_lp: FName('PlayerCameraManager') not in pool");
+        return nullptr;
+    }
+
+    /* FField reflection: walk APlayerController UClass + SuperStruct chain */
+    uintptr_t pc_class = seh_read_ptr((uint8_t*)pc + 0x10);
+    if (pc_class < 0x10000) {
+        bridge_log("  cam_via_lp: invalid PC UClass");
+        return nullptr;
+    }
+
+    int32_t pcm_off = -1;
+    void* cls = (void*)pc_class;
+    char cls_name[64] = {0};
+    for (int depth = 0; cls && depth < 20 && pcm_off < 0; depth++) {
+        pcm_off = ffield_find_offset(cls, pcm_fname);
+        if (pcm_off >= 0) {
+            resolve_fname(*(uint32_t*)((uint8_t*)cls + 0x18), cls_name, sizeof(cls_name));
+            bridge_log("  cam_via_lp: PlayerCameraManager at PC+0x%X "
+                       "(found in class '%s', depth=%d)",
+                       pcm_off, cls_name, depth);
+            break;
+        }
+        cls = (void*)seh_read_ptr((uint8_t*)cls + 0x40); /* SuperStruct */
+        if ((uintptr_t)cls < 0x10000) break;
+    }
+
+    if (pcm_off < 0) {
+        bridge_log("  cam_via_lp: PlayerCameraManager property not found "
+                   "in APlayerController UClass chain");
+        return nullptr;
+    }
+
+    uintptr_t pcm = seh_read_ptr((uint8_t*)pc + pcm_off);
+    if (pcm < 0x10000 || pcm >= 0x800000000000ULL) {
+        bridge_log("  cam_via_lp: PCM pointer null/invalid at PC+0x%X", pcm_off);
+        return nullptr;
+    }
+
+    char pcm_name[128] = {0}, pcm_cls[128] = {0};
+    read_obj_names((void*)pcm, pcm_name, sizeof(pcm_name),
+                   pcm_cls, sizeof(pcm_cls));
+    bridge_log("  cam_via_lp: APlayerCameraManager=0x%p name='%s' class='%s'",
+               (void*)pcm, pcm_name, pcm_cls);
+    return (void*)pcm;
+}
+
+/*
+ * validate_engine_viewport_chain() -- sanity check via render path.
+ *
+ * Reads GEngine -> GameViewport -> World and compares with g_world_ptr.
+ * If they match, GEngine pointer is confirmed correct.
+ * If they differ, log a warning (GEngine may point to wrong object or
+ * g_world_ptr may be stale after a map change).
+ */
+static void validate_engine_viewport_chain()
+{
+    if (!g_engine_ptr) return;
+
+    uintptr_t gvc = seh_read_ptr((uint8_t*)g_engine_ptr + UENGINE_GVC_OFFSET);
+    if (gvc < 0x10000) {
+        bridge_log("  GVC chain: GameViewport null at GEngine+0x%X",
+                   UENGINE_GVC_OFFSET);
+        return;
+    }
+
+    uintptr_t gvc_world = seh_read_ptr((void*)(gvc + GVC_WORLD_OFFSET));
+    bridge_log("  GVC chain: GameViewport=0x%p  GVC->World=0x%p  "
+               "g_world_ptr=0x%p",
+               (void*)gvc, (void*)gvc_world, g_world_ptr);
+
+    if (!g_world_ptr) {
+        /* GVC chain found a world we didn't -- use it */
+        if (gvc_world >= 0x10000 && gvc_world < 0x800000000000ULL) {
+            bridge_log("  GVC chain: adopting world 0x%p from render path",
+                       (void*)gvc_world);
+            g_world_ptr = (void*)gvc_world;
+        }
+        return;
+    }
+
+    if (gvc_world == (uintptr_t)g_world_ptr) {
+        bridge_log("  GVC chain: World CONFIRMED (render path == g_world_ptr)");
+    } else {
+        bridge_log("  GVC chain: World MISMATCH -- render=0x%p stored=0x%p "
+                   "(map change? stale pointer?)",
+                   (void*)gvc_world, g_world_ptr);
+        /* Prefer the render-path world: it's what's actually being drawn */
+        if (gvc_world >= 0x10000 && gvc_world < 0x800000000000ULL) {
+            bridge_log("  GVC chain: updating g_world_ptr -> 0x%p", (void*)gvc_world);
+            g_world_ptr = (void*)gvc_world;
+            g_world_from_gua = false;
+        }
+    }
+}
+
+/*
+ * cross_validate_camera() -- run both paths and pick best result.
+ *
+ * Called after find_camera_manager() (Path A, GUObjectArray FName scan)
+ * and find_localplayer() are complete.
+ *
+ * Runs Path B (LP chain) and compares with g_camera_manager_ptr.
+ * Also runs Path C (GEngine render viewport) for world sanity.
+ */
+static void cross_validate_camera()
+{
+    /* Path C: render viewport world sanity check */
+    validate_engine_viewport_chain();
+
+    /* Path B: LP -> PC -> CameraManager pointer walk */
+    void* cam_lp = find_camera_manager_via_lp();
+
+    if (!cam_lp && !g_camera_manager_ptr) {
+        bridge_log("  camera cross-val: BOTH paths failed -- no camera control");
+        return;
+    }
+
+    if (!g_camera_manager_ptr && cam_lp) {
+        bridge_log("  camera cross-val: only LP chain found 0x%p "
+                   "(FName scan missed BP subclass) -- using LP result", cam_lp);
+        g_camera_manager_ptr = cam_lp;
+        return;
+    }
+
+    if (g_camera_manager_ptr && !cam_lp) {
+        bridge_log("  camera cross-val: only FName scan found 0x%p "
+                   "(LP chain failed) -- keeping scan result", g_camera_manager_ptr);
+        return;
+    }
+
+    /* Both found */
+    if (cam_lp == g_camera_manager_ptr) {
+        bridge_log("  camera cross-val: CONFIRMED -- both paths agree "
+                   "on 0x%p", g_camera_manager_ptr);
+    } else {
+        bridge_log("  camera cross-val: MISMATCH! "
+                   "FName-scan=0x%p  LP-chain=0x%p  "
+                   "-- preferring LP chain (game-agnostic)",
+                   g_camera_manager_ptr, cam_lp);
+        g_camera_manager_ptr = cam_lp;
+        g_cam_pov_ptr = nullptr; /* invalidate: camera manager changed */
+    }
+}
+
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
 
 /*
