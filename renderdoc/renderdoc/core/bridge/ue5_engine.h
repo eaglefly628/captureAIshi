@@ -196,9 +196,9 @@ struct UEVersionLayout {
 };
 
 /* UE5.7 -- CONFIRMED StackOBot UE5.7 Dev (stride=32, LWC doubles)
- * cam_pov_direct_off=0: not yet verified. Scan found manager+0x360
- * as the best heuristic candidate but it is UNCONFIRMED. Use FField+scan
- * until verified via __cam_mem_write test or debugger. */
+ * cam_pov_direct_off=0x360: VERIFIED via ToggleDebugCamera -- camera
+ * position at manager+0x360 matched in-game view (xyz=9450,-14230,1216 fov=90).
+ * CameraCachePrivate at manager+0x358 (POV = CachEntry+0x08 = manager+0x360). */
 static const UEVersionLayout k_layout_ue57 = {
     "UE5.7",
     32,   0x08,                          /* FUObjectItem stride=32, obj at +0x08 */
@@ -209,7 +209,7 @@ static const UEVersionLayout k_layout_ue57 = {
     0x00,  0x08,  0x10,                  /* Location doubles */
     0x18,  0x20,  0x28,                  /* Rotation doubles */
     0x30,                                /* FOV float */
-    0,                                   /* cam_pov_direct_off: unverified, use scan */
+    0x360,                               /* cam_pov_direct_off: VERIFIED StackOBot */
     0x2A0, 0x380, 8,                     /* PCM probe range */
 };
 

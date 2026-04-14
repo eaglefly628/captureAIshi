@@ -136,7 +136,7 @@ Path D (fixed-offset probe) is cross-validation only.
 
 | Game | UE Version | LWC | FUObjectItem stride | obj_off | Camera found | GUObjectArray scan | FField | POV scan | Notes |
 |------|------------|-----|---------------------|---------|-------------|--------------------|---------| ---------|-------|
-| StackOBot | UE5.7 Dev | yes | 32 | 0x08 | Path A (FName) | Pat-D (SplitFiction/LEA-RCX) | fails (PCOwner only) | LWC-double | GVC via LP+0x78; GEngine+0x200 may be TObjectPtr |
+| StackOBot | UE5.7 Dev | yes | 32 | 0x08 | Path A (FName) | Pat-D (SplitFiction/LEA-RCX) | fails (PCOwner only) | LWC-double, manager+0x360 VERIFIED | cam_pov_direct_off=0x360 confirmed via ToggleDebugCamera; CachEntry+0x358 |
 
 *Add rows here as games are validated.*
 
@@ -160,11 +160,14 @@ FField chain:
   Era:   UE5.03-5.07  (Next=+0x18, Name=+0x20, Offset_Internal=+0x44)
   ChildProperties in UStruct: +0x50
   Status: CameraCachePrivate NOT found in chain (chain ends at PCOwner)
-  Workaround: find_cam_pov_scan_pass(is_lwc=true)
+  Workaround: cam_pov_direct_off (verified) or find_cam_pov_scan_pass(is_lwc=true)
 
 FMinimalViewInfo layout:
-  Type:  LWC double  (g_cam_pov_is_lwc = true)
-  FCameraCacheEntry::POV at +0x08
+  Type:     LWC double  (g_cam_pov_is_lwc = true)
+  Direct:   manager+0x360  *** VERIFIED via ToggleDebugCamera ***
+            (matched xyz=9450,-14230,1216 fov=90 with in-game view)
+  CameraCachePrivate offset: manager+0x358
+  FCameraCacheEntry::POV at CachEntry+0x08 = manager+0x360
   Location  at POV+0x00 (3 x double)
   Rotation  at POV+0x18 (3 x double)
   FOV       at POV+0x30 (float)
@@ -176,8 +179,8 @@ UGameViewportClient::World: GVC+0x78
 
 APlayerCameraManager location:
   Path A (GUObjectArray FName scan):  CONFIRMED working
-  Path D (PC fixed-offset probe):     CONFIRMED working (cross-validates A)
-  Path B (FField on APlayerController): FAILS (same FField chain issue)
+  Path D (PC fixed-offset probe):     FAILS (PlayerCameraManager not at 0x2A0-0x380)
+  Path B (FField on APlayerController): FAILS (same FField chain truncation)
 ```
 
 ---
