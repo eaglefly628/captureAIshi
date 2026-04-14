@@ -24,6 +24,30 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] a0fe8c3 -- xiaoni
+- **Direct FMinimalViewInfo camera override** (complete implementation):
+  - `find_cam_pov()`: walks `UClass::ChildProperties` (FField linked list) at runtime
+    to find `CameraCachePrivate` offset; no PDB, no hardcoded per-game offsets.
+  - Handles two UE5 FField eras (UE4SS PDB verified):
+    UE5.00-5.02 (Next=+0x20, Name=+0x28, Offset_Internal=+0x4C);
+    UE5.03-5.07 (Next=+0x18, Name=+0x20, Offset_Internal=+0x44).
+    Key fix: `UStruct::ChildProperties` = **+0x50** (not +0x40 which is SuperStruct).
+  - FCameraCacheEntry::POV at +0x10 (float TimeStamp + 12-byte SIMD pad),
+    with +0x04 fallback for non-SIMD builds; validated by reading FOV in [1,179].
+  - FMinimalViewInfo: Location+0x00, Rotation+0x0C, FOV+0x18 (stable across UE5).
+  - Tick thread (60 Hz) writes `g_cam_override_state` to fight game's per-frame update.
+- **New TCP commands**: `__cam_mem_find`, `__cam_mem_read`,
+  `__cam_mem_write X Y Z P Y R [FOV]`, `__cam_mem_on`, `__cam_mem_off`.
+- **find_camera_manager()**: scans GUObjectArray for class FName
+  "PlayerCameraManager" or "BP_PlayerCameraManager_C"; skips CDOs; prefers
+  candidate whose OuterPrivate class is "PlayerController".
+- **__bridge_status** extended: `camera_manager_ptr`, `cam_pov_ptr`,
+  `camera_manager_found`, `cam_pov_found`, `cam_override`.
+- **__bridge_rescan_objects** now resets and re-finds camera_manager + cam_pov.
+- **Startup sequence** extended to 10 steps: step 9=CameraManager, step 10=POV.
+- **Python/UI**: `scan_status()`, `rescan_objects()` return `camera_manager_found/ptr`;
+  Web UI debug panel shows "CameraMgr:" badge alongside UWorld/LP.
+
 ### [v0.2.0] 373cf2b -- xiaoni
 - **Toolbar '重新扫描 UE' button**: visible at all times, colored dot (gray/green/orange/red),
   opens debug panel + triggers rescan in one click. No longer buried in debug panel.
