@@ -196,8 +196,9 @@ struct UEVersionLayout {
 };
 
 /* UE5.7 -- CONFIRMED StackOBot UE5.7 Dev (stride=32, LWC doubles)
- * CameraCachePrivate at manager+0x358, FMinimalViewInfo POV at manager+0x360.
- * cam_pov_direct_off=0x360 skips FField reflection + scan entirely. */
+ * cam_pov_direct_off=0: not yet verified. Scan found manager+0x360
+ * as the best heuristic candidate but it is UNCONFIRMED. Use FField+scan
+ * until verified via __cam_mem_write test or debugger. */
 static const UEVersionLayout k_layout_ue57 = {
     "UE5.7",
     32,   0x08,                          /* FUObjectItem stride=32, obj at +0x08 */
@@ -208,7 +209,7 @@ static const UEVersionLayout k_layout_ue57 = {
     0x00,  0x08,  0x10,                  /* Location doubles */
     0x18,  0x20,  0x28,                  /* Rotation doubles */
     0x30,                                /* FOV float */
-    0x360,                               /* cam_pov_direct_off: confirmed StackOBot */
+    0,                                   /* cam_pov_direct_off: unverified, use scan */
     0x2A0, 0x380, 8,                     /* PCM probe range */
 };
 
