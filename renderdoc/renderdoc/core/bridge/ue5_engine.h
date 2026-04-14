@@ -146,6 +146,108 @@ static uintptr_t   g_fexec_offset = 0;  /* byte offset in GEngine */
 #define FUOBJECTARRAY_CHUNK_SHIFT 16   /* NumElementsPerChunk = 64K = 1<<16 */
 #define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
 
+/* ============================================================
+ * UEVersionLayout -- per-engine-version memory offset table.
+ *
+ * Add a new entry when a game is confirmed on a different UE version.
+ * Set g_ue_layout = &k_layout_XXX at startup (or auto-detect).
+ * See docs/ue_memory_layout.md for details and verification status.
+ * ============================================================ */
+struct UEVersionLayout {
+    const char* name;
+
+    /* FUObjectItem */
+    int  fuobjectitem_stride;    /* 24=Shipping, 32=Dev/WithVerseVM */
+    int  fuobjectitem_obj_off;   /* offset of UObjectBase* inside item */
+
+    /* FField chain (UStruct::ChildProperties walk) */
+    int  ffield_next_off;        /* FField::Next pointer */
+    int  ffield_name_off;        /* FField::NamePrivate (FName ComparisonIndex) */
+    int  fprop_offset_off;       /* FProperty::Offset_Internal */
+    int  ustruct_childprops_off; /* UStruct::ChildProperties -- 0x50 all known UE5 */
+    int  ustruct_super_off;      /* UStruct::SuperStruct      -- 0x40 all known UE5 */
+
+    /* UPlayer / ULocalPlayer chain */
+    int  uplayer_pc_off;         /* UPlayer::PlayerController (APlayerController*) */
+    int  ulp_vc_off;             /* ULocalPlayer::ViewportClient (UGameViewportClient*) */
+
+    /* UEngine / UGameViewportClient */
+    int  uengine_gvc_off;        /* UEngine::GameViewport */
+    int  ugvc_world_off;         /* UGameViewportClient::World */
+
+    /* FMinimalViewInfo inside FCameraCacheEntry */
+    bool fmvi_is_lwc;            /* true=double (UE5 LWC), false=float (UE4/non-LWC) */
+    int  fcce_pov_off;           /* FCameraCacheEntry::POV offset */
+    /* Offsets relative to start of FMinimalViewInfo: */
+    int  fmvi_loc_x, fmvi_loc_y, fmvi_loc_z;    /* Location */
+    int  fmvi_pitch, fmvi_yaw,   fmvi_roll;      /* Rotation */
+    int  fmvi_fov;                               /* FOV (always float) */
+
+    /* APlayerController -> APlayerCameraManager UUU-style probe */
+    int  pc_pcm_start;           /* probe range start */
+    int  pc_pcm_end;             /* probe range end */
+    int  pc_pcm_step;            /* probe step (always 8) */
+};
+
+/* UE5.7 -- CONFIRMED StackOBot UE5.7 Dev (stride=32, LWC doubles) */
+static const UEVersionLayout k_layout_ue57 = {
+    "UE5.7",
+    32,   0x08,                          /* FUObjectItem stride=32, obj at +0x08 */
+    0x18, 0x20, 0x44, 0x50, 0x40,       /* FField era2 */
+    0x30, 0x78,                          /* UPlayer chain */
+    0x200, 0x78,                         /* UEngine/GVC */
+    true,  0x08,                         /* LWC double, POV at FCCEntry+0x08 */
+    0x00,  0x08,  0x10,                  /* Location doubles */
+    0x18,  0x20,  0x28,                  /* Rotation doubles */
+    0x30,                                /* FOV float */
+    0x2A0, 0x380, 8,                     /* PCM probe range */
+};
+
+/* UE5.3-5.6 -- INFERRED (FField era2, LWC, shipping stride=24) */
+static const UEVersionLayout k_layout_ue53 = {
+    "UE5.3-5.6",
+    24,   0x00,
+    0x18, 0x20, 0x44, 0x50, 0x40,
+    0x30, 0x78,
+    0x200, 0x78,
+    true,  0x08,
+    0x00,  0x08,  0x10,
+    0x18,  0x20,  0x28,
+    0x30,
+    0x2A0, 0x360, 8,
+};
+
+/* UE5.0-5.2 -- INFERRED (FField era1 introduced with LWC) */
+static const UEVersionLayout k_layout_ue50 = {
+    "UE5.0-5.2",
+    24,   0x00,
+    0x20, 0x28, 0x4C, 0x50, 0x40,       /* FField era1 */
+    0x30, 0x78,
+    0x200, 0x78,
+    true,  0x08,
+    0x00,  0x08,  0x10,
+    0x18,  0x20,  0x28,
+    0x30,
+    0x2A0, 0x340, 8,
+};
+
+/* UE4.27 -- INFERRED (float layout, FField era1) */
+static const UEVersionLayout k_layout_ue427 = {
+    "UE4.27",
+    24,   0x00,
+    0x20, 0x28, 0x4C, 0x50, 0x40,
+    0x30, 0x78,
+    0x200, 0x78,
+    false, 0x10,                         /* float, POV at FCCEntry+0x10 (SIMD) */
+    0x00,  0x04,  0x08,                  /* Location floats */
+    0x0C,  0x10,  0x14,                  /* Rotation floats */
+    0x18,                                /* FOV */
+    0x2A0, 0x2C0, 8,
+};
+
+/* Active layout -- default UE5.7; override at startup for other games */
+static const UEVersionLayout* g_ue_layout = &k_layout_ue57;
+
 /*
  * FUObjectItem size depends on BUILD CONFIG, NOT engine version:
  *   0x18 (24B) -- Standard Shipping: Object*(8)+Flags(4)+ClusterRoot(4)+Serial(4)+Pad(4)
@@ -2186,8 +2288,8 @@ static int32_t ffield_find_offset_era(void* child_props_ptr,
 static int32_t ffield_find_offset(void* uclass_or_ustruct,
                                   uint32_t prop_fname_idx)
 {
-    /* UStruct::ChildProperties is at +0x50 (UE4SS PDB verified, UE5.00-5.07) */
-    uintptr_t child_props = seh_read_ptr((uint8_t*)uclass_or_ustruct + 0x50);
+    /* UStruct::ChildProperties -- offset from layout (0x50 all known UE5/UE4.27) */
+    uintptr_t child_props = seh_read_ptr((uint8_t*)uclass_or_ustruct + g_ue_layout->ustruct_childprops_off);
     if (!child_props || child_props < 0x10000) {
         bridge_log("  ffield: class=0x%p ChildProperties@+0x50=null/invalid",
                    uclass_or_ustruct);
@@ -2210,21 +2312,30 @@ static int32_t ffield_find_offset(void* uclass_or_ustruct,
 
     void* fp = (void*)child_props;
 
-    /* Try UE5.03+ layout first (most common current target) */
+    /* Try layout-specified FField era first */
     int32_t off = ffield_find_offset_era(fp, prop_fname_idx,
-                                         0x18, 0x20, 0x44);
+                                         g_ue_layout->ffield_next_off,
+                                         g_ue_layout->ffield_name_off,
+                                         g_ue_layout->fprop_offset_off);
     if (off >= 0) {
-        bridge_log("  ffield: found at 0x%X via UE5.03+ era (next=0x18,name=0x20,off=0x44)",
-                   off);
+        bridge_log("  ffield: found at 0x%X via %s era (next=0x%X,name=0x%X,off=0x%X)",
+                   off, g_ue_layout->name,
+                   g_ue_layout->ffield_next_off,
+                   g_ue_layout->ffield_name_off,
+                   g_ue_layout->fprop_offset_off);
         return off;
     }
 
-    /* Fall back to UE5.00-5.02 layout */
-    off = ffield_find_offset_era(fp, prop_fname_idx,
-                                  0x20, 0x28, 0x4C);
+    /* Fall back to the other era (for games that don't match the layout exactly) */
+    bool primary_is_era2 = (g_ue_layout->ffield_next_off == 0x18);
+    int alt_next = primary_is_era2 ? 0x20 : 0x18;
+    int alt_name = primary_is_era2 ? 0x28 : 0x20;
+    int alt_off  = primary_is_era2 ? 0x4C : 0x44;
+    off = ffield_find_offset_era(fp, prop_fname_idx, alt_next, alt_name, alt_off);
     if (off >= 0) {
-        bridge_log("  ffield: found at 0x%X via UE5.00-02 era (next=0x20,name=0x28,off=0x4C)",
-                   off);
+        bridge_log("  ffield: found at 0x%X via alt era (next=0x%X,name=0x%X,off=0x%X) "
+                   "-- layout mismatch?",
+                   off, alt_next, alt_name, alt_off);
     } else {
         bridge_log("  ffield: property 0x%X not found in either FField era", prop_fname_idx);
     }
@@ -2288,7 +2399,7 @@ static bool find_cam_pov()
                        cc_off, cls_name, depth);
             break;
         }
-        cls = (void*)seh_read_ptr((uint8_t*)cls + 0x40); /* SuperStruct */
+        cls = (void*)seh_read_ptr((uint8_t*)cls + g_ue_layout->ustruct_super_off); /* SuperStruct */
         if ((uintptr_t)cls < 0x10000) {
             bridge_log("  find_cam_pov: SuperStruct chain ended at depth %d", depth);
             break;
@@ -2301,18 +2412,20 @@ static bool find_cam_pov()
         return find_cam_pov_scan();
     }
 
-    /* Try three POV-in-cache offsets with the corresponding FOV offset:
-     *   +0x08 LWC doubles (UE5.0+): FOV at POV+0x30
-     *   +0x10 SIMD float  (UE4/early UE5): FOV at POV+0x18
-     *   +0x04 non-SIMD float: FOV at POV+0x18
-     */
+    /* Try POV-in-cache offsets. Layout provides the primary; two hardcoded
+     * fallbacks cover the other known layout variants. */
     struct { int32_t pov_in_cache; int32_t fov_in_pov; bool is_lwc; } trials[] = {
-        { 0x08, 0x30, true  },   /* UE5 LWC doubles */
-        { 0x10, 0x18, false },   /* UE5 SIMD float  */
-        { 0x04, 0x18, false },   /* non-SIMD float  */
+        { g_ue_layout->fcce_pov_off, g_ue_layout->fmvi_fov, g_ue_layout->fmvi_is_lwc },
+        { 0x08, 0x30, true  },   /* LWC double fallback */
+        { 0x10, 0x18, false },   /* SIMD float fallback */
+        { 0x04, 0x18, false },   /* non-SIMD float fallback */
     };
+    /* deduplicate: skip trial[0] copy if it matches trial[1] or [2] */
+    int num_trials = 4;
 
-    for (int t = 0; t < 3; t++) {
+    for (int t = 0; t < num_trials; t++) {
+        /* skip duplicate of trial[0] in trials[1..3] */
+        if (t > 0 && trials[t].pov_in_cache == trials[0].pov_in_cache) continue;
         int32_t pov_off = cc_off + trials[t].pov_in_cache;
         uint8_t* pov_candidate = (uint8_t*)g_camera_manager_ptr + pov_off;
         float fov_val = 0.0f;
@@ -2460,23 +2573,21 @@ static bool read_camera_mem(CameraMemState& out)
     if (!g_cam_pov_ptr) return false;
     __try {
         if (g_cam_pov_is_lwc) {
-            /* UE5 LWC: Location+Rotation are double, FOV float at +0x30 */
-            out.x     = *(double*)(g_cam_pov_ptr + 0x00);
-            out.y     = *(double*)(g_cam_pov_ptr + 0x08);
-            out.z     = *(double*)(g_cam_pov_ptr + 0x10);
-            out.pitch = *(double*)(g_cam_pov_ptr + 0x18);
-            out.yaw   = *(double*)(g_cam_pov_ptr + 0x20);
-            out.roll  = *(double*)(g_cam_pov_ptr + 0x28);
-            out.fov   = *(float* )(g_cam_pov_ptr + 0x30);
+            out.x     = *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_x);
+            out.y     = *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_y);
+            out.z     = *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_z);
+            out.pitch = *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_pitch);
+            out.yaw   = *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_yaw);
+            out.roll  = *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_roll);
+            out.fov   = *(float* )(g_cam_pov_ptr + g_ue_layout->fmvi_fov);
         } else {
-            /* UE4 / non-LWC: all floats, FOV at +0x18 */
-            out.x     = *(float*)(g_cam_pov_ptr + 0x00);
-            out.y     = *(float*)(g_cam_pov_ptr + 0x04);
-            out.z     = *(float*)(g_cam_pov_ptr + 0x08);
-            out.pitch = *(float*)(g_cam_pov_ptr + 0x0C);
-            out.yaw   = *(float*)(g_cam_pov_ptr + 0x10);
-            out.roll  = *(float*)(g_cam_pov_ptr + 0x14);
-            out.fov   = *(float*)(g_cam_pov_ptr + 0x18);
+            out.x     = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_x);
+            out.y     = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_y);
+            out.z     = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_z);
+            out.pitch = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_pitch);
+            out.yaw   = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_yaw);
+            out.roll  = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_roll);
+            out.fov   = *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_fov);
         }
         return true;
     }
@@ -2496,23 +2607,21 @@ static bool write_camera_mem(const CameraMemState& s)
     if (!g_cam_pov_ptr) return false;
     __try {
         if (g_cam_pov_is_lwc) {
-            /* UE5 LWC: Location+Rotation are double, FOV float at +0x30 */
-            *(double*)(g_cam_pov_ptr + 0x00) = s.x;
-            *(double*)(g_cam_pov_ptr + 0x08) = s.y;
-            *(double*)(g_cam_pov_ptr + 0x10) = s.z;
-            *(double*)(g_cam_pov_ptr + 0x18) = s.pitch;
-            *(double*)(g_cam_pov_ptr + 0x20) = s.yaw;
-            *(double*)(g_cam_pov_ptr + 0x28) = s.roll;
-            *(float* )(g_cam_pov_ptr + 0x30) = s.fov;
+            *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_x) = s.x;
+            *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_y) = s.y;
+            *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_z) = s.z;
+            *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_pitch) = s.pitch;
+            *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_yaw)   = s.yaw;
+            *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_roll)  = s.roll;
+            *(float* )(g_cam_pov_ptr + g_ue_layout->fmvi_fov)   = s.fov;
         } else {
-            /* UE4 / non-LWC: all floats, FOV at +0x18 */
-            *(float*)(g_cam_pov_ptr + 0x00) = (float)s.x;
-            *(float*)(g_cam_pov_ptr + 0x04) = (float)s.y;
-            *(float*)(g_cam_pov_ptr + 0x08) = (float)s.z;
-            *(float*)(g_cam_pov_ptr + 0x0C) = (float)s.pitch;
-            *(float*)(g_cam_pov_ptr + 0x10) = (float)s.yaw;
-            *(float*)(g_cam_pov_ptr + 0x14) = (float)s.roll;
-            *(float*)(g_cam_pov_ptr + 0x18) = s.fov;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_x) = (float)s.x;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_y) = (float)s.y;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_z) = (float)s.z;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_pitch) = (float)s.pitch;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_yaw)   = (float)s.yaw;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_roll)  = (float)s.roll;
+            *(float*)(g_cam_pov_ptr + g_ue_layout->fmvi_fov)   = s.fov;
         }
         return true;
     }
@@ -2557,12 +2666,9 @@ static bool write_camera_mem(const CameraMemState& s)
  * UEngine::GameViewport (UGameViewportClient*): +0x200 (stable UE5.00-5.07)
  * UGameViewportClient::World (UWorld*): +0x78 (stable UE5.00-5.07)
  */
-#define UPLAYER_PC_OFFSET   0x30  /* APlayerController* */
-#define UENGINE_GVC_OFFSET  0x200 /* UGameViewportClient* */
-#define GVC_WORLD_OFFSET    0x78  /* UWorld* inside GameViewportClient */
-/* ULocalPlayer::ViewportClient = +0x78 (UE4SS MemberVarLayout_5_07 confirmed).
- * DISTINCT from GVC_WORLD_OFFSET: this is LP->GVC, not GVC->World. */
-#define ULP_VC_OFFSET       0x78  /* UGameViewportClient* inside ULocalPlayer */
+/* All chain offsets now come from g_ue_layout (see UEVersionLayout above).
+ * Use g_ue_layout->uplayer_pc_off, ->uengine_gvc_off, ->ugvc_world_off,
+ * ->ulp_vc_off instead of the old #defines. */
 
 /* Saved GVC pointer (set by validate_engine_viewport_chain, reused by
  * cross_validate_camera LP cross-check). */
@@ -2576,7 +2682,7 @@ static uintptr_t g_gvc_ptr = 0;
 static void* get_playercontroller()
 {
     if (!g_localplayer_ptr) return nullptr;
-    uintptr_t pc = seh_read_ptr((uint8_t*)g_localplayer_ptr + UPLAYER_PC_OFFSET);
+    uintptr_t pc = seh_read_ptr((uint8_t*)g_localplayer_ptr + g_ue_layout->uplayer_pc_off);
     if (pc < 0x10000 || pc >= 0x800000000000ULL) return nullptr;
     return (void*)pc;
 }
@@ -2627,7 +2733,7 @@ static void* find_camera_manager_via_lp()
                        pcm_off, cls_name, depth);
             break;
         }
-        cls = (void*)seh_read_ptr((uint8_t*)cls + 0x40); /* SuperStruct */
+        cls = (void*)seh_read_ptr((uint8_t*)cls + g_ue_layout->ustruct_super_off); /* SuperStruct */
         if ((uintptr_t)cls < 0x10000) break;
     }
 
@@ -2663,15 +2769,15 @@ static void validate_engine_viewport_chain()
 {
     if (!g_engine_ptr) return;
 
-    uintptr_t gvc = seh_read_ptr((uint8_t*)g_engine_ptr + UENGINE_GVC_OFFSET);
+    uintptr_t gvc = seh_read_ptr((uint8_t*)g_engine_ptr + g_ue_layout->uengine_gvc_off);
     if (gvc < 0x10000) {
         bridge_log("  GVC chain: GameViewport null at GEngine+0x%X",
-                   UENGINE_GVC_OFFSET);
+                   g_ue_layout->uengine_gvc_off);
         return;
     }
     g_gvc_ptr = gvc;  /* save for LP cross-check in cross_validate_camera */
 
-    uintptr_t gvc_world = seh_read_ptr((void*)(gvc + GVC_WORLD_OFFSET));
+    uintptr_t gvc_world = seh_read_ptr((void*)(gvc + g_ue_layout->ugvc_world_off));
     bridge_log("  GVC chain: GameViewport=0x%p  GVC->World=0x%p  "
                "g_world_ptr=0x%p",
                (void*)gvc, (void*)gvc_world, g_world_ptr);
@@ -2715,7 +2821,7 @@ static bool verify_lp_via_gvc()
 {
     if (!g_localplayer_ptr || !g_gvc_ptr) return false;
 
-    uintptr_t lp_gvc = seh_read_ptr((uint8_t*)g_localplayer_ptr + ULP_VC_OFFSET);
+    uintptr_t lp_gvc = seh_read_ptr((uint8_t*)g_localplayer_ptr + g_ue_layout->ulp_vc_off);
     if (lp_gvc == g_gvc_ptr) {
         bridge_log("  LP cross-check: LP+0x78->GVC=0x%p == g_gvc_ptr CONFIRMED",
                    (void*)lp_gvc);
@@ -2756,18 +2862,17 @@ static void* find_camera_manager_uuu_style()
         return nullptr;
     }
 
-    /* Probe range: 0x2A0 to 0x380 in 8-byte steps */
-    static const int32_t PROBE_OFFS[] = {
-        0x2A0, 0x2A8, 0x2B0, 0x2C0, 0x2D0, 0x2E0,
-        0x2F0, 0x300, 0x310, 0x320, 0x330, 0x340,
-        0x350, 0x360, 0x370, 0x380
-    };
-    static const int NUM_PROBES = 16;
+    /* Probe range from layout: pc_pcm_start..pc_pcm_end, step pc_pcm_step */
+    bridge_log("  cam_uuu_probe: PC=0x%p range [0x%X..0x%X] step=%d (%s)",
+               pc, g_ue_layout->pc_pcm_start, g_ue_layout->pc_pcm_end,
+               g_ue_layout->pc_pcm_step, g_ue_layout->name);
 
     void* best = nullptr;
-    for (int i = 0; i < NUM_PROBES; i++) {
+    for (int32_t probe = g_ue_layout->pc_pcm_start;
+         probe <= g_ue_layout->pc_pcm_end;
+         probe += g_ue_layout->pc_pcm_step) {
         uintptr_t candidate = 0;
-        __try { candidate = *(uintptr_t*)((uint8_t*)pc + PROBE_OFFS[i]); }
+        __try { candidate = *(uintptr_t*)((uint8_t*)pc + probe); }
         __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
 
         if (candidate < 0x10000 || candidate >= 0x800000000000ULL) continue;
@@ -2795,7 +2900,7 @@ static void* find_camera_manager_uuu_style()
         bool looks_like_cam = (strstr(cls_name, "Camera") != nullptr ||
                                strstr(cls_name, "camera") != nullptr);
         bridge_log("  cam_uuu_probe: PC+0x%X=0x%p class='%s'%s",
-                   PROBE_OFFS[i], (void*)candidate, cls_name,
+                   probe, (void*)candidate, cls_name,
                    looks_like_cam ? " <-- CAMERA" : "");
 
         if (looks_like_cam && !best) {
@@ -2804,7 +2909,8 @@ static void* find_camera_manager_uuu_style()
     }
 
     if (!best)
-        bridge_log("  cam_uuu_probe: no camera-class pointer found in PC[0x2A0..0x380]");
+        bridge_log("  cam_uuu_probe: no camera-class pointer found in PC[0x%X..0x%X]",
+                   g_ue_layout->pc_pcm_start, g_ue_layout->pc_pcm_end);
     return best;
 }
 
