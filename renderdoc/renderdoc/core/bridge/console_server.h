@@ -176,14 +176,15 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     if (cmd == "__bridge_ping") { cs_reply(client, "pong\n"); return true; }
 
     if (cmd == "__bridge_status") {
-        char buf[768];
+        char buf[896];
         snprintf(buf, sizeof(buf),
             "engine_found=%d engine_ptr=0x%p "
             "fexec_exec=0x%p fexec_offset=%d "
             "fexec_hooks=%d "
             "guobjectarray_found=%d guobjectarray=0x%p "
             "world_ptr=0x%p localplayer_ptr=0x%p "
-            "uworld_found=%d localplayer_found=%d "
+            "camera_manager_ptr=0x%p "
+            "uworld_found=%d localplayer_found=%d camera_manager_found=%d "
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
@@ -194,7 +195,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             g_fexec_hook_count,
             (int)g_guobjectarray_found.load(), g_guobjectarray,
             g_world_ptr, g_localplayer_ptr,
+            g_camera_manager_ptr,
             g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
+            g_camera_manager_ptr ? 1 : 0,
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
@@ -240,14 +243,17 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         g_world_ptr = nullptr;
         g_world_from_gua = false;
         g_localplayer_ptr = nullptr;
+        g_camera_manager_ptr = nullptr;
         find_uworld_via_guobjectarray();
         find_localplayer();
-        char rbuf[256];
+        find_camera_manager();
+        char rbuf[320];
         snprintf(rbuf, sizeof(rbuf),
-                 "uworld_found=%d localplayer_found=%d "
-                 "world_ptr=0x%p localplayer_ptr=0x%p\n",
+                 "uworld_found=%d localplayer_found=%d camera_manager_found=%d "
+                 "world_ptr=0x%p localplayer_ptr=0x%p camera_manager_ptr=0x%p\n",
                  g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
-                 g_world_ptr, g_localplayer_ptr);
+                 g_camera_manager_ptr ? 1 : 0,
+                 g_world_ptr, g_localplayer_ptr, g_camera_manager_ptr);
         cs_reply(client, rbuf);
         return true;
     }
@@ -608,6 +614,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
         BRIDGE_LOG("[7/7] ULocalPlayer: 0x%p", g_localplayer_ptr);
     else
         BRIDGE_LOG("[7/7] ULocalPlayer: not found -- gameplay cmds (slomo, camera) will fail");
+
+    /* === Step 9: APlayerCameraManager via GUObjectArray + FName ===
+     * Used for direct FMinimalViewInfo memory write (camera override).
+     * Depends on GUObjectArray and FNamePool being ready. */
+    if (find_camera_manager())
+        BRIDGE_LOG("[8/8] APlayerCameraManager: 0x%p", g_camera_manager_ptr);
+    else
+        BRIDGE_LOG("[8/8] APlayerCameraManager: not found -- "
+                   "direct camera override unavailable");
 
     /* === Game-thread dispatch ===
      * UE5 requires console commands on the game thread.

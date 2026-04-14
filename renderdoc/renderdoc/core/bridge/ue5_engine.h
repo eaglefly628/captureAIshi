@@ -1889,6 +1889,181 @@ static bool find_localplayer()
     return true;
 }
 
+/* ---- APlayerCameraManager via GUObjectArray + FName ---------------- */
+
+/* APlayerCameraManager pointer. Set by find_camera_manager().
+ * Used for direct FMinimalViewInfo memory write (camera override). */
+static void* g_camera_manager_ptr = nullptr;
+
+/*
+ * find_camera_manager() -- scan GUObjectArray for an object whose class
+ * FName matches "PlayerCameraManager" or "BP_PlayerCameraManager_C".
+ *
+ * Layout used:
+ *   UObjectBase+0x08: ObjectFlags  (skip CDO if flag 0x10 set)
+ *   UObjectBase+0x10: ClassPrivate
+ *   ClassPrivate+0x18: ComparisonIndex (class FName)
+ *   UObjectBase+0x20: OuterPrivate (owner APlayerController)
+ *
+ * Selection: prefer candidates whose OuterPrivate's class FName
+ * contains "PlayerController".  Fall back to last non-CDO if none.
+ */
+static bool find_camera_manager()
+{
+    if (g_camera_manager_ptr) return true;
+    if (!g_guobjectarray_found) return false;
+
+    /* Build a list of candidate class FName indices to match against.
+     * Stock UE5 class is "PlayerCameraManager".
+     * Blueprint subclass is "BP_PlayerCameraManager_C" (common override). */
+    const char* class_names[] = {
+        "PlayerCameraManager",
+        "BP_PlayerCameraManager_C",
+        nullptr
+    };
+
+    uint32_t pcm_idx[2] = { 0xFFFFFFFF, 0xFFFFFFFF };
+    int n_pcm = 0;
+    for (int ni = 0; class_names[ni]; ni++) {
+        uint32_t idx = get_fname_cmpidx_for(class_names[ni]);
+        if (idx != 0xFFFFFFFF) {
+            pcm_idx[n_pcm++] = idx;
+            bridge_log("  find_camera_manager: FName('%s')=0x%X (block=%d word=0x%X)",
+                       class_names[ni], idx, idx >> 16, idx & 0xFFFF);
+        } else {
+            bridge_log("  find_camera_manager: FName('%s') not in pool",
+                       class_names[ni]);
+        }
+    }
+
+    if (n_pcm == 0) {
+        bridge_log("  find_camera_manager: no matching FName found -- "
+                   "camera manager cannot be located via GUA scan");
+        return false;
+    }
+
+    /* Look up "PlayerController" FName for outer validation. */
+    uint32_t pc_idx = get_fname_cmpidx_for("PlayerController");
+    bridge_log("  find_camera_manager: FName('PlayerController')=0x%X", pc_idx);
+
+    struct PCMCandidate {
+        int32_t index; void* obj;
+        uint32_t flags; bool outer_is_pc;
+        char class_name[64];
+    };
+    PCMCandidate candidates[8];
+    int n_candidates = 0;
+    int cdo_skipped = 0;
+
+    int32_t num_elems = guobjectarray_num_elements();
+    for (int32_t i = 0; i < num_elems; i++) {
+        void* obj = guobjectarray_get(i);
+        if (!obj || (uintptr_t)obj < 0x10000) continue;
+        if ((uintptr_t)obj >= 0x800000000000ULL) continue;
+
+        uintptr_t class_ptr = seh_read_ptr((uint8_t*)obj + 0x10);
+        if (class_ptr < 0x10000) continue;
+
+        uint32_t cmp_idx = 0;
+        __try { cmp_idx = *(uint32_t*)((uint8_t*)class_ptr + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        /* Match against any of our candidate class FNames */
+        bool matched = false;
+        for (int ni = 0; ni < n_pcm; ni++) {
+            if (cmp_idx == pcm_idx[ni]) { matched = true; break; }
+        }
+        if (!matched) continue;
+
+        /* ObjectFlags at UObjectBase+0x08 -- skip CDOs */
+        uint32_t obj_flags = 0;
+        __try { obj_flags = *(uint32_t*)((uint8_t*)obj + 0x08); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+
+        char obj_name[128], cls_name[128];
+        read_obj_names(obj, obj_name, sizeof(obj_name), cls_name, sizeof(cls_name));
+
+        if (obj_flags & 0x10) {
+            bridge_log("  CameraManager [%d] 0x%p: CDO name='%s' class='%s' "
+                       "flags=0x%X -- skipped",
+                       i, obj, obj_name, cls_name, obj_flags);
+            cdo_skipped++;
+            continue;
+        }
+
+        /* Check if OuterPrivate is a PlayerController. */
+        bool outer_is_pc = false;
+        char outer_cls_name[128] = {0};
+        uintptr_t outer = seh_read_ptr((uint8_t*)obj + 0x20);
+        if (outer >= 0x10000 && outer < 0x800000000000ULL) {
+            uintptr_t outer_class = seh_read_ptr((void*)(outer + 0x10));
+            if (outer_class >= 0x10000) {
+                uint32_t outer_cmp = 0;
+                __try { outer_cmp = *(uint32_t*)((uint8_t*)outer_class + 0x18); }
+                __except(EXCEPTION_EXECUTE_HANDLER) { outer_cmp = 0; }
+                resolve_fname(outer_cmp, outer_cls_name, sizeof(outer_cls_name));
+                if (pc_idx != 0xFFFFFFFF)
+                    outer_is_pc = (outer_cmp == pc_idx);
+            }
+        }
+
+        bridge_log("  CameraManager candidate #%d: [%d] obj=0x%p name='%s' "
+                   "class='%s' flags=0x%X outer_class='%s' pc=%d",
+                   n_candidates, i, obj, obj_name, cls_name,
+                   obj_flags, outer_cls_name, (int)outer_is_pc);
+
+        if (n_candidates < 8) {
+            PCMCandidate& c = candidates[n_candidates];
+            c.index = i; c.obj = obj; c.flags = obj_flags;
+            c.outer_is_pc = outer_is_pc;
+            strncpy(c.class_name, cls_name, sizeof(c.class_name) - 1);
+            n_candidates++;
+        } else {
+            for (int j = 0; j < 7; j++) candidates[j] = candidates[j + 1];
+            PCMCandidate& c = candidates[7];
+            c.index = i; c.obj = obj; c.flags = obj_flags;
+            c.outer_is_pc = outer_is_pc;
+            strncpy(c.class_name, cls_name, sizeof(c.class_name) - 1);
+        }
+    }
+
+    bridge_log("  find_camera_manager: %d non-CDO candidates, %d CDO skipped",
+               n_candidates, cdo_skipped);
+
+    if (n_candidates == 0) {
+        bridge_log("  find_camera_manager: not found in %d objects", num_elems);
+        return false;
+    }
+
+    /* Selection: prefer candidate whose outer is a PlayerController.
+     * Among those, take the last (most recently created). */
+    int best_c = -1;
+    for (int c = n_candidates - 1; c >= 0; c--) {
+        if (candidates[c].outer_is_pc) {
+            best_c = c;
+            break;
+        }
+    }
+    if (best_c < 0) {
+        best_c = n_candidates - 1;
+        bridge_log("  CameraManager: no PlayerController outer found, "
+                   "using last non-CDO candidate");
+    }
+
+    PCMCandidate& best = candidates[best_c];
+    g_camera_manager_ptr = best.obj;
+    bridge_log("  APlayerCameraManager SELECTED: [%d] obj=0x%p class='%s' "
+               "outer_pc=%d (%d candidates)",
+               best.index, best.obj, best.class_name,
+               (int)best.outer_is_pc, n_candidates);
+
+    if (g_debug_break_armed.exchange(false)) {
+        bridge_log("  DEBUG BREAK: CameraManager found -- breaking into debugger");
+        __debugbreak();
+    }
+    return true;
+}
+
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
 
 /*

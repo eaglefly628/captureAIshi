@@ -197,13 +197,15 @@ class UE5ConsoleDriver(CameraDriver):
         return False
 
     def scan_status(self) -> dict:
-        """Parse __bridge_status for UWorld + LocalPlayer scan state.
+        """Parse __bridge_status for UWorld + LocalPlayer + CameraManager scan state.
 
         Returns dict with keys: uworld_found, localplayer_found,
-        world_ptr, localplayer_ptr.  All False/0 on failure.
+        camera_manager_found, world_ptr, localplayer_ptr,
+        camera_manager_ptr.  All False/0 on failure.
         """
         if not self._socket or not self._is_bridge:
-            return {"uworld_found": False, "localplayer_found": False}
+            return {"uworld_found": False, "localplayer_found": False,
+                    "camera_manager_found": False}
         try:
             self._socket.sendall(b"__bridge_status\n")
             self._socket.settimeout(3.0)
@@ -216,23 +218,27 @@ class UE5ConsoleDriver(CameraDriver):
             return {
                 "uworld_found": result.get("uworld_found") == "1",
                 "localplayer_found": result.get("localplayer_found") == "1",
+                "camera_manager_found": result.get("camera_manager_found") == "1",
                 "world_ptr": result.get("world_ptr", "0x0"),
                 "localplayer_ptr": result.get("localplayer_ptr", "0x0"),
+                "camera_manager_ptr": result.get("camera_manager_ptr", "0x0"),
             }
         except (socket.timeout, OSError) as e:
             logger.debug(f"[UE5] scan_status error: {e}")
-            return {"uworld_found": False, "localplayer_found": False}
+            return {"uworld_found": False, "localplayer_found": False,
+                    "camera_manager_found": False}
 
     def rescan_objects(self) -> dict:
-        """Trigger UWorld + LocalPlayer re-scan in the bridge.
+        """Trigger UWorld + LocalPlayer + CameraManager re-scan in the bridge.
 
         Should be called after map load completes. The bridge will:
-          1. Clear stale g_world_ptr / g_localplayer_ptr
-          2. Re-run find_uworld_via_guobjectarray() + find_localplayer()
+          1. Clear stale g_world_ptr / g_localplayer_ptr / g_camera_manager_ptr
+          2. Re-run find_uworld + find_localplayer + find_camera_manager
         Returns same dict as scan_status().
         """
         if not self._socket or not self._is_bridge:
             return {"uworld_found": False, "localplayer_found": False,
+                    "camera_manager_found": False,
                     "error": "not connected to bridge"}
         try:
             self._socket.sendall(b"__bridge_rescan_objects\n")
@@ -246,20 +252,24 @@ class UE5ConsoleDriver(CameraDriver):
             status = {
                 "uworld_found": result.get("uworld_found") == "1",
                 "localplayer_found": result.get("localplayer_found") == "1",
+                "camera_manager_found": result.get("camera_manager_found") == "1",
                 "world_ptr": result.get("world_ptr", "0x0"),
                 "localplayer_ptr": result.get("localplayer_ptr", "0x0"),
+                "camera_manager_ptr": result.get("camera_manager_ptr", "0x0"),
             }
             logger.info(
                 f"[UE5] Rescan: uworld={status['uworld_found']} "
                 f"({status['world_ptr']}) "
                 f"localplayer={status['localplayer_found']} "
-                f"({status['localplayer_ptr']})"
+                f"({status['localplayer_ptr']}) "
+                f"camera_mgr={status['camera_manager_found']} "
+                f"({status['camera_manager_ptr']})"
             )
             return status
         except (socket.timeout, OSError) as e:
             logger.warning(f"[UE5] rescan_objects error: {e}")
             return {"uworld_found": False, "localplayer_found": False,
-                    "error": str(e)}
+                    "camera_manager_found": False, "error": str(e)}
 
     def is_objects_ready(self) -> bool:
         """Return True if both UWorld and LocalPlayer are confirmed found."""
