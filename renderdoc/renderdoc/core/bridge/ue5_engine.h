@@ -183,6 +183,12 @@ struct UEVersionLayout {
     int  fmvi_pitch, fmvi_yaw,   fmvi_roll;      /* Rotation */
     int  fmvi_fov;                               /* FOV (always float) */
 
+    /* FMinimalViewInfo direct offset from APlayerCameraManager base.
+     * Non-zero = FField+scan skipped; set directly.
+     * 0 = unknown; use FField reflection then scan to discover.
+     * Discovered value should be added to the layout for subsequent runs. */
+    int  cam_pov_direct_off;
+
     /* APlayerController -> APlayerCameraManager UUU-style probe */
     int  pc_pcm_start;           /* probe range start */
     int  pc_pcm_end;             /* probe range end */
@@ -190,7 +196,8 @@ struct UEVersionLayout {
 };
 
 /* UE5.7 -- CONFIRMED StackOBot UE5.7 Dev (stride=32, LWC doubles)
- * CameraCachePrivate at manager+0x358 (POV=manager+0x360, scan-confirmed) */
+ * CameraCachePrivate at manager+0x358, FMinimalViewInfo POV at manager+0x360.
+ * cam_pov_direct_off=0x360 skips FField reflection + scan entirely. */
 static const UEVersionLayout k_layout_ue57 = {
     "UE5.7",
     32,   0x08,                          /* FUObjectItem stride=32, obj at +0x08 */
@@ -201,10 +208,12 @@ static const UEVersionLayout k_layout_ue57 = {
     0x00,  0x08,  0x10,                  /* Location doubles */
     0x18,  0x20,  0x28,                  /* Rotation doubles */
     0x30,                                /* FOV float */
+    0x360,                               /* cam_pov_direct_off: confirmed StackOBot */
     0x2A0, 0x380, 8,                     /* PCM probe range */
 };
 
-/* UE5.3-5.6 -- INFERRED (FField era2, LWC, shipping stride=24) */
+/* UE5.3-5.6 -- INFERRED (FField era2, LWC, shipping stride=24)
+ * cam_pov_direct_off=0: unknown, will use FField reflection + scan */
 static const UEVersionLayout k_layout_ue53 = {
     "UE5.3-5.6",
     24,   0x00,
@@ -215,10 +224,12 @@ static const UEVersionLayout k_layout_ue53 = {
     0x00,  0x08,  0x10,
     0x18,  0x20,  0x28,
     0x30,
+    0,                                   /* cam_pov_direct_off: unknown */
     0x2A0, 0x360, 8,
 };
 
-/* UE5.0-5.2 -- INFERRED (FField era1 introduced with LWC) */
+/* UE5.0-5.2 -- INFERRED (FField era1 introduced with LWC)
+ * cam_pov_direct_off=0: unknown */
 static const UEVersionLayout k_layout_ue50 = {
     "UE5.0-5.2",
     24,   0x00,
@@ -229,10 +240,12 @@ static const UEVersionLayout k_layout_ue50 = {
     0x00,  0x08,  0x10,
     0x18,  0x20,  0x28,
     0x30,
+    0,                                   /* cam_pov_direct_off: unknown */
     0x2A0, 0x340, 8,
 };
 
-/* UE4.27 -- INFERRED (float layout, FField era1) */
+/* UE4.27 -- INFERRED (float layout, FField era1)
+ * cam_pov_direct_off=0: unknown */
 static const UEVersionLayout k_layout_ue427 = {
     "UE4.27",
     24,   0x00,
@@ -243,6 +256,7 @@ static const UEVersionLayout k_layout_ue427 = {
     0x00,  0x04,  0x08,                  /* Location floats */
     0x0C,  0x10,  0x14,                  /* Rotation floats */
     0x18,                                /* FOV */
+    0,                                   /* cam_pov_direct_off: unknown */
     0x2A0, 0x2C0, 8,
 };
 
@@ -2349,17 +2363,44 @@ static bool find_cam_pov_scan();
 /*
  * find_cam_pov() -- locate FMinimalViewInfo inside g_camera_manager_ptr.
  *
- * 1. Look up FName("CameraCachePrivate").
- * 2. Walk UClass::ChildProperties chain on the manager's UClass
- *    (and SuperStruct chain) to get Offset_Internal.
- * 3. Add FCameraCacheEntry::POV offset (+0x10).
- * 4. Validate: read FOV at POV+0x18, must be in [1, 179].
- * 5. Store result in g_cam_pov_ptr.
+ * Priority order:
+ * 1. Layout cam_pov_direct_off (non-zero = confirmed offset for this UE version).
+ *    Skips FField + scan entirely.  Fastest path.
+ * 2. FField reflection: look up FName("CameraCachePrivate"), walk UClass chain.
+ *    Correct path when reflection data is complete.
+ * 3. Memory scan fallback: find_cam_pov_scan().
+ *    Used when FField chain is truncated (e.g. transient properties stripped).
  */
 static bool find_cam_pov()
 {
     if (g_cam_pov_ptr) return true;
     if (!g_camera_manager_ptr) return false;
+
+    /* Path 1: direct offset from layout (fastest -- no FField, no scan) */
+    if (g_ue_layout->cam_pov_direct_off != 0) {
+        uint8_t* pov = (uint8_t*)g_camera_manager_ptr + g_ue_layout->cam_pov_direct_off;
+        float fov_val = 0.0f;
+        __try { fov_val = *(float*)(pov + g_ue_layout->fmvi_fov); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {
+            bridge_log("  find_cam_pov: AV at direct offset manager+0x%X",
+                       g_ue_layout->cam_pov_direct_off);
+            goto fallback_ffield;
+        }
+        if (!isfinite(fov_val) || fov_val < 1.0f || fov_val > 179.0f) {
+            bridge_log("  find_cam_pov: direct offset manager+0x%X FOV=%.2f "
+                       "invalid -- falling back to FField",
+                       g_ue_layout->cam_pov_direct_off, fov_val);
+            goto fallback_ffield;
+        }
+        g_cam_pov_ptr    = pov;
+        g_cam_pov_is_lwc = g_ue_layout->fmvi_is_lwc;
+        bridge_log("  find_cam_pov: DIRECT at manager+0x%X FOV=%.1f (%s)",
+                   g_ue_layout->cam_pov_direct_off, fov_val,
+                   g_cam_pov_is_lwc ? "LWC-double" : "float");
+        return true;
+    }
+
+    fallback_ffield:
 
     /* Get UClass of the camera manager */
     void* uclass = (void*)seh_read_ptr((uint8_t*)g_camera_manager_ptr + 0x10);
