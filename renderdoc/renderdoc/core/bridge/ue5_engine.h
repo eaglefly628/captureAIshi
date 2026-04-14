@@ -2094,26 +2094,37 @@ static bool find_camera_manager()
  *   Offset_Internal: +0x44  (int32) <-- runtime struct offset we need
  *
  * FCameraCacheEntry:
- *   TimeStamp:  +0x00  (float)
- *   [pad 12 -- FVector is 16-byte aligned in UE5 SIMD mode]
- *   POV:        +0x10  (FMinimalViewInfo)
+ *   TimeStamp:  +0x00  (float, 4B)
+ *   [pad 4 -- to align FMinimalViewInfo at 8-byte boundary for doubles]
+ *   POV:        +0x08  (FMinimalViewInfo)
  *
- * FMinimalViewInfo (stable across UE5 versions):
- *   Location:  +0x00  (FVector,  12 bytes, x/y/z floats)
- *   Rotation:  +0x0C  (FRotator, 12 bytes, pitch/yaw/roll floats)
+ * FMinimalViewInfo -- UE5 LWC layout (FVector/FRotator = double):
+ *   Location:  +0x00  (3 x double = 24B: X, Y, Z)
+ *   Rotation:  +0x18  (3 x double = 24B: Pitch, Yaw, Roll)
+ *   FOV:       +0x30  (float, 4B)
+ *
+ * FMinimalViewInfo -- legacy float layout (UE4 / non-LWC UE5):
+ *   Location:  +0x00  (3 x float = 12B)
+ *   Rotation:  +0x0C  (3 x float = 12B)
  *   FOV:       +0x18  (float)
- *   DesiredFOV:+0x1C  (float, controlled by game -- we ignore)
+ *   POV in FCameraCacheEntry: +0x10 (SIMD) or +0x04 (non-SIMD)
  */
 
 /* Pointer to FMinimalViewInfo inside APlayerCameraManager.
  * Set by find_cam_pov().  Written by write_camera_mem() every tick. */
 static uint8_t* g_cam_pov_ptr = nullptr;
 
+/* True when the FMinimalViewInfo at g_cam_pov_ptr uses LWC double layout
+ * (UE5 with Large World Coordinates: FVector/FRotator are double).
+ * False for legacy float layout (UE4 / non-LWC UE5). */
+static bool g_cam_pov_is_lwc = false;
+
 /* Camera override state -- written by TCP cam_write command,
- * applied every tick while g_camera_override is true. */
+ * applied every tick while g_camera_override is true.
+ * x/y/z/pitch/yaw/roll are double to match UE5 LWC precision. */
 struct CameraMemState {
-    float x, y, z;          /* UE5 cm */
-    float pitch, yaw, roll; /* degrees */
+    double x, y, z;          /* UE5 cm (double for LWC) */
+    double pitch, yaw, roll; /* degrees */
     float fov;
 };
 static CameraMemState g_cam_override_state = {0,0,0, 0,0,0, 90.0f};
@@ -2290,49 +2301,41 @@ static bool find_cam_pov()
         return find_cam_pov_scan();
     }
 
-    /* FCameraCacheEntry::POV at +0x10 (float TimeStamp + 12 bytes padding).
-     * This is stable across UE4.25-5.07 when compiled with SIMD FVector. */
-    static const int32_t POV_IN_CACHE = 0x10;
-    int32_t pov_off = cc_off + POV_IN_CACHE;
+    /* Try three POV-in-cache offsets with the corresponding FOV offset:
+     *   +0x08 LWC doubles (UE5.0+): FOV at POV+0x30
+     *   +0x10 SIMD float  (UE4/early UE5): FOV at POV+0x18
+     *   +0x04 non-SIMD float: FOV at POV+0x18
+     */
+    struct { int32_t pov_in_cache; int32_t fov_in_pov; bool is_lwc; } trials[] = {
+        { 0x08, 0x30, true  },   /* UE5 LWC doubles */
+        { 0x10, 0x18, false },   /* UE5 SIMD float  */
+        { 0x04, 0x18, false },   /* non-SIMD float  */
+    };
 
-    uint8_t* pov_candidate = (uint8_t*)g_camera_manager_ptr + pov_off;
+    for (int t = 0; t < 3; t++) {
+        int32_t pov_off = cc_off + trials[t].pov_in_cache;
+        uint8_t* pov_candidate = (uint8_t*)g_camera_manager_ptr + pov_off;
+        float fov_val = 0.0f;
+        __try { fov_val = *(float*)(pov_candidate + trials[t].fov_in_pov); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
 
-    /* Validate by reading FOV (FMinimalViewInfo+0x18) */
-    float fov_val = 0.0f;
-    __try { fov_val = *(float*)(pov_candidate + 0x18); }
-    __except(EXCEPTION_EXECUTE_HANDLER) {
-        bridge_log("  find_cam_pov: AV reading FOV candidate at 0x%p+0x%X",
-                   g_camera_manager_ptr, pov_off + 0x18);
-        return false;
-    }
+        bridge_log("  find_cam_pov: trial[%d] POV at manager+0x%X "
+                   "(fov_off=+0x%X) FOV=%.2f",
+                   t, pov_off, trials[t].fov_in_pov, fov_val);
 
-    bridge_log("  find_cam_pov: POV at manager+0x%X, FOV reads %.2f", pov_off, fov_val);
-
-    if (fov_val < 1.0f || fov_val > 179.0f) {
-        /* Try POV at +0x04 (non-SIMD FVector, no padding) */
-        static const int32_t POV_IN_CACHE_ALT = 0x04;
-        pov_off = cc_off + POV_IN_CACHE_ALT;
-        pov_candidate = (uint8_t*)g_camera_manager_ptr + pov_off;
-        __try { fov_val = *(float*)(pov_candidate + 0x18); }
-        __except(EXCEPTION_EXECUTE_HANDLER) {
-            bridge_log("  find_cam_pov: AV reading FOV (alt) at manager+0x%X",
-                       pov_off + 0x18);
-            return false;
-        }
-        bridge_log("  find_cam_pov: ALT POV at manager+0x%X, FOV=%.2f",
-                   pov_off, fov_val);
-        if (fov_val < 1.0f || fov_val > 179.0f) {
-            bridge_log("  find_cam_pov: FOV %.2f out of range [1,179] "
-                       "at both offsets -- cannot validate FMinimalViewInfo",
-                       fov_val);
-            return false;
+        if (fov_val >= 1.0f && fov_val <= 179.0f) {
+            g_cam_pov_ptr    = pov_candidate;
+            g_cam_pov_is_lwc = trials[t].is_lwc;
+            bridge_log("  FMinimalViewInfo confirmed at 0x%p "
+                       "(FOV=%.1f deg, layout=%s)",
+                       g_cam_pov_ptr, fov_val,
+                       g_cam_pov_is_lwc ? "LWC-double" : "float");
+            return true;
         }
     }
 
-    g_cam_pov_ptr = pov_candidate;
-    bridge_log("  FMinimalViewInfo confirmed at 0x%p (FOV=%.1f deg)",
-               g_cam_pov_ptr, fov_val);
-    return true;
+    bridge_log("  find_cam_pov: FOV out of range [1,179] at all 3 offsets");
+    return false;
 }
 
 /*
@@ -2353,68 +2356,102 @@ static bool find_cam_pov()
  * Logs ALL candidates found (for diagnostics).
  * Picks the first valid candidate that also has a finite Location.
  */
-static bool find_cam_pov_scan()
+/*
+ * Scan pass: try a specific FMinimalViewInfo layout.
+ * is_lwc=true:  3 doubles (Location) + 3 doubles (Rotation) + float FOV at +0x30
+ * is_lwc=false: 3 floats  (Location) + 3 floats  (Rotation) + float FOV at +0x18
+ * step: 8 for LWC (double-aligned), 4 for float.
+ */
+static bool find_cam_pov_scan_pass(bool is_lwc)
 {
-    if (!g_camera_manager_ptr) return false;
-
-    bridge_log("  find_cam_pov_scan: FField failed -- scanning manager "
-               "[+0x200..+0x900] in 4-byte steps");
-
     uint8_t* mgr = (uint8_t*)g_camera_manager_ptr;
     const int32_t SCAN_START = 0x200;
     const int32_t SCAN_END   = 0x900;
+    const int32_t step       = is_lwc ? 8 : 4;
 
     int found_count = 0;
     uint8_t* best   = nullptr;
 
-    for (int32_t off = SCAN_START; off <= SCAN_END; off += 4) {
+    for (int32_t off = SCAN_START; off <= SCAN_END; off += step) {
         uint8_t* pov = mgr + off;
+        float fov = 0.0f;
+        double px = 0.0, py = 0.0, pz = 0.0;
+        double pitch = 0.0, yaw = 0.0, roll = 0.0;
 
-        float fov = 0.0f, pitch = 0.0f, yaw = 0.0f, roll = 0.0f;
-        float x = 0.0f, y = 0.0f, z = 0.0f;
-        __try {
-            x     = *(float*)(pov + 0x00);
-            y     = *(float*)(pov + 0x04);
-            z     = *(float*)(pov + 0x08);
-            pitch = *(float*)(pov + 0x0C);
-            yaw   = *(float*)(pov + 0x10);
-            roll  = *(float*)(pov + 0x14);
-            fov   = *(float*)(pov + 0x18);
+        if (is_lwc) {
+            /* LWC: Location and Rotation are doubles, FOV float at +0x30 */
+            __try {
+                px    = *(double*)(pov + 0x00);
+                py    = *(double*)(pov + 0x08);
+                pz    = *(double*)(pov + 0x10);
+                pitch = *(double*)(pov + 0x18);
+                yaw   = *(double*)(pov + 0x20);
+                roll  = *(double*)(pov + 0x28);
+                fov   = *(float* )(pov + 0x30);
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+        } else {
+            /* float: Location and Rotation are floats, FOV float at +0x18 */
+            float fx, fy, fz, fp, fy2, fr;
+            __try {
+                fx  = *(float*)(pov + 0x00);
+                fy  = *(float*)(pov + 0x04);
+                fz  = *(float*)(pov + 0x08);
+                fp  = *(float*)(pov + 0x0C);
+                fy2 = *(float*)(pov + 0x10);
+                fr  = *(float*)(pov + 0x14);
+                fov = *(float*)(pov + 0x18);
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
+            px = fx; py = fy; pz = fz;
+            pitch = fp; yaw = fy2; roll = fr;
         }
-        __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
 
-        /* FOV check: strict range to avoid false positives */
         if (fov < 1.0f || fov > 179.0f) continue;
-
-        /* Rotation validity */
-        if (pitch < -91.0f || pitch > 91.0f) continue;
-        if (yaw   < -360.0f || yaw  > 360.0f) continue;
-        if (roll  < -360.0f || roll > 360.0f) continue;
-
-        /* No NaN/Inf anywhere in the 7-float block */
-        if (!isfinite(x) || !isfinite(y) || !isfinite(z)) continue;
+        if (pitch < -91.0 || pitch > 91.0) continue;
+        if (yaw   < -360.0 || yaw  > 360.0) continue;
+        if (roll  < -360.0 || roll > 360.0) continue;
+        if (!isfinite(px) || !isfinite(py) || !isfinite(pz)) continue;
         if (!isfinite(pitch) || !isfinite(yaw) || !isfinite(roll)) continue;
 
         found_count++;
-        bridge_log("  cam_scan candidate #%d at manager+0x%X: "
+        bridge_log("  cam_scan(%s) #%d at manager+0x%X: "
                    "xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f",
-                   found_count, off, x, y, z, pitch, yaw, roll, fov);
+                   is_lwc ? "LWC" : "float",
+                   found_count, off,
+                   (float)px, (float)py, (float)pz,
+                   (float)pitch, (float)yaw, (float)roll, fov);
 
-        if (!best) best = pov;  /* take first valid candidate */
+        if (!best) best = pov;
     }
 
-    if (!best) {
-        bridge_log("  find_cam_pov_scan: no candidate found -- "
-                   "game may be in loading screen (FOV/Rotation are 0)");
-        return false;
-    }
+    if (!best) return false;
 
-    g_cam_pov_ptr = best;
-    bridge_log("  FMinimalViewInfo SCAN found at 0x%p (manager+0x%X). "
+    g_cam_pov_ptr    = best;
+    g_cam_pov_is_lwc = is_lwc;
+    bridge_log("  FMinimalViewInfo SCAN found at 0x%p (manager+0x%X, %s). "
                "Run __cam_mem_find again after level loads if wrong.",
                g_cam_pov_ptr,
-               (int32_t)(g_cam_pov_ptr - (uint8_t*)g_camera_manager_ptr));
+               (int32_t)(g_cam_pov_ptr - mgr),
+               is_lwc ? "LWC-double" : "float");
     return true;
+}
+
+static bool find_cam_pov_scan()
+{
+    if (!g_camera_manager_ptr) return false;
+
+    bridge_log("  find_cam_pov_scan: trying LWC-double layout first "
+               "[+0x200..+0x900] step=8");
+    if (find_cam_pov_scan_pass(true)) return true;
+
+    bridge_log("  find_cam_pov_scan: LWC pass found nothing -- "
+               "trying float layout step=4");
+    if (find_cam_pov_scan_pass(false)) return true;
+
+    bridge_log("  find_cam_pov_scan: no candidate in either layout -- "
+               "game may be in loading screen (FOV/Rotation are 0)");
+    return false;
 }
 
 /* Read current camera state directly from FMinimalViewInfo */
@@ -2422,13 +2459,25 @@ static bool read_camera_mem(CameraMemState& out)
 {
     if (!g_cam_pov_ptr) return false;
     __try {
-        out.x     = *(float*)(g_cam_pov_ptr + 0x00);
-        out.y     = *(float*)(g_cam_pov_ptr + 0x04);
-        out.z     = *(float*)(g_cam_pov_ptr + 0x08);
-        out.pitch = *(float*)(g_cam_pov_ptr + 0x0C);
-        out.yaw   = *(float*)(g_cam_pov_ptr + 0x10);
-        out.roll  = *(float*)(g_cam_pov_ptr + 0x14);
-        out.fov   = *(float*)(g_cam_pov_ptr + 0x18);
+        if (g_cam_pov_is_lwc) {
+            /* UE5 LWC: Location+Rotation are double, FOV float at +0x30 */
+            out.x     = *(double*)(g_cam_pov_ptr + 0x00);
+            out.y     = *(double*)(g_cam_pov_ptr + 0x08);
+            out.z     = *(double*)(g_cam_pov_ptr + 0x10);
+            out.pitch = *(double*)(g_cam_pov_ptr + 0x18);
+            out.yaw   = *(double*)(g_cam_pov_ptr + 0x20);
+            out.roll  = *(double*)(g_cam_pov_ptr + 0x28);
+            out.fov   = *(float* )(g_cam_pov_ptr + 0x30);
+        } else {
+            /* UE4 / non-LWC: all floats, FOV at +0x18 */
+            out.x     = *(float*)(g_cam_pov_ptr + 0x00);
+            out.y     = *(float*)(g_cam_pov_ptr + 0x04);
+            out.z     = *(float*)(g_cam_pov_ptr + 0x08);
+            out.pitch = *(float*)(g_cam_pov_ptr + 0x0C);
+            out.yaw   = *(float*)(g_cam_pov_ptr + 0x10);
+            out.roll  = *(float*)(g_cam_pov_ptr + 0x14);
+            out.fov   = *(float*)(g_cam_pov_ptr + 0x18);
+        }
         return true;
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -2446,13 +2495,25 @@ static bool write_camera_mem(const CameraMemState& s)
 {
     if (!g_cam_pov_ptr) return false;
     __try {
-        *(float*)(g_cam_pov_ptr + 0x00) = s.x;
-        *(float*)(g_cam_pov_ptr + 0x04) = s.y;
-        *(float*)(g_cam_pov_ptr + 0x08) = s.z;
-        *(float*)(g_cam_pov_ptr + 0x0C) = s.pitch;
-        *(float*)(g_cam_pov_ptr + 0x10) = s.yaw;
-        *(float*)(g_cam_pov_ptr + 0x14) = s.roll;
-        *(float*)(g_cam_pov_ptr + 0x18) = s.fov;
+        if (g_cam_pov_is_lwc) {
+            /* UE5 LWC: Location+Rotation are double, FOV float at +0x30 */
+            *(double*)(g_cam_pov_ptr + 0x00) = s.x;
+            *(double*)(g_cam_pov_ptr + 0x08) = s.y;
+            *(double*)(g_cam_pov_ptr + 0x10) = s.z;
+            *(double*)(g_cam_pov_ptr + 0x18) = s.pitch;
+            *(double*)(g_cam_pov_ptr + 0x20) = s.yaw;
+            *(double*)(g_cam_pov_ptr + 0x28) = s.roll;
+            *(float* )(g_cam_pov_ptr + 0x30) = s.fov;
+        } else {
+            /* UE4 / non-LWC: all floats, FOV at +0x18 */
+            *(float*)(g_cam_pov_ptr + 0x00) = (float)s.x;
+            *(float*)(g_cam_pov_ptr + 0x04) = (float)s.y;
+            *(float*)(g_cam_pov_ptr + 0x08) = (float)s.z;
+            *(float*)(g_cam_pov_ptr + 0x0C) = (float)s.pitch;
+            *(float*)(g_cam_pov_ptr + 0x10) = (float)s.yaw;
+            *(float*)(g_cam_pov_ptr + 0x14) = (float)s.roll;
+            *(float*)(g_cam_pov_ptr + 0x18) = s.fov;
+        }
         return true;
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
