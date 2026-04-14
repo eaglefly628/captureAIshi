@@ -139,6 +139,14 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
                 BRIDGE_LOG("Camera path playback ended");
         }
 
+        /* Direct memory camera override: fight game's per-frame camera
+         * update by re-writing FMinimalViewInfo every tick.
+         * g_camera_override is set by __cam_mem_write / __cam_mem_on.
+         * No game-thread requirement: plain memory write, no FExec. */
+        if (g_camera_override.load() && g_cam_pov_ptr) {
+            write_camera_mem(g_cam_override_state);
+        }
+
         Sleep(16);  /* ~60 Hz */
     }
     BRIDGE_LOG("Camera tick thread stopped");
@@ -183,8 +191,10 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "fexec_hooks=%d "
             "guobjectarray_found=%d guobjectarray=0x%p "
             "world_ptr=0x%p localplayer_ptr=0x%p "
-            "camera_manager_ptr=0x%p "
-            "uworld_found=%d localplayer_found=%d camera_manager_found=%d "
+            "camera_manager_ptr=0x%p cam_pov_ptr=0x%p "
+            "uworld_found=%d localplayer_found=%d "
+            "camera_manager_found=%d cam_pov_found=%d "
+            "cam_override=%d "
             "camera_active=%d paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
@@ -195,9 +205,10 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             g_fexec_hook_count,
             (int)g_guobjectarray_found.load(), g_guobjectarray,
             g_world_ptr, g_localplayer_ptr,
-            g_camera_manager_ptr,
+            g_camera_manager_ptr, g_cam_pov_ptr,
             g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
-            g_camera_manager_ptr ? 1 : 0,
+            g_camera_manager_ptr ? 1 : 0, g_cam_pov_ptr ? 1 : 0,
+            (int)g_camera_override.load(),
             (int)g_debug_camera_active, (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
@@ -244,16 +255,21 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         g_world_from_gua = false;
         g_localplayer_ptr = nullptr;
         g_camera_manager_ptr = nullptr;
+        g_cam_pov_ptr = nullptr;
         find_uworld_via_guobjectarray();
         find_localplayer();
         find_camera_manager();
-        char rbuf[320];
+        find_cam_pov();
+        char rbuf[448];
         snprintf(rbuf, sizeof(rbuf),
-                 "uworld_found=%d localplayer_found=%d camera_manager_found=%d "
-                 "world_ptr=0x%p localplayer_ptr=0x%p camera_manager_ptr=0x%p\n",
+                 "uworld_found=%d localplayer_found=%d "
+                 "camera_manager_found=%d cam_pov_found=%d "
+                 "world_ptr=0x%p localplayer_ptr=0x%p "
+                 "camera_manager_ptr=0x%p cam_pov_ptr=0x%p\n",
                  g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
-                 g_camera_manager_ptr ? 1 : 0,
-                 g_world_ptr, g_localplayer_ptr, g_camera_manager_ptr);
+                 g_camera_manager_ptr ? 1 : 0, g_cam_pov_ptr ? 1 : 0,
+                 g_world_ptr, g_localplayer_ptr,
+                 g_camera_manager_ptr, g_cam_pov_ptr);
         cs_reply(client, rbuf);
         return true;
     }
@@ -276,6 +292,99 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         exec_console_command("slomo 1");           /* restore */
         exec_console_command("stat fps");          /* show FPS counter */
         cs_reply(client, "test_done\n");
+        return true;
+    }
+
+    /* ---- Direct camera memory commands (no FExec, no game thread) ---- */
+
+    /* Find FMinimalViewInfo pointer on demand (e.g. after map load) */
+    if (cmd == "__cam_mem_find") {
+        g_cam_pov_ptr = nullptr;          /* force re-scan */
+        if (!g_camera_manager_ptr) {
+            g_camera_manager_ptr = nullptr;
+            find_camera_manager();
+        }
+        bool ok = find_cam_pov();
+        char buf[128];
+        if (ok)
+            snprintf(buf, sizeof(buf), "ok pov=0x%p\n", g_cam_pov_ptr);
+        else
+            snprintf(buf, sizeof(buf), "not_found camera_mgr=0x%p\n",
+                     g_camera_manager_ptr);
+        cs_reply(client, buf);
+        return true;
+    }
+
+    /* Read current camera state from FMinimalViewInfo */
+    if (cmd == "__cam_mem_read") {
+        if (!g_cam_pov_ptr && !find_cam_pov()) {
+            cs_reply(client, "error: pov_not_found\n");
+            return true;
+        }
+        CameraMemState st;
+        if (read_camera_mem(st)) {
+            char buf[192];
+            snprintf(buf, sizeof(buf),
+                     "x=%.4f y=%.4f z=%.4f "
+                     "pitch=%.4f yaw=%.4f roll=%.4f "
+                     "fov=%.4f\n",
+                     st.x, st.y, st.z,
+                     st.pitch, st.yaw, st.roll, st.fov);
+            cs_reply(client, buf);
+        } else {
+            cs_reply(client, "error: read_failed\n");
+        }
+        return true;
+    }
+
+    /* Write camera state directly to FMinimalViewInfo.
+     * Format: __cam_mem_write X Y Z Pitch Yaw Roll FOV
+     * Enables override (game writes fought by tick thread at 60 Hz). */
+    if (cmd.rfind("__cam_mem_write ", 0) == 0) {
+        if (!g_cam_pov_ptr && !find_cam_pov()) {
+            cs_reply(client, "error: pov_not_found\n");
+            return true;
+        }
+        float vals[7] = {0,0,0, 0,0,0, 90.0f};
+        int n = 0;
+        const char* p = cmd.c_str() + 16;
+        while (n < 7 && *p) {
+            while (*p == ' ' || *p == ',') p++;
+            if (!*p) break;
+            char* end = nullptr;
+            vals[n++] = strtof(p, &end);
+            if (end == p) break;
+            p = end;
+        }
+        if (n < 6) {
+            cs_reply(client, "error: usage __cam_mem_write X Y Z P Y R [FOV]\n");
+            return true;
+        }
+        CameraMemState st;
+        st.x = vals[0]; st.y = vals[1]; st.z = vals[2];
+        st.pitch = vals[3]; st.yaw = vals[4]; st.roll = vals[5];
+        st.fov = (n >= 7) ? vals[6] : g_cam_override_state.fov;
+        g_cam_override_state = st;
+        g_camera_override = true;
+        bool ok = write_camera_mem(st);
+        cs_reply(client, ok ? "ok\n" : "error: write_failed\n");
+        return true;
+    }
+
+    /* Enable/disable per-tick camera override */
+    if (cmd == "__cam_mem_on") {
+        if (!g_cam_pov_ptr && !find_cam_pov()) {
+            cs_reply(client, "error: pov_not_found\n");
+            return true;
+        }
+        g_camera_override = true;
+        cs_reply(client, "ok override=on\n");
+        return true;
+    }
+
+    if (cmd == "__cam_mem_off") {
+        g_camera_override = false;
+        cs_reply(client, "ok override=off\n");
         return true;
     }
 
@@ -623,6 +732,15 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
     else
         BRIDGE_LOG("[8/8] APlayerCameraManager: not found -- "
                    "direct camera override unavailable");
+
+    /* === Step 10: FMinimalViewInfo pointer via UClass property reflection ===
+     * find_cam_pov() walks UClass::ChildProperties to get CameraCachePrivate
+     * offset, then validates by reading FOV. */
+    if (find_cam_pov())
+        BRIDGE_LOG("[9/9] FMinimalViewInfo: 0x%p", g_cam_pov_ptr);
+    else
+        BRIDGE_LOG("[9/9] FMinimalViewInfo: not resolved yet "
+                   "(run __cam_mem_find after game loads)");
 
     /* === Game-thread dispatch ===
      * UE5 requires console commands on the game thread.

@@ -2064,6 +2064,267 @@ static bool find_camera_manager()
     return true;
 }
 
+/* ---- FMinimalViewInfo direct memory access -------------------------
+ *
+ * APlayerCameraManager stores the active view in CameraCachePrivate
+ * (FCameraCacheEntry).  We locate it at runtime via UClass property
+ * reflection so the code is version-independent.
+ *
+ * UStruct layout (UE4SS PDB verified, UE5.00 - UE5.07, all identical):
+ *   UObjectBase:        +0x00  (0x28 bytes)
+ *   UField::Next:       +0x28  (UField*, 8 bytes -- UField total 0x30)
+ *   UStruct::SuperStruct:  +0x40  (UStruct* -- 0x10 gap for UStruct internals)
+ *   UStruct::Children:     +0x48  (UField*, legacy)
+ *   UStruct::ChildProperties: +0x50 (FField*, UE4.25+ property chain)
+ *
+ * FField layout (UE4.25+):
+ *   ClassPrivate:  +0x00
+ *   Owner:         +0x08  (FFieldVariant, 16 bytes)
+ *   Next:          +0x18  (FField*)
+ *   NamePrivate:   +0x20  (FName -- ComparisonIndex at +0x20)
+ *   FlagsPrivate:  +0x28
+ *
+ * FProperty extends FField:
+ *   ArrayDim:      +0x30
+ *   ElementSize:   +0x34
+ *   PropertyFlags: +0x38  (uint64)
+ *   RepIndex:      +0x40
+ *   Condition:     +0x42
+ *   [pad2]
+ *   Offset_Internal: +0x44  (int32) <-- runtime struct offset we need
+ *
+ * FCameraCacheEntry:
+ *   TimeStamp:  +0x00  (float)
+ *   [pad 12 -- FVector is 16-byte aligned in UE5 SIMD mode]
+ *   POV:        +0x10  (FMinimalViewInfo)
+ *
+ * FMinimalViewInfo (stable across UE5 versions):
+ *   Location:  +0x00  (FVector,  12 bytes, x/y/z floats)
+ *   Rotation:  +0x0C  (FRotator, 12 bytes, pitch/yaw/roll floats)
+ *   FOV:       +0x18  (float)
+ *   DesiredFOV:+0x1C  (float, controlled by game -- we ignore)
+ */
+
+/* Pointer to FMinimalViewInfo inside APlayerCameraManager.
+ * Set by find_cam_pov().  Written by write_camera_mem() every tick. */
+static uint8_t* g_cam_pov_ptr = nullptr;
+
+/* Camera override state -- written by TCP cam_write command,
+ * applied every tick while g_camera_override is true. */
+struct CameraMemState {
+    float x, y, z;          /* UE5 cm */
+    float pitch, yaw, roll; /* degrees */
+    float fov;
+};
+static CameraMemState g_cam_override_state = {0,0,0, 0,0,0, 90.0f};
+static std::atomic<bool> g_camera_override{false};
+
+/*
+ * ffield_find_offset() -- walk UClass::ChildProperties FField chain
+ * and return Offset_Internal for the property matching prop_fname_idx.
+ * Returns -1 if not found.
+ */
+/*
+ * FField layout changed between UE5.02 and UE5.03 (FFieldVariant shrank).
+ * UE4SS PDB verified:
+ *
+ *   Era        | Next  | NamePrivate | FProperty::Offset_Internal
+ *   -----------|-------|-------------|----------------------------
+ *   5.00-5.02  | +0x20 | +0x28       | +0x4C
+ *   5.03-5.07  | +0x18 | +0x20       | +0x44
+ *
+ * We detect at runtime by probing: walk the chain with both layouts,
+ * check which one produces a readable, non-zero FName index.
+ */
+static int32_t ffield_find_offset_era(void* child_props_ptr,
+                                      uint32_t prop_fname_idx,
+                                      int32_t next_off,
+                                      int32_t name_off,
+                                      int32_t offset_off)
+{
+    void* field = child_props_ptr;
+    for (int limit = 1024; field && limit > 0; limit--) {
+        uint32_t fname_idx = 0;
+        __try { fname_idx = *(uint32_t*)((uint8_t*)field + name_off); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { break; }
+
+        if (fname_idx == prop_fname_idx) {
+            int32_t off = -1;
+            __try { off = *(int32_t*)((uint8_t*)field + offset_off); }
+            __except(EXCEPTION_EXECUTE_HANDLER) { return -1; }
+            return off;
+        }
+
+        uintptr_t next = seh_read_ptr((uint8_t*)field + next_off);
+        if (!next || next == (uintptr_t)field) break;
+        field = (void*)next;
+    }
+    return -1;
+}
+
+static int32_t ffield_find_offset(void* uclass_or_ustruct,
+                                  uint32_t prop_fname_idx)
+{
+    /* UStruct::ChildProperties is at +0x50 (UE4SS PDB verified, UE5.00-5.07) */
+    uintptr_t child_props = seh_read_ptr((uint8_t*)uclass_or_ustruct + 0x50);
+    if (!child_props || child_props < 0x10000) return -1;
+    void* fp = (void*)child_props;
+
+    /* Try UE5.03+ layout first (most common current target) */
+    int32_t off = ffield_find_offset_era(fp, prop_fname_idx,
+                                         0x18, 0x20, 0x44);
+    if (off >= 0) return off;
+
+    /* Fall back to UE5.00-5.02 layout */
+    off = ffield_find_offset_era(fp, prop_fname_idx,
+                                  0x20, 0x28, 0x4C);
+    return off;
+}
+
+/*
+ * find_cam_pov() -- locate FMinimalViewInfo inside g_camera_manager_ptr.
+ *
+ * 1. Look up FName("CameraCachePrivate").
+ * 2. Walk UClass::ChildProperties chain on the manager's UClass
+ *    (and SuperStruct chain) to get Offset_Internal.
+ * 3. Add FCameraCacheEntry::POV offset (+0x10).
+ * 4. Validate: read FOV at POV+0x18, must be in [1, 179].
+ * 5. Store result in g_cam_pov_ptr.
+ */
+static bool find_cam_pov()
+{
+    if (g_cam_pov_ptr) return true;
+    if (!g_camera_manager_ptr) return false;
+
+    /* Get UClass of the camera manager */
+    void* uclass = (void*)seh_read_ptr((uint8_t*)g_camera_manager_ptr + 0x10);
+    if (!uclass || (uintptr_t)uclass < 0x10000) {
+        bridge_log("  find_cam_pov: invalid UClass pointer");
+        return false;
+    }
+
+    /* Resolve FName for the property we're searching */
+    uint32_t cc_fname = get_fname_cmpidx_for("CameraCachePrivate");
+    if (cc_fname == 0xFFFFFFFF) {
+        bridge_log("  find_cam_pov: FName('CameraCachePrivate') not in FNamePool");
+        return false;
+    }
+    bridge_log("  find_cam_pov: FName('CameraCachePrivate')=0x%X", cc_fname);
+
+    /* Walk UClass and its SuperStruct chain */
+    int32_t cc_off = -1;
+    void* cls = uclass;
+    char cls_name[64];
+    for (int depth = 0; cls && depth < 16 && cc_off < 0; depth++) {
+        cc_off = ffield_find_offset(cls, cc_fname);
+        if (cc_off >= 0) {
+            resolve_fname(*(uint32_t*)((uint8_t*)cls + 0x18), cls_name, sizeof(cls_name));
+            bridge_log("  find_cam_pov: CameraCachePrivate at offset 0x%X "
+                       "(found in class '%s')",
+                       cc_off, cls_name);
+            break;
+        }
+        cls = (void*)seh_read_ptr((uint8_t*)cls + 0x40); /* SuperStruct */
+        if ((uintptr_t)cls < 0x10000) break;
+    }
+
+    if (cc_off < 0) {
+        bridge_log("  find_cam_pov: CameraCachePrivate property not found "
+                   "in UClass chain");
+        return false;
+    }
+
+    /* FCameraCacheEntry::POV at +0x10 (float TimeStamp + 12 bytes padding).
+     * This is stable across UE4.25-5.07 when compiled with SIMD FVector. */
+    static const int32_t POV_IN_CACHE = 0x10;
+    int32_t pov_off = cc_off + POV_IN_CACHE;
+
+    uint8_t* pov_candidate = (uint8_t*)g_camera_manager_ptr + pov_off;
+
+    /* Validate by reading FOV (FMinimalViewInfo+0x18) */
+    float fov_val = 0.0f;
+    __try { fov_val = *(float*)(pov_candidate + 0x18); }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        bridge_log("  find_cam_pov: AV reading FOV candidate at 0x%p+0x%X",
+                   g_camera_manager_ptr, pov_off + 0x18);
+        return false;
+    }
+
+    bridge_log("  find_cam_pov: POV at manager+0x%X, FOV reads %.2f", pov_off, fov_val);
+
+    if (fov_val < 1.0f || fov_val > 179.0f) {
+        /* Try POV at +0x04 (non-SIMD FVector, no padding) */
+        static const int32_t POV_IN_CACHE_ALT = 0x04;
+        pov_off = cc_off + POV_IN_CACHE_ALT;
+        pov_candidate = (uint8_t*)g_camera_manager_ptr + pov_off;
+        __try { fov_val = *(float*)(pov_candidate + 0x18); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {
+            bridge_log("  find_cam_pov: AV reading FOV (alt) at manager+0x%X",
+                       pov_off + 0x18);
+            return false;
+        }
+        bridge_log("  find_cam_pov: ALT POV at manager+0x%X, FOV=%.2f",
+                   pov_off, fov_val);
+        if (fov_val < 1.0f || fov_val > 179.0f) {
+            bridge_log("  find_cam_pov: FOV %.2f out of range [1,179] "
+                       "at both offsets -- cannot validate FMinimalViewInfo",
+                       fov_val);
+            return false;
+        }
+    }
+
+    g_cam_pov_ptr = pov_candidate;
+    bridge_log("  FMinimalViewInfo confirmed at 0x%p (FOV=%.1f deg)",
+               g_cam_pov_ptr, fov_val);
+    return true;
+}
+
+/* Read current camera state directly from FMinimalViewInfo */
+static bool read_camera_mem(CameraMemState& out)
+{
+    if (!g_cam_pov_ptr) return false;
+    __try {
+        out.x     = *(float*)(g_cam_pov_ptr + 0x00);
+        out.y     = *(float*)(g_cam_pov_ptr + 0x04);
+        out.z     = *(float*)(g_cam_pov_ptr + 0x08);
+        out.pitch = *(float*)(g_cam_pov_ptr + 0x0C);
+        out.yaw   = *(float*)(g_cam_pov_ptr + 0x10);
+        out.roll  = *(float*)(g_cam_pov_ptr + 0x14);
+        out.fov   = *(float*)(g_cam_pov_ptr + 0x18);
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        bridge_log("  read_camera_mem: AV at 0x%p -- clearing pov ptr",
+                   g_cam_pov_ptr);
+        g_cam_pov_ptr = nullptr;
+        return false;
+    }
+}
+
+/* Write camera state directly to FMinimalViewInfo.
+ * Called from tick thread every frame while g_camera_override is true.
+ * This fights the game's per-frame camera update without needing hooks. */
+static bool write_camera_mem(const CameraMemState& s)
+{
+    if (!g_cam_pov_ptr) return false;
+    __try {
+        *(float*)(g_cam_pov_ptr + 0x00) = s.x;
+        *(float*)(g_cam_pov_ptr + 0x04) = s.y;
+        *(float*)(g_cam_pov_ptr + 0x08) = s.z;
+        *(float*)(g_cam_pov_ptr + 0x0C) = s.pitch;
+        *(float*)(g_cam_pov_ptr + 0x10) = s.yaw;
+        *(float*)(g_cam_pov_ptr + 0x14) = s.roll;
+        *(float*)(g_cam_pov_ptr + 0x18) = s.fov;
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        bridge_log("  write_camera_mem: AV at 0x%p -- clearing pov ptr",
+                   g_cam_pov_ptr);
+        g_cam_pov_ptr = nullptr;
+        return false;
+    }
+}
+
 /* -- FExec multi-hook: scan GUObjectArray for FExec objects -------- */
 
 /*
