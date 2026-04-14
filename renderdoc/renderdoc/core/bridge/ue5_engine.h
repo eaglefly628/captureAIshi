@@ -3009,11 +3009,13 @@ static void* find_camera_manager_uuu_style()
         char cls_name[64] = {0};
         resolve_fname(cls_fname, cls_name, sizeof(cls_name));
 
-        bool looks_like_cam = (strstr(cls_name, "Camera") != nullptr ||
-                               strstr(cls_name, "camera") != nullptr);
+        /* Require "CameraManager" specifically -- this avoids false positives from
+         * DebugCameraHUD, DebugCameraController, CameraActor, CameraComponent, etc.
+         * APlayerCameraManager and its BP subclasses all contain "CameraManager". */
+        bool looks_like_cam = (strstr(cls_name, "CameraManager") != nullptr);
         bridge_log("  cam_uuu_probe: PC+0x%X=0x%p class='%s'%s",
                    probe, (void*)candidate, cls_name,
-                   looks_like_cam ? " <-- CAMERA" : "");
+                   looks_like_cam ? " <-- CAMERA MANAGER" : "");
 
         if (looks_like_cam && !best) {
             best = (void*)candidate;
@@ -3077,8 +3079,8 @@ static void* find_camera_manager_uuu_style()
             char cls_name[64] = {0};
             resolve_fname(cls_fname, cls_name, sizeof(cls_name));
 
-            if (strstr(cls_name, "Camera") || strstr(cls_name, "camera")) {
-                bridge_log("  cam_uuu_probe: pass2 PC+0x%X=0x%p class='%s' <-- CAMERA",
+            if (strstr(cls_name, "CameraManager")) {
+                bridge_log("  cam_uuu_probe: pass2 PC+0x%X=0x%p class='%s' <-- CAMERA MANAGER",
                            probe, (void*)candidate, cls_name);
                 if (!best) best = (void*)candidate;
             }
@@ -3189,14 +3191,31 @@ static void cross_validate_camera()
         return;
     }
 
-    /* B failed; A found something. Prefer D over A when they disagree. */
+    /* B failed; A found something. Prefer D over A when they disagree,
+     * but ONLY if D's direct-offset FOV is valid -- this prevents switching
+     * to a non-PCM object that happens to have "CameraManager" in its class
+     * name or was returned by a confused scan (e.g. stale DebugCameraHUD). */
     if (cam_d && cam_d != g_camera_manager_ptr) {
-        bridge_log("  camera cross-val: A!=D (no B) -- "
-                   "switching to D(PC-ref)=0x%p (was A=%0xp)",
-                   cam_d, g_camera_manager_ptr);
-        g_camera_manager_ptr = cam_d;
-        g_cam_pov_ptr = nullptr; /* invalidate: manager changed */
-        return;
+        float d_fov = 0.0f;
+        if (g_ue_layout->cam_pov_direct_off) {
+            uint8_t* d_pov = (uint8_t*)cam_d + g_ue_layout->cam_pov_direct_off;
+            __try { d_fov = *(float*)(d_pov + g_ue_layout->fmvi_fov); }
+            __except(EXCEPTION_EXECUTE_HANDLER) { d_fov = 0.0f; }
+        }
+        bool d_fov_valid = isfinite(d_fov) && d_fov >= 1.0f && d_fov <= 179.0f;
+        if (!d_fov_valid) {
+            bridge_log("  camera cross-val: A!=D (no B) -- "
+                       "D's FOV=%.2f invalid, keeping A(FName)=0x%p",
+                       d_fov, g_camera_manager_ptr);
+            /* Keep A -- it has a valid POV at startup-verified direct offset */
+        } else {
+            bridge_log("  camera cross-val: A!=D (no B) -- "
+                       "switching to D(PC-ref)=0x%p FOV=%.1f (was A=0x%p)",
+                       cam_d, d_fov, g_camera_manager_ptr);
+            g_camera_manager_ptr = cam_d;
+            g_cam_pov_ptr = nullptr; /* invalidate: manager changed */
+            return;
+        }
     }
 
     bridge_log("  camera cross-val: B failed, keeping A(FName)=0x%p%s",
