@@ -8,7 +8,7 @@
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
 - [x] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — fixed: replaced with cam_read() FOV poll.
 - [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
-- [ ] **P2: g_gvc_ptr binary-address bug** — GEngine+0x200 for StackOBot returns 0x7FF4... (binary/DLL range, not heap). LP+0x78 gives correct heap GVC. Need to use LP GVC as authoritative, or TObjectPtr decode for GVC field.
+- [x] **P2: g_gvc_ptr binary-address bug** — fixed in d82c2b4: always compare GEngine+0x200 with LP+0x78; if they differ, LP wins (raw ptr, authoritative).
 
 ## [v0.2.0] UUU / UE4SS Camera Research
 
@@ -50,6 +50,25 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] d82c2b4 -- xiaoni
+- **Fix camera not moving: slomo before path play** (`tools/test_camera_path.py`):
+  Root cause: `APlayerCameraManager::UpdateCamera()` runs every game frame and
+  writes the player-follow position back to CameraCachePrivate.POV -- the same
+  address our 60 Hz tick writes to. Game wins the race; camera stays at player pos.
+  Fix: issue `slomo 0.0001` before `path_play()`. At 1/10000 speed UpdateCamera
+  runs ~once per 167s; our 60 Hz tick dominates every rendered frame.
+  Speed restored to 1.0 after path ends or Ctrl+C.
+  Added `--no-slomo` flag for debug-camera-active scenarios (debug PCM has no
+  position lock, so no competition).
+- **Fix: GVC TObjectPtr detection extended to DLL range** (`ue5_engine.h`):
+  Previous check only caught GVC values in main EXE range. In StackOBot,
+  `GEngine+0x200 = 0x7FF457799DF8` is in a DLL range below the EXE base --
+  old check missed it, `g_gvc_ptr` got the fake value, LP cross-check logged
+  spurious MISMATCH, GVC-world update used wrong world causing GEngine FExec
+  crash on every subsequent command.
+  Fix: always read `LP+0x78` (raw ptr, UE4SS verified). If LP GVC != GEngine GVC,
+  adopt LP's value. `g_gvc_ptr` now equals `LP+0x78` so `verify_lp_via_gvc()` confirms.
 
 ### [v0.2.0] a403a51 -- xiaoni
 - **Fix crash: Path D "CameraManager" filter** (was "Camera"):
