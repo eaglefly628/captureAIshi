@@ -2853,39 +2853,60 @@ static void validate_engine_viewport_chain()
         return;
     }
 
-    /* Detect TObjectPtr encoding: if GVC is inside the game binary it is an
-     * encoded handle (UE5.4+ TObjectPtr dynamic resolution), not a real heap ptr.
-     * Fall back to LP->ViewportClient (+0x78) which always stores a raw pointer. */
+    /* Detect TObjectPtr encoding: GEngine+0x200 may hold an encoded handle
+     * rather than a raw heap pointer in UE5.4+ builds.
+     *
+     * Detection: always read LP->ViewportClient (LP+ulp_vc_off, always raw ptr
+     * per UE4SS MemberVarLayout_5_07).  If LP gives a valid heap address that
+     * differs from GEngine+0x200, GEngine+0x200 is encoded -- use LP value.
+     *
+     * Also catch the case where GVC is inside ANY module range (not just the
+     * main EXE), since on some builds the encoded address falls in a DLL. */
     ModuleRegion rgn;
-    bool in_binary = false;
+    bool gvc_in_binary = false;
     if (get_main_module(rgn)) {
         uintptr_t mod_lo = (uintptr_t)rgn.base;
         uintptr_t mod_hi = mod_lo + rgn.size;
-        in_binary = (gvc >= mod_lo && gvc < mod_hi);
+        gvc_in_binary = (gvc >= mod_lo && gvc < mod_hi);
     }
-    if (in_binary) {
-        bridge_log("  GVC chain: GEngine+0x%X=0x%p is in binary range "
-                   "(TObjectPtr-encoded), trying LP+0x78 fallback",
+
+    /* Always check LP+0x78 for authoritative GVC */
+    uintptr_t lp_gvc = 0;
+    bool lp_gvc_valid = false;
+    if (g_localplayer_ptr) {
+        lp_gvc = seh_read_ptr((uint8_t*)g_localplayer_ptr + g_ue_layout->ulp_vc_off);
+        /* Heap pointer: must be in user-space range [64KB, 128 TB] */
+        lp_gvc_valid = (lp_gvc >= 0x10000 && lp_gvc < 0x800000000000ULL);
+        /* Reject if LP GVC is in binary range too */
+        if (lp_gvc_valid && rgn.base &&
+            lp_gvc >= (uintptr_t)rgn.base &&
+            lp_gvc < (uintptr_t)rgn.base + rgn.size)
+            lp_gvc_valid = false;
+    }
+
+    /* Prefer LP GVC when GVC from GEngine looks encoded (in binary or mismatches LP) */
+    bool use_lp_gvc = false;
+    if (lp_gvc_valid) {
+        if (gvc_in_binary) {
+            use_lp_gvc = true;
+            bridge_log("  GVC chain: GEngine+0x%X=0x%p in binary range "
+                       "(TObjectPtr-encoded) -- using LP+0x78=0x%p",
+                       g_ue_layout->uengine_gvc_off, (void*)gvc, (void*)lp_gvc);
+        } else if (lp_gvc != gvc) {
+            /* Mismatch: LP raw ptr wins; GEngine value may be encoded DLL handle */
+            use_lp_gvc = true;
+            bridge_log("  GVC chain: GEngine+0x%X=0x%p != LP+0x78=0x%p -- "
+                       "LP is authoritative (raw ptr), adopting LP GVC",
+                       g_ue_layout->uengine_gvc_off, (void*)gvc, (void*)lp_gvc);
+        }
+    } else if (gvc_in_binary) {
+        bridge_log("  GVC chain: GEngine+0x%X=0x%p in binary range and no valid LP GVC -- skip",
                    g_ue_layout->uengine_gvc_off, (void*)gvc);
-        if (!g_localplayer_ptr) {
-            bridge_log("  GVC chain: no LP available for GVC fallback");
-            return;
-        }
-        uintptr_t lp_gvc = seh_read_ptr((uint8_t*)g_localplayer_ptr +
-                                         g_ue_layout->ulp_vc_off);
-        bool lp_valid = (lp_gvc >= 0x10000 && lp_gvc < 0x800000000000ULL);
-        bool lp_in_bin = lp_valid &&
-                         (lp_gvc >= (uintptr_t)rgn.base &&
-                          lp_gvc < (uintptr_t)rgn.base + rgn.size);
-        if (!lp_valid || lp_in_bin) {
-            bridge_log("  GVC chain: LP+0x78=0x%p invalid or also in binary, "
-                       "cannot resolve GVC", (void*)lp_gvc);
-            return;
-        }
-        bridge_log("  GVC chain: LP+0x78=0x%p (heap, authoritative -- overrides GEngine field)",
-                   (void*)lp_gvc);
-        gvc = lp_gvc;
+        return;
     }
+
+    if (use_lp_gvc)
+        gvc = lp_gvc;
 
     g_gvc_ptr = gvc;  /* save for LP cross-check in cross_validate_camera */
 
