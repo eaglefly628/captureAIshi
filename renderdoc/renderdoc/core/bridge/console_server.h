@@ -419,6 +419,34 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 
     if (cmd == "__cam_toggle") { toggle_debug_camera(); cs_reply(client, "ok\n"); return true; }
 
+    /* Idempotent debug camera enable/disable.
+     * __cam_debug_on  -- enable if not already active; camera_active=1 in status.
+     * __cam_debug_off -- disable if currently active.
+     * After enable, call __cam_mem_find so the correct (newest = debug) PCM
+     * is selected by find_camera_manager(). */
+    if (cmd == "__cam_debug_on") {
+        char buf[64];
+        if (!g_debug_camera_active) {
+            toggle_debug_camera();
+            snprintf(buf, sizeof(buf), "ok camera_active=1\n");
+        } else {
+            snprintf(buf, sizeof(buf), "ok camera_active=1 (already)\n");
+        }
+        cs_reply(client, buf);
+        return true;
+    }
+    if (cmd == "__cam_debug_off") {
+        char buf[64];
+        if (g_debug_camera_active) {
+            toggle_debug_camera();
+            snprintf(buf, sizeof(buf), "ok camera_active=0\n");
+        } else {
+            snprintf(buf, sizeof(buf), "ok camera_active=0 (already)\n");
+        }
+        cs_reply(client, buf);
+        return true;
+    }
+
     if (cmd == "__cam_pause" || cmd == "__timestop") {
         toggle_pause();
         char buf[64];

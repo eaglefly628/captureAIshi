@@ -2164,26 +2164,46 @@ static bool find_camera_manager()
     }
 
     /* Selection priority:
-     *   1. Candidate whose Outer is a PlayerController (authoritative).
-     *      Among those, prefer the FIRST (lowest GUA index = oldest).
-     *   2. If no outer_is_pc: take the FIRST non-CDO candidate.
-     *      Rationale: original game PCM is created at spawn time (low index).
-     *      Debug camera PCMs (ToggleDebugCamera -> ADebugCameraController) are
-     *      created later (higher index).  Taking the OLDEST avoids accidentally
-     *      picking a debug/temp PCM.  cross_validate_camera() (Path D) will
-     *      override this with the PC-referenced manager if they differ. */
+     *
+     * When debug camera (ToggleDebugCamera) is ACTIVE:
+     *   The original PCM has UpdateCamera() locked to the player position --
+     *   writing to it achieves nothing because the game overwrites every frame.
+     *   The debug PCM (created by ADebugCameraController on toggle) has NO
+     *   position lock; our 60 Hz writes persist.
+     *   The debug PCM is always NEWER (higher GUA index) than the original.
+     *   -> Select the NEWEST (highest-index) candidate.
+     *
+     * When debug camera is NOT active (normal gameplay):
+     *   The original game PCM has the lowest GUA index (created at BeginPlay).
+     *   cross_validate_camera() Path-D will correct if we pick the wrong one.
+     *   -> Select the OLDEST (lowest-index) candidate. */
     int best_c = -1;
-    for (int c = 0; c < n_candidates; c++) {
-        if (candidates[c].outer_is_pc) {
-            best_c = c;
-            break;  /* take first (oldest) PC-outer candidate */
+
+    /* Priority 1: candidate whose Outer is a PlayerController (authoritative) */
+    if (!g_debug_camera_active) {
+        for (int c = 0; c < n_candidates; c++) {
+            if (candidates[c].outer_is_pc) {
+                best_c = c;
+                break;  /* first (oldest) with PC outer */
+            }
         }
     }
+
     if (best_c < 0) {
-        best_c = 0;  /* first (oldest) non-CDO; D will override if wrong */
-        bridge_log("  CameraManager: no PlayerController outer found, "
-                   "using first (oldest) non-CDO candidate -- "
-                   "cross_validate_camera Path-D will correct if needed");
+        if (g_debug_camera_active && n_candidates > 1) {
+            /* Debug cam active: newest = debug PCM (no position lock) */
+            best_c = n_candidates - 1;
+            bridge_log("  CameraManager: debug camera active -- selecting newest "
+                       "candidate (debug PCM) [%d] idx=%d",
+                       best_c, candidates[best_c].index);
+        } else {
+            /* Normal mode: oldest = original game PCM */
+            best_c = 0;
+            if (!g_debug_camera_active)
+                bridge_log("  CameraManager: no PlayerController outer found, "
+                           "using first (oldest) non-CDO candidate -- "
+                           "cross_validate_camera Path-D will correct if needed");
+        }
     }
 
     PCMCandidate& best = candidates[best_c];
@@ -3212,30 +3232,43 @@ static void cross_validate_camera()
         return;
     }
 
-    /* B failed; A found something. Prefer D over A when they disagree,
-     * but ONLY if D's direct-offset FOV is valid -- this prevents switching
-     * to a non-PCM object that happens to have "CameraManager" in its class
-     * name or was returned by a confused scan (e.g. stale DebugCameraHUD). */
+    /* B failed; A found something. Decide between A and D:
+     *
+     * When debug camera is ACTIVE:
+     *   A = debug PCM (newest candidate, no position lock).
+     *   D = scans LP+0x30's PC, which may still be the ORIGINAL PC when
+     *       ToggleDebugCamera does not update LP's controller slot.
+     *   D would return the original PCM (position-locked) -- wrong target.
+     *   -> Keep A (debug PCM) regardless of D. */
     if (cam_d && cam_d != g_camera_manager_ptr) {
-        float d_fov = 0.0f;
-        if (g_ue_layout->cam_pov_direct_off) {
-            uint8_t* d_pov = (uint8_t*)cam_d + g_ue_layout->cam_pov_direct_off;
-            __try { d_fov = *(float*)(d_pov + g_ue_layout->fmvi_fov); }
-            __except(EXCEPTION_EXECUTE_HANDLER) { d_fov = 0.0f; }
-        }
-        bool d_fov_valid = isfinite(d_fov) && d_fov >= 1.0f && d_fov <= 179.0f;
-        if (!d_fov_valid) {
-            bridge_log("  camera cross-val: A!=D (no B) -- "
-                       "D's FOV=%.2f invalid, keeping A(FName)=0x%p",
-                       d_fov, g_camera_manager_ptr);
-            /* Keep A -- it has a valid POV at startup-verified direct offset */
+        if (g_debug_camera_active) {
+            bridge_log("  camera cross-val: A!=D but debug camera active -- "
+                       "keeping A(debug PCM)=0x%p, ignoring D(orig PC scan)=0x%p",
+                       g_camera_manager_ptr, cam_d);
+            /* A = debug PCM is correct; D scans original PC which still holds
+             * the position-locked original PCM. Do not switch. */
         } else {
-            bridge_log("  camera cross-val: A!=D (no B) -- "
-                       "switching to D(PC-ref)=0x%p FOV=%.1f (was A=0x%p)",
-                       cam_d, d_fov, g_camera_manager_ptr);
-            g_camera_manager_ptr = cam_d;
-            g_cam_pov_ptr = nullptr; /* invalidate: manager changed */
-            return;
+            /* Normal mode: prefer D over A when they disagree,
+             * but ONLY if D's direct-offset FOV is valid. */
+            float d_fov = 0.0f;
+            if (g_ue_layout->cam_pov_direct_off) {
+                uint8_t* d_pov = (uint8_t*)cam_d + g_ue_layout->cam_pov_direct_off;
+                __try { d_fov = *(float*)(d_pov + g_ue_layout->fmvi_fov); }
+                __except(EXCEPTION_EXECUTE_HANDLER) { d_fov = 0.0f; }
+            }
+            bool d_fov_valid = isfinite(d_fov) && d_fov >= 1.0f && d_fov <= 179.0f;
+            if (!d_fov_valid) {
+                bridge_log("  camera cross-val: A!=D (no B) -- "
+                           "D's FOV=%.2f invalid, keeping A(FName)=0x%p",
+                           d_fov, g_camera_manager_ptr);
+            } else {
+                bridge_log("  camera cross-val: A!=D (no B) -- "
+                           "switching to D(PC-ref)=0x%p FOV=%.1f (was A=0x%p)",
+                           cam_d, d_fov, g_camera_manager_ptr);
+                g_camera_manager_ptr = cam_d;
+                g_cam_pov_ptr = nullptr; /* invalidate: manager changed */
+                return;
+            }
         }
     }
 

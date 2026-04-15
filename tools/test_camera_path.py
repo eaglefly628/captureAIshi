@@ -1,23 +1,23 @@
 """Camera path test tool.
 
-Connects to the captureAIshi bridge DLL (127.0.0.1:9998), reads the
-current camera position, builds a smooth demo path, and plays it.
+Connects to the captureAIshi bridge DLL (127.0.0.1:9998), enables the
+debug camera (idempotent), reads the current camera position, builds a
+smooth demo path, and plays it.
 
 Usage:
     python tools/test_camera_path.py                   # orbit demo
     python tools/test_camera_path.py --arc             # forward arc demo
     python tools/test_camera_path.py --read            # just print current camera pos
     python tools/test_camera_path.py --host 192.168.1.2 --port 9998
-    python tools/test_camera_path.py --no-slomo        # skip timestop (debug cam active)
 
-By default the script issues 'slomo 0.0001' before playback and 'slomo 1.0'
-after.  This is necessary because APlayerCameraManager::UpdateCamera() runs
-every game frame and writes the player-follow position back to the same POV
-address our 60 Hz tick writes to -- without timestop the game wins the race
-and the camera never visibly moves.
-
-Use --no-slomo only when the debug camera (ToggleDebugCamera) is already
-active, because the debug PCM has no game-side position lock.
+How it works:
+  The script enables the debug camera via __cam_debug_on (idempotent).
+  With debug camera active, find_camera_manager() selects the NEWEST PCM
+  (the debug PCM created by ADebugCameraController).  The debug PCM has no
+  UpdateCamera() position lock so our 60 Hz tick writes persist across frames.
+  Without debug camera the original PCM is locked to the player position and
+  the game overwrites our writes every frame -- slomo is NOT a reliable fix
+  (many cracked/modified games disable or ignore TimeDilation).
 
 The path is built in UE5 space (Z-up, centimeters).
 """
@@ -95,15 +95,12 @@ def build_arc_path(cx: float, cy: float, cz: float,
     return keyframes
 
 
-def play_path(driver: UE5ConsoleDriver, keyframes: list, loop: bool = False,
-              slomo: bool = True) -> None:
+def play_path(driver: UE5ConsoleDriver, keyframes: list, loop: bool = False) -> None:
     """Upload keyframes and start playback.
 
-    slomo: issue 'slomo 0.0001' before playback so the bridge's 60 Hz
-    memory writes dominate over the game's per-frame UpdateCamera().
-    Without this, the game's camera lock (player-follow) overwrites our
-    position writes every frame and the camera never visibly moves.
-    Speed is restored to 1.0 when the path finishes or is interrupted.
+    Assumes the debug camera is already active (cam_debug_on was called).
+    The debug PCM has no UpdateCamera() position lock, so our 60 Hz writes
+    persist without needing slomo.
     """
     logger.info(f"Uploading {len(keyframes)} keyframes...")
     driver.path_clear()
@@ -119,21 +116,10 @@ def play_path(driver: UE5ConsoleDriver, keyframes: list, loop: bool = False,
         f"Path ready: {info['keyframes']} keyframes, "
         f"total={info['total_duration']:.1f}s"
     )
-
-    if slomo:
-        # APlayerCameraManager::UpdateCamera() runs every game frame and
-        # writes the player-follow position to the same POV address.
-        # At 0.0001x speed the game runs ~1 tick per 167s wall-clock time,
-        # so our 60 Hz tick wins cleanly on every rendered frame.
-        logger.info("Slowing game (slomo 0.0001) so camera writes win...")
-        driver.send_command("slomo 0.0001")
-        time.sleep(0.3)  # let at least one slomo tick process
-
     logger.info("Starting playback...")
     driver.path_play(speed=1.0)
     logger.info("Path is playing. Press Ctrl+C to stop early.")
 
-    # Wait for path to finish (poll wall-clock time against total_duration)
     total = info["total_duration"]
     start = time.time()
     try:
@@ -149,15 +135,10 @@ def play_path(driver: UE5ConsoleDriver, keyframes: list, loop: bool = False,
         print()
         logger.info("Stopping path playback.")
         driver.path_stop()
-        if slomo:
-            driver.send_command("slomo 1.0")
         return
 
     print()
     driver.path_stop()
-    if slomo:
-        logger.info("Restoring game speed (slomo 1.0)...")
-        driver.send_command("slomo 1.0")
     logger.info("Path complete.")
 
 
@@ -175,9 +156,6 @@ def main() -> None:
                         help="Number of orbit segments (default 8)")
     parser.add_argument("--duration", type=float, default=2.0,
                         help="Seconds per segment (default 2.0)")
-    parser.add_argument("--no-slomo", action="store_true",
-                        help="Skip slomo -- only use when debug camera is active "
-                             "(game's UpdateCamera has no position lock)")
     args = parser.parse_args()
 
     driver = UE5ConsoleDriver(host=args.host, port=args.port)
@@ -193,11 +171,17 @@ def main() -> None:
         driver.disconnect()
         sys.exit(1)
 
-    # Make sure camera POV is located
-    logger.info("Locating camera POV in game memory...")
+    # Enable debug camera (idempotent).
+    # With debug camera active, the bridge selects the debug PCM which has
+    # no UpdateCamera() position lock -- our 60 Hz writes are not overwritten.
+    logger.info("Enabling debug camera (idempotent)...")
+    driver.cam_debug_on()
+
+    # Rescan to select the correct (debug) PCM now that debug cam is active.
+    logger.info("Locating camera POV in game memory (debug PCM)...")
     driver.cam_find()
 
-    # Read current position
+    # Read current position from the debug PCM
     pos = driver.cam_read()
     if pos["x"] == 0.0 and pos["y"] == 0.0 and pos["z"] == 0.0:
         logger.warning("Camera read returned all zeros -- may not be found yet")
@@ -236,7 +220,7 @@ def main() -> None:
             seg_duration=args.duration,
         )
 
-    play_path(driver, keyframes, slomo=not args.no_slomo)
+    play_path(driver, keyframes)
 
     driver.disconnect()
 

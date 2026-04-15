@@ -448,18 +448,49 @@ class UE5ConsoleDriver(CameraDriver):
             except Exception as e:
                 logger.warning(f"[STREAMING] Failed to restore '{cmd}': {e}")
 
+    def cam_debug_on(self) -> bool:
+        """Idempotently enable debug camera (__cam_debug_on).
+
+        When debug camera is active the bridge selects the NEWEST (debug) PCM
+        in find_camera_manager() -- this PCM has no player-position lock so
+        our 60 Hz writes aren't overwritten by UpdateCamera every frame.
+        Always call cam_find() after this to re-select the debug PCM.
+
+        Returns True if camera_active=1 in the response.
+        """
+        if not self._is_bridge:
+            return False
+        resp = self._send_recv("__cam_debug_on", timeout=5.0)
+        ok = "camera_active=1" in resp
+        logger.info(f"[CAM] cam_debug_on: {resp.strip()}")
+        return ok
+
+    def cam_debug_off(self) -> bool:
+        """Idempotently disable debug camera (__cam_debug_off).
+
+        Returns True if camera_active=0 in the response.
+        """
+        if not self._is_bridge:
+            return False
+        resp = self._send_recv("__cam_debug_off", timeout=5.0)
+        ok = "camera_active=0" in resp
+        logger.info(f"[CAM] cam_debug_off: {resp.strip()}")
+        return ok
+
     def enable_debug_camera(self) -> None:
-        """Toggle the debug camera mode and configure rendering for capture."""
-        self.send_command("ToggleDebugCamera")
-        # Poll until camera FOV is readable (confirms debug camera is active)
-        # rather than a fixed sleep.
+        """Enable debug camera and configure rendering for capture.
+
+        Bridge mode: sends __cam_debug_on (idempotent -- only toggles if not
+        already active). The bridge's g_debug_camera_active flag is then set
+        so the next cam_find() picks the debug PCM (no UpdateCamera position
+        lock). The game's UpdateCamera on the original PCM cannot interfere.
+
+        UUU / fallback: sends ToggleDebugCamera directly with a fixed wait.
+        """
         if self._is_bridge:
-            for _ in range(20):
-                time.sleep(0.05)
-                pos = self.cam_read()
-                if pos["fov"] > 1.0:
-                    break
+            self.cam_debug_on()
         else:
+            self.send_command("ToggleDebugCamera")
             time.sleep(0.5)
         self._configure_rendering_for_capture()
 
