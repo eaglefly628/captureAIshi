@@ -2,7 +2,33 @@
 
 ## Active TODO
 
+### 当前 session (from 主程序员 + 老白)
+
+- [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
+  - UpdateCamera() 每帧写回玩家摄像机位置，无法从外部争抢
+  - 正确解: hook `ULocalPlayer::GetViewPoint` (virtual, hookable via vtable)
+  - GetViewPoint 在渲染线程 FSceneView 构建前被调用，是数据流进渲染器的最后门
+  - UE4SS 方案: `RegisterHook("Function /Script/Engine.LocalPlayer.GetViewPoint", ...)`
+  - 我们方案: 找 LP vtable 中 GetViewPoint 的 slot，VirtualProtect + 写钩子函数
+  - 钩子直接返回 g_cam_override_state，完全跳过 UpdateCamera 写的 POV
+  - 注意: vtable index 因 UE 版本而异，需从 UE4SS PDB 数据或运行时扫描确定
+
+- [ ] **P0: ue5_engine.h 文件拆分** (from 老白) -- DONE in current commit
+  - [x] 拆成 ue5_scan_engine.h / ue5_scan_world.h / ue5_scan_camera.h / ue5_exec_hook.h / ue5_actions.h
+  - 主文件 430 行 (原 3839 行), 最大子文件 ~1237 行
+
 - [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find, confirm scan fallback finds POV.
+
+### UUU 功能复刻 (from 小由 2026-04-05, 老白 confirmed)
+
+- [ ] **P0: per-node FOV 支持** — 路径每个关键帧可以设不同 FOV，播放时线性插值
+- [ ] **P0: 播放时长控制** — `__path_play <total_seconds>` 参数控制总播放时间
+- [ ] **P0: Loop 播放** — `__path_loop 1/0` 命令
+- [ ] **P0: 暂停/恢复** — `__path_pause` / `__path_resume`
+- [ ] **P0: 当前位置查询** — `__camera_get` 返回当前 pos/rot/fov
+
+### 其他
+
 - [ ] **P0: Path D 逆向补全** — pass 2 now scans PC+[0x100..0x800] for exact manager ptr. On next run, log "PC+0xXXX == Path-A manager [XVAL OK]" -- update k_layout_ue57.pc_pcm_start/end to that discovered offset.
 - [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
 - [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
@@ -50,6 +76,23 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] (pending push) -- xiaoni
+- **Remove ToggleDebugCamera logic**: all `g_debug_camera_active` code removed from
+  `ue5_engine.h`, `console_server.h`, `ue5_console.py`, `test_camera_path.py`.
+  Shipping games have no ToggleDebugCamera; debug PCM approach is dev-build-only.
+  Removed `__cam_toggle`, `__cam_debug_on`, `__cam_debug_off` bridge commands.
+- **Tick thread bumped to 1000 Hz** (`Sleep(1)` was `Sleep(16)`): writes 16x per
+  game frame vs UpdateCamera's 1x. Temporary mitigation until GetViewPoint hook.
+  UpdateCamera root cause documented: correct fix is ULocalPlayer::GetViewPoint vtable
+  hook (virtual, called at game-to-render boundary, bypasses UpdateCamera entirely).
+- **ue5_engine.h split** (3839 -> 430 lines): implementation extracted into 5
+  sub-headers included in order from ue5_engine.h:
+  - `ue5_scan_engine.h` (1218 lines): GEngine, GUObjectArray, FNamePool, FExec vtable
+  - `ue5_scan_world.h` (379 lines): UWorld, ULocalPlayer
+  - `ue5_scan_camera.h` (1237 lines): PCM, cam_pov, R/W, cross-validation
+  - `ue5_exec_hook.h` (472 lines): FExec multi-hook, console exec, gamethread dispatch
+  - `ue5_actions.h` (129 lines): timestop, HUD, free camera, hotsampling
 
 ### [v0.2.0] 1089807 -- xiaoni
 - **Fix camera not moving (without slomo)**: correct approach is debug PCM.

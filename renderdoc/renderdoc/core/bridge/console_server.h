@@ -120,7 +120,7 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&last);
 
-    BRIDGE_LOG("Camera tick thread started (60 Hz)");
+    BRIDGE_LOG("Camera tick thread started (1000 Hz)");
 
     while (InterlockedCompareExchange(&cs_tick_running, 1, 1) == 1) {
         QueryPerformanceCounter(&now);
@@ -162,7 +162,7 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
             write_camera_mem(g_cam_override_state);
         }
 
-        Sleep(16);  /* ~60 Hz */
+        Sleep(1);   /* ~1000 Hz -- outpaces UpdateCamera (once per frame ~60 Hz) */
     }
     BRIDGE_LOG("Camera tick thread stopped");
     return 0;
@@ -214,7 +214,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "uworld_found=%d localplayer_found=%d "
             "camera_manager_found=%d cam_pov_found=%d "
             "cam_override=%d "
-            "camera_active=%d paused=%d hud=%d "
+            "paused=%d hud=%d "
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
             "gengine_global=0x%llX "
@@ -228,7 +228,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             g_world_ptr ? 1 : 0, g_localplayer_ptr ? 1 : 0,
             g_camera_manager_ptr ? 1 : 0, g_cam_pov_ptr ? 1 : 0,
             (int)g_camera_override.load(),
-            (int)g_debug_camera_active, (int)g_paused.load(),
+            (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
             cs_smooth_factor,
@@ -296,7 +296,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 
     /* Commands below require GEngine -- return error if not ready */
     if (!g_engine_found) {
-        if (cmd == "__cam_toggle" || cmd == "__cam_pause" ||
+        if (cmd == "__cam_pause" ||
             cmd == "__timestop" || cmd.rfind("__cam_speed ",0)==0 ||
             cmd == "__hud_toggle" || cmd.rfind("__hotsample ",0)==0) {
             cs_reply(client, "error: engine_not_ready\n");
@@ -414,36 +414,6 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     if (cmd == "__cam_mem_off") {
         g_camera_override = false;
         cs_reply(client, "ok override=off\n");
-        return true;
-    }
-
-    if (cmd == "__cam_toggle") { toggle_debug_camera(); cs_reply(client, "ok\n"); return true; }
-
-    /* Idempotent debug camera enable/disable.
-     * __cam_debug_on  -- enable if not already active; camera_active=1 in status.
-     * __cam_debug_off -- disable if currently active.
-     * After enable, call __cam_mem_find so the correct (newest = debug) PCM
-     * is selected by find_camera_manager(). */
-    if (cmd == "__cam_debug_on") {
-        char buf[64];
-        if (!g_debug_camera_active) {
-            toggle_debug_camera();
-            snprintf(buf, sizeof(buf), "ok camera_active=1\n");
-        } else {
-            snprintf(buf, sizeof(buf), "ok camera_active=1 (already)\n");
-        }
-        cs_reply(client, buf);
-        return true;
-    }
-    if (cmd == "__cam_debug_off") {
-        char buf[64];
-        if (g_debug_camera_active) {
-            toggle_debug_camera();
-            snprintf(buf, sizeof(buf), "ok camera_active=0\n");
-        } else {
-            snprintf(buf, sizeof(buf), "ok camera_active=0 (already)\n");
-        }
-        cs_reply(client, buf);
         return true;
     }
 

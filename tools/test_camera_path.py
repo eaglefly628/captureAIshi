@@ -1,8 +1,7 @@
 """Camera path test tool.
 
-Connects to the captureAIshi bridge DLL (127.0.0.1:9998), enables the
-debug camera (idempotent), reads the current camera position, builds a
-smooth demo path, and plays it.
+Connects to the captureAIshi bridge DLL (127.0.0.1:9998), reads the current
+camera position, builds a smooth demo path, and plays it.
 
 Usage:
     python tools/test_camera_path.py                   # orbit demo
@@ -11,13 +10,11 @@ Usage:
     python tools/test_camera_path.py --host 192.168.1.2 --port 9998
 
 How it works:
-  The script enables the debug camera via __cam_debug_on (idempotent).
-  With debug camera active, find_camera_manager() selects the NEWEST PCM
-  (the debug PCM created by ADebugCameraController).  The debug PCM has no
-  UpdateCamera() position lock so our 60 Hz tick writes persist across frames.
-  Without debug camera the original PCM is locked to the player position and
-  the game overwrites our writes every frame -- slomo is NOT a reliable fix
-  (many cracked/modified games disable or ignore TimeDilation).
+  The bridge tick thread runs at ~1000 Hz and writes the interpolated camera
+  position directly into FMinimalViewInfo (CameraCachePrivate.POV) on every
+  tick.  APlayerCameraManager::UpdateCamera() writes once per game frame
+  (~60 Hz).  Because we write ~16 times per game frame, our last write before
+  the renderer reads the POV wins.  No ToggleDebugCamera or slomo needed.
 
 The path is built in UE5 space (Z-up, centimeters).
 """
@@ -96,12 +93,7 @@ def build_arc_path(cx: float, cy: float, cz: float,
 
 
 def play_path(driver: UE5ConsoleDriver, keyframes: list, loop: bool = False) -> None:
-    """Upload keyframes and start playback.
-
-    Assumes the debug camera is already active (cam_debug_on was called).
-    The debug PCM has no UpdateCamera() position lock, so our 60 Hz writes
-    persist without needing slomo.
-    """
+    """Upload keyframes and start playback."""
     logger.info(f"Uploading {len(keyframes)} keyframes...")
     driver.path_clear()
     for i, kf in enumerate(keyframes):
@@ -171,14 +163,8 @@ def main() -> None:
         driver.disconnect()
         sys.exit(1)
 
-    # Enable debug camera (idempotent).
-    # With debug camera active, the bridge selects the debug PCM which has
-    # no UpdateCamera() position lock -- our 60 Hz writes are not overwritten.
-    logger.info("Enabling debug camera (idempotent)...")
-    driver.cam_debug_on()
-
-    # Rescan to select the correct (debug) PCM now that debug cam is active.
-    logger.info("Locating camera POV in game memory (debug PCM)...")
+    # Scan for the camera PCM and POV address.
+    logger.info("Locating camera POV in game memory...")
     driver.cam_find()
 
     # Read current position from the debug PCM
