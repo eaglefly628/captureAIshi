@@ -51,6 +51,26 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] 1089807 -- xiaoni
+- **Fix camera not moving (without slomo)**: correct approach is debug PCM.
+  `slomo` is unreliable in cracked/modified games (TimeDilation may be disabled).
+  UUU-style fix: ToggleDebugCamera creates a debug PCM with no `UpdateCamera()`
+  position lock; writing to IT persists across frames. Original PCM is locked to
+  player position every frame.
+- `find_camera_manager()`: when `g_debug_camera_active && n_candidates > 1`,
+  select **NEWEST** (highest GUA index) candidate = debug PCM. Was always selecting
+  oldest (original position-locked PCM).
+- `cross_validate_camera()`: when `g_debug_camera_active && A != D`, **keep A**
+  (debug PCM). D scans LP+0x30 which may still point to original PC in UE5.7
+  (LP not updated by ToggleDebugCamera); D returns original PCM = wrong.
+- **New bridge commands**: `__cam_debug_on` / `__cam_debug_off` (idempotent).
+  Only toggles if state differs; replies `camera_active=0/1`. Caller runs
+  `__cam_mem_find` after enable so PCM re-selection takes effect.
+- **Driver**: `cam_debug_on()` / `cam_debug_off()` methods.
+  `enable_debug_camera()` now uses `cam_debug_on()` (idempotent) for bridge.
+- **test_camera_path.py**: removed slomo. Calls `cam_debug_on()` + `cam_find()`
+  before building path. Path starts from debug PCM position.
+
 ### [v0.2.0] d82c2b4 -- xiaoni
 - **Fix camera not moving: slomo before path play** (`tools/test_camera_path.py`):
   Root cause: `APlayerCameraManager::UpdateCamera()` runs every game frame and
