@@ -19,6 +19,22 @@
 
 - [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find, confirm scan fallback finds POV.
 
+### 代码 bug（from 主程序员 review，基于 claudeMainBranch）
+
+- [ ] **P0: 3rdparty/bridge/src/ 与 renderdoc/renderdoc/core/bridge/ 双树分叉** (spotted by 主程序员) — `3rdparty/bridge/src/` 是旧版本（pre-split），`renderdoc/` 是新版本（post-split）。camera_path.h 差 44 行，pattern_scan.h 差 248 行（renderdoc 版本已加 VirtualQuery 安全扫描）。`3rdparty/bridge/src/` 是独立 CMake 构建的 bridge.dll 源码，renderdoc 版本是嵌入 renderdoc.dll 的版本。两者必须同步，否则修 bug 只修一边。修法：用 CMake `configure_file` 或 symlink 让两者共享同一份源码，或明确弃用其中一个并在 CMakeLists.txt 里 include 另一个。
+
+- [ ] **P0: line_buf 无大小上限** (spotted by 主程序员) — `console_server.h` client handler：`line_buf.append(buffer, n)` 无任何大小检查。本地 JS 连接持续发送不含 `\n` 的字节流，`std::string` 无限增长 → OOM crash game process。加上限：`if (line_buf.size() + n > 1024*1024) { disconnect; break; }`。
+
+- [ ] **P1: recv() 错误和关闭未区分** (spotted by 主程序员) — `console_server.h:556`：`if (n <= 0) break;` 把 recv 错误 (-1) 和正常关闭 (0) 混在一起。应分开：`n < 0` 时记录 `WSAGetLastError()`，`n == 0` 是正常断开。
+
+- [ ] **P1: `__path_delete` atoi 整数溢出** (spotted by 主程序员) — `console_server.h:480`：`atoi(cmd.c_str()+14)` 不检查 `INT_MAX` 溢出，传入 `2147483648` 让 int 变负数，绕过 `< 0` 检查后 cast 为 `size_t` 变天文数字。改用 `strtol()` 并加上界检查（`> 10000` 就 reject）。
+
+- [ ] **P1: camera_path.h count()/list_keyframes()/tick() 无 mutex** (spotted by 主程序员) — `count()` 直接 `return m_keyframes.size()` 无锁，`list_keyframes()` 同，`tick()` 读 `m_keyframes` 无锁。`delete_keyframe()` 在 TCP 线程调用修改 vector，并发时 iterator 失效 → UB/crash。修法：(1) 将 `m_mutex` 改为 `mutable std::mutex`；(2) 在 `count()`/`list_keyframes()`/`tick()` 入口加 `std::lock_guard<std::mutex> lk(m_mutex)`；(3) `interpolate()`/`total_duration()` 是内部 helper（被 tick() 调用时已持锁），不额外加锁。
+
+- [ ] **P1: ClientArg CreateThread 失败泄漏** (spotted by 主程序员) — `console_server.h:618`：`ClientArg* arg = new ClientArg` 后调 `CreateThread`，若失败则 `arg` 泄漏且 socket 未关。加 `if (!h) { delete arg; closesocket(c); continue; }`。
+
+- [ ] **P2: cs_smooth_initialized 数据竞争** (spotted by 主程序员) — `console_server.h:83`：`cs_smooth_initialized` 是普通 `bool`，被 camera tick 线程读、TCP 线程写，无同步。改为 `std::atomic<bool>`。
+
 ### UUU 功能复刻 (from 小由 2026-04-05, 老白 confirmed)
 
 - [ ] **P0: per-node FOV 支持** — 路径每个关键帧可以设不同 FOV，播放时线性插值
