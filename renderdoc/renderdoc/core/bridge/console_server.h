@@ -67,6 +67,7 @@ static void bridge_log_adapter(const char* fmt, ...)
 #include "pattern_scan.h"
 #include "ue5_engine.h"
 #include "camera_path.h"
+#include "camera_intercept.h"
 
 #undef bridge_log
 
@@ -242,7 +243,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "path_keyframes=%zu path_playing=%d "
             "smooth_factor=%.1f embedded=1 "
             "gengine_global=0x%llX "
-            "gamethread_dispatch=%d\n",
+            "gamethread_dispatch=%d "
+            "intercept_sites=%zu intercept_nopped=%d\n",
             (int)g_engine_found.load(), g_engine_ptr,
             (void*)g_fexec_exec, (int)g_fexec_offset,
             g_fexec_hook_count,
@@ -257,7 +259,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             g_camera_path.count(), (int)g_camera_path.is_active(),
             cs_smooth_factor,
             (unsigned long long)g_engine_global_addr,
-            (int)g_gamethread_dispatch_ready.load());
+            (int)g_gamethread_dispatch_ready.load(),
+            cam_intercept_count(),
+            (int)cam_intercept_any_nopped());
         cs_reply(client, buf);
         return true;
     }
@@ -441,6 +445,101 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     if (cmd == "__cam_mem_off") {
         g_camera_override = false;
         cs_reply(client, "ok override=off\n");
+        return true;
+    }
+
+    /* ---- IGCS-style code-patch intercept ----
+     * Patches the game's own MOV instruction(s) that write POV so that
+     * UpdateCamera stops fighting our external writes. Two states per
+     * site: "pass" (original bytes) and "nop" (blocked).
+     *
+     *   __cam_intercept_install_addr <hex_addr> <size> [name]
+     *       Install at an absolute address (for testing).
+     *   __cam_intercept_install_aob <size> <name> | <AOB>
+     *       Install at first AOB match in main module. Name is required
+     *       to separate args from the AOB hex (which contains spaces).
+     *       The literal '|' separates size/name from the AOB tokens.
+     *   __cam_intercept_nop      -- switch all sites to nop (override).
+     *   __cam_intercept_pass     -- switch all sites to original.
+     *   __cam_intercept_list     -- dump installed sites.
+     *   __cam_intercept_uninstall -- restore bytes + clear list.
+     */
+    if (cmd.rfind("__cam_intercept_install_addr ", 0) == 0) {
+        const char* p = cmd.c_str() + 29;
+        char* end = NULL;
+        uintptr_t addr = strtoull(p, &end, 16);
+        if (end == p || addr == 0) {
+            cs_reply(client, "error: usage __cam_intercept_install_addr <hex_addr> <size> [name]\n");
+            return true;
+        }
+        p = end;
+        while (*p == ' ') p++;
+        long size = strtol(p, &end, 10);
+        if (end == p || size <= 0 || size > 64) {
+            cs_reply(client, "error: size must be 1..64\n");
+            return true;
+        }
+        p = end;
+        while (*p == ' ') p++;
+        const char* name = *p ? p : "manual";
+        bool ok = cam_intercept_install_addr((uint8_t*)addr, (size_t)size, name);
+        cs_reply(client, ok ? "ok\n" : "error: install failed\n");
+        return true;
+    }
+
+    if (cmd.rfind("__cam_intercept_install_aob ", 0) == 0) {
+        /* format: __cam_intercept_install_aob <size> <name> | <AOB hex> */
+        const char* p = cmd.c_str() + 28;
+        char* end = NULL;
+        long size = strtol(p, &end, 10);
+        if (end == p || size <= 0 || size > 64) {
+            cs_reply(client, "error: usage __cam_intercept_install_aob <size> <name> | <AOB>\n");
+            return true;
+        }
+        p = end;
+        while (*p == ' ') p++;
+        const char* name_start = p;
+        const char* bar = strchr(p, '|');
+        if (!bar) {
+            cs_reply(client, "error: missing '|' separator before AOB\n");
+            return true;
+        }
+        std::string name(name_start, bar - name_start);
+        while (!name.empty() && name.back() == ' ') name.pop_back();
+        const char* aob = bar + 1;
+        while (*aob == ' ') aob++;
+        bool ok = cam_intercept_install_aob(aob, (size_t)size,
+                                             name.empty() ? "aob" : name.c_str());
+        cs_reply(client, ok ? "ok\n" : "error: install failed (see log)\n");
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_nop") {
+        bool ok = cam_intercept_set_nop_all(true);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s sites=%zu\n",
+                 ok ? "ok" : "partial_failure", cam_intercept_count());
+        cs_reply(client, buf);
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_pass") {
+        bool ok = cam_intercept_set_nop_all(false);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s sites=%zu\n",
+                 ok ? "ok" : "partial_failure", cam_intercept_count());
+        cs_reply(client, buf);
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_list") {
+        cs_reply(client, cam_intercept_list());
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_uninstall") {
+        cam_intercept_uninstall_all();
+        cs_reply(client, "ok\n");
         return true;
     }
 
@@ -1007,6 +1106,9 @@ static inline void ConsoleServer_Stop()
 
     /* Remove all FExec hooks before shutdown */
     uninstall_all_fexec_hooks();
+
+    /* Restore any code-patched camera-write sites */
+    cam_intercept_uninstall_all();
 
     BRIDGE_LOG("Console server shutdown complete");
 }

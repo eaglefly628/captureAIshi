@@ -7,4 +7,4 @@ Auto-updated by each agent after every response.
 | 主程序员 | ~15% | 2026-04-06 | 新 session: 修 stderr 死锁/路径穿越/Unicode/索引bug，code review 完成 |
 | 小由 (UI) | ~30% | 2026-04-05 | Camera Path Editor + Game Library + Per-Game Profiles done, pushed |
 | 小萱 (Rendering) | — | — | — |
-| 小逆 (Reversing) | ~75% | 2026-04-17 | 老白 bug sweep: 4x P0 SEH + cam_override mutex + 5x P1 + 3x P2 fixed on claudeMainBranch |
+| 小逆 (Reversing) | ~87% | 2026-04-17 | IGCS-style camera_intercept.h MVP: AOB-scan + VirtualProtect byte-swap; TCP __cam_intercept_* wired; keeping FName/GUA discovery intact |

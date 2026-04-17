@@ -2,6 +2,38 @@
 
 ## Active TODO
 
+### 2026-04-17 汇报给老白 -- xiaoni -- IGCS intercept MVP 进度
+
+Session focus this round:
+  1. **DONE** 老白 bug fix sweep (12 of 14 review items) -- sha `8994179`.
+  2. **DONE** Copy IGCS source to `docs/refCode/igcs/` -- sha `2accaeb`.
+     Reference for the inline MOV-patch technique.
+  3. **IN PROGRESS** Implement IGCS-style camera intercept -- current CL.
+     Infrastructure done: `camera_intercept.h` + TCP commands +
+     shutdown cleanup + `__bridge_status` reporting.
+
+Decision recorded (per 老白 direction):
+  - Keep current FName/GUObjectArray discovery. Actors / UWorld /
+    LocalPlayer / CameraManager still found the same way.
+  - Per-game AOB signatures acceptable (target-game list is small).
+  - Starting with simple byte-swap (NOP game writes) instead of a
+    full IGCS conditional-asm trampoline. Trampoline is a follow-up
+    if NOPs corrupt anything.
+
+Want feedback before next step on:
+  - **(auto-discovery)** After `find_cam_pov` succeeds we know
+    `camera_manager_ptr + cc_off + pov_x_off`. Scanning `.text` for
+    `movsd [reg + <that disp32>], xmm0` should land us on the write
+    site automatically. Worth doing next or wait for field data from
+    StackOBot?
+  - **(trampoline)** If NOPs break audio/animation (they shouldn't,
+    but UE may read these fields after writing), do we go IGCS-full
+    with a conditional asm stub, or just live with write-then-restore?
+  - **(Slack bot practice target)** User plans to test this on a Slack
+    Bot-exercised game today. Need a minimal driver-side recipe so
+    the bot can: (a) install AOB, (b) flip nop/pass, (c) verify via
+    `__bridge_status`.
+
 ### 当前 session (from 主程序员 + 老白)
 
 - [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
@@ -123,7 +155,61 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- 老白 bug fix sweep
+### [v0.2.0] (pending push) -- xiaoni -- IGCS-style camera intercept (MVP)
+
+**New file**: `renderdoc/renderdoc/core/bridge/camera_intercept.h`
+
+Motivation: `APlayerCameraManager::UpdateCamera()` writes player-follow
+position into `FMinimalViewInfo` every frame, racing with our 1000 Hz
+tick. Instead of racing, patch the game's own MOV instruction(s): swap
+to NOPs when we want to block the game's writes, swap back when we
+want it to drive.
+
+Key decision (confirmed by 老白): **keep the entire existing discovery
+pipeline**. GEngine / UWorld / ULocalPlayer / APlayerCameraManager are
+still located via string-xref + GUObjectArray + FName. We still plan to
+walk actors with the same infrastructure. The intercept module replaces
+only the 1000 Hz override mechanism.
+
+Design mirrors IGCS Hellblade (UE4) reference at
+`docs/refCode/igcs/Cameras/Hellblade/InjectableGenericCameraSystem/`:
+ - AOB-scan the game's write instruction in `.text`.
+ - `VirtualProtect(PAGE_EXECUTE_READWRITE)` + `memcpy` + restore +
+   `FlushInstructionCache`. Per-site original bytes saved so toggles
+   between `pass` / `nop` are reversible.
+ - Not using MinHook / Detours / inline trampoline generation yet --
+   simpler byte-swap first. Conditional asm trampoline is a follow-up
+   if per-game NOP turns out to corrupt game state.
+
+TCP commands (new):
+  - `__cam_intercept_install_addr <hex_addr> <size> [name]`
+  - `__cam_intercept_install_aob <size> <name> | <AOB hex>`
+  - `__cam_intercept_nop`       (override ON -- block game writes)
+  - `__cam_intercept_pass`      (override OFF -- restore originals)
+  - `__cam_intercept_list`
+  - `__cam_intercept_uninstall` (restore + clear list; also runs on DLL shutdown)
+
+`__bridge_status` now reports `intercept_sites=N intercept_nopped=0/1`.
+
+Not yet implemented (intentional scope):
+  - Auto-discovery of the write instruction from known
+    `g_camera_manager_ptr + cc_off + pov_x_off`. Currently per-game AOB
+    must be supplied from UI / config.
+  - Conditional asm trampoline (IGCS's `cameraStructInterceptor` PROC
+    with `g_cam_override_state` writes inside the asm). Byte-swap first.
+  - Integration with path playback: tick-thread path writes still go
+    through `write_camera_mem` unchanged. Once an intercept site is in
+    nop mode, the game doesn't fight those writes any more.
+
+Expected usage from UI side (xiaoyu to wire up):
+  1. Call `__cam_mem_find` as today -- confirms camera POV pointer.
+  2. For target game, pass the AOB (found offline in CE/x64dbg) +
+     byte-count via `__cam_intercept_install_aob`.
+  3. Before path playback: `__cam_intercept_nop` + `__cam_mem_on`.
+  4. After playback: `__cam_intercept_pass` (hand control back to game).
+  5. DLL unload or `__cam_intercept_uninstall` cleans up.
+
+### [v0.2.0] 8994179 -- xiaoni -- 老白 bug fix sweep
 
 Batch fix of 主程序员 review (base + Opus 4.7 deep review). All listed
 P0 / P1 / P2 items marked completed in the TODO section above.
