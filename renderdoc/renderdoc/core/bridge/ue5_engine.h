@@ -22,6 +22,7 @@
 #include <vector>
 #include <atomic>
 #include <cmath>
+#include <mutex>
 
 #include "pattern_scan.h"
 
@@ -325,6 +326,31 @@ static uintptr_t seh_read_ptr(const void* addr)
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
         return 0;
+    }
+}
+
+/* Safely read a uint32_t; returns 0 on access violation.
+ * 0 is a valid FName ComparisonIndex ("None") so callers that need
+ * to distinguish AV from legitimate zero must use seh_read_u32_ok. */
+static uint32_t seh_read_u32(const void* addr)
+{
+    __try {
+        return *(const uint32_t*)addr;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+/* Safely read a uint32_t with success flag; returns false on AV. */
+static bool seh_read_u32_ok(const void* addr, uint32_t* out)
+{
+    __try {
+        *out = *(const uint32_t*)addr;
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
     }
 }
 

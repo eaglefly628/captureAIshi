@@ -80,16 +80,18 @@ static const int CONSOLE_MAX_CMD_LEN  = 4096;
 static float cs_smooth_factor = 1.0f;
 static Vec3  cs_smooth_pos = {0, 0, 0};
 static float cs_smooth_pitch = 0, cs_smooth_yaw = 0, cs_smooth_roll = 0;
-static bool  cs_smooth_initialized = false;
+/* Read by tick thread, written by TCP thread (__smooth command resets it).
+ * atomic avoids torn read + gives release/acquire semantics on the flag. */
+static std::atomic<bool> cs_smooth_initialized{false};
 
 static InterpolatedCamera cs_apply_smoothing(const InterpolatedCamera& raw)
 {
-    if (cs_smooth_factor <= 1.0f || !cs_smooth_initialized) {
+    if (cs_smooth_factor <= 1.0f || !cs_smooth_initialized.load()) {
         cs_smooth_pos = raw.pos;
         cs_smooth_pitch = raw.pitch;
         cs_smooth_yaw = raw.yaw;
         cs_smooth_roll = raw.roll;
-        cs_smooth_initialized = true;
+        cs_smooth_initialized.store(true);
         return raw;
     }
     float alpha = 1.0f / cs_smooth_factor;
@@ -135,14 +137,19 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
              * This is what UUU does: background-thread POV override.
              * No race with UpdateCamera because we write AFTER it. */
             if (g_cam_pov_ptr) {
-                g_cam_override_state.x     = cam.pos.x;
-                g_cam_override_state.y     = cam.pos.y;
-                g_cam_override_state.z     = cam.pos.z;
-                g_cam_override_state.pitch = cam.pitch;
-                g_cam_override_state.yaw   = cam.yaw;
-                g_cam_override_state.roll  = cam.roll;
-                if (cam.fov > 0.0f) g_cam_override_state.fov = cam.fov;
-                write_camera_mem(g_cam_override_state);
+                CameraMemState snap;
+                {
+                    std::lock_guard<std::mutex> lk(g_cam_override_mutex);
+                    g_cam_override_state.x     = cam.pos.x;
+                    g_cam_override_state.y     = cam.pos.y;
+                    g_cam_override_state.z     = cam.pos.z;
+                    g_cam_override_state.pitch = cam.pitch;
+                    g_cam_override_state.yaw   = cam.yaw;
+                    g_cam_override_state.roll  = cam.roll;
+                    if (cam.fov > 0.0f) g_cam_override_state.fov = cam.fov;
+                    snap = g_cam_override_state;
+                }
+                write_camera_mem(snap);
             } else {
                 /* Fallback: console commands (requires DebugCamera active) */
                 set_camera_location(cam.pos.x, cam.pos.y, cam.pos.z);
@@ -159,7 +166,12 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
          * g_camera_override is set by __cam_mem_write / __cam_mem_on.
          * No game-thread requirement: plain memory write, no FExec. */
         if (g_camera_override.load() && g_cam_pov_ptr) {
-            write_camera_mem(g_cam_override_state);
+            CameraMemState snap;
+            {
+                std::lock_guard<std::mutex> lk(g_cam_override_mutex);
+                snap = g_cam_override_state;
+            }
+            write_camera_mem(snap);
         }
 
         Sleep(1);   /* ~1000 Hz -- outpaces UpdateCamera (once per frame ~60 Hz) */
@@ -175,6 +187,18 @@ static void cs_reply(SOCKET sock, const char* msg) {
 }
 static void cs_reply(SOCKET sock, const std::string& msg) {
     send(sock, msg.c_str(), (int)msg.size(), 0);
+}
+
+/* Sanitize a user-supplied float. Rejects NaN, infinities, and values
+ * outside [lo, hi]. strtof happily returns INF for "1e40" and NaN for
+ * "nan"; feeding those into slomo / path_play / smooth_factor would
+ * propagate NaN into camera math (catmull_rom, SLERP) and blank the
+ * camera. Returns fallback when input is out of range. */
+static float cs_sanitize_float(float v, float lo, float hi, float fallback)
+{
+    if (!std::isfinite(v)) return fallback;
+    if (v < lo || v > hi) return fallback;
+    return v;
 }
 
 static int cs_parse_floats(const char* str, float* out, int max_count) {
@@ -389,8 +413,11 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         CameraMemState st;
         st.x = vals[0]; st.y = vals[1]; st.z = vals[2];
         st.pitch = vals[3]; st.yaw = vals[4]; st.roll = vals[5];
-        st.fov = (n >= 7) ? vals[6] : g_cam_override_state.fov;
-        g_cam_override_state = st;
+        {
+            std::lock_guard<std::mutex> lk(g_cam_override_mutex);
+            st.fov = (n >= 7) ? vals[6] : g_cam_override_state.fov;
+            g_cam_override_state = st;
+        }
         g_camera_override = true;
         bool ok = write_camera_mem(st);
         BRIDGE_LOG("  cam_write: xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f -> %s",
@@ -426,7 +453,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__cam_speed ", 0) == 0) {
-        set_game_speed(strtof(cmd.c_str() + 12, NULL));
+        float sp = cs_sanitize_float(strtof(cmd.c_str() + 12, NULL),
+                                     0.0f, 1e6f, 1.0f);
+        set_game_speed(sp);
         cs_reply(client, "ok\n");
         return true;
     }
@@ -442,9 +471,9 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__smooth ", 0) == 0) {
-        cs_smooth_factor = strtof(cmd.c_str() + 9, NULL);
-        if (cs_smooth_factor < 1.0f) cs_smooth_factor = 1.0f;
-        cs_smooth_initialized = false;
+        cs_smooth_factor = cs_sanitize_float(
+            strtof(cmd.c_str() + 9, NULL), 1.0f, 1000.0f, 1.0f);
+        cs_smooth_initialized.store(false);
         char buf[64]; snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", cs_smooth_factor);
         cs_reply(client, buf);
         return true;
@@ -477,14 +506,21 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 
     if (cmd == "__path_clear") { g_camera_path.clear(); cs_reply(client, "ok\n"); return true; }
     if (cmd.rfind("__path_delete ",0)==0) {
-        int val = atoi(cmd.c_str()+14);
-        if (val < 0) { cs_reply(client, "error: negative index\n"); return true; }
+        /* strtol + bounds: atoi silently overflows on "2147483648" and
+         * returns a negative that cast to size_t becomes astronomical. */
+        char* end = NULL;
+        long val = strtol(cmd.c_str()+14, &end, 10);
+        if (end == cmd.c_str()+14 || val < 0 || val > 10000) {
+            cs_reply(client, "error: bad index\n");
+            return true;
+        }
         cs_reply(client, g_camera_path.delete_keyframe((size_t)val) ? "ok\n":"error\n");
         return true;
     }
     if (cmd == "__path_list") { cs_reply(client, g_camera_path.list_keyframes()); return true; }
     if (cmd == "__path_play" || cmd.rfind("__path_play ",0)==0) {
-        float spd = cmd.size()>12 ? strtof(cmd.c_str()+12,NULL) : 1.0f;
+        float raw = cmd.size()>12 ? strtof(cmd.c_str()+12,NULL) : 1.0f;
+        float spd = cs_sanitize_float(raw, 0.0001f, 1e6f, 1.0f);
         if (spd <= 0) spd = 1.0f;
         g_camera_path.play(spd); cs_reply(client, "ok\n");
         return true;
@@ -534,8 +570,12 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
 static volatile LONG cs_server_running = 0;
 static SOCKET cs_listen_socket = INVALID_SOCKET;
 
-/* Client thread tracking */
-static HANDLE cs_client_handles[32];
+/* Client thread tracking. We record the socket alongside the thread
+ * handle so shutdown can force recv() to return before WaitForSingleObject;
+ * otherwise a client blocked in recv with no pending data holds the
+ * thread open past the wait timeout, leaking both handle and socket. */
+struct ClientSlot { HANDLE thread; SOCKET sock; };
+static ClientSlot cs_client_slots[32];
 static int cs_client_count = 0;
 static CRITICAL_SECTION cs_client_cs;
 
@@ -550,12 +590,30 @@ static DWORD WINAPI cs_handle_client_thread(LPVOID arg)
     BRIDGE_LOG("Client connected");
     char buffer[CONSOLE_MAX_CMD_LEN];
     std::string line_buf;
+    /* Upper bound on pending line bytes. A single unterminated command
+     * spamming us without a newline would otherwise grow the string to OOM
+     * and kill the game process. 1 MB is ~256x the largest legitimate
+     * command. */
+    const size_t LINE_BUF_MAX = 1024 * 1024;
 
     while (InterlockedCompareExchange(&cs_server_running, 1, 1) == 1) {
         int n = recv(client, buffer, sizeof(buffer)-1, 0);
-        if (n <= 0) break;
-        buffer[n] = '\0';
-        line_buf.append(buffer);
+        if (n == 0) {
+            BRIDGE_LOG("Client closed connection");
+            break;
+        }
+        if (n < 0) {
+            int err = WSAGetLastError();
+            if (err != WSAECONNRESET && err != WSAEINTR)
+                BRIDGE_LOG("recv error: %d", err);
+            break;
+        }
+        if (line_buf.size() + (size_t)n > LINE_BUF_MAX) {
+            BRIDGE_LOG("Client exceeded %zu-byte line buffer -- disconnecting",
+                       LINE_BUF_MAX);
+            break;
+        }
+        line_buf.append(buffer, (size_t)n);
 
         size_t pos;
         while ((pos = line_buf.find('\n')) != std::string::npos) {
@@ -572,9 +630,21 @@ static DWORD WINAPI cs_handle_client_thread(LPVOID arg)
 
 static void cs_server_main(int port)
 {
+    /* RenderDoc normally calls WSAStartup via Network::Init() before we
+     * get here, but there is no happens-before guarantee. WSAStartup is
+     * ref-counted and safe to call redundantly; pair with WSACleanup on
+     * exit to balance the ref. */
+    WSADATA wsa_data;
+    bool wsa_started = (WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0);
+    if (!wsa_started) {
+        BRIDGE_LOG("WSAStartup failed: %d", WSAGetLastError());
+        return;
+    }
+
     cs_listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (cs_listen_socket == INVALID_SOCKET) {
         BRIDGE_LOG("socket() failed: %d", WSAGetLastError());
+        WSACleanup();
         return;
     }
 
@@ -591,6 +661,7 @@ static void cs_server_main(int port)
         BRIDGE_LOG("bind() port %d failed: %d", port, WSAGetLastError());
         closesocket(cs_listen_socket);
         cs_listen_socket = INVALID_SOCKET;
+        WSACleanup();
         return;
     }
 
@@ -598,6 +669,7 @@ static void cs_server_main(int port)
         BRIDGE_LOG("listen() failed: %d", WSAGetLastError());
         closesocket(cs_listen_socket);
         cs_listen_socket = INVALID_SOCKET;
+        WSACleanup();
         return;
     }
 
@@ -620,11 +692,20 @@ static void cs_server_main(int port)
                 HANDLE h = CreateThread(NULL, 0, cs_handle_client_thread, arg, 0, NULL);
                 if (h) {
                     EnterCriticalSection(&cs_client_cs);
-                    if (cs_client_count < 32)
-                        cs_client_handles[cs_client_count++] = h;
-                    else
+                    if (cs_client_count < 32) {
+                        cs_client_slots[cs_client_count].thread = h;
+                        cs_client_slots[cs_client_count].sock = c;
+                        cs_client_count++;
+                    } else {
                         CloseHandle(h);
+                    }
                     LeaveCriticalSection(&cs_client_cs);
+                } else {
+                    /* CreateThread failed -- thread never ran, so it can't
+                     * free arg or close the socket. Clean up here. */
+                    BRIDGE_LOG("CreateThread(client) failed: %lu", GetLastError());
+                    delete arg;
+                    closesocket(c);
                 }
             }
         }
@@ -632,6 +713,7 @@ static void cs_server_main(int port)
 
     closesocket(cs_listen_socket);
     cs_listen_socket = INVALID_SOCKET;
+    WSACleanup();
     BRIDGE_LOG("Console server stopped");
 }
 
@@ -648,8 +730,28 @@ static HANDLE cs_engine_scan_handle = NULL;
  */
 static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 {
-    BRIDGE_LOG("Engine scan thread started, waiting 5s for game to stabilize...");
-    Sleep(5000);
+    /* Poll module size until it stabilizes instead of a blind Sleep(5000).
+     * Game module may still be loading sections when we start; scanning
+     * partial code yields false negatives. We consider the module stable
+     * when its reported size has not grown for 3 consecutive polls. */
+    BRIDGE_LOG("Engine scan thread started, waiting for module to stabilize...");
+    {
+        size_t last_size = 0;
+        int stable_count = 0;
+        const int stable_target = 3;
+        const int poll_ms = 500;
+        const int max_wait_ms = 30000;
+        int elapsed = 0;
+        while (stable_count < stable_target && elapsed < max_wait_ms) {
+            ModuleRegion mr;
+            size_t cur = get_main_module(mr) ? mr.size : 0;
+            if (cur > 0 && cur == last_size) stable_count++;
+            else { stable_count = 0; last_size = cur; }
+            Sleep(poll_ms);
+            elapsed += poll_ms;
+        }
+        BRIDGE_LOG("Module stable at %zu bytes after %dms", last_size, elapsed);
+    }
 
     /* === Gate 1: GUObjectArray (mandatory) ===
      * All object discovery goes through GUObjectArray.  No GUObjectArray = no
@@ -888,11 +990,16 @@ static inline void ConsoleServer_Stop()
         cs_engine_scan_handle = NULL;
     }
 
-    /* Wait for client threads */
+    /* Wait for client threads. Force each socket to error-out of recv()
+     * first so the thread can observe cs_server_running==0 promptly. */
     EnterCriticalSection(&cs_client_cs);
     for (int i = 0; i < cs_client_count; i++) {
-        WaitForSingleObject(cs_client_handles[i], 1000);
-        CloseHandle(cs_client_handles[i]);
+        if (cs_client_slots[i].sock != INVALID_SOCKET)
+            shutdown(cs_client_slots[i].sock, SD_BOTH);
+    }
+    for (int i = 0; i < cs_client_count; i++) {
+        WaitForSingleObject(cs_client_slots[i].thread, 1000);
+        CloseHandle(cs_client_slots[i].thread);
     }
     cs_client_count = 0;
     LeaveCriticalSection(&cs_client_cs);

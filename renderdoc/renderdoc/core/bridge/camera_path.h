@@ -259,7 +259,10 @@ public:
         return true;
     }
 
-    size_t count() const { return m_keyframes.size(); }
+    size_t count() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_keyframes.size();
+    }
 
     /* -- Playback control -- */
 
@@ -306,12 +309,15 @@ public:
      */
     bool tick(float dt, InterpolatedCamera& out)
     {
+        /* Hold m_mutex for the full tick: delete_keyframe() can run from
+         * the TCP thread and invalidate vector iterators mid-interpolate. */
+        std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_playing || m_play_paused || m_keyframes.size() < 2)
             return false;
 
         m_play_time += dt * m_speed;
 
-        float total_dur = total_duration();
+        float total_dur = total_duration_unlocked();
         if (m_play_time >= total_dur) {
             if (m_loop) {
                 /* Wrap around */
@@ -361,17 +367,14 @@ public:
 
     float total_duration() const
     {
-        float dur = 0.0f;
-        for (size_t i = 0; i + 1 < m_keyframes.size(); i++) {
-            float d = m_keyframes[i].duration;
-            dur += (d > 0.0f) ? d : 1.0f;
-        }
-        return dur;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return total_duration_unlocked();
     }
 
     /* Format keyframe list as string for TCP response */
     std::string list_keyframes() const
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         std::string result;
         char buf[256];
         for (size_t i = 0; i < m_keyframes.size(); i++) {
@@ -390,6 +393,7 @@ public:
     /* Get interpolated points along the entire path for visualization */
     std::vector<InterpolatedCamera> visualize(int samples_per_segment = 10) const
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         std::vector<InterpolatedCamera> points;
         if (m_keyframes.size() < 2) return points;
 
@@ -409,13 +413,24 @@ public:
 
 private:
     std::vector<CameraKeyframe> m_keyframes;
-    std::mutex                  m_mutex;
+    mutable std::mutex          m_mutex;
 
     std::atomic<bool>  m_playing{false};
     std::atomic<bool>  m_play_paused{false};
     std::atomic<bool>  m_loop{false};
     float              m_speed = 1.0f;
     float              m_play_time = 0.0f;  /* seconds into playback */
+
+    /* Unlocked total_duration for callers that already hold m_mutex. */
+    float total_duration_unlocked() const
+    {
+        float dur = 0.0f;
+        for (size_t i = 0; i + 1 < m_keyframes.size(); i++) {
+            float d = m_keyframes[i].duration;
+            dur += (d > 0.0f) ? d : 1.0f;
+        }
+        return dur;
+    }
 
     /* -- Core interpolation -- */
 

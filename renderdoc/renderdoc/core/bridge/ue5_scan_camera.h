@@ -256,6 +256,12 @@ struct CameraMemState {
     float fov;
 };
 static CameraMemState g_cam_override_state = {0,0,0, 0,0,0, 90.0f};
+/* Guards whole-struct reads/writes. TCP thread writes 56 bytes at once;
+ * tick thread reads the same bytes to push to FMinimalViewInfo. Without
+ * this mutex the tick could see a half-updated struct (old xyz + new
+ * pitch/yaw) and flash the in-game camera. Snapshot under lock, release,
+ * then perform the (potentially slow) write to game memory. */
+static std::mutex g_cam_override_mutex;
 /* g_camera_override declared at top of file (line ~294) -- single definition */
 
 /*
@@ -442,7 +448,14 @@ static bool find_cam_pov()
     void* cls = uclass;
     char cls_name[64];
     for (int depth = 0; cls && depth < 16 && cc_off < 0; depth++) {
-        resolve_fname(*(uint32_t*)((uint8_t*)cls + 0x18), cls_name, sizeof(cls_name));
+        /* SEH-safe: cls may point to a protected/unmapped page mid-chain
+         * (game unloaded the class, or we walked past the real root). */
+        uint32_t cls_cf = 0;
+        if (!seh_read_u32_ok((uint8_t*)cls + 0x18, &cls_cf)) {
+            bridge_log("  find_cam_pov: AV reading class FName at depth %d -- stop", depth);
+            break;
+        }
+        resolve_fname(cls_cf, cls_name, sizeof(cls_name));
         bridge_log("  find_cam_pov: [depth %d] searching class '%s'(0x%p)",
                    depth, cls_name, cls);
         cc_off = ffield_find_offset(cls, cc_fname);
@@ -796,7 +809,12 @@ static void* find_camera_manager_via_lp()
     for (int depth = 0; cls && depth < 20 && pcm_off < 0; depth++) {
         pcm_off = ffield_find_offset(cls, pcm_fname);
         if (pcm_off >= 0) {
-            resolve_fname(*(uint32_t*)((uint8_t*)cls + 0x18), cls_name, sizeof(cls_name));
+            /* SEH-safe FName read; see find_cam_pov for rationale. */
+            uint32_t cls_cf = 0;
+            if (seh_read_u32_ok((uint8_t*)cls + 0x18, &cls_cf))
+                resolve_fname(cls_cf, cls_name, sizeof(cls_name));
+            else
+                snprintf(cls_name, sizeof(cls_name), "<av>");
             bridge_log("  cam_via_lp: PlayerCameraManager at PC+0x%X "
                        "(found in class '%s', depth=%d)",
                        pcm_off, cls_name, depth);

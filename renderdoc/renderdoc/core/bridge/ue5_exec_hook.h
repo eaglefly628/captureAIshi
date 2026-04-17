@@ -341,8 +341,20 @@ static bool setup_gamethread_dispatch()
 static bool exec_console_command(const char* cmd)
 {
     if (g_gamethread_dispatch_ready && g_game_hwnd) {
+        /* Reject if the ring buffer is full; otherwise a slow game
+         * thread (stuck in a loading screen, blocking sync) would let
+         * the TCP thread wrap head past tail and silently overwrite
+         * unconsumed commands. */
+        LONG head = g_cmd_queue_head;
+        LONG tail = g_cmd_queue_tail;
+        if ((LONG)(head - tail) >= CMD_QUEUE_MAX) {
+            bridge_log("CMD: '%s' DROPPED -- queue full (%d pending)",
+                       cmd, (int)(head - tail));
+            return false;
+        }
+
         /* Push to queue */
-        LONG idx = g_cmd_queue_head % CMD_QUEUE_MAX;
+        LONG idx = head % CMD_QUEUE_MAX;
         strncpy(g_cmd_queue[idx], cmd, 511);
         g_cmd_queue[idx][511] = '\0';
         InterlockedIncrement(&g_cmd_queue_head);

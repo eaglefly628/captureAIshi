@@ -150,12 +150,16 @@ static bool find_gengine_via_string_xref()
                     continue;
                 }
 
-                /* Read the pointer value at that address */
-                void* candidate = *(void**)resolved;
-                if (!candidate) {
+                /* Read the pointer value at that address.
+                 * SEH-safe: module range can contain uncommitted pages
+                 * (DRM/AC may rewrite page protection); a raw deref on
+                 * such a page would crash the game process mid-scan. */
+                uintptr_t cand_raw = seh_read_ptr((void*)resolved);
+                if (cand_raw == 0) {
                     rejected_null_ptr++;
                     continue;
                 }
+                void* candidate = (void*)cand_raw;
 
                 /* Basic validation: the pointer should point to
                  * a valid-looking object (not stack, not too low).
@@ -245,13 +249,16 @@ static bool find_gengine_via_offset(uintptr_t offset)
     }
 
     uintptr_t addr = (uintptr_t)rgn.base + offset;
-    void* candidate = *(void**)addr;
+    /* SEH-safe: user-supplied offset may point into .pdata or
+     * another non-committed region. Raw deref would kill the game. */
+    uintptr_t cand_raw = seh_read_ptr((void*)addr);
 
-    if (!candidate) {
-        bridge_log("WARNING: Offset 0x%llX yielded NULL pointer",
+    if (cand_raw == 0) {
+        bridge_log("WARNING: Offset 0x%llX yielded NULL/unreadable pointer",
                    (unsigned long long)offset);
         return false;
     }
+    void* candidate = (void*)cand_raw;
 
     g_engine_global_addr = addr;
     g_engine_ptr = (UEngine*)candidate;

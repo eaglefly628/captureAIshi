@@ -23,45 +23,45 @@
 
 - [ ] **P0: 3rdparty/bridge/src/ 与 renderdoc/renderdoc/core/bridge/ 双树分叉** (spotted by 主程序员) — `3rdparty/bridge/src/` 是旧版本（pre-split），`renderdoc/` 是新版本（post-split）。camera_path.h 差 44 行，pattern_scan.h 差 248 行（renderdoc 版本已加 VirtualQuery 安全扫描）。`3rdparty/bridge/src/` 是独立 CMake 构建的 bridge.dll 源码，renderdoc 版本是嵌入 renderdoc.dll 的版本。两者必须同步，否则修 bug 只修一边。修法：用 CMake `configure_file` 或 symlink 让两者共享同一份源码，或明确弃用其中一个并在 CMakeLists.txt 里 include 另一个。
 
-- [ ] **P0: line_buf 无大小上限** (spotted by 主程序员) — `console_server.h` client handler：`line_buf.append(buffer, n)` 无任何大小检查。本地 JS 连接持续发送不含 `\n` 的字节流，`std::string` 无限增长 → OOM crash game process。加上限：`if (line_buf.size() + n > 1024*1024) { disconnect; break; }`。
+- [x] **P0: line_buf 无大小上限** (spotted by 主程序员) — fixed in pending CL: 1 MB cap + explicit disconnect + split recv close/error.
 
-- [ ] **P1: recv() 错误和关闭未区分** (spotted by 主程序员) — `console_server.h:556`：`if (n <= 0) break;` 把 recv 错误 (-1) 和正常关闭 (0) 混在一起。应分开：`n < 0` 时记录 `WSAGetLastError()`，`n == 0` 是正常断开。
+- [x] **P1: recv() 错误和关闭未区分** (spotted by 主程序员) — fixed in pending CL: n==0 logs close, n<0 logs WSAGetLastError() (skips WSAECONNRESET/WSAEINTR).
 
-- [ ] **P1: `__path_delete` atoi 整数溢出** (spotted by 主程序员) — `console_server.h:480`：`atoi(cmd.c_str()+14)` 不检查 `INT_MAX` 溢出，传入 `2147483648` 让 int 变负数，绕过 `< 0` 检查后 cast 为 `size_t` 变天文数字。改用 `strtol()` 并加上界检查（`> 10000` 就 reject）。
+- [x] **P1: `__path_delete` atoi 整数溢出** (spotted by 主程序员) — fixed in pending CL: strtol + bounds [0, 10000].
 
-- [ ] **P1: camera_path.h count()/list_keyframes()/tick() 无 mutex** (spotted by 主程序员) — `count()` 直接 `return m_keyframes.size()` 无锁，`list_keyframes()` 同，`tick()` 读 `m_keyframes` 无锁。`delete_keyframe()` 在 TCP 线程调用修改 vector，并发时 iterator 失效 → UB/crash。修法：(1) 将 `m_mutex` 改为 `mutable std::mutex`；(2) 在 `count()`/`list_keyframes()`/`tick()` 入口加 `std::lock_guard<std::mutex> lk(m_mutex)`；(3) `interpolate()`/`total_duration()` 是内部 helper（被 tick() 调用时已持锁），不额外加锁。
+- [x] **P1: camera_path.h count()/list_keyframes()/tick() 无 mutex** (spotted by 主程序员) — fixed in pending CL: m_mutex -> mutable, lock_guard on count/list/visualize/tick/total_duration; added total_duration_unlocked() helper.
 
-- [ ] **P1: ClientArg CreateThread 失败泄漏** (spotted by 主程序员) — `console_server.h:618`：`ClientArg* arg = new ClientArg` 后调 `CreateThread`，若失败则 `arg` 泄漏且 socket 未关。加 `if (!h) { delete arg; closesocket(c); continue; }`。
+- [x] **P1: ClientArg CreateThread 失败泄漏** (spotted by 主程序员) — fixed in pending CL: delete arg + closesocket on CreateThread failure.
 
-- [ ] **P2: cs_smooth_initialized 数据竞争** (spotted by 主程序员) — `console_server.h:83`：`cs_smooth_initialized` 是普通 `bool`，被 camera tick 线程读、TCP 线程写，无同步。改为 `std::atomic<bool>`。
+- [x] **P2: cs_smooth_initialized 数据竞争** (spotted by 主程序员) — fixed in pending CL: std::atomic<bool>.
 
 ### Opus 4.7 深度 review (2026-04-17, by 主程序员)
 
 **P0 新发现：**
 
-- [ ] **P0: ue5_scan_engine.h:154 裸指针解引用无 SEH** (spotted by 主程序员 4.7 review) — `find_gengine_via_string_xref`：候选 `resolved` 地址通过范围检查后，直接 `void* candidate = *(void**)resolved;`，没有 `__try`。模块内存区间可能含未提交页（DRM/反作弊改过页权限），扫描成百上千候选时一个无效页直接崩 renderdoc.dll + 游戏。修法：`uintptr_t v = seh_read_ptr((void*)resolved); if (!v) continue; void* candidate = (void*)v;`
+- [x] **P0: ue5_scan_engine.h:154 裸指针解引用无 SEH** (spotted by 主程序员 4.7 review) — fixed in pending CL: seh_read_ptr on string-xref candidate.
 
-- [ ] **P0: ue5_scan_engine.h:248 同样裸解引用** (spotted by 主程序员 4.7 review) — `find_gengine_via_offset`：`void* candidate = *(void**)addr;` 无 SEH。用户给不合法 offset（指向 .pdata）直接死进程。同样改 `seh_read_ptr`。
+- [x] **P0: ue5_scan_engine.h:248 同样裸解引用** (spotted by 主程序员 4.7 review) — fixed in pending CL: seh_read_ptr on manual-offset deref.
 
-- [ ] **P0: ue5_scan_camera.h:445 + :799 FField 链裸解引用** (spotted by 主程序员 4.7 review) — `find_cam_pov` 和 `find_camera_manager_via_lp` 在 UClass/SuperStruct 链遍历时，用 `seh_read_ptr` 读指针但随后 **裸解引用** `*(uint32_t*)((uint8_t*)cls + 0x18)` 作为 `resolve_fname` 实参。cls 指向不可读页时整个进程崩。修法：`uint32_t cf = 0; __try { cf = *(uint32_t*)((uint8_t*)cls+0x18); } __except(EXCEPTION_EXECUTE_HANDLER) { break; } resolve_fname(cf, ...);`
+- [x] **P0: ue5_scan_camera.h:445 + :799 FField 链裸解引用** (spotted by 主程序员 4.7 review) — fixed in pending CL: added seh_read_u32_ok helper; wrapped cls+0x18 reads in find_cam_pov and find_camera_manager_via_lp.
 
-- [ ] **P0: g_cam_override_state 多线程撕裂读写** (spotted by 主程序员 4.7 review) — `console_server.h:393`：TCP 线程 `__cam_mem_write` 对 `g_cam_override_state` 整块赋值（56 字节结构），tick 线程同时读取。写入中途 tick 可读到混合旧 xyz + 新 pitch/yaw，写进 FMinimalViewInfo 后镜头抽搐或 NaN 跳帧。修法：加 `std::mutex` 保护整块读写，或将结构体字段拆为 `std::atomic<double/float>`。
+- [x] **P0: g_cam_override_state 多线程撕裂读写** (spotted by 主程序员 4.7 review) — fixed in pending CL: g_cam_override_mutex guards every read/write; tick snapshots under lock then writes to FMinimalViewInfo outside it.
 
 **P1 新发现：**
 
-- [ ] **P1: console_server.h:652 Sleep(5000) 违反 no-sleep.md** (spotted by 主程序员 4.7 review) — `cs_engine_scan_thread` 开头 `Sleep(5000)` "等游戏稳定"，违反 `.claude/rules/no-sleep.md`。改为轮询 `get_main_module()` 返回 size >= BRIDGE_MIN_MODULE_SIZE 且稳定 N 次，或轮询目标 UE5 DLL 的 GetModuleHandle。
+- [x] **P1: console_server.h:652 Sleep(5000) 违反 no-sleep.md** (spotted by 主程序员 4.7 review) — fixed in pending CL: module-size-stability poll (3 stable samples @ 500 ms, 30 s cap).
 
-- [ ] **P1: console_server.h 无 WSAStartup** (spotted by 主程序员 4.7 review) — `cs_server_main` 直接 `socket(AF_INET,...)`，依赖 RenderDoc 先调 `Network::Init()`。时序无 happens-before 保证。修法：`cs_server_main` 入口加 `WSAData wsa; WSAStartup(MAKEWORD(2,2), &wsa);`，Stop 时 `WSACleanup`（多次调用安全）。
+- [x] **P1: console_server.h 无 WSAStartup** (spotted by 主程序员 4.7 review) — fixed in pending CL: WSAStartup at entry of cs_server_main, WSACleanup at exit (ref-counted, safe).
 
-- [ ] **P1: ue5_actions.h:85 + ue5_exec_hook.h:294 重复 EnumWindows 代码** (spotted by 主程序员 4.7 review) — `hotsample()` 和 `setup_gamethread_dispatch()` 里查找游戏窗口的代码几乎字字相同（结构体/变量名都一样）。提取 `static HWND find_game_window()` 助手消除重复，避免日后双版本 drift。
+- [ ] **P1: ue5_actions.h:85 + ue5_exec_hook.h:294 重复 EnumWindows 代码** (spotted by 主程序员 4.7 review) — not done; cosmetic refactor, kept on TODO.
 
-- [ ] **P1: ue5_exec_hook.h:346 cmd_queue 生产者无溢出保护** (spotted by 主程序员 4.7 review) — TCP 线程写入 `g_cmd_queue[head % CMD_QUEUE_MAX]` 后立即 `InterlockedIncrement(&g_cmd_queue_head)`，游戏线程消费慢时 head 可比 tail 多 256+ 直接覆盖未消费条目，命令静默丢失/乱序。修法：生产前检查 `head - tail < CMD_QUEUE_MAX`，否则回复 `"error: queue_full\n"`。
+- [x] **P1: ue5_exec_hook.h:346 cmd_queue 生产者无溢出保护** (spotted by 主程序员 4.7 review) — fixed in pending CL: check (head - tail) >= CMD_QUEUE_MAX and drop with log.
 
 **P2 新发现：**
 
-- [ ] **P2: console_server.h:429/445/487 strtof 返回 INF/NaN 未拦截** (spotted by 主程序员 4.7 review) — `__path_play 1e40` → spd=INF → tick 线程 `m_play_time += dt*INF` → NaN → catmull_rom 全 NaN 写入 FMinimalViewInfo。加上下界检查：`if (!isfinite(spd) || spd <= 0 || spd > 1e6) spd = 1.0f;`。`__cam_speed` 同理。
+- [x] **P2: console_server.h:429/445/487 strtof 返回 INF/NaN 未拦截** (spotted by 主程序员 4.7 review) — fixed in pending CL: cs_sanitize_float applied to __cam_speed / __smooth / __path_play.
 
-- [ ] **P2: console_server.h:892 client thread shutdown 不彻底** (spotted by 主程序员 4.7 review) — shutdown 时 `WaitForSingleObject(handle, 1000)`，但 client socket 未关，`recv` 永远阻塞线程不退出，1s 后 `CloseHandle` 导致句柄泄漏、线程继续裸跑。修法：shutdown 前对所有 client socket 调 `shutdown(sock, SD_BOTH)` 强制 recv 返回，再 wait。
+- [x] **P2: console_server.h:892 client thread shutdown 不彻底** (spotted by 主程序员 4.7 review) — fixed in pending CL: ClientSlot tracks SOCKET+HANDLE; shutdown(SD_BOTH) before WaitForSingleObject.
 
 - [ ] **P2: CL 条目缺失** (spotted by 主程序员 4.7 review) — `c088120 "Remove ToggleDebugCamera; split ue5_engine.h; bump tick to 1000Hz"` 在 SHARED.md 里仍是 `(pending push)`，已 push 应填实际 sha。`43ac097 "Add ref/ to .gitignore"` 完全无 CL 条目。按 versioning.md 规则补上。
 
@@ -123,7 +123,65 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni
+### [v0.2.0] (pending push) -- xiaoni -- 老白 bug fix sweep
+
+Batch fix of 主程序员 review (base + Opus 4.7 deep review). All listed
+P0 / P1 / P2 items marked completed in the TODO section above.
+
+P0 crashes & races:
+- `ue5_scan_engine.h`: wrap `*(void**)resolved` (string-xref) and
+  `*(void**)addr` (manual-offset) with `seh_read_ptr`. Uncommitted pages
+  in DRM/AC-modified modules no longer take the whole process down.
+- `ue5_scan_camera.h`: add `seh_read_u32_ok` helper in `ue5_engine.h`;
+  replace bare `*(uint32_t*)(cls+0x18)` FName loads in `find_cam_pov`
+  and `find_camera_manager_via_lp` so a torn class-chain step logs
+  `<av>` instead of faulting.
+- `console_server.h`: add `g_cam_override_mutex` (declared next to
+  `g_cam_override_state` in `ue5_scan_camera.h`). Tick thread snapshots
+  the struct under lock before pushing to FMinimalViewInfo; TCP
+  `__cam_mem_write` updates it under the same lock. No more mid-struct
+  torn writes feeding NaN into the camera.
+- `console_server.h` client handler: cap `line_buf` at 1 MB (was
+  unbounded), split `recv <= 0` into explicit close (`n == 0`) vs
+  error (`n < 0` with `WSAGetLastError`).
+
+P1:
+- `__path_delete`: switch `atoi` -> `strtol` with explicit bounds
+  `[0, 10000]`; rejects `INT_MAX+1` etc.
+- `camera_path.h`: make `m_mutex` mutable, add `lock_guard` to
+  `count()`, `list_keyframes()`, `visualize()`, `tick()`, and the
+  public `total_duration()`. Introduced `total_duration_unlocked()`
+  for callers that already hold the lock.
+- `console_server.h`: clean up `ClientArg` + `closesocket(c)` on
+  `CreateThread` failure.
+- `console_server.h`: replace `Sleep(5000)` engine-scan preamble with
+  a module-size-stability poll (3 consecutive stable samples,
+  500 ms cadence, 30 s cap). Per `.claude/rules/no-sleep.md`.
+- `console_server.h`: call `WSAStartup`/`WSACleanup` inside
+  `cs_server_main` instead of relying on RenderDoc's `Network::Init()`
+  ordering.
+- `ue5_exec_hook.h`: bound-check `cmd_queue` before push
+  (`head - tail >= CMD_QUEUE_MAX` => drop with log). Prevents silent
+  overwrite when game thread is paused on a loading screen.
+
+P2:
+- `cs_smooth_initialized` -> `std::atomic<bool>`.
+- `__cam_speed` / `__smooth` / `__path_play` run incoming floats
+  through `cs_sanitize_float` (rejects NaN/INF and out-of-range).
+- Client-thread shutdown now records the SOCKET alongside the HANDLE
+  and calls `shutdown(SD_BOTH)` on each before `WaitForSingleObject`,
+  so a recv-blocked client does not leak its handle past the timeout.
+
+Notes / deferred:
+- P1 EnumWindows dedup in `ue5_actions.h` + `ue5_exec_hook.h`: not
+  done (cosmetic; separate refactor).
+- P0 "3rdparty/bridge/src/ vs renderdoc/ 双树分叉": not addressed
+  here; this fix set lives on the renderdoc/ (post-split) tree only.
+  Needs a build-system decision (`configure_file` symlink or explicit
+  deprecation) from 老白 before I touch 3rdparty/bridge/src/.
+- CL 条目缺失 for `c088120` / `43ac097`: still pending.
+
+### [v0.2.0] (pending push, earlier) -- xiaoni
 - **Remove ToggleDebugCamera logic**: all `g_debug_camera_active` code removed from
   `ue5_engine.h`, `console_server.h`, `ue5_console.py`, `test_camera_path.py`.
   Shipping games have no ToggleDebugCamera; debug PCM approach is dev-build-only.
