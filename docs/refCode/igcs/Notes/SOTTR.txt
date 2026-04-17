@@ -1,0 +1,92 @@
+// AR check
+SOTTR.exe+1206CADB - F3 0F59 C2            - mulss xmm0,xmm2
+SOTTR.exe+1206CADF - F3 0F11 46 10         - movss [rsi+10],xmm0
+SOTTR.exe+1206CAE4 - 48 8B 8D D8FFFFFF     - mov rcx,[rbp-00000028]
+SOTTR.exe+1206CAEB - 48 85 C9              - test rcx,rcx
+SOTTR.exe+1206CAEE - 74 05                 - je SOTTR.exe+1206CAF5
+SOTTR.exe+1206CAF0 - E8 6BE3F4EE           - call SOTTR.exe+FBAE60
+SOTTR.exe+1206CAF5 - F3 41 0F10 86 64010000  - movss xmm0,[r14+00000164]
+SOTTR.exe+1206CAFE - F3 0F11 46 14         - movss [rsi+14],xmm0
+SOTTR.exe+1206CB03 - F3 41 0F10 8E 68010000  - movss xmm1,[r14+00000168]
+SOTTR.exe+1206CB0C - EB 63                 - jmp SOTTR.exe+1206CB71
+SOTTR.exe+1206CB0E - F3 41 0F10 86 6C010000  - movss xmm0,[r14+0000016C]
+SOTTR.exe+1206CB17 - EB 09                 - jmp SOTTR.exe+1206CB22
+SOTTR.exe+1206CB19 - F3 41 0F10 86 64010000  - movss xmm0,[r14+00000164]	<<< Load minimal AR (should be 0). replace with xorps xmm0, xmm0
+SOTTR.exe+1206CB22 - F3 0F11 46 14         - movss [rsi+14],xmm0
+SOTTR.exe+1206CB27 - F3 41 0F10 86 70010000  - movss xmm0,[r14+00000170]
+
+
+// Photomode / Ansel coords + quaternion location. Only used when photomode / ansel are active
+// Writes when photomode movement is allowed:
+SOTTR.exe+B12A2F7 - 0F29 8B 10040000      - movaps [rbx+00000410],xmm1
+SOTTR.exe+B12A2FE - 89 15 B8884DF8        - mov [SOTTR.exe+3602BBC],edx { [CA794BBA] }
+SOTTR.exe+B12A304 - 48 8B 83 68010000     - mov rax,[rbx+00000168]
+SOTTR.exe+B12A30B - 31 D2                 - xor edx,edx
+SOTTR.exe+B12A30D - 0F28 44 24 20         - movaps xmm0,[rsp+20]
+SOTTR.exe+B12A312 - 0F29 80 80000000      - movaps [rax+00000080],xmm0					<< WRITE COORDS.
+SOTTR.exe+B12A319 - 48 8B 83 68010000     - mov rax,[rbx+00000168]
+SOTTR.exe+B12A320 - 0F28 8D A7FFFFFF      - movaps xmm1,[rbp-00000059]
+SOTTR.exe+B12A327 - 0F29 88 A0000000      - movaps [rax+000000A0],xmm1					<< WRITE QUATERNION
+SOTTR.exe+B12A32E - 48 8B 83 68010000     - mov rax,[rbx+00000168]
+SOTTR.exe+B12A335 - F3 0F11 B8 B0000000   - movss [rax+000000B0],xmm7					<< WRITE FOV, other stuff.
+SOTTR.exe+B12A33D - 0F28 95 97FFFFFF      - movaps xmm2,[rbp-00000069]
+SOTTR.exe+B12A344 - 0F5C 54 24 20         - subps xmm2,[rsp+20]
+SOTTR.exe+B12A349 - 48 8B 83 68010000     - mov rax,[rbx+00000168]
+SOTTR.exe+B12A350 - 0F59 D2               - mulps xmm2,xmm2
+SOTTR.exe+B12A353 - 0F28 CA               - movaps xmm1,xmm2
+SOTTR.exe+B12A356 - 0F28 C2               - movaps xmm0,xmm2
+
+// So layout is: X, Y, Z, Dummy, qX, qY, qZ, qW, FOV.
+
+// Writes when photomode movement is NOT allowed: (used for many destinations. Test for target address!)
+// It's the only write. 
+SOTTR.exe+5EE33C8 - 66 0F7F 41 60         - movdqa [rcx+60],xmm0
+SOTTR.exe+5EE33CD - 0F28 4A 70            - movaps xmm1,[rdx+70]
+SOTTR.exe+5EE33D1 - 66 0F7F 49 70         - movdqa [rcx+70],xmm1
+SOTTR.exe+5EE33D6 - 0F28 82 80000000      - movaps xmm0,[rdx+00000080]
+SOTTR.exe+5EE33DD - 66 0F7F 81 80000000   - movdqa [rcx+00000080],xmm0					<< WRITE COORDS
+SOTTR.exe+5EE33E5 - 0F28 8A A0000000      - movaps xmm1,[rdx+000000A0]
+SOTTR.exe+5EE33EC - 0F29 89 A0000000      - movaps [rcx+000000A0],xmm1					<< WRITE QUATERNION
+SOTTR.exe+5EE33F3 - 8B 82 B0000000        - mov eax,[rdx+000000B0]						<< WRITE FOV
+SOTTR.exe+5EE33F9 - 89 81 B0000000        - mov [rcx+000000B0],eax
+SOTTR.exe+5EE33FF - 8B 82 B4000000        - mov eax,[rdx+000000B4]
+SOTTR.exe+5EE3405 - 89 81 B4000000        - mov [rcx+000000B4],eax
+SOTTR.exe+5EE340B - 8B 82 B8000000        - mov eax,[rdx+000000B8]
+SOTTR.exe+5EE3411 - 89 81 B8000000        - mov [rcx+000000B8],eax
+SOTTR.exe+5EE3417 - 8B 82 BC000000        - mov eax,[rdx+000000BC]
+SOTTR.exe+5EE341D - 89 81 BC000000        - mov [rcx+000000BC],eax
+SOTTR.exe+5EE3423 - 0F28 82 C0000000      - movaps xmm0,[rdx+000000C0]
+SOTTR.exe+5EE342A - 66 0F7F 81 C0000000   - movdqa [rcx+000000C0],xmm0
+SOTTR.exe+5EE3432 - 0F28 8A D0000000      - movaps xmm1,[rdx+000000D0]
+
+//... which is the game coords+quaternion. But to reliably get the address, use:
+SOTTR.exe+5D3F16A - 48 85 C0              - test rax,rax
+SOTTR.exe+5D3F16D - 0F84 74010000         - je SOTTR.exe+5D3F2E7
+SOTTR.exe+5D3F173 - 0F28 50 30            - movaps xmm2,[rax+30]
+SOTTR.exe+5D3F177 - 41 0F5C 94 24 80000000  - subps xmm2,[r12+00000080]					<< Camera struct address in r12
+SOTTR.exe+5D3F180 - 49 8B 87 60060000     - mov rax,[r15+00000660]
+SOTTR.exe+5D3F187 - 0F59 D2               - mulps xmm2,xmm2
+SOTTR.exe+5D3F18A - 0F28 CA               - movaps xmm1,xmm2
+SOTTR.exe+5D3F18D - 0F28 C2               - movaps xmm0,xmm2
+SOTTR.exe+5D3F190 - 0FC6 CA 02            - shufps xmm1,xmm202 { 2 }
+SOTTR.exe+5D3F194 - 0FC6 C2 01            - shufps xmm0,xmm201 { 1 }
+SOTTR.exe+5D3F198 - F3 0F58 C1            - addss xmm0,xmm1
+SOTTR.exe+5D3F19C - F3 0F10 88 D0000000   - movss xmm1,[rax+000000D0]
+SOTTR.exe+5D3F1A4 - F3 0F59 C9            - mulss xmm1,xmm1
+
+// or...
+SOTTR.exe+853FC4E - 48 8D AC 24 B8FFFFFF  - lea rbp,[rsp-00000048]
+SOTTR.exe+853FC56 - 48 81 EC 48010000     - sub rsp,00000148 { 328 }
+SOTTR.exe+853FC5D - 41 B1 01              - mov r9l,01 { 1 }
+SOTTR.exe+853FC60 - 31 DB                 - xor ebx,ebx
+SOTTR.exe+853FC62 - 89 59 28              - mov [rcx+28],ebx
+SOTTR.exe+853FC65 - 45 31 C0              - xor r8d,r8d
+SOTTR.exe+853FC68 - 0F28 82 80000000      - movaps xmm0,[rdx+00000080]					<< Camera struct address in rdx.
+SOTTR.exe+853FC6F - 49 89 CF              - mov r15,rcx
+SOTTR.exe+853FC72 - 41 0FB6 D1            - movzx edx,r9l
+SOTTR.exe+853FC76 - 0F29 44 24 60         - movaps [rsp+60],xmm0
+SOTTR.exe+853FC7B - E8 0060F1F7           - call SOTTR.exe+455C80
+SOTTR.exe+853FC80 - 49 8B 8F E0070000     - mov rcx,[r15+000007E0]
+SOTTR.exe+853FC87 - 49 89 C5              - mov r13,rax
+SOTTR.exe+853FC8A - 48 89 44 24 48        - mov [rsp+48],rax
+
