@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "hellblade_ue4",
+  "display_name": "Hellblade: Senua's Sacrifice (UE4)",
+  "process_names": ["HellbladeGame-Win64-Shipping.exe"],
+  "engine": "UE4",
+  "engine_version": "1.0+",
+  "credits": "Otis_Inf (IGCS)",
+  "source": "docs/refCode/igcs/Cameras/Hellblade/",
+  "notes": "UE4 UpdateCamera block at +0x1940B77..+0x1940BA2 = 43 bytes. 4 stores to [rdi+0x480..0x494] (Location as movsd pair + movsd pair + 2x mov dword) plus surrounding loads from [rsp+disp8]. Wildcard AOB tolerates disp8 shifts across builds. Base register is rdi at intercept entry.",
+
+  "intercepts": [
+    {
+      "name": "camera_write",
+      "description": "UpdateCamera Location + Rotation (X/Y as movsd pair, Z + yaw as ints)",
+      "size": 43,
+      "aob_literal":  "F2 0F 11 87 80 04 00 00 F2 0F 10 44 24 5C F2 0F 11 87 8C 04 00 00 0F 10 44 24 68 89 87 88 04 00 00 8B 44 24 64 89 87 94 04 00 00",
+      "aob_wildcard": "F2 0F 11 87 ?? ?? ?? ?? F2 0F 10 44 24 ?? F2 0F 11 87 ?? ?? ?? ?? 0F 10 44 24 ?? 89 87 ?? ?? ?? ?? 8B 44 24 ?? 89 87 ?? ?? ?? ?? 8B 44 24 ??",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "Enable after pointer-capture lands. UE4 FRotator is 3x float (pitch/yaw/roll in degrees). FOV at +0x498. Alt FOV (photomode) at +0x414.",
+    "struct_base_reg": "rdi",
+    "capture_from_intercept": "camera_write",
+    "location": { "x": "0x480", "y": "0x484", "z": "0x488", "type": "float32" },
+    "rotation": { "pitch": "0x48C", "yaw": "0x490", "roll": "0x494", "type": "float32" },
+    "fov": { "off": "0x498", "type": "float32" }
+  }
+}
