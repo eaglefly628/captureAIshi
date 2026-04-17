@@ -126,16 +126,65 @@ Want feedback before next step on:
 
 ### 主程序员 peer review: e9f764e (IGCS intercept infrastructure)
 
-Overall: 架构合理，代码整洁。发现两个安全漏洞，需修复后才能用于真实游戏：
+Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个新问题：
 
 - [x] **P1: camera_intercept.h:171 memcpy(site.orig, addr, size) 无 SEH** (spotted by 主程序员) —
-  fixed: added CAM_READABLE_MASK protect check + cam_seh_memcpy SEH wrapper
-  for the read. DRM exec-only pages now fail gracefully with a log line.
+  fixed in `06b88ca`: added CAM_READABLE_MASK protect check + cam_seh_memcpy SEH wrapper。
 
 - [x] **P1: cam_patch_write() memcpy 无 SEH** (spotted by 主程序员) —
-  fixed: write goes through cam_seh_memcpy; VirtualProtect is still paired
-  (old_prot restored) on fault, and we log "AC may have blocked VirtualProtect"
-  so the user knows what happened.
+  fixed in `06b88ca`: write goes through cam_seh_memcpy。
+
+**P0 — 崩溃 / 数据污染（Opus 4.7 deep review，2026-04-17）：**
+
+- [ ] **P0: ue5_exec_hook.h cmd_queue 多生产者竞争** (spotted by 主程序员 Opus) —
+  两个 TCP 客户端并发 `exec_console_command()` 时读到同一 `head`，写同一槽，各自 `InterlockedIncrement`。
+  结果：命令丢失 + 槽内容混杂。修法：push 前加 CRITICAL_SECTION。
+
+- [ ] **P0: cam_patch_write() patch 时未暂停游戏线程** (spotted by 主程序员 Opus) —
+  `memcpy(addr, data, n)` 最多 64 字节写入时游戏线程可能正在执行该代码，x64 不保证多字节写原子性。
+  修法：`SuspendThread` 所有游戏线程 → patch → `FlushInstructionCache` → `ResumeThread`。
+
+**P1 — 功能/正确性（Opus 4.7 deep review）：**
+
+- [ ] **P1: camera_intercept.h:166 VirtualQuery 未检查 size 跨页** (spotted by 主程序员 Opus) —
+  若 `size` 跨页边界进入 PAGE_NOACCESS 页，`memcpy(site.orig, addr, size)` AV。
+  修法：检查 `(uint8_t*)addr + size <= (uint8_t*)mbi.BaseAddress + mbi.RegionSize`。
+
+- [ ] **P1: console_server.h InterpolatedCamera cam 未初始化** (spotted by 主程序员 Opus) —
+  `cam` 是未初始化 POD；`tick()` keyframes<2 时 `return false` 不写 `out`，随后用 garbage 写入游戏内存。
+  修法：`InterpolatedCamera cam = {};`。
+
+- [ ] **P1: camera_path.h play()/stop() 未持有 m_mutex** (spotted by 主程序员 Opus) —
+  `play()` 无锁读 `m_keyframes.size()`（UB vector race）；`stop()` 无锁写 `m_play_time`（data race with tick）。
+  修法：加 lock_guard；`clear()` 内部调 stop 需加 `stop_unlocked()` 变体。
+
+- [ ] **P1: __cam_mem_write 未做 NaN/Inf 过滤** (spotted by 主程序员 Opus) —
+  `cs_parse_floats` 直接用 strtof，NaN/Inf 进 FMinimalViewInfo 导致相机矩阵崩溃。
+  修法：对 vals[0..6] 跑 `cs_sanitize_float`（坐标 ±1e8，角度 ±360，FOV 1..179）。
+
+- [ ] **P1: g_cam_pov_ptr 无同步** (spotted by 主程序员 Opus) —
+  TCP 线程 `__cam_mem_find` 清空指针再重扫，tick 线程可能在 if/write_camera_mem 之间读到被清零的指针。
+  修法：`std::atomic<uint8_t*>` 或 rescan 前停 tick 线程。
+
+- [ ] **P1: ConsoleServer_Stop WSACleanup 时序** (spotted by 主程序员 Opus) —
+  WaitForSingleObject 1s 超时后 CloseHandle 但线程仍活，WSACleanup 清零引用计数，
+  存活线程再调 closesocket → WSANOTINITIALISED UB。
+  修法：等所有客户端线程退出后再 WSACleanup。
+
+**P2 — 次要/代码质量（Opus 4.7 deep review）：**
+
+- [ ] **P2: BRIDGE_LOG vsnprintf truncation 数学错误** (spotted by 主程序员 Opus) —
+  vsnprintf 截断返回"本应写入数"而非实际写入数，`buf[total]='\n'` 可能越界。
+  修法：clamp n: `int nc = (n<0||n>=(int)(sizeof(buf)-prefix_len-2)) ? (int)(sizeof(buf)-prefix_len-3) : n;`
+
+- [ ] **P2: g_fexec_hook_count 非原子递增** (spotted by 主程序员 Opus) —
+  plain `int++` 竞争游戏线程 hook 分发。修法：填满 entry 后再 `InterlockedIncrement`。
+
+- [ ] **P2: 第 33 个客户端 socket 泄漏** (spotted by 主程序员 Opus) —
+  slots 满时 `CloseHandle(h)` 但未 `closesocket(c)`，线程持有 socket 永不释放。
+
+- [ ] **P2: ue5_scan_engine.h Sleep(100) 违反 no-sleep.md** (spotted by 主程序员 Opus) —
+  用于协作让步但违反项目规则。修法：换成 `SwitchToThread()`。
 
 两个 P1 修复后 camera_intercept.h 可用于生产。
 回答小逆的问题:
