@@ -2629,6 +2629,19 @@ pollSessions();pollCaptures();
       <button class="btn" onclick="interceptInstall()" title="Install intercept at first AOB match">Install</button>
     </div>
 
+    <!-- Game Profile: one-click auto-install per game (configs/hacks/*.json) -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center;border-top:1px solid #333;padding-top:6px">
+      <span style="color:#aaa;font-size:11px;min-width:56px" title="Per-game hack profile (AOB + offsets)">Profile:</span>
+      <select id="hackProfileSelect" style="flex:1;min-width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px">
+        <option value="">-- select game --</option>
+      </select>
+      <button class="btn btn-accent" onclick="hackApply()" title="Uninstall then install all intercepts from profile">Apply</button>
+      <button class="btn" onclick="hackLock()" title="Lock camera (all sites NOP)">Lock</button>
+      <button class="btn" onclick="hackUnlock()" title="Unlock camera (pass-through)">Unlock</button>
+      <button class="btn" onclick="hackUninstall()" title="Clear all sites">Clear</button>
+      <button class="btn" onclick="hackRefresh()" title="Reload profile list from disk">↻</button>
+    </div>
+
     <div style="display:flex;gap:4px">
       <input id="debugCmdInput" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:monospace" placeholder="Custom command..." onkeydown="if(event.key==='Enter')bridgeCmd(this.value)">
       <button class="btn" onclick="bridgeCmd(document.getElementById('debugCmdInput').value)">Send</button>
@@ -2670,6 +2683,71 @@ function interceptInstall(){
   if(!/^\d+$/.test(size)){debugAppend('ERROR: size must be integer');return;}
   bridgeCmd('__cam_intercept_install_aob '+size+' '+name+' | '+aob);
 }
+
+// --- Game hack profiles ---
+function hackRefresh(){
+  debugAppend('> hacks/list');
+  fetch('/api/hacks/list')
+    .then(r=>r.json())
+    .then(d=>{
+      var sel=document.getElementById('hackProfileSelect');
+      var keep=sel.value;
+      sel.innerHTML='<option value="">-- select game --</option>';
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      (d.profiles||[]).forEach(function(p){
+        var o=document.createElement('option');
+        o.value=p.id;
+        o.textContent=p.display_name+' ('+(p.engine||'?')+', '+p.intercept_count+' intercepts)';
+        sel.appendChild(o);
+      });
+      if(keep){sel.value=keep;}
+      debugAppend('profiles loaded: '+(d.profiles||[]).length);
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+function _hackPost(path, verb){
+  debugAppend('> hacks/'+verb);
+  fetch('/api/hacks/'+path, {method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||JSON.stringify(d.result||{})));return;}
+      var res=d.result;
+      if(res && res.steps){
+        res.steps.forEach(function(s){
+          debugAppend('  '+s.step+(s.intercept?' '+s.intercept:'')+': '+
+                      (s.ok!==undefined?(s.ok?'ok':'FAIL'):'')+
+                      (s.response?' '+String(s.response).replace(/\n/g,' | '):''));
+        });
+        debugAppend('apply result: '+res.installed+'/'+res.expected+' installed');
+      } else {
+        debugAppend('  '+JSON.stringify(res));
+      }
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+function hackApply(){
+  var id=document.getElementById('hackProfileSelect').value;
+  if(!id){debugAppend('ERROR: select a profile first');return;}
+  _hackPost('apply/'+encodeURIComponent(id), 'apply '+id);
+}
+function hackLock(){_hackPost('lock', 'lock');}
+function hackUnlock(){_hackPost('unlock', 'unlock');}
+function hackUninstall(){
+  if(!confirm('Clear all intercept sites?'))return;
+  _hackPost('uninstall', 'uninstall');
+}
+// Auto-populate dropdown the first time the debug panel opens.
+(function(){
+  var orig=window.toggleDebugPanel;
+  window.toggleDebugPanel=function(){
+    orig();
+    var p=document.getElementById('debugPanel');
+    if(p.style.display!=='none' && !p.dataset.hacksLoaded){
+      p.dataset.hacksLoaded='1';
+      hackRefresh();
+    }
+  };
+})();
 function _scanBadge(found, label){
   return found
     ? '<span style="color:#4f4">'+label+': OK</span>'

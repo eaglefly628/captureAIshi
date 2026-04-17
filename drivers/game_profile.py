@@ -1,0 +1,315 @@
+"""Game hack profile loader and applier.
+
+Reads ``configs/hacks/<id>.json`` profiles and drives the bridge TCP
+interface at 127.0.0.1:9998 to install AOB intercepts.
+
+This is the "tools engineering" layer: data-driven (profile JSON),
+idempotent (``apply`` always starts by uninstalling), and per-game.
+
+CLI usage::
+
+    python -m drivers.game_profile list
+    python -m drivers.game_profile apply batman_ak
+    python -m drivers.game_profile lock
+    python -m drivers.game_profile unlock
+    python -m drivers.game_profile uninstall
+    python -m drivers.game_profile status
+
+Web UI / other callers import the functions directly.
+"""
+
+from __future__ import annotations
+
+import json
+import socket
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+_BRIDGE_HOST = "127.0.0.1"
+_BRIDGE_PORT = 9998
+_BRIDGE_TIMEOUT = 6.0
+_PROFILE_DIR = Path(__file__).resolve().parent.parent / "configs" / "hacks"
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Intercept:
+    name: str
+    size: int
+    aob_literal: str | None = None
+    aob_wildcard: str | None = None
+    prefer: str = "literal"          # "literal" or "wildcard"
+    default_mode: str = "pass"       # "pass" or "nop"
+    description: str = ""
+
+
+@dataclass
+class Profile:
+    id: str
+    display_name: str
+    process_names: list[str]
+    engine: str
+    engine_version: str = ""
+    credits: str = ""
+    source: str = ""
+    notes: str = ""
+    intercepts: list[Intercept] = field(default_factory=list)
+    camera_write_profile: dict[str, Any] = field(default_factory=dict)
+    schema_version: int = 1
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "Profile":
+        ints = [
+            Intercept(
+                name=i["name"],
+                size=int(i["size"]),
+                aob_literal=i.get("aob_literal"),
+                aob_wildcard=i.get("aob_wildcard"),
+                prefer=i.get("prefer", "literal"),
+                default_mode=i.get("default_mode", "pass"),
+                description=i.get("description", ""),
+            )
+            for i in data.get("intercepts", [])
+        ]
+        return cls(
+            schema_version=int(data.get("schema_version", 1)),
+            id=data["id"],
+            display_name=data["display_name"],
+            process_names=list(data.get("process_names", [])),
+            engine=data.get("engine", ""),
+            engine_version=data.get("engine_version", ""),
+            credits=data.get("credits", ""),
+            source=data.get("source", ""),
+            notes=data.get("notes", ""),
+            intercepts=ints,
+            camera_write_profile=data.get("camera_write_profile", {}),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bridge TCP helper
+# ---------------------------------------------------------------------------
+
+
+def _send(cmd: str, timeout: float = _BRIDGE_TIMEOUT) -> str:
+    """Send one newline-terminated command and return the decoded response.
+
+    Raises ``ConnectionError`` if the bridge is not reachable. The bridge
+    always sends a short response per command; we read until the peer either
+    stops sending or the timeout elapses.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        try:
+            s.connect((_BRIDGE_HOST, _BRIDGE_PORT))
+        except OSError as e:
+            raise ConnectionError(f"bridge unreachable: {e}") from e
+        s.sendall((cmd + "\n").encode("utf-8"))
+        chunks: list[bytes] = []
+        try:
+            while True:
+                buf = s.recv(8192)
+                if not buf:
+                    break
+                chunks.append(buf)
+                # Most responses fit in one recv. Shadow read to avoid
+                # blocking for the full timeout on short replies.
+                s.settimeout(0.2)
+        except TimeoutError:
+            pass
+    return b"".join(chunks).decode("utf-8", errors="replace").strip()
+
+
+# ---------------------------------------------------------------------------
+# Profile IO
+# ---------------------------------------------------------------------------
+
+
+def list_profiles() -> list[dict[str, Any]]:
+    """Return summaries of every profile in ``configs/hacks/``."""
+    out: list[dict[str, Any]] = []
+    if not _PROFILE_DIR.exists():
+        return out
+    for path in sorted(_PROFILE_DIR.glob("*.json")):
+        if path.name.startswith("_"):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            out.append({
+                "id": data["id"],
+                "display_name": data["display_name"],
+                "engine": data.get("engine", ""),
+                "engine_version": data.get("engine_version", ""),
+                "intercept_count": len(data.get("intercepts", [])),
+                "process_names": data.get("process_names", []),
+            })
+        except (KeyError, ValueError, json.JSONDecodeError) as e:
+            out.append({
+                "id": path.stem,
+                "display_name": path.stem,
+                "error": str(e),
+            })
+    return out
+
+
+def load_profile(profile_id: str) -> Profile:
+    """Load and validate a single profile by id."""
+    path = _PROFILE_DIR / f"{profile_id}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"no such profile: {profile_id}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return Profile.from_json(data)
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+
+def _install_one(inter: Intercept) -> tuple[bool, str]:
+    """Install one intercept. Tries preferred AOB, falls back to the other.
+
+    Returns (success, last_response_line).
+    """
+    order: list[tuple[str, str]] = []
+    if inter.prefer == "wildcard":
+        if inter.aob_wildcard:
+            order.append(("wildcard", inter.aob_wildcard))
+        if inter.aob_literal:
+            order.append(("literal", inter.aob_literal))
+    else:
+        if inter.aob_literal:
+            order.append(("literal", inter.aob_literal))
+        if inter.aob_wildcard:
+            order.append(("wildcard", inter.aob_wildcard))
+
+    last = ""
+    for kind, aob in order:
+        cmd = f"__cam_intercept_install_aob {inter.size} {inter.name}_{kind} | {aob}"
+        last = _send(cmd)
+        if last.strip() == "ok":
+            return True, f"{kind}: ok"
+    return False, last or "no aob provided"
+
+
+def apply_profile(profile_id: str) -> dict[str, Any]:
+    """Uninstall any existing sites, then install all intercepts in profile.
+
+    Starts in "pass" mode by default; caller invokes :func:`lock_camera`
+    to switch to NOP.
+    """
+    prof = load_profile(profile_id)
+    steps: list[dict[str, Any]] = []
+
+    # Clean slate
+    r = _send("__cam_intercept_uninstall")
+    steps.append({"step": "uninstall_existing", "response": r})
+
+    all_ok = True
+    for inter in prof.intercepts:
+        ok, detail = _install_one(inter)
+        steps.append({
+            "step": "install",
+            "intercept": inter.name,
+            "ok": ok,
+            "detail": detail,
+        })
+        if not ok:
+            all_ok = False
+
+    # List current state
+    r = _send("__cam_intercept_list")
+    steps.append({"step": "list", "response": r})
+
+    return {
+        "profile": profile_id,
+        "display_name": prof.display_name,
+        "ok": all_ok,
+        "installed": sum(1 for s in steps if s.get("step") == "install" and s.get("ok")),
+        "expected": len(prof.intercepts),
+        "steps": steps,
+    }
+
+
+def lock_camera() -> dict[str, Any]:
+    """Switch all installed sites to NOP (block game writes)."""
+    r = _send("__cam_intercept_nop")
+    return {"step": "nop", "response": r}
+
+
+def unlock_camera() -> dict[str, Any]:
+    """Switch all installed sites to pass-through (let game drive camera)."""
+    r = _send("__cam_intercept_pass")
+    return {"step": "pass", "response": r}
+
+
+def uninstall_all() -> dict[str, Any]:
+    """Restore all patched bytes and clear site list."""
+    r = _send("__cam_intercept_uninstall")
+    return {"step": "uninstall", "response": r}
+
+
+def status() -> dict[str, Any]:
+    """Return bridge intercept state: site count + nop flag + full list."""
+    try:
+        stat = _send("__bridge_status")
+    except ConnectionError as e:
+        return {"ok": False, "error": str(e)}
+    sites = _send("__cam_intercept_list")
+    return {"ok": True, "bridge_status": stat, "sites": sites}
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _cli(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print("usage: python -m drivers.game_profile <list|apply ID|lock|unlock|uninstall|status>")
+        return 2
+    cmd = argv[1]
+    try:
+        if cmd == "list":
+            for p in list_profiles():
+                print(f"  {p['id']:24} {p['display_name']:32} "
+                      f"engine={p.get('engine','?'):6} "
+                      f"intercepts={p.get('intercept_count', 0)}")
+            return 0
+        if cmd == "apply":
+            if len(argv) < 3:
+                print("usage: python -m drivers.game_profile apply <id>")
+                return 2
+            result = apply_profile(argv[2])
+            print(json.dumps(result, indent=2))
+            return 0 if result["ok"] else 1
+        if cmd == "lock":
+            print(json.dumps(lock_camera(), indent=2))
+            return 0
+        if cmd == "unlock":
+            print(json.dumps(unlock_camera(), indent=2))
+            return 0
+        if cmd == "uninstall":
+            print(json.dumps(uninstall_all(), indent=2))
+            return 0
+        if cmd == "status":
+            print(json.dumps(status(), indent=2))
+            return 0
+    except ConnectionError as e:
+        print(f"bridge unreachable: {e}")
+        return 3
+    except FileNotFoundError as e:
+        print(f"profile not found: {e}")
+        return 4
+    print(f"unknown command: {cmd}")
+    return 2
+
+
+if __name__ == "__main__":
+    import sys
+    raise SystemExit(_cli(sys.argv))

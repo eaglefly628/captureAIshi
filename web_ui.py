@@ -147,6 +147,64 @@ def bridge_test():
         return jsonify({"ok": False, "error": "Bridge connection failed"}), 500
 
 
+# ---------------------------------------------------------------------------
+# Game hack profiles (configs/hacks/*.json)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/hacks/list", methods=["GET"])
+def hacks_list():
+    try:
+        from drivers import game_profile
+        return jsonify({"ok": True, "profiles": game_profile.list_profiles()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/hacks/apply/<profile_id>", methods=["POST"])
+def hacks_apply(profile_id: str):
+    # Validate slug: only a-z0-9_ allowed to avoid path traversal
+    if not profile_id.replace("_", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile id"}), 400
+    try:
+        from drivers import game_profile
+        result = game_profile.apply_profile(profile_id)
+        return jsonify({"ok": result["ok"], "result": result})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/hacks/lock", methods=["POST"])
+def hacks_lock():
+    try:
+        from drivers import game_profile
+        return jsonify({"ok": True, "result": game_profile.lock_camera()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+
+
+@app.route("/api/hacks/unlock", methods=["POST"])
+def hacks_unlock():
+    try:
+        from drivers import game_profile
+        return jsonify({"ok": True, "result": game_profile.unlock_camera()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+
+
+@app.route("/api/hacks/uninstall", methods=["POST"])
+def hacks_uninstall():
+    try:
+        from drivers import game_profile
+        return jsonify({"ok": True, "result": game_profile.uninstall_all()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+
+
 @app.route("/api/bridge/scan_status", methods=["GET"])
 def bridge_scan_status():
     """Query current UWorld + LocalPlayer + CameraManager scan state."""

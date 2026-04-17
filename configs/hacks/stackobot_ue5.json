@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "stackobot_ue5",
+  "display_name": "StackOBot (UE5 sample)",
+  "process_names": ["StackOBot-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.x LWC",
+  "credits": "captureAIshi (manual CE analysis)",
+  "source": "in-house StackOBot reverse",
+  "notes": "UE5 LWC UpdateCamera cache writes via movups [rsi],xmm0 + movups [rsi+10],xmm1 with an interleaved movsd load from [rbp-disp8]. Location.X+Y and Location.Z+Rot.Pitch covered. Yaw/Roll/FOV are written elsewhere and currently NOT blocked here; add additional intercepts when those sites are mapped. Site 0 (xy) anchor is not robust enough to be unique with pure wildcard -- confirm address via __cam_intercept_list and compare RVA against site 1.",
+
+  "intercepts": [
+    {
+      "name": "pov_rsi_xy",
+      "description": "movups [rsi],xmm0 -- writes Location.X + Location.Y (LWC doubles)",
+      "size": 3,
+      "aob_wildcard": "0F 11 06 F2 0F 10 ?? ?? 0F 11 4E 10",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "pov_rsi_zp",
+      "description": "movups [rsi+0x10],xmm1 -- writes Location.Z + Rotation.Pitch (LWC doubles)",
+      "size": 4,
+      "aob_literal":  "0F 11 4E 10 F2 0F 10 4D B8",
+      "aob_wildcard": "0F 11 4E 10 F2 0F 10 ?? ??",
+      "prefer": "literal",
+      "default_mode": "pass"
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "UE5 has find_cam_pov which sets g_cam_pov_ptr. Trajectory playback uses that path, not this profile's offsets. Kept here for reference.",
+    "struct_base_reg": "rsi",
+    "capture_from_intercept": "pov_rsi_xy",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x20", "roll": "0x28", "type": "double64" },
+    "fov": { "off": "0x30", "type": "float32" }
+  }
+}

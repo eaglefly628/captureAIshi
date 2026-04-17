@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "batman_ak",
+  "display_name": "Batman: Arkham Knight",
+  "process_names": ["BatmanAK.exe"],
+  "engine": "UE3",
+  "engine_version": "1.6.2.0",
+  "credits": "Otis_Inf / One3rd / Jim2Point0 (IGCS)",
+  "source": "docs/refCode/igcs/Cameras/BatmanArkhamKnight/",
+  "notes": "UpdateCamera block at +0x43A111B..+0x43A1157 = 60 bytes, 7 stores to [rbx+0x574..58C] interleaved with 6 loads from [rdi+0x04..18]. Full-block NOP is safe: the next instruction reloads rbx from stack so eax liveness across block does not matter.",
+
+  "intercepts": [
+    {
+      "name": "camera_write",
+      "description": "UpdateCamera Location+Rotation+FOV writes (7 stores)",
+      "size": 60,
+      "aob_literal":  "89 83 74 05 00 00 8B 47 04 89 83 78 05 00 00 8B 47 08 89 83 7C 05 00 00 8B 47 0C 89 83 80 05 00 00",
+      "aob_wildcard": "89 83 ?? 05 00 00 8B 47 04 89 83 ?? 05 00 00 8B 47 08 89 83 ?? 05 00 00 8B 47 0C 89 83 ?? 05 00 00",
+      "prefer": "literal",
+      "default_mode": "pass"
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "Enable after pointer-capture trampoline lands. Struct base is rbx at intercept entry per IGCS asm.",
+    "struct_base_reg": "rbx",
+    "capture_from_intercept": "camera_write",
+    "location": { "x": "0x574", "y": "0x578", "z": "0x57C", "type": "float32" },
+    "rotation": { "pitch": "0x580", "yaw": "0x584", "roll": "0x588", "type": "ue3_packed_int" },
+    "fov": { "off": "0x58C", "type": "float32" }
+  }
+}
