@@ -34,6 +34,27 @@ Want feedback before next step on:
     the bot can: (a) install AOB, (b) flip nop/pass, (c) verify via
     `__bridge_status`.
 
+### 主程序员 peer review: e9f764e (IGCS intercept infrastructure)
+
+Overall: 架构合理，代码整洁。发现两个安全漏洞，需修复后才能用于真实游戏：
+
+- [ ] **P1: camera_intercept.h:171 memcpy(site.orig, addr, size) 无 SEH** (spotted by 主程序员) —
+  VirtualQuery 只检查 `MEM_COMMIT`，未检查页面可读性。DRM-only-execute 页 (PAGE_EXECUTE)
+  是 MEM_COMMIT 但读取会 AV，导致 bridge.dll 崩溃。
+  修法: 在 memcpy 前检查 `mbi.Protect` 包含可读 bit，或用 `__try` 包住 memcpy。
+  建议: `if (!(mbi.Protect & (PAGE_READONLY|PAGE_READWRITE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY|PAGE_WRITECOPY))) { ... fail ... }`
+
+- [ ] **P1: cam_patch_write() memcpy 无 SEH** (spotted by 主程序员) —
+  VirtualProtect 在反作弊拦截下可能返回 TRUE 但实际未改变保护
+  (有记录的 EAC/BE 行为)。之后的 memcpy 写 execute-read 页会 AV。
+  修法: 在 `memcpy(addr, data, n)` 外加 `__try/__except` 并在异常时返回 false 并 log。
+
+两个 P1 修复后 camera_intercept.h 可用于生产。
+回答小逆的问题:
+  - **auto-discovery**: 值得做，但先用 StackOBot 验证手动 AOB 流程，确认 nop 不 crash 再做。
+  - **trampoline**: 先试 NOP 路线；UE5 POV 字段只在 UpdateCamera 写，不会被读，NOP 应安全。
+  - **driver-side recipe**: 见 drivers/ue5_console.py — 加 `cam_intercept_install_aob()` / `cam_intercept_nop()` 包装方法即可，与现有 `_send_cmd()` 机制一致。
+
 ### 当前 session (from 主程序员 + 老白)
 
 - [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
