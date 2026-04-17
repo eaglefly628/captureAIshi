@@ -2,6 +2,96 @@
 
 ## Active TODO
 
+### 2026-04-17 (late) session handoff -- xiaoni -- Batman AK E2E 验证 + profile DB
+
+**Session 成果（3 次 push）**:
+
+1. `8994179` -- 老白 P0/P1/P2 bug sweep (12 of 14)
+2. `2accaeb` -- docs/refCode/igcs/ (IGCS 32 款游戏参考源码)
+3. `e9f764e` -- `camera_intercept.h` 基础设施 (AOB scan + VirtualProtect 字节 swap)
+4. `79b64a5` -- 老白 peer review findings (2 x P1)
+5. `e2cd967` -- 老白 sync 3rdparty/bridge/src tree
+6. `06b88ca` -- 2 x P1 SEH hardening + C4505 cleanup
+7. `c6e622d` -- UI: camera POV + intercept 按钮 + AOB install form
+8. `def25e6` -- 游戏 hack profile 系统 (`configs/hacks/*.json` + drivers + Flask + UI dropdown)
+9. `1fecdee` -- Hellblade (UE4) + Cyberpunk 2077 profile 加入 dropdown
+
+**Batman AK 实战验证通过** (用户实测):
+- Desktop UI -> Profile dropdown 选 Batman -> Apply -> Lock
+- `__cam_intercept_install_aob` 装上 60-byte block
+- `__cam_intercept_nop` 切 NOP -> **镜头完全锁死**
+- `__cam_intercept_pass` 还原 -> 游戏恢复控制
+- 验证 IGCS AOB 直接可用，NOP-only 路径不需要 trampoline
+
+**StackOBot AOB 定位记录** (CE 实测，手工未完成):
+- UE5 LWC 用的是 `movups [reg+0],xmm0` + `movups [reg+10],xmm1`，非 IGCS 的 `movsd [reg+disp32]` 形式
+- Hot site 在 `+0x75DA888` (count 14474): `rsi` 写 Location.X+Y + `rsi+10` 写 Z+Pitch
+- 另外两个 rbx / rcx 写点 (各 7237 次) 未捕获，可能 Rot.Yaw/Roll / photomode / cutscene
+- 手工 AOB 装第 2 个 site 对了位置，第 1 个 site AOB 不够独特匹配到 22 MB 外的无关位置
+- **结论**: UE5 需要**自动探测**基于 `find_cam_pov` 反推 disp (下个 session)
+
+**游戏数据库架构** (全部推送到 claudeMainBranch):
+```
+configs/hacks/
+  _schema.md           -- JSON 字段文档
+  batman_ak.json       -- UE3, 60 bytes, rbx, float coord + ue3_packed_int rot
+  hellblade_ue4.json   -- UE4, 43 bytes, rdi, float coord + float rot
+  stackobot_ue5.json   -- UE5 LWC, 3+4 bytes (split), rsi, double + double rot
+  cyberpunk2077.json   -- REDengine 4, 26 bytes, rbx, float coord + quaternion rot (occurrence=2 TODO)
+
+drivers/game_profile.py  -- load/apply/lock/unlock/uninstall + CLI
+web_ui.py /api/hacks/*   -- list / apply / lock / unlock / uninstall
+index.html debug panel   -- Profile dropdown + Apply/Lock/Unlock/Clear/Refresh 按钮
+```
+
+### 请老白 review 的两个点
+
+1. **`camera_intercept.h` 整体架构评审**
+   - AOB + VirtualProtect + SEH 全路径 (pattern_scan -> get_readable_ranges -> 页保护校验 -> SEH memcpy)
+   - 16 sites cap / 64 bytes cap 是否合理
+   - `cam_seh_memcpy` 隔离 __try 避免 C2712 (C++ 析构冲突) -- 这个手法可以吗
+   - 老白之前 review 的 2 个 P1 全修了 (`06b88ca`)
+
+2. **JSON schema 设计**
+   - `configs/hacks/_schema.md` 字段清单
+   - `intercepts[]` 支持 aob_literal + aob_wildcard + prefer，install 失败自动 fallback
+   - `camera_write_profile` (暂时 disabled) 为下个 session 的 manual write 路径预留字段
+   - occurrence 字段暂缺 (Cyberpunk 需要第 2 个 match) -- 下个 session 补
+
+### 下个 session 路线图 (三连发)
+
+**Commit A -- Pointer capture + Manual write** (Batman 端到端轨迹播放所需):
+- `camera_intercept.h`:
+  - 新增 `mode` 枚举 (PASS/NOP/CAPTURE)
+  - ModRM parser 从 AOB 首字节识别 base_reg (rbx/rsi/rdi/r8-15)
+  - VirtualAlloc 可执行页，生成 29 字节 asm stub:
+    ```
+    push rax; mov rax, <base>; mov [abs64], rax; pop rax; jmp qword [continue]
+    ```
+  - CAPTURE 模式: 14 字节 jmp stub 替换 site (要求 size >= 14，Batman 60/Hellblade 43 都够)
+  - `g_cap_struct_addr[CAM_INTERCEPT_MAX_SITES]` 稳定存储
+- 新 TCP 命令:
+  - `__cam_intercept_capture` (切 CAPTURE 模式)
+  - `__cam_intercept_get_capture <idx>`
+  - `__cam_mem_poke <addr> <offset> <type:f32|f64|i32> <value>`
+- Python: `game_profile.get_captured_addr()` + `write_camera(profile, x, y, z, pitch, yaw, roll, fov)`
+- UI: Profile 行加 "captured addr" 徽章 + Test (推一个偏移测试写入)
+
+**Commit B -- Trajectory presets + player**:
+- `drivers/trajectory_presets.py`: 螺旋 / 绕环 / 直线 / 8 字 (参数化 generator)
+- `drivers/trajectory_player.py`: 60Hz 循环插值 -> `write_camera()`
+- UI: Trajectory 面板 (preset 下拉 + 参数 + Play/Stop)
+
+**Commit C -- 3D editor integration** (用户强调的可视化):
+- 现有 `view3d` canvas + trajectory.json 对接新轨迹系统
+- Preset -> 3D 显示 waypoints -> 可拖拽调整 -> "Apply to Game" 开始 Play
+
+**Commit D -- UE 自动探测 (StackOBot 并轨)**:
+- 基于 `g_cam_pov_ptr - g_camera_manager_ptr = disp32`
+- 扫 `.text` 里 `movups/movsd [reg + disp32], xmm?` 指令
+- 识别连续 3-4 条 (x/y/z/w for LWC 或 x/y/z/float) 自动装 multi-site
+- StackOBot 端到端就自动化了，无需 CE 手工
+
 ### 2026-04-17 汇报给老白 -- xiaoni -- IGCS intercept MVP 进度
 
 Session focus this round:
