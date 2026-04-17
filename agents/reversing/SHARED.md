@@ -38,16 +38,14 @@ Want feedback before next step on:
 
 Overall: 架构合理，代码整洁。发现两个安全漏洞，需修复后才能用于真实游戏：
 
-- [ ] **P1: camera_intercept.h:171 memcpy(site.orig, addr, size) 无 SEH** (spotted by 主程序员) —
-  VirtualQuery 只检查 `MEM_COMMIT`，未检查页面可读性。DRM-only-execute 页 (PAGE_EXECUTE)
-  是 MEM_COMMIT 但读取会 AV，导致 bridge.dll 崩溃。
-  修法: 在 memcpy 前检查 `mbi.Protect` 包含可读 bit，或用 `__try` 包住 memcpy。
-  建议: `if (!(mbi.Protect & (PAGE_READONLY|PAGE_READWRITE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY|PAGE_WRITECOPY))) { ... fail ... }`
+- [x] **P1: camera_intercept.h:171 memcpy(site.orig, addr, size) 无 SEH** (spotted by 主程序员) —
+  fixed: added CAM_READABLE_MASK protect check + cam_seh_memcpy SEH wrapper
+  for the read. DRM exec-only pages now fail gracefully with a log line.
 
-- [ ] **P1: cam_patch_write() memcpy 无 SEH** (spotted by 主程序员) —
-  VirtualProtect 在反作弊拦截下可能返回 TRUE 但实际未改变保护
-  (有记录的 EAC/BE 行为)。之后的 memcpy 写 execute-read 页会 AV。
-  修法: 在 `memcpy(addr, data, n)` 外加 `__try/__except` 并在异常时返回 false 并 log。
+- [x] **P1: cam_patch_write() memcpy 无 SEH** (spotted by 主程序员) —
+  fixed: write goes through cam_seh_memcpy; VirtualProtect is still paired
+  (old_prot restored) on fault, and we log "AC may have blocked VirtualProtect"
+  so the user knows what happened.
 
 两个 P1 修复后 camera_intercept.h 可用于生产。
 回答小逆的问题:

@@ -69,6 +69,27 @@ static std::mutex                     g_cam_sites_mutex;
 
 /* -- Low-level: page protection + code write ------------------------- */
 
+/* Page protection flags that mean "the page is readable from user mode". */
+static const DWORD CAM_READABLE_MASK =
+    PAGE_READONLY | PAGE_READWRITE |
+    PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+    PAGE_EXECUTE_WRITECOPY | PAGE_WRITECOPY;
+
+/* SEH-safe memcpy. Returns false if the copy faulted.
+ * Anti-cheat scenarios (EAC/BE) have been observed returning TRUE from
+ * VirtualProtect without actually changing the page, so the subsequent
+ * memcpy can still AV. __try wraps both halves of the copy. */
+static bool cam_seh_memcpy(void* dst, const void* src, size_t n)
+{
+    __try {
+        memcpy(dst, src, n);
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static bool cam_patch_write(uint8_t* addr, const uint8_t* data, size_t n)
 {
     DWORD old_prot = 0;
@@ -77,9 +98,15 @@ static bool cam_patch_write(uint8_t* addr, const uint8_t* data, size_t n)
                    addr, n, GetLastError());
         return false;
     }
-    memcpy(addr, data, n);
+    /* SEH-wrap the write: anti-cheat may silently refuse the VP change. */
+    bool ok = cam_seh_memcpy(addr, data, n);
     DWORD tmp = 0;
     VirtualProtect(addr, n, old_prot, &tmp);
+    if (!ok) {
+        bridge_log("[intercept] memcpy faulted writing %zu bytes at 0x%p "
+                   "(AC may have blocked VirtualProtect)", n, addr);
+        return false;
+    }
     FlushInstructionCache(GetCurrentProcess(), addr, n);
     return true;
 }
@@ -161,14 +188,29 @@ static bool cam_intercept_install_addr_locked(uint8_t* addr, size_t size,
     else
         snprintf(site.name, sizeof(site.name), "site#%zu", g_cam_sites.size());
 
-    /* Save original bytes (readable code section; no SEH expected but
-     * we still validate the address is in a committed page). */
+    /* Save original bytes. Two-step validation:
+     *   (1) MEM_COMMIT: page is mapped (not reserved-only / free).
+     *   (2) Protect & READABLE_MASK: page is readable from user mode.
+     *       DRM packers sometimes use PAGE_EXECUTE (exec-only) which is
+     *       MEM_COMMIT but a read AVs. Without this check we'd crash
+     *       bridge.dll just saving the "original" bytes.
+     * Then SEH-wrap the read as belt-and-suspenders for AC shenanigans. */
     MEMORY_BASIC_INFORMATION mbi = {};
     if (!VirtualQuery(addr, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) {
         bridge_log("[intercept] install: 0x%p not committed", addr);
         return false;
     }
-    memcpy(site.orig, addr, size);
+    if (!(mbi.Protect & CAM_READABLE_MASK)) {
+        bridge_log("[intercept] install: 0x%p protect=0x%lx not readable "
+                   "from user mode (DRM execute-only?)",
+                   addr, (unsigned long)mbi.Protect);
+        return false;
+    }
+    if (!cam_seh_memcpy(site.orig, addr, size)) {
+        bridge_log("[intercept] install: AV reading %zu bytes at 0x%p",
+                   size, addr);
+        return false;
+    }
     memset(site.nops, 0x90, size);
 
     g_cam_sites.push_back(site);
