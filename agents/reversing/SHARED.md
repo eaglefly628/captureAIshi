@@ -35,6 +35,36 @@
 
 - [ ] **P2: cs_smooth_initialized 数据竞争** (spotted by 主程序员) — `console_server.h:83`：`cs_smooth_initialized` 是普通 `bool`，被 camera tick 线程读、TCP 线程写，无同步。改为 `std::atomic<bool>`。
 
+### Opus 4.7 深度 review (2026-04-17, by 主程序员)
+
+**P0 新发现：**
+
+- [ ] **P0: ue5_scan_engine.h:154 裸指针解引用无 SEH** (spotted by 主程序员 4.7 review) — `find_gengine_via_string_xref`：候选 `resolved` 地址通过范围检查后，直接 `void* candidate = *(void**)resolved;`，没有 `__try`。模块内存区间可能含未提交页（DRM/反作弊改过页权限），扫描成百上千候选时一个无效页直接崩 renderdoc.dll + 游戏。修法：`uintptr_t v = seh_read_ptr((void*)resolved); if (!v) continue; void* candidate = (void*)v;`
+
+- [ ] **P0: ue5_scan_engine.h:248 同样裸解引用** (spotted by 主程序员 4.7 review) — `find_gengine_via_offset`：`void* candidate = *(void**)addr;` 无 SEH。用户给不合法 offset（指向 .pdata）直接死进程。同样改 `seh_read_ptr`。
+
+- [ ] **P0: ue5_scan_camera.h:445 + :799 FField 链裸解引用** (spotted by 主程序员 4.7 review) — `find_cam_pov` 和 `find_camera_manager_via_lp` 在 UClass/SuperStruct 链遍历时，用 `seh_read_ptr` 读指针但随后 **裸解引用** `*(uint32_t*)((uint8_t*)cls + 0x18)` 作为 `resolve_fname` 实参。cls 指向不可读页时整个进程崩。修法：`uint32_t cf = 0; __try { cf = *(uint32_t*)((uint8_t*)cls+0x18); } __except(EXCEPTION_EXECUTE_HANDLER) { break; } resolve_fname(cf, ...);`
+
+- [ ] **P0: g_cam_override_state 多线程撕裂读写** (spotted by 主程序员 4.7 review) — `console_server.h:393`：TCP 线程 `__cam_mem_write` 对 `g_cam_override_state` 整块赋值（56 字节结构），tick 线程同时读取。写入中途 tick 可读到混合旧 xyz + 新 pitch/yaw，写进 FMinimalViewInfo 后镜头抽搐或 NaN 跳帧。修法：加 `std::mutex` 保护整块读写，或将结构体字段拆为 `std::atomic<double/float>`。
+
+**P1 新发现：**
+
+- [ ] **P1: console_server.h:652 Sleep(5000) 违反 no-sleep.md** (spotted by 主程序员 4.7 review) — `cs_engine_scan_thread` 开头 `Sleep(5000)` "等游戏稳定"，违反 `.claude/rules/no-sleep.md`。改为轮询 `get_main_module()` 返回 size >= BRIDGE_MIN_MODULE_SIZE 且稳定 N 次，或轮询目标 UE5 DLL 的 GetModuleHandle。
+
+- [ ] **P1: console_server.h 无 WSAStartup** (spotted by 主程序员 4.7 review) — `cs_server_main` 直接 `socket(AF_INET,...)`，依赖 RenderDoc 先调 `Network::Init()`。时序无 happens-before 保证。修法：`cs_server_main` 入口加 `WSAData wsa; WSAStartup(MAKEWORD(2,2), &wsa);`，Stop 时 `WSACleanup`（多次调用安全）。
+
+- [ ] **P1: ue5_actions.h:85 + ue5_exec_hook.h:294 重复 EnumWindows 代码** (spotted by 主程序员 4.7 review) — `hotsample()` 和 `setup_gamethread_dispatch()` 里查找游戏窗口的代码几乎字字相同（结构体/变量名都一样）。提取 `static HWND find_game_window()` 助手消除重复，避免日后双版本 drift。
+
+- [ ] **P1: ue5_exec_hook.h:346 cmd_queue 生产者无溢出保护** (spotted by 主程序员 4.7 review) — TCP 线程写入 `g_cmd_queue[head % CMD_QUEUE_MAX]` 后立即 `InterlockedIncrement(&g_cmd_queue_head)`，游戏线程消费慢时 head 可比 tail 多 256+ 直接覆盖未消费条目，命令静默丢失/乱序。修法：生产前检查 `head - tail < CMD_QUEUE_MAX`，否则回复 `"error: queue_full\n"`。
+
+**P2 新发现：**
+
+- [ ] **P2: console_server.h:429/445/487 strtof 返回 INF/NaN 未拦截** (spotted by 主程序员 4.7 review) — `__path_play 1e40` → spd=INF → tick 线程 `m_play_time += dt*INF` → NaN → catmull_rom 全 NaN 写入 FMinimalViewInfo。加上下界检查：`if (!isfinite(spd) || spd <= 0 || spd > 1e6) spd = 1.0f;`。`__cam_speed` 同理。
+
+- [ ] **P2: console_server.h:892 client thread shutdown 不彻底** (spotted by 主程序员 4.7 review) — shutdown 时 `WaitForSingleObject(handle, 1000)`，但 client socket 未关，`recv` 永远阻塞线程不退出，1s 后 `CloseHandle` 导致句柄泄漏、线程继续裸跑。修法：shutdown 前对所有 client socket 调 `shutdown(sock, SD_BOTH)` 强制 recv 返回，再 wait。
+
+- [ ] **P2: CL 条目缺失** (spotted by 主程序员 4.7 review) — `c088120 "Remove ToggleDebugCamera; split ue5_engine.h; bump tick to 1000Hz"` 在 SHARED.md 里仍是 `(pending push)`，已 push 应填实际 sha。`43ac097 "Add ref/ to .gitignore"` 完全无 CL 条目。按 versioning.md 规则补上。
+
 ### UUU 功能复刻 (from 小由 2026-04-05, 老白 confirmed)
 
 - [ ] **P0: per-node FOV 支持** — 路径每个关键帧可以设不同 FOV，播放时线性插值
