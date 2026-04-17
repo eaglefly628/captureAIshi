@@ -214,7 +214,16 @@ static bool find_gengine_via_string_xref()
                     resolved >= (uintptr_t)(rgn.base + rgn.size))
                     continue;
 
-                /* Read the pointer value at that address */
+                /* Read the pointer value at that address.
+                 * SEH-safe: module range can contain uncommitted pages
+                 * (DRM/AC may rewrite page protection after mapping);
+                 * a raw deref on such a page crashes the game. */
+                __try {
+                    /* noop -- just validate the read is safe */
+                    volatile uintptr_t tmp = *(const uintptr_t*)resolved;
+                    (void)tmp;
+                }
+                __except(EXCEPTION_EXECUTE_HANDLER) { continue; }
                 void* candidate = *(void**)resolved;
                 if (!candidate) continue;
 
@@ -271,10 +280,18 @@ static bool find_gengine_via_offset(uintptr_t offset)
     }
 
     uintptr_t addr = (uintptr_t)rgn.base + offset;
-    void* candidate = *(void**)addr;
+    /* SEH-safe: user-supplied offset may point into an uncommitted or
+     * DRM-protected page. Raw deref would kill the game process. */
+    void* candidate = NULL;
+    __try { candidate = *(void**)addr; }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        bridge_log("WARNING: Offset 0x%llX caused access violation",
+                   (unsigned long long)offset);
+        return false;
+    }
 
     if (!candidate) {
-        bridge_log("WARNING: Offset 0x%llX yielded NULL pointer",
+        bridge_log("WARNING: Offset 0x%llX yielded NULL/unreadable pointer",
                    (unsigned long long)offset);
         return false;
     }

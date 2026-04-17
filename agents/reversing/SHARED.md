@@ -53,7 +53,7 @@ Want feedback before next step on:
 
 ### 代码 bug（from 主程序员 review，基于 claudeMainBranch）
 
-- [ ] **P0: 3rdparty/bridge/src/ 与 renderdoc/renderdoc/core/bridge/ 双树分叉** (spotted by 主程序员) — `3rdparty/bridge/src/` 是旧版本（pre-split），`renderdoc/` 是新版本（post-split）。camera_path.h 差 44 行，pattern_scan.h 差 248 行（renderdoc 版本已加 VirtualQuery 安全扫描）。`3rdparty/bridge/src/` 是独立 CMake 构建的 bridge.dll 源码，renderdoc 版本是嵌入 renderdoc.dll 的版本。两者必须同步，否则修 bug 只修一边。修法：用 CMake `configure_file` 或 symlink 让两者共享同一份源码，或明确弃用其中一个并在 CMakeLists.txt 里 include 另一个。
+- [x] **P0: 3rdparty/bridge/src/ 与 renderdoc/renderdoc/core/bridge/ 双树分叉** (spotted by 主程序员) — 老白 的 bug sweep (commit 8994179) 全部修在 renderdoc 树，但实际 CMake 构建目标是 3rdparty/bridge/src/bridge.cpp，该文件无任何修复。主程序员已同步全部 P0/P1/P2 修复到 3rdparty 树（直接修 ue5_engine.h + camera_path.h + bridge.cpp），见下方 CL。两树仍独立存在，建议小逆在后续 PR 中删除其中一棵或通过 target_include_directories 统一来源。
 
 - [x] **P0: line_buf 无大小上限** (spotted by 主程序员) — fixed in pending CL: 1 MB cap + explicit disconnect + split recv close/error.
 
@@ -261,11 +261,50 @@ P2:
 Notes / deferred:
 - P1 EnumWindows dedup in `ue5_actions.h` + `ue5_exec_hook.h`: not
   done (cosmetic; separate refactor).
-- P0 "3rdparty/bridge/src/ vs renderdoc/ 双树分叉": not addressed
-  here; this fix set lives on the renderdoc/ (post-split) tree only.
-  Needs a build-system decision (`configure_file` symlink or explicit
-  deprecation) from 老白 before I touch 3rdparty/bridge/src/.
 - CL 条目缺失 for `c088120` / `43ac097`: still pending.
+
+### [v0.2.0] (pending push) -- 主程序员 peer review: 3rdparty build tree sync
+
+Review of commit 8994179 (老白 P0/P1/P2 bug sweep) found that ALL
+fixes were applied to `renderdoc/renderdoc/core/bridge/` only.
+The actual CMake build target (`3rdparty/bridge/src/bridge.cpp`) includes
+`ue5_engine.h`, `camera_path.h`, `pattern_scan.h` from `3rdparty/bridge/src/`
+-- none of the renderdoc fixes were in the built DLL.
+
+Applied equivalent fixes to the 3rdparty build tree:
+
+**3rdparty/bridge/src/ue5_engine.h (P0 SEH)**
+- Line 218: bare `*(void**)resolved` in string-xref scan -- wrapped in
+  `__try/__except` block (inline, same pattern as seh_read_ptr).
+- Line 274: bare `*(void**)addr` in `find_gengine_via_offset` -- wrapped
+  in `__try/__except`; AV now logs and returns false instead of crashing.
+
+**3rdparty/bridge/src/camera_path.h (P1 mutex)**
+- `m_mutex` -> `mutable std::mutex`
+- `count()`: add lock_guard
+- `tick()`: add lock_guard + call total_duration_unlocked()
+- `total_duration()`: add lock_guard + call total_duration_unlocked()
+- `list_keyframes()`: add lock_guard
+- `visualize()`: add lock_guard
+- Added private `total_duration_unlocked()` helper
+
+**3rdparty/bridge/src/bridge.cpp (P1/P2)**
+- `g_smooth_initialized`: bool -> `std::atomic<bool>` (P2)
+- `__smooth` float: add NaN/INF/range check before storing (P2)
+- `__cam_speed` float: add NaN/INF/range check (P2)
+- `__path_play` float: add NaN/INF/range check (P2)
+- `__path_delete`: atoi -> strtol + bounds [0, 10000] (P1)
+- `line_buffer`: cap at 1 MB before append; disconnect on overflow (P1)
+- Client socket tracking: `g_client_socks` vector + mutex; registered
+  on connect, erased on disconnect. `shutdown()` calls `shutdown(SD_BOTH)`
+  on all before joining server thread (P1 recv-blocked thread leak)
+- Added `#include <algorithm>` and `#include <cmath>`
+
+Remaining open items:
+- Two trees still independent (CMake build-system decision TBD by 小逆)
+- EnumWindows dedup in renderdoc tree (cosmetic, deferred)
+- cmd_queue overflow comparison: `(LONG)(head - tail)` should be `(ULONG)` to
+  avoid UB when head/tail wrap past INT_MAX (P2, theoretical, ~2B ops)
 
 ### [v0.2.0] (pending push, earlier) -- xiaoni
 - **Remove ToggleDebugCamera logic**: all `g_debug_camera_active` code removed from

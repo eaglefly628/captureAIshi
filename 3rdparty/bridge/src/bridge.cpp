@@ -34,8 +34,10 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -95,16 +97,17 @@ void bridge_log(const char* fmt, ...)
 static float g_smooth_factor = 1.0f;   /* 1 = no smoothing */
 static Vec3  g_smooth_pos = {0, 0, 0};
 static float g_smooth_pitch = 0, g_smooth_yaw = 0, g_smooth_roll = 0;
-static bool  g_smooth_initialized = false;
+/* Read by tick thread, written by TCP thread -- atomic avoids torn read. */
+static std::atomic<bool> g_smooth_initialized{false};
 
 static InterpolatedCamera apply_smoothing(const InterpolatedCamera& raw)
 {
-    if (g_smooth_factor <= 1.0f || !g_smooth_initialized) {
+    if (g_smooth_factor <= 1.0f || !g_smooth_initialized.load()) {
         g_smooth_pos = raw.pos;
         g_smooth_pitch = raw.pitch;
         g_smooth_yaw = raw.yaw;
         g_smooth_roll = raw.roll;
-        g_smooth_initialized = true;
+        g_smooth_initialized.store(true);
         return raw;
     }
 
@@ -181,6 +184,13 @@ static void camera_tick_thread()
 
 static std::atomic<bool> g_server_running{false};
 static SOCKET g_listen_socket = INVALID_SOCKET;
+
+/* Client socket tracking for clean shutdown.
+ * shutdown(SD_BOTH) on each socket causes recv() to return with an
+ * error, letting the detached client threads observe g_server_running==false
+ * and exit instead of blocking forever. */
+static std::mutex              g_client_socks_mutex;
+static std::vector<SOCKET>     g_client_socks;
 
 /* Helper: send response string to client */
 static void reply(SOCKET sock, const char* msg)
@@ -278,6 +288,7 @@ static bool route_command(SOCKET client, const std::string& cmd)
 
     if (cmd.rfind("__cam_speed ", 0) == 0) {
         float speed = strtof(cmd.c_str() + 12, NULL);
+        if (!std::isfinite(speed) || speed < 0.0f || speed > 1e6f) speed = 1.0f;
         set_game_speed(speed);
         reply(client, "ok\n");
         return true;
@@ -302,9 +313,10 @@ static bool route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__smooth ", 0) == 0) {
-        g_smooth_factor = strtof(cmd.c_str() + 9, NULL);
-        if (g_smooth_factor < 1.0f) g_smooth_factor = 1.0f;
-        g_smooth_initialized = false;
+        float v = strtof(cmd.c_str() + 9, NULL);
+        if (!std::isfinite(v) || v < 1.0f || v > 1000.0f) v = 1.0f;
+        g_smooth_factor = v;
+        g_smooth_initialized.store(false);
         char buf[64];
         snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", g_smooth_factor);
         reply(client, buf);
@@ -354,8 +366,13 @@ static bool route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__path_delete ", 0) == 0) {
-        size_t idx = (size_t)atoi(cmd.c_str() + 14);
-        if (g_camera_path.delete_keyframe(idx))
+        char* end = NULL;
+        long val = strtol(cmd.c_str() + 14, &end, 10);
+        if (end == cmd.c_str() + 14 || val < 0 || val > 10000) {
+            reply(client, "error: bad index\n");
+            return true;
+        }
+        if (g_camera_path.delete_keyframe((size_t)val))
             reply(client, "ok\n");
         else
             reply(client, "error: invalid index\n");
@@ -369,9 +386,10 @@ static bool route_command(SOCKET client, const std::string& cmd)
 
     if (cmd == "__path_play" || cmd.rfind("__path_play ", 0) == 0) {
         float speed = 1.0f;
-        if (cmd.size() > 12)
-            speed = strtof(cmd.c_str() + 12, NULL);
-        if (speed <= 0.0f) speed = 1.0f;
+        if (cmd.size() > 12) {
+            float v = strtof(cmd.c_str() + 12, NULL);
+            if (std::isfinite(v) && v > 0.0f && v <= 1e6f) speed = v;
+        }
         g_camera_path.play(speed);
         reply(client, "ok\n");
         return true;
@@ -450,6 +468,10 @@ static bool route_command(SOCKET client, const std::string& cmd)
 
 static void handle_client(SOCKET client_sock)
 {
+    {
+        std::lock_guard<std::mutex> lk(g_client_socks_mutex);
+        g_client_socks.push_back(client_sock);
+    }
     bridge_log("Client connected");
 
     char buffer[MAX_CMD_LEN];
@@ -468,8 +490,12 @@ static void handle_client(SOCKET client_sock)
             break;
         }
 
-        buffer[received] = '\0';
-        line_buffer.append(buffer);
+        /* Cap line buffer to prevent OOM on malicious/runaway clients. */
+        if (line_buffer.size() + (size_t)received > 1024 * 1024) {
+            bridge_log("Client line buffer overflow -- disconnecting");
+            break;
+        }
+        line_buffer.append(buffer, (size_t)received);
 
         /* Process complete lines (newline-delimited) */
         size_t pos;
@@ -487,6 +513,11 @@ static void handle_client(SOCKET client_sock)
         }
     }
 
+    {
+        std::lock_guard<std::mutex> lk(g_client_socks_mutex);
+        auto it = std::find(g_client_socks.begin(), g_client_socks.end(), client_sock);
+        if (it != g_client_socks.end()) g_client_socks.erase(it);
+    }
     closesocket(client_sock);
     bridge_log("Client handler exited");
 }
@@ -612,8 +643,14 @@ static void shutdown()
     if (g_tick_thread.joinable())
         g_tick_thread.join();
 
-    /* Stop TCP server */
+    /* Stop TCP server: first force all recv()-blocked client threads
+     * to return an error so they can see g_server_running==false. */
     g_server_running = false;
+    {
+        std::lock_guard<std::mutex> lk(g_client_socks_mutex);
+        for (SOCKET s : g_client_socks)
+            shutdown(s, SD_BOTH);
+    }
     if (g_listen_socket != INVALID_SOCKET)
         closesocket(g_listen_socket);
     if (g_server_thread.joinable())
