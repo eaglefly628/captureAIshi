@@ -48,3 +48,4 @@ capture_bridge*.pyd
 *.obj
 CMakeCache.txt
 CMakeFiles/
+ref/
