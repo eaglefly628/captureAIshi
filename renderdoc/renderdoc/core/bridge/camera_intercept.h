@@ -4,26 +4,17 @@
  * INCLUDED FROM console_server.h ONLY. Depends on pattern_scan.h and
  * ue5_engine.h being included earlier in the same translation unit.
  *
- * Problem:
- *   UE5 APlayerCameraManager::UpdateCamera() writes the player-follow
- *   position into FMinimalViewInfo every game frame. Our 1000 Hz tick
- *   races against it and usually loses.
+ * Three modes per site:
+ *   - PASS    : original bytes in place; game updates camera normally.
+ *   - NOP     : 0x90 fill. Game's write is a no-op; external writes persist.
+ *   - CAPTURE : 14-byte `jmp qword ptr [rip+0]` to a VirtualAlloc'd asm stub
+ *               that snapshots the base-register (rbx/rsi/rdi/r8..r15) to
+ *               g_cap_addr[slot] and then jumps past the original block.
+ *               Requires site.size >= 14.
  *
- * Solution (Otis_Inf / IGCS approach for UE4/UE5 games):
- *   Patch the game's own MOV instructions that write to the POV struct.
- *   Keep the FName / GUObjectArray discovery pipeline intact -- we still
- *   find CameraManager / UWorld / Actors through that. This module only
- *   replaces the "override" mechanism.
- *
- * Two states per installed site:
- *   - "pass"  : original bytes in place; game updates camera normally.
- *   - "nop"   : patched with 0x90s; game write becomes a no-op. Our
- *               __cam_mem_write / path playback keeps the values alive.
- *
- * Scope:
- *   This is the infrastructure layer. AOB patterns are supplied per
- *   game (via TCP command or config). Auto-discovery of the write
- *   instruction from known cam_pov offsets is a follow-up.
+ * The stub is assembled at runtime from the ModRM byte of the first
+ * instruction in the AOB. That byte tells us which register holds the
+ * camera struct pointer (rm field + REX.B).
  *
  * ASCII only (MSVC C4819 compliance).
  */
@@ -39,46 +30,60 @@
 #include <vector>
 #include <mutex>
 
-/* Forward-declare; defined in bridge_log_adapter in console_server.h */
 extern void bridge_log(const char* fmt, ...);
 
 /* -- Configuration ---------------------------------------------------- */
 
-/* Maximum bytes a single intercept can cover. A typical UE5 LWC camera
- * write block (movsd x / movsd y / movsd z + a few mov eax) fits in
- * well under 64 bytes. */
-static const size_t CAM_INTERCEPT_MAX_SIZE = 64;
-
-/* Hard cap on installed sites. Prevents runaway memory if someone spams
- * __cam_intercept_install_aob. */
+static const size_t CAM_INTERCEPT_MAX_SIZE  = 64;
 static const size_t CAM_INTERCEPT_MAX_SITES = 16;
+static const size_t CAM_STUB_MAX_SIZE       = 64;   /* our stub is ~29 bytes */
+
+/* -- Mode ------------------------------------------------------------- */
+
+enum CamMode {
+    CAM_MODE_PASS    = 0,
+    CAM_MODE_NOP     = 1,
+    CAM_MODE_CAPTURE = 2,
+};
+
+static const char* cam_mode_str(int m) {
+    switch (m) {
+        case CAM_MODE_PASS:    return "pass";
+        case CAM_MODE_NOP:     return "nop";
+        case CAM_MODE_CAPTURE: return "capture";
+        default:               return "?";
+    }
+}
 
 /* -- State ------------------------------------------------------------ */
 
 struct CamInterceptSite {
-    uint8_t*  addr;                                 /* patched location  */
-    size_t    size;                                 /* byte count        */
-    uint8_t   orig[CAM_INTERCEPT_MAX_SIZE];         /* saved bytes       */
-    uint8_t   nops[CAM_INTERCEPT_MAX_SIZE];         /* 0x90 padding      */
-    bool      nopped;                               /* current state     */
-    char      name[64];                             /* label for logs    */
+    uint8_t*  addr;                                  /* patched location   */
+    size_t    size;                                  /* byte count         */
+    uint8_t   orig[CAM_INTERCEPT_MAX_SIZE];          /* saved original     */
+    uint8_t   nops[CAM_INTERCEPT_MAX_SIZE];          /* 0x90 fill          */
+    uint8_t   patch[CAM_INTERCEPT_MAX_SIZE];         /* jmp-to-stub + NOPs */
+    int       mode;                                  /* CAM_MODE_*         */
+    int       base_reg;                              /* 0..15 or -1        */
+    void*     stub;                                  /* VirtualAlloc'd code*/
+    int       slot;                                  /* cap-addr index     */
+    char      name[64];
 };
 
 static std::vector<CamInterceptSite> g_cam_sites;
 static std::mutex                     g_cam_sites_mutex;
 
+/* Stubs write captured base-register values here. 8-byte aligned.
+ * Indexed by site.slot (0..CAM_INTERCEPT_MAX_SITES-1). */
+static uint64_t g_cap_addr[CAM_INTERCEPT_MAX_SITES] = {0};
+
 /* -- Low-level: page protection + code write ------------------------- */
 
-/* Page protection flags that mean "the page is readable from user mode". */
 static const DWORD CAM_READABLE_MASK =
     PAGE_READONLY | PAGE_READWRITE |
     PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
     PAGE_EXECUTE_WRITECOPY | PAGE_WRITECOPY;
 
-/* SEH-safe memcpy. Returns false if the copy faulted.
- * Anti-cheat scenarios (EAC/BE) have been observed returning TRUE from
- * VirtualProtect without actually changing the page, so the subsequent
- * memcpy can still AV. __try wraps both halves of the copy. */
 static bool cam_seh_memcpy(void* dst, const void* src, size_t n)
 {
     __try {
@@ -98,7 +103,6 @@ static bool cam_patch_write(uint8_t* addr, const uint8_t* data, size_t n)
                    addr, n, GetLastError());
         return false;
     }
-    /* SEH-wrap the write: anti-cheat may silently refuse the VP change. */
     bool ok = cam_seh_memcpy(addr, data, n);
     DWORD tmp = 0;
     VirtualProtect(addr, n, old_prot, &tmp);
@@ -113,18 +117,12 @@ static bool cam_patch_write(uint8_t* addr, const uint8_t* data, size_t n)
 
 /* -- AOB parsing ------------------------------------------------------ */
 
-/*
- * Parse "F2 0F 11 ?? 80 04 00 00" into bytes[] + mask[] (mask: 'x'/'?').
- * Returns token count on success, -1 on malformed input.
- * Tokens are space-separated; each is 2 hex chars or "??".
- */
 static int cam_parse_aob(const char* hex, uint8_t* bytes, char* mask,
                          int max_len)
 {
     int count = 0;
     const char* p = hex;
     while (*p && count < max_len) {
-        /* skip whitespace and commas */
         while (*p == ' ' || *p == '\t' || *p == ',') p++;
         if (!*p) break;
         if (p[0] == '?' && p[1] == '?') {
@@ -132,7 +130,6 @@ static int cam_parse_aob(const char* hex, uint8_t* bytes, char* mask,
             mask[count] = '?';
             p += 2;
         } else {
-            /* Expect 2 hex chars */
             auto hex_digit = [](char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
                 if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
@@ -152,14 +149,131 @@ static int cam_parse_aob(const char* hex, uint8_t* bytes, char* mask,
     return count;
 }
 
-/* -- Install / set mode ---------------------------------------------- */
+/* -- ModRM -> base register ------------------------------------------- */
+
+/*
+ * Walk the first instruction in an AOB: skip SSE/size prefix, optional
+ * REX, opcode, read ModRM. Return the base register (rm + REX.B<<3).
+ * Returns -1 if we don't recognize the opcode or ModRM is wildcarded or
+ * addressing doesn't use [reg + disp] (i.e. mod==11 or rm==4 SIB).
+ *
+ * Supported opcodes:
+ *   0F 11 /r          movups/movaps store
+ *   F2 0F 11 /r       movsd  store
+ *   F3 0F 11 /r       movss  store
+ *   89 /r             mov r/m16/32/64, r (used by UE3 Batman)
+ */
+static int cam_parse_base_reg(const uint8_t* bytes, const char* mask,
+                               int pat_len)
+{
+    int i = 0;
+    uint8_t rex = 0;
+
+    if (i >= pat_len || mask[i] != 'x') return -1;
+    if (bytes[i] == 0xF2 || bytes[i] == 0xF3 || bytes[i] == 0x66) i++;
+
+    if (i < pat_len && mask[i] == 'x' &&
+        (bytes[i] & 0xF0) == 0x40) {
+        rex = bytes[i];
+        i++;
+    }
+
+    if (i >= pat_len || mask[i] != 'x') return -1;
+    uint8_t op1 = bytes[i++];
+
+    if (op1 == 0x0F) {
+        if (i >= pat_len || mask[i] != 'x') return -1;
+        uint8_t op2 = bytes[i++];
+        if (op2 != 0x11 && op2 != 0x29) return -1; /* movups/movaps store */
+    } else if (op1 != 0x89) {
+        return -1;
+    }
+
+    if (i >= pat_len || mask[i] != 'x') return -1;
+    uint8_t modrm = bytes[i];
+    uint8_t mod = (modrm >> 6) & 0x3;
+    uint8_t rm  = modrm & 0x7;
+
+    if (mod == 0x3) return -1; /* register-register, no memory */
+    if (rm  == 0x4) return -1; /* SIB -- unsupported */
+    if (mod == 0x0 && rm == 0x5) return -1; /* RIP-relative, no base */
+
+    int base = rm | ((rex & 0x1) << 3);
+    return base;
+}
+
+/* -- Capture stub assembly ------------------------------------------- */
+
+/*
+ * Assemble a 29-byte capture stub into `out`.
+ * Stub: push rax / mov rax,<base> / mov [g_cap_addr+slot*8],rax / pop rax
+ *       / jmp qword ptr [rip+0]; dq continue
+ * Returns bytes written, or 0 on failure.
+ */
+static size_t cam_build_capture_stub(uint8_t* out, size_t out_cap,
+                                      int base_reg,
+                                      uint64_t cap_target_addr,
+                                      uint64_t continue_addr)
+{
+    if (out_cap < 29) return 0;
+    if (base_reg < 0 || base_reg > 15) return 0;
+
+    size_t n = 0;
+    out[n++] = 0x50;                                 /* push rax */
+
+    /* mov rax, <base_reg>  (REX.W | REX.R? | 89 | ModRM) */
+    out[n++] = (base_reg >= 8) ? 0x4C : 0x48;
+    out[n++] = 0x89;
+    out[n++] = (uint8_t)(0xC0 | ((base_reg & 7) << 3));
+
+    /* mov [abs64], rax   (48 A3 <8 bytes>) */
+    out[n++] = 0x48;
+    out[n++] = 0xA3;
+    memcpy(out + n, &cap_target_addr, 8); n += 8;
+
+    out[n++] = 0x58;                                 /* pop rax */
+
+    /* jmp qword ptr [rip+0] */
+    out[n++] = 0xFF;
+    out[n++] = 0x25;
+    out[n++] = 0x00; out[n++] = 0x00;
+    out[n++] = 0x00; out[n++] = 0x00;
+    memcpy(out + n, &continue_addr, 8); n += 8;
+
+    return n;
+}
+
+static void* cam_alloc_stub_page(size_t n_bytes)
+{
+    void* p = VirtualAlloc(NULL, 4096, MEM_COMMIT | MEM_RESERVE,
+                           PAGE_EXECUTE_READWRITE);
+    if (!p) {
+        bridge_log("[intercept] VirtualAlloc(stub) failed: %lu",
+                   GetLastError());
+        return NULL;
+    }
+    /* Fill with INT3s so stray jumps die loudly. */
+    memset(p, 0xCC, 4096);
+    (void)n_bytes;
+    return p;
+}
+
+/* Build the 14-byte `jmp qword ptr [rip+0]; dq stub` patch, pad rest w/ NOP. */
+static void cam_build_capture_patch(uint8_t* out, size_t size, uint64_t stub)
+{
+    out[0] = 0xFF; out[1] = 0x25;
+    out[2] = 0x00; out[3] = 0x00; out[4] = 0x00; out[5] = 0x00;
+    memcpy(out + 6, &stub, 8);
+    if (size > 14) memset(out + 14, 0x90, size - 14);
+}
+
+/* -- Install ---------------------------------------------------------- */
 
 static bool cam_intercept_install_addr_locked(uint8_t* addr, size_t size,
                                                const char* name)
 {
     if (!addr) {
-        bridge_log("[intercept] install: null address");
-        return false;
+        bridge_log("[intercept] install: null address"); return false;
     }
     if (size == 0 || size > CAM_INTERCEPT_MAX_SIZE) {
         bridge_log("[intercept] install: bad size %zu (max %zu)",
@@ -171,7 +285,6 @@ static bool cam_intercept_install_addr_locked(uint8_t* addr, size_t size,
                    CAM_INTERCEPT_MAX_SITES);
         return false;
     }
-    /* Refuse to re-install the same address */
     for (const auto& s : g_cam_sites) {
         if (s.addr == addr) {
             bridge_log("[intercept] install: 0x%p already has a site", addr);
@@ -182,27 +295,22 @@ static bool cam_intercept_install_addr_locked(uint8_t* addr, size_t size,
     CamInterceptSite site = {};
     site.addr = addr;
     site.size = size;
-    site.nopped = false;
+    site.mode = CAM_MODE_PASS;
+    site.base_reg = -1;
+    site.stub = NULL;
+    site.slot = (int)g_cam_sites.size();
     if (name && *name)
         snprintf(site.name, sizeof(site.name), "%s", name);
     else
         snprintf(site.name, sizeof(site.name), "site#%zu", g_cam_sites.size());
 
-    /* Save original bytes. Two-step validation:
-     *   (1) MEM_COMMIT: page is mapped (not reserved-only / free).
-     *   (2) Protect & READABLE_MASK: page is readable from user mode.
-     *       DRM packers sometimes use PAGE_EXECUTE (exec-only) which is
-     *       MEM_COMMIT but a read AVs. Without this check we'd crash
-     *       bridge.dll just saving the "original" bytes.
-     * Then SEH-wrap the read as belt-and-suspenders for AC shenanigans. */
     MEMORY_BASIC_INFORMATION mbi = {};
     if (!VirtualQuery(addr, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) {
         bridge_log("[intercept] install: 0x%p not committed", addr);
         return false;
     }
     if (!(mbi.Protect & CAM_READABLE_MASK)) {
-        bridge_log("[intercept] install: 0x%p protect=0x%lx not readable "
-                   "from user mode (DRM execute-only?)",
+        bridge_log("[intercept] install: 0x%p protect=0x%lx not readable",
                    addr, (unsigned long)mbi.Protect);
         return false;
     }
@@ -212,10 +320,12 @@ static bool cam_intercept_install_addr_locked(uint8_t* addr, size_t size,
         return false;
     }
     memset(site.nops, 0x90, size);
+    memset(site.patch, 0x90, size);  /* will be overwritten if CAPTURE used */
 
+    g_cap_addr[site.slot] = 0;
     g_cam_sites.push_back(site);
-    bridge_log("[intercept] installed '%s' at 0x%p (%zu bytes, mode=pass)",
-               site.name, addr, size);
+    bridge_log("[intercept] installed '%s' at 0x%p (%zu bytes, slot=%d, mode=pass)",
+               site.name, addr, size, site.slot);
     return true;
 }
 
@@ -226,7 +336,8 @@ static bool cam_intercept_install_addr(uint8_t* addr, size_t size,
     return cam_intercept_install_addr_locked(addr, size, name);
 }
 
-/* AOB scan in main module; install at first match. */
+/* AOB scan in main module; install at first match. Also parses ModRM
+ * for future capture mode. */
 static bool cam_intercept_install_aob(const char* aob_hex, size_t size,
                                        const char* name)
 {
@@ -243,45 +354,125 @@ static bool cam_intercept_install_aob(const char* aob_hex, size_t size,
                    pat_len);
         return false;
     }
-    bridge_log("[intercept] install_aob: match at 0x%p (pattern %d tokens)",
-               (void*)match, pat_len);
-    return cam_intercept_install_addr((uint8_t*)match, size, name);
-}
+    int base_reg = cam_parse_base_reg(bytes, mask, pat_len);
+    bridge_log("[intercept] install_aob: match 0x%p (pat=%d bytes, base_reg=%d)",
+               (void*)match, pat_len, base_reg);
 
-/* Switch all sites to nop (true) or pass-through (false). */
-static bool cam_intercept_set_nop_all(bool nop)
-{
-    std::lock_guard<std::mutex> lk(g_cam_sites_mutex);
-    int ok_count = 0, fail_count = 0;
-    for (auto& s : g_cam_sites) {
-        if (s.nopped == nop) continue;
-        const uint8_t* data = nop ? s.nops : s.orig;
-        if (cam_patch_write(s.addr, data, s.size)) {
-            s.nopped = nop;
-            ok_count++;
-            bridge_log("[intercept] '%s' -> %s", s.name, nop ? "nop" : "pass");
-        } else {
-            fail_count++;
+    bool ok = cam_intercept_install_addr((uint8_t*)match, size, name);
+    if (!ok) return false;
+
+    /* Patch base_reg into the last installed site (we just pushed_back). */
+    {
+        std::lock_guard<std::mutex> lk(g_cam_sites_mutex);
+        if (!g_cam_sites.empty()) {
+            g_cam_sites.back().base_reg = base_reg;
         }
     }
-    bridge_log("[intercept] set_nop_all(%d): %d ok, %d failed, total sites %zu",
-               (int)nop, ok_count, fail_count, g_cam_sites.size());
-    return fail_count == 0;
+    return true;
 }
 
-/* Restore original bytes everywhere and clear the list. */
+/* -- Mode switching --------------------------------------------------- */
+
+/* Ensure site has a valid stub (allocating + building if needed). */
+static bool cam_ensure_stub(CamInterceptSite& s)
+{
+    if (s.stub) return true;
+    if (s.base_reg < 0) {
+        bridge_log("[intercept] '%s' base_reg unknown; capture mode unavailable",
+                   s.name);
+        return false;
+    }
+    if (s.size < 14) {
+        bridge_log("[intercept] '%s' size=%zu < 14; capture mode needs 14 bytes "
+                   "for absolute jmp", s.name, s.size);
+        return false;
+    }
+    void* page = cam_alloc_stub_page(29);
+    if (!page) return false;
+
+    uint8_t stub[64] = {};
+    uint64_t cap_target = (uint64_t)(uintptr_t)&g_cap_addr[s.slot];
+    uint64_t cont       = (uint64_t)(uintptr_t)(s.addr + s.size);
+    size_t stub_n = cam_build_capture_stub(stub, sizeof(stub),
+                                           s.base_reg, cap_target, cont);
+    if (stub_n == 0) {
+        VirtualFree(page, 0, MEM_RELEASE);
+        return false;
+    }
+    memcpy(page, stub, stub_n);
+    FlushInstructionCache(GetCurrentProcess(), page, stub_n);
+
+    s.stub = page;
+    cam_build_capture_patch(s.patch, s.size, (uint64_t)(uintptr_t)page);
+    bridge_log("[intercept] '%s' stub built at 0x%p (%zu bytes, base_reg=%d, "
+               "cap_target=0x%llX, continue=0x%llX)",
+               s.name, page, stub_n, s.base_reg,
+               (unsigned long long)cap_target,
+               (unsigned long long)cont);
+    return true;
+}
+
+static bool cam_set_mode_one(CamInterceptSite& s, int new_mode)
+{
+    if (s.mode == new_mode) return true;
+
+    const uint8_t* src = s.orig;
+    if (new_mode == CAM_MODE_NOP) {
+        src = s.nops;
+    } else if (new_mode == CAM_MODE_CAPTURE) {
+        if (!cam_ensure_stub(s)) {
+            bridge_log("[intercept] '%s' capture setup failed", s.name);
+            return false;
+        }
+        src = s.patch;
+    }
+
+    if (!cam_patch_write(s.addr, src, s.size)) return false;
+    bridge_log("[intercept] '%s' %s -> %s",
+               s.name, cam_mode_str(s.mode), cam_mode_str(new_mode));
+    s.mode = new_mode;
+    return true;
+}
+
+static bool cam_intercept_set_mode_all(int new_mode)
+{
+    std::lock_guard<std::mutex> lk(g_cam_sites_mutex);
+    int ok = 0, fail = 0;
+    for (auto& s : g_cam_sites) {
+        if (cam_set_mode_one(s, new_mode)) ok++;
+        else fail++;
+    }
+    bridge_log("[intercept] set_mode_all(%s): %d ok, %d failed",
+               cam_mode_str(new_mode), ok, fail);
+    return fail == 0;
+}
+
+/* Legacy API kept for existing TCP commands (__cam_intercept_nop/pass). */
+static bool cam_intercept_set_nop_all(bool nop)
+{
+    return cam_intercept_set_mode_all(nop ? CAM_MODE_NOP : CAM_MODE_PASS);
+}
+
+/* -- Uninstall -------------------------------------------------------- */
+
 static void cam_intercept_uninstall_all()
 {
     std::lock_guard<std::mutex> lk(g_cam_sites_mutex);
     for (auto& s : g_cam_sites) {
-        if (s.nopped)
+        if (s.mode != CAM_MODE_PASS)
             cam_patch_write(s.addr, s.orig, s.size);
+        if (s.stub) {
+            VirtualFree(s.stub, 0, MEM_RELEASE);
+            s.stub = NULL;
+        }
+        if (s.slot >= 0 && s.slot < (int)CAM_INTERCEPT_MAX_SITES)
+            g_cap_addr[s.slot] = 0;
     }
     bridge_log("[intercept] uninstalled %zu sites", g_cam_sites.size());
     g_cam_sites.clear();
 }
 
-/* -- Query ----------------------------------------------------------- */
+/* -- Query ------------------------------------------------------------ */
 
 static size_t cam_intercept_count()
 {
@@ -289,30 +480,75 @@ static size_t cam_intercept_count()
     return g_cam_sites.size();
 }
 
-/* Format current sites for TCP response. */
 static std::string cam_intercept_list()
 {
     std::lock_guard<std::mutex> lk(g_cam_sites_mutex);
     std::string out;
-    char buf[256];
+    char buf[320];
     for (size_t i = 0; i < g_cam_sites.size(); i++) {
         const auto& s = g_cam_sites[i];
         snprintf(buf, sizeof(buf),
-                 "[%zu] %s addr=0x%p size=%zu mode=%s\n",
-                 i, s.name, s.addr, s.size, s.nopped ? "nop" : "pass");
+                 "[%zu] %s addr=0x%p size=%zu mode=%s base_reg=%d "
+                 "slot=%d captured=0x%llX\n",
+                 i, s.name, s.addr, s.size, cam_mode_str(s.mode),
+                 s.base_reg, s.slot,
+                 (unsigned long long)g_cap_addr[s.slot]);
         out += buf;
     }
     if (out.empty()) out = "(no sites)\n";
     return out;
 }
 
-/* True if at least one site is installed and currently in nop mode. */
 static bool cam_intercept_any_nopped()
 {
     std::lock_guard<std::mutex> lk(g_cam_sites_mutex);
     for (const auto& s : g_cam_sites)
-        if (s.nopped) return true;
+        if (s.mode == CAM_MODE_NOP || s.mode == CAM_MODE_CAPTURE) return true;
     return false;
+}
+
+/* Retrieve captured base register value for a given slot.
+ * Returns 0 if slot out of range or nothing captured yet. */
+static uint64_t cam_intercept_get_captured(int slot)
+{
+    if (slot < 0 || slot >= (int)CAM_INTERCEPT_MAX_SITES) return 0;
+    return g_cap_addr[slot];
+}
+
+/* -- Manual memory write --------------------------------------------- *
+ *
+ * cam_mem_poke(addr, offset, type, value):
+ *   Write a value into the camera struct at the given offset. Wraps in
+ *   SEH so a bogus addr/offset doesn't take the DLL down.
+ *
+ *   type: 0=f32, 1=f64, 2=i32, 3=u32
+ */
+static bool cam_mem_poke(uint64_t addr, uint64_t offset, int type,
+                         uint64_t value_bits)
+{
+    if (addr == 0) return false;
+    uint8_t* target = (uint8_t*)(uintptr_t)addr + offset;
+    __try {
+        switch (type) {
+            case 0: { /* f32 */
+                uint32_t v = (uint32_t)(value_bits & 0xFFFFFFFFu);
+                *(uint32_t*)target = v;
+                return true;
+            }
+            case 1: /* f64 */
+                *(uint64_t*)target = value_bits;
+                return true;
+            case 2: /* i32 */
+            case 3: /* u32 */
+                *(uint32_t*)target = (uint32_t)(value_bits & 0xFFFFFFFFu);
+                return true;
+            default:
+                return false;
+        }
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 
 #endif /* CAPTUREAI_CAMERA_INTERCEPT_H */

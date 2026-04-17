@@ -22,8 +22,8 @@
   ],
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "Enable after pointer-capture lands. UE4 FRotator is 3x float (pitch/yaw/roll in degrees). FOV at +0x498. Alt FOV (photomode) at +0x414.",
+    "enabled": true,
+    "_comment": "rdi captured by asm stub. UE4 FRotator is 3x float (pitch/yaw/roll in degrees). FOV at +0x498. Alt FOV (photomode) at +0x414.",
     "struct_base_reg": "rdi",
     "capture_from_intercept": "camera_write",
     "location": { "x": "0x480", "y": "0x484", "z": "0x488", "type": "float32" },

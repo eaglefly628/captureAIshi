@@ -543,6 +543,87 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
+    /* Switch all sites to CAPTURE mode (NOP + snapshot base-register). */
+    if (cmd == "__cam_intercept_capture") {
+        bool ok = cam_intercept_set_mode_all(CAM_MODE_CAPTURE);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%s sites=%zu\n",
+                 ok ? "ok" : "partial_failure", cam_intercept_count());
+        cs_reply(client, buf);
+        return true;
+    }
+
+    /* Read captured address at a slot. Returns "addr=0x..." or "null". */
+    if (cmd.rfind("__cam_intercept_get_capture ", 0) == 0) {
+        char* end = NULL;
+        long slot = strtol(cmd.c_str() + 28, &end, 10);
+        if (end == cmd.c_str() + 28 || slot < 0 || slot >= 16) {
+            cs_reply(client, "error: usage __cam_intercept_get_capture <slot:0-15>\n");
+            return true;
+        }
+        uint64_t cap = cam_intercept_get_captured((int)slot);
+        char buf[64];
+        if (cap == 0) snprintf(buf, sizeof(buf), "null slot=%ld\n", slot);
+        else          snprintf(buf, sizeof(buf), "addr=0x%llX slot=%ld\n",
+                               (unsigned long long)cap, slot);
+        cs_reply(client, buf);
+        return true;
+    }
+
+    /* Write a typed value into the camera struct.
+     * Format: __cam_mem_poke <addr_hex> <offset_hex_or_dec> <type> <value>
+     * Types:  f32, f64, i32, u32
+     */
+    if (cmd.rfind("__cam_mem_poke ", 0) == 0) {
+        const char* p = cmd.c_str() + 15;
+        char* end = NULL;
+        uint64_t addr = strtoull(p, &end, 16);
+        if (end == p || addr == 0) { cs_reply(client, "error: bad addr\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        /* offset: accept 0x prefix or decimal */
+        uint64_t off = 0;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+            off = strtoull(p + 2, &end, 16);
+        } else {
+            off = strtoull(p, &end, 10);
+        }
+        if (end == p) { cs_reply(client, "error: bad offset\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        /* type token */
+        char tbuf[8] = {0};
+        int ti = 0;
+        while (*p && *p != ' ' && ti < 7) { tbuf[ti++] = *p++; }
+        while (*p == ' ') p++;
+        int type = -1;
+        if (strcmp(tbuf, "f32") == 0) type = 0;
+        else if (strcmp(tbuf, "f64") == 0) type = 1;
+        else if (strcmp(tbuf, "i32") == 0) type = 2;
+        else if (strcmp(tbuf, "u32") == 0) type = 3;
+        if (type < 0) { cs_reply(client, "error: type must be f32|f64|i32|u32\n"); return true; }
+        /* value */
+        uint64_t bits = 0;
+        if (type == 0) {
+            float f = strtof(p, &end);
+            uint32_t u = 0; memcpy(&u, &f, 4);
+            bits = u;
+        } else if (type == 1) {
+            double d = strtod(p, &end);
+            memcpy(&bits, &d, 8);
+        } else if (type == 2) {
+            long v = strtol(p, &end, 10);
+            bits = (uint32_t)(int32_t)v;
+        } else {
+            unsigned long v = strtoul(p, &end, 10);
+            bits = (uint32_t)v;
+        }
+        if (end == p) { cs_reply(client, "error: bad value\n"); return true; }
+        bool ok = cam_mem_poke(addr, off, type, bits);
+        cs_reply(client, ok ? "ok\n" : "error: poke faulted\n");
+        return true;
+    }
+
     if (cmd == "__cam_pause" || cmd == "__timestop") {
         toggle_pause();
         char buf[64];

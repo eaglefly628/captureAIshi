@@ -22,8 +22,8 @@
   ],
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "Enable after pointer-capture trampoline lands. Struct base is rbx at intercept entry per IGCS asm.",
+    "enabled": true,
+    "_comment": "rbx captured at intercept entry by asm stub. UE3 rotator is 16.16 fixed-point (0x10000 = 360 deg); current write path casts pitch/yaw/roll floats to i32 verbatim -- use value 0 for initial Test. Proper deg->packed_int conversion lives in the trajectory layer (next commit).",
     "struct_base_reg": "rbx",
     "capture_from_intercept": "camera_write",
     "location": { "x": "0x574", "y": "0x578", "z": "0x57C", "type": "float32" },

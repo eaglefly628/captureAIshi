@@ -205,6 +205,62 @@ def hacks_uninstall():
         return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
 
 
+@app.route("/api/hacks/capture", methods=["POST"])
+def hacks_capture():
+    """Switch all sites to CAPTURE mode (NOP + snapshot base register)."""
+    try:
+        from drivers import game_profile
+        return jsonify({"ok": True, "result": game_profile.capture_all()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+
+
+@app.route("/api/hacks/get_capture", methods=["GET"])
+def hacks_get_capture():
+    """Return captured struct address for a slot. ?slot=0 by default."""
+    try:
+        from drivers import game_profile
+        slot = int(request.args.get("slot", "0"))
+        addr = game_profile.get_captured_addr(slot)
+        return jsonify({
+            "ok": True,
+            "slot": slot,
+            "addr_hex": f"0x{addr:X}" if addr else None,
+            "addr_int": addr,
+        })
+    except (ValueError, ConnectionError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 503
+
+
+@app.route("/api/hacks/write/<profile_id>", methods=["POST"])
+def hacks_write(profile_id: str):
+    """Write a pose to the captured camera struct via profile offsets.
+
+    JSON body: {"x":..,"y":..,"z":..,"pitch":..,"yaw":..,"roll":..,"fov":..,"slot":0}
+    """
+    if not profile_id.replace("_", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile id"}), 400
+    body = request.get_json(silent=True) or {}
+    try:
+        from drivers import game_profile
+        result = game_profile.write_camera(
+            profile_id,
+            x=float(body.get("x", 0.0)), y=float(body.get("y", 0.0)),
+            z=float(body.get("z", 0.0)),
+            pitch=float(body.get("pitch", 0.0)), yaw=float(body.get("yaw", 0.0)),
+            roll=float(body.get("roll", 0.0)),
+            fov=float(body.get("fov", 90.0)),
+            slot=int(body.get("slot", 0)),
+        )
+        return jsonify({"ok": result.get("ok", False), "result": result})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/bridge/scan_status", methods=["GET"])
 def bridge_scan_status():
     """Query current UWorld + LocalPlayer + CameraManager scan state."""

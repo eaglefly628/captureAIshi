@@ -2630,7 +2630,7 @@ pollSessions();pollCaptures();
     </div>
 
     <!-- Game Profile: one-click auto-install per game (configs/hacks/*.json) -->
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center;border-top:1px solid #333;padding-top:6px">
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;align-items:center;border-top:1px solid #333;padding-top:6px">
       <span style="color:#aaa;font-size:11px;min-width:56px" title="Per-game hack profile (AOB + offsets)">Profile:</span>
       <select id="hackProfileSelect" style="flex:1;min-width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px">
         <option value="">-- select game --</option>
@@ -2640,6 +2640,14 @@ pollSessions();pollCaptures();
       <button class="btn" onclick="hackUnlock()" title="Unlock camera (pass-through)">Unlock</button>
       <button class="btn" onclick="hackUninstall()" title="Clear all sites">Clear</button>
       <button class="btn" onclick="hackRefresh()" title="Reload profile list from disk">↻</button>
+    </div>
+    <!-- Capture + Test row: wait for first UpdateCamera to snapshot base reg, then poke an offset to verify -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+      <span style="color:#aaa;font-size:11px;min-width:56px" title="Captured camera struct pointer (first UpdateCamera frame fills this)">Capture:</span>
+      <button class="btn" onclick="hackCapture()" title="Switch all sites to CAPTURE mode: NOP + snapshot base register">Capture</button>
+      <button class="btn" onclick="hackGetCapture()" title="Read the captured pointer for slot 0">Read Addr</button>
+      <span id="hackCapAddr" style="flex:1;color:#888;font-family:monospace;font-size:11px;padding:3px 6px;background:#0f0f23;border:1px solid #333;border-radius:4px">(no capture yet)</span>
+      <button class="btn" onclick="hackTestWrite()" title="Push a test pose (x+100, current yaw+45°) to verify the full write path">Test</button>
     </div>
 
     <div style="display:flex;gap:4px">
@@ -2735,6 +2743,71 @@ function hackUnlock(){_hackPost('unlock', 'unlock');}
 function hackUninstall(){
   if(!confirm('Clear all intercept sites?'))return;
   _hackPost('uninstall', 'uninstall');
+}
+function hackCapture(){
+  debugAppend('> hacks/capture');
+  fetch('/api/hacks/capture',{method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      debugAppend('capture: '+(d.result && d.result.response || 'ok'));
+      // Auto-poll the captured addr a few times; first game frame should fill it.
+      var tries = 0;
+      (function poll(){
+        tries++;
+        fetch('/api/hacks/get_capture?slot=0').then(r=>r.json()).then(g=>{
+          if(g.ok && g.addr_hex){
+            document.getElementById('hackCapAddr').style.color = '#4f4';
+            document.getElementById('hackCapAddr').textContent = g.addr_hex;
+            debugAppend('captured: '+g.addr_hex);
+          } else if (tries < 10) {
+            setTimeout(poll, 250);
+          } else {
+            debugAppend('capture timed out (game did not hit hook yet)');
+          }
+        });
+      })();
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+function hackGetCapture(){
+  fetch('/api/hacks/get_capture?slot=0')
+    .then(r=>r.json())
+    .then(d=>{
+      var el = document.getElementById('hackCapAddr');
+      if (d.ok && d.addr_hex){
+        el.style.color = '#4f4';
+        el.textContent = d.addr_hex;
+        debugAppend('slot 0 addr: '+d.addr_hex);
+      } else {
+        el.style.color = '#888';
+        el.textContent = '(no capture yet)';
+        debugAppend('slot 0: null');
+      }
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+function hackTestWrite(){
+  var id = document.getElementById('hackProfileSelect').value;
+  if(!id){debugAppend('ERROR: select a profile first');return;}
+  // Arbitrary test pose -- should move the camera visibly in most games.
+  var pose = { x: 0.0, y: 0.0, z: 100.0, pitch: 0.0, yaw: 45.0, roll: 0.0, fov: 70.0 };
+  debugAppend('> hacks/write '+id+' '+JSON.stringify(pose));
+  fetch('/api/hacks/write/'+encodeURIComponent(id),{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(pose)
+  })
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||JSON.stringify(d.result||{})));return;}
+      var res = d.result || {};
+      debugAppend('wrote to '+(res.addr||'?'));
+      (res.writes||[]).forEach(function(w){
+        debugAppend('  '+w.field+' @ '+w.offset+' ('+w.type+') = '+w.value+' -> '+(w.ok?'ok':w.response));
+      });
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
 }
 // Auto-populate dropdown the first time the debug panel opens.
 (function(){

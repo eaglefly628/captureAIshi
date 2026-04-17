@@ -254,6 +254,133 @@ def uninstall_all() -> dict[str, Any]:
     return {"step": "uninstall", "response": r}
 
 
+def capture_all() -> dict[str, Any]:
+    """Switch all installed sites to CAPTURE mode.
+
+    CAPTURE = NOP + snapshot base register. First time the hooked code
+    runs, the stub saves the register value (rbx/rsi/rdi/...) into a
+    slot we can read via :func:`get_captured_addr`.
+    """
+    r = _send("__cam_intercept_capture")
+    return {"step": "capture", "response": r}
+
+
+def get_captured_addr(slot: int = 0) -> int | None:
+    """Return captured struct address as int, or None if nothing captured yet.
+
+    The bridge returns ``addr=0x<hex> slot=N`` on success or ``null slot=N``
+    before the game has hit the patched site.
+    """
+    r = _send(f"__cam_intercept_get_capture {slot}")
+    r = (r or "").strip()
+    if r.startswith("addr=0x"):
+        hex_part = r[7:].split()[0]
+        try:
+            return int(hex_part, 16)
+        except ValueError:
+            return None
+    return None
+
+
+# type IDs in bridge: 0=f32, 1=f64, 2=i32, 3=u32
+_TYPE_NAMES = {0: "f32", 1: "f64", 2: "i32", 3: "u32"}
+
+
+def _poke_str(v_type: str, v: float | int) -> str:
+    if v_type in ("f32", "f64"):
+        return repr(float(v))
+    return str(int(v))
+
+
+def mem_poke(addr: int, offset: int, v_type: str, value: float | int) -> str:
+    """Send one typed write to the camera struct. Returns bridge response."""
+    cmd = f"__cam_mem_poke {addr:X} 0x{offset:X} {v_type} {_poke_str(v_type, value)}"
+    return _send(cmd)
+
+
+def _parse_hex_or_dec(s: Any) -> int:
+    if isinstance(s, int):
+        return s
+    s = str(s).strip().lower()
+    if s.startswith("0x"):
+        return int(s, 16)
+    return int(s, 10)
+
+
+def write_camera(profile_id: str,
+                 x: float, y: float, z: float,
+                 pitch: float, yaw: float, roll: float,
+                 fov: float,
+                 slot: int = 0) -> dict[str, Any]:
+    """Write a pose to the captured camera struct using a profile's offsets.
+
+    Requires :func:`capture_all` to have run AND the game to have executed
+    the hooked code at least once so the base register was captured.
+
+    Returns {"ok": bool, "addr": int, "writes": [{field, type, ok, response}]}.
+    """
+    prof = load_profile(profile_id)
+    cam = prof.camera_write_profile
+    if not cam.get("enabled"):
+        return {"ok": False, "error": f"profile {profile_id} has camera_write_profile disabled"}
+
+    addr = get_captured_addr(slot)
+    if not addr:
+        return {"ok": False, "error": f"no capture at slot {slot} -- run capture_all and let game tick"}
+
+    loc = cam.get("location", {})
+    rot = cam.get("rotation", {})
+    fov_cfg = cam.get("fov", {})
+
+    loc_type = loc.get("type", "float32")
+    rot_type = rot.get("type", "float32")
+    fov_type = fov_cfg.get("type", "float32")
+
+    def tc(t: str) -> str:
+        # schema types -> bridge poke types
+        if t in ("float32", "f32"): return "f32"
+        if t in ("double64", "f64"): return "f64"
+        if t in ("int32", "i32", "ue3_packed_int"): return "i32"
+        if t in ("uint32", "u32"): return "u32"
+        return "f32"
+
+    writes: list[dict[str, Any]] = []
+
+    def push(field: str, off_key: str, where: dict[str, Any], type_: str,
+             val: float | int):
+        if off_key not in where:
+            return
+        off = _parse_hex_or_dec(where[off_key])
+        tn = tc(type_)
+        resp = mem_poke(addr, off, tn, val)
+        writes.append({
+            "field": field,
+            "offset": f"0x{off:X}",
+            "type": tn,
+            "value": val,
+            "ok": resp.strip() == "ok",
+            "response": resp,
+        })
+
+    push("x", "x", loc, loc_type, x)
+    push("y", "y", loc, loc_type, y)
+    push("z", "z", loc, loc_type, z)
+    push("pitch", "pitch", rot, rot_type, pitch)
+    push("yaw", "yaw", rot, rot_type, yaw)
+    push("roll", "roll", rot, rot_type, roll)
+    if "off" in fov_cfg:
+        off = _parse_hex_or_dec(fov_cfg["off"])
+        resp = mem_poke(addr, off, tc(fov_type), fov)
+        writes.append({"field": "fov", "offset": f"0x{off:X}", "type": tc(fov_type),
+                       "value": fov, "ok": resp.strip() == "ok", "response": resp})
+
+    return {
+        "ok": all(w["ok"] for w in writes),
+        "addr": f"0x{addr:X}",
+        "writes": writes,
+    }
+
+
 def status() -> dict[str, Any]:
     """Return bridge intercept state: site count + nop flag + full list."""
     try:
@@ -271,7 +398,9 @@ def status() -> dict[str, Any]:
 
 def _cli(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("usage: python -m drivers.game_profile <list|apply ID|lock|unlock|uninstall|status>")
+        print("usage: python -m drivers.game_profile "
+              "<list|apply ID|lock|unlock|capture|get-capture [slot]|"
+              "write ID x y z pitch yaw roll fov|uninstall|status>")
         return 2
     cmd = argv[1]
     try:
@@ -297,6 +426,23 @@ def _cli(argv: list[str]) -> int:
         if cmd == "uninstall":
             print(json.dumps(uninstall_all(), indent=2))
             return 0
+        if cmd == "capture":
+            print(json.dumps(capture_all(), indent=2))
+            return 0
+        if cmd == "get-capture":
+            slot = int(argv[2]) if len(argv) >= 3 else 0
+            a = get_captured_addr(slot)
+            print(f"slot={slot} addr={('0x%X' % a) if a else 'null'}")
+            return 0 if a else 1
+        if cmd == "write":
+            if len(argv) < 10:
+                print("usage: ... write <id> <x> <y> <z> <pitch> <yaw> <roll> <fov>")
+                return 2
+            pid = argv[2]
+            xs = list(map(float, argv[3:10]))
+            result = write_camera(pid, *xs)
+            print(json.dumps(result, indent=2))
+            return 0 if result.get("ok") else 1
         if cmd == "status":
             print(json.dumps(status(), indent=2))
             return 0
