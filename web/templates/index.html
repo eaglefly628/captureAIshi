@@ -2577,7 +2577,7 @@ pollSessions();pollCaptures();
 </script>
 
 <!-- Debug Panel (hidden by default) -->
-<div id="debugPanel" style="display:none;position:fixed;bottom:0;right:0;width:420px;max-height:60vh;background:#1a1a2e;border:1px solid #444;border-radius:8px 0 0 0;z-index:9999;font-size:13px;overflow:hidden;box-shadow:0 -2px 16px rgba(0,0,0,0.5)">
+<div id="debugPanel" style="display:none;position:fixed;bottom:0;right:0;width:560px;max-height:70vh;background:#1a1a2e;border:1px solid #444;border-radius:8px 0 0 0;z-index:9999;font-size:13px;overflow:hidden;box-shadow:0 -2px 16px rgba(0,0,0,0.5)">
   <div style="padding:8px 12px;background:#16213e;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleDebugPanel()">
     <b style="color:#e94560">Bridge Debug</b>
     <span style="color:#888;font-size:11px">click to close</span>
@@ -2603,6 +2603,32 @@ pollSessions();pollCaptures();
       <button class="btn" onclick="bridgeStatus()">Status</button>
       <button class="btn" id="btnArmBreak" onclick="bridgeArmBreak()" title="Arm __debugbreak() in bridge -- fires on next UWorld/LP discovery. Attach WinDbg first.">Arm Break</button>
     </div>
+
+    <!-- Camera POV (FMinimalViewInfo direct memory) -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;border-top:1px solid #333;padding-top:6px;align-items:center">
+      <span style="color:#aaa;font-size:11px;min-width:56px">Cam POV:</span>
+      <button class="btn" onclick="bridgeCmd('__cam_mem_find')" title="Locate FMinimalViewInfo pointer via UClass property scan">Find POV</button>
+      <button class="btn" onclick="bridgeCmd('__cam_mem_read')" title="Read x/y/z/pitch/yaw/roll/fov from FMinimalViewInfo">Read</button>
+      <button class="btn" onclick="bridgeCmd('__cam_mem_on')" title="Enable per-tick 1000Hz memory override (races with UpdateCamera)">OV On</button>
+      <button class="btn" onclick="bridgeCmd('__cam_mem_off')" title="Disable 1000Hz override">OV Off</button>
+    </div>
+
+    <!-- IGCS-style code-patch intercept -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;border-top:1px solid #333;padding-top:6px;align-items:center">
+      <span style="color:#aaa;font-size:11px;min-width:56px" title="IGCS-style patch of game's own camera-write MOV">Intercept:</span>
+      <button class="btn" onclick="bridgeCmd('__cam_intercept_list')" title="List installed sites">List</button>
+      <button class="btn btn-accent" onclick="if(confirm('NOP all sites? Game's UpdateCamera writes will be blocked.'))bridgeCmd('__cam_intercept_nop')" title="Switch all sites to NOP (override mode)">NOP</button>
+      <button class="btn" onclick="bridgeCmd('__cam_intercept_pass')" title="Restore original bytes (game drives camera)">Pass</button>
+      <button class="btn" onclick="if(confirm('Restore bytes + clear all sites?'))bridgeCmd('__cam_intercept_uninstall')" title="Restore + forget all sites">Uninstall</button>
+    </div>
+    <!-- Intercept install form (own row because AOB can be long) -->
+    <div style="display:flex;gap:4px;margin-bottom:8px;align-items:center">
+      <input id="interceptSize" style="width:56px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="size" value="24" title="Bytes to patch (total length of MOV block)">
+      <input id="interceptName" style="width:90px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="name" value="camwrite" title="Label for logs">
+      <input id="interceptAob" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="AOB: F2 0F 11 ?? ?? ?? ?? ??" onkeydown="if(event.key==='Enter')interceptInstall()" title="Byte pattern, '??' for wildcards">
+      <button class="btn" onclick="interceptInstall()" title="Install intercept at first AOB match">Install</button>
+    </div>
+
     <div style="display:flex;gap:4px">
       <input id="debugCmdInput" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:monospace" placeholder="Custom command..." onkeydown="if(event.key==='Enter')bridgeCmd(this.value)">
       <button class="btn" onclick="bridgeCmd(document.getElementById('debugCmdInput').value)">Send</button>
@@ -2635,6 +2661,14 @@ function bridgeCmd(cmd){
 }
 function bridgeStatus(){
   bridgeCmd('__bridge_status');
+}
+function interceptInstall(){
+  var size=(document.getElementById('interceptSize').value||'').trim();
+  var name=(document.getElementById('interceptName').value||'').trim()||'ui';
+  var aob=(document.getElementById('interceptAob').value||'').trim();
+  if(!size||!aob){debugAppend('ERROR: size and AOB required');return;}
+  if(!/^\d+$/.test(size)){debugAppend('ERROR: size must be integer');return;}
+  bridgeCmd('__cam_intercept_install_aob '+size+' '+name+' | '+aob);
 }
 function _scanBadge(found, label){
   return found
