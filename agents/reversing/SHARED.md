@@ -2,9 +2,9 @@
 
 ## Active TODO
 
-### 2026-04-17 (late) session handoff -- xiaoni -- Batman AK E2E 验证 + profile DB
+### 2026-04-17 (late) session handoff -- xiaoni -- Batman AK E2E 验证 + profile DB + Commit A pointer capture
 
-**Session 成果（3 次 push）**:
+**Session 成果（10 次 push）**:
 
 1. `8994179` -- 老白 P0/P1/P2 bug sweep (12 of 14)
 2. `2accaeb` -- docs/refCode/igcs/ (IGCS 32 款游戏参考源码)
@@ -15,6 +15,7 @@
 7. `c6e622d` -- UI: camera POV + intercept 按钮 + AOB install form
 8. `def25e6` -- 游戏 hack profile 系统 (`configs/hacks/*.json` + drivers + Flask + UI dropdown)
 9. `1fecdee` -- Hellblade (UE4) + Cyberpunk 2077 profile 加入 dropdown
+10. `306395b` -- **Commit A: pointer capture + manual write (Batman 能推姿态)**
 
 **Batman AK 实战验证通过** (用户实测):
 - Desktop UI -> Profile dropdown 选 Batman -> Apply -> Lock
@@ -60,22 +61,21 @@ index.html debug panel   -- Profile dropdown + Apply/Lock/Unlock/Clear/Refresh �
 
 ### 下个 session 路线图 (三连发)
 
-**Commit A -- Pointer capture + Manual write** (Batman 端到端轨迹播放所需):
-- `camera_intercept.h`:
-  - 新增 `mode` 枚举 (PASS/NOP/CAPTURE)
-  - ModRM parser 从 AOB 首字节识别 base_reg (rbx/rsi/rdi/r8-15)
-  - VirtualAlloc 可执行页，生成 29 字节 asm stub:
-    ```
-    push rax; mov rax, <base>; mov [abs64], rax; pop rax; jmp qword [continue]
-    ```
-  - CAPTURE 模式: 14 字节 jmp stub 替换 site (要求 size >= 14，Batman 60/Hellblade 43 都够)
-  - `g_cap_struct_addr[CAM_INTERCEPT_MAX_SITES]` 稳定存储
-- 新 TCP 命令:
-  - `__cam_intercept_capture` (切 CAPTURE 模式)
-  - `__cam_intercept_get_capture <idx>`
-  - `__cam_mem_poke <addr> <offset> <type:f32|f64|i32> <value>`
-- Python: `game_profile.get_captured_addr()` + `write_camera(profile, x, y, z, pitch, yaw, roll, fov)`
-- UI: Profile 行加 "captured addr" 徽章 + Test (推一个偏移测试写入)
+**Commit A -- Pointer capture + Manual write** ✅ DONE in sha `306395b`
+
+已实现全部内容，待用户实测验证：
+- `CamMode` 枚举 + `cam_parse_base_reg` (ModRM 解析) + 29 字节 asm stub
+- `g_cap_addr[CAM_INTERCEPT_MAX_SITES]` 稳定槽位
+- 新 TCP 命令 `__cam_intercept_capture` / `__cam_intercept_get_capture` / `__cam_mem_poke`
+- Python `capture_all` / `get_captured_addr` / `write_camera` / `mem_poke` + CLI `capture` / `get-capture` / `write`
+- Flask `/api/hacks/capture` / `/get_capture` / `/write`
+- UI "Capture" 行: Capture / Read Addr / 徽章 / Test 按钮
+- Batman + Hellblade profile `camera_write_profile.enabled = true`
+
+**已知限制 (留给下个 session)**:
+- StackOBot 两个 site 只有 3 / 4 字节，< 14 无法装 CAPTURE。等 UE 自动探测 (Commit D) 合并成一个大 site
+- UE3 packed_int 旋转 (16.16 fixed point) 当前直接 cast 浮点为 i32。Batman Test 写 `pitch/yaw/roll=0` 能验证 XYZ 通路，正确换算 `deg * (0x10000/360.0)` 放进轨迹层 (Commit B)
+- Cyberpunk 2077 用四元数旋转，`camera_write_profile` 仍 disabled，需加 `quat_f32` 类型
 
 **Commit B -- Trajectory presets + player**:
 - `drivers/trajectory_presets.py`: 螺旋 / 绕环 / 直线 / 8 字 (参数化 generator)
