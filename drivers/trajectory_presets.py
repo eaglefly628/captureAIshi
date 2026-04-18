@@ -233,6 +233,104 @@ def line(
     return pts
 
 
+def custom(
+    waypoints: Sequence[Sequence[float]],
+    duration: float | None = None,
+    samples_per_segment: int = 0,
+    fov: float = 70.0,
+    look_at: Sequence[float] | None = None,
+) -> list[PosePoint]:
+    """User-defined waypoint list (the 'data-driven' preset).
+
+    Parameters
+    ----------
+    waypoints : list of either
+        ``[x, y, z]`` (position only; rotation follows travel direction
+        unless ``look_at`` is set),
+        ``[x, y, z, pitch, yaw, roll]`` (explicit rotation, fov=default),
+        or ``[x, y, z, pitch, yaw, roll, fov]`` (per-waypoint fov).
+    duration : total seconds. If None, uses len(waypoints) * 0.5s as a
+        reasonable default.
+    samples_per_segment : interpolation density. ``0`` = use the raw
+        waypoints; > 0 inserts that many linear samples between each
+        pair (useful when feeding a smooth 60 Hz player).
+    fov : fallback FOV if waypoints don't carry one.
+    look_at : optional (tx, ty, tz) -- when set, every sample faces this
+        point regardless of explicit rotation in waypoints.
+
+    This is what the UI 'custom' preset uses. Save / load writes the
+    ``waypoints`` list verbatim into ``configs/trajectories/<name>.json``.
+    """
+    if not waypoints or len(waypoints) < 2:
+        raise ValueError("custom trajectory needs at least 2 waypoints")
+    if duration is None:
+        duration = max(0.5, len(waypoints) * 0.5)
+    _validate(max(len(waypoints), 2), duration)
+
+    def expand(wp):
+        wp = list(wp)
+        if len(wp) == 3:
+            return wp[0], wp[1], wp[2], None, None, 0.0, fov
+        if len(wp) == 6:
+            return wp[0], wp[1], wp[2], wp[3], wp[4], wp[5], fov
+        if len(wp) == 7:
+            return wp[0], wp[1], wp[2], wp[3], wp[4], wp[5], wp[6]
+        raise ValueError(f"waypoint must have 3, 6 or 7 numbers (got {len(wp)})")
+
+    raw: list[tuple[float, ...]] = [expand(w) for w in waypoints]
+
+    # If samples_per_segment > 0, linearly insert intermediate points
+    # between consecutive waypoints. Rotation/FOV interp uses
+    # shortest-path yaw.
+    if samples_per_segment and samples_per_segment > 0:
+        expanded: list[tuple[float, ...]] = []
+        n_seg = len(raw) - 1
+        for i in range(n_seg):
+            a = raw[i]
+            b = raw[i + 1]
+            for k in range(samples_per_segment + 1):
+                u = k / (samples_per_segment + 1)
+                expanded.append((
+                    a[0] + u * (b[0] - a[0]),
+                    a[1] + u * (b[1] - a[1]),
+                    a[2] + u * (b[2] - a[2]),
+                    None if (a[3] is None or b[3] is None) else a[3] + u * (b[3] - a[3]),
+                    None if (a[4] is None or b[4] is None) else a[4] + u * _short_delta(a[4], b[4]),
+                    a[5] + u * (b[5] - a[5]),
+                    a[6] + u * (b[6] - a[6]),
+                ))
+        expanded.append(raw[-1])
+        raw = expanded
+
+    # If some waypoints omitted rotation, fill it from travel direction
+    # (or look_at target if supplied).
+    pts: list[PosePoint] = []
+    n = len(raw)
+    for i, p in enumerate(raw):
+        x, y, z, pitch, yaw, roll, pt_fov = p
+        if look_at is not None:
+            lp_pitch, lp_yaw = _look_at_yaw_pitch(x, y, z, *look_at)
+            pitch, yaw = lp_pitch, lp_yaw
+        elif pitch is None or yaw is None:
+            # Aim toward the next waypoint (or back toward the prev one
+            # for the last sample).
+            nxt = raw[i + 1] if i + 1 < n else raw[i - 1]
+            dir_sign = 1.0 if i + 1 < n else -1.0
+            dx = (nxt[0] - x) * dir_sign
+            dy = (nxt[1] - y) * dir_sign
+            dz = (nxt[2] - z) * dir_sign
+            ground = math.hypot(dx, dy)
+            yaw = math.degrees(math.atan2(dy, dx)) if ground > 1e-9 else 0.0
+            pitch = math.degrees(math.atan2(dz, ground)) if ground > 1e-9 else 0.0
+        t = (i / (n - 1)) * duration
+        pts.append(PosePoint(
+            t=t, x=x, y=y, z=z,
+            pitch=pitch, yaw=yaw, roll=roll,
+            fov=pt_fov,
+        ))
+    return pts
+
+
 def figure8(
     center: Sequence[float],
     radius: float,
@@ -291,6 +389,7 @@ PRESETS: dict[str, Callable[..., list[PosePoint]]] = {
     "helix": helix,
     "line": line,
     "figure8": figure8,
+    "custom": custom,
 }
 
 
@@ -338,6 +437,16 @@ PRESET_SCHEMA: dict[str, list[dict]] = {
         {"key": "look_at_center", "kind": "bool", "default": True, "help": "Auto-face center"},
         {"key": "axis", "kind": "choice", "default": "z", "choices": ["z", "y"], "help": "Plane axis"},
     ],
+    # 'custom' -- user supplies a waypoint list in JSON. The UI form for
+    # custom doesn't fit the vec3/num/int scheme, so it renders a
+    # free-form textarea (handled client-side). See docs in custom().
+    "custom": [
+        {"key": "waypoints", "kind": "waypoints", "default": [],
+         "help": "List of [x,y,z] / [x,y,z,pitch,yaw,roll] / [x,y,z,p,y,r,fov] (game coords)"},
+        {"key": "duration", "kind": "num", "default": 5.0, "help": "Seconds (total)"},
+        {"key": "samples_per_segment", "kind": "int", "default": 0, "help": "0 = raw waypoints, >0 = linear subdivision"},
+        {"key": "fov", "kind": "num", "default": 70.0, "help": "Fallback FOV"},
+    ],
 }
 
 
@@ -365,6 +474,11 @@ def generate(preset: str, params: dict) -> list[PosePoint]:
     for key in ("center", "start", "end", "look_at", "start_rot", "end_rot"):
         if key in kwargs and kwargs[key] is not None:
             kwargs[key] = tuple(float(v) for v in kwargs[key])
+    # 'custom' takes a waypoint list of variable-arity rows -- coerce each
+    # row to a tuple of floats but leave the outer list alone.
+    if "waypoints" in kwargs and kwargs["waypoints"] is not None:
+        kwargs["waypoints"] = [tuple(float(v) for v in row)
+                               for row in kwargs["waypoints"]]
     return fn(**kwargs)
 
 

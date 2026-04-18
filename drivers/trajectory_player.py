@@ -197,6 +197,11 @@ class PlayerStatus:
     ticks: int = 0
     writes_ok: int = 0
     writes_fail: int = 0
+    # When True, the active trajectory intends to trigger a RenderDoc
+    # capture per waypoint (wired in a later commit).  The flag is
+    # already plumbed through play() and surfaced in status() so the UI
+    # can show "RDC capture armed" while we finish the backend.
+    renderdoc_capture: bool = False
     last_error: str = ""
     last_pose: dict | None = None
 
@@ -235,6 +240,7 @@ class TrajectoryPlayer:
         rate_hz: float = 60.0,
         loop: bool = False,
         preset_name: str = "",
+        renderdoc_capture: bool = False,
     ) -> dict:
         """Start streaming ``points`` to the camera at ``rate_hz``.
 
@@ -267,6 +273,7 @@ class TrajectoryPlayer:
                 rate_hz=rate_hz,
                 duration=total_duration(points),
                 loop=loop,
+                renderdoc_capture=renderdoc_capture,
             )
             t = threading.Thread(
                 target=self._run,
@@ -337,6 +344,7 @@ class TrajectoryPlayer:
                 "ticks": s.ticks,
                 "writes_ok": s.writes_ok,
                 "writes_fail": s.writes_fail,
+                "renderdoc_capture": s.renderdoc_capture,
                 "last_error": s.last_error,
                 "last_pose": s.last_pose,
             }

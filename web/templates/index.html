@@ -2667,74 +2667,85 @@ pollSessions();pollCaptures();
       <span id="scanCM" style="color:#555">CameraMgr: --</span>
       <button class="btn btn-accent" onclick="bridgeRescan()" style="margin-left:auto;font-size:11px;height:22px;padding:0 10px" title="Re-scan UWorld + LocalPlayer after map load">Re-scan UE</button>
     </div>
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
-      <button class="btn" onclick="bridgeCmd('slomo 0.1')" title="Slow motion">Slow-Mo</button>
-      <button class="btn" onclick="bridgeCmd('slomo 1')" title="Normal speed">Normal</button>
-      <button class="btn" onclick="bridgeCmd('stat fps')" title="Toggle FPS">FPS</button>
-      <button class="btn" onclick="bridgeCmd('stat none')" title="Clear stats">Stat Off</button>
-      <button class="btn btn-accent" onclick="bridgeCmd('ToggleDebugCamera')" title="Debug camera">DebugCam</button>
-      <button class="btn" onclick="bridgeCmd('ShowHUD 0')">HUD Off</button>
-      <button class="btn" onclick="bridgeCmd('ShowHUD 1')">HUD On</button>
-      <button class="btn" onclick="bridgeCmd('pause')">Pause</button>
-      <button class="btn" onclick="bridgeStatus()">Status</button>
-      <button class="btn" id="btnArmBreak" onclick="bridgeArmBreak()" title="Arm __debugbreak() in bridge -- fires on next UWorld/LP discovery. Attach WinDbg first.">Arm Break</button>
-    </div>
-
-    <!-- Camera POV (FMinimalViewInfo direct memory) -->
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;border-top:1px solid #333;padding-top:6px;align-items:center">
+    <!-- Camera POV (FMinimalViewInfo direct memory) -- kept visible, used in normal flow -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;border-top:1px solid #333;padding-top:6px;align-items:center">
       <span style="color:#aaa;font-size:11px;min-width:56px">Cam POV:</span>
       <button class="btn" onclick="bridgeCmd('__cam_mem_find')" title="Locate FMinimalViewInfo pointer via UClass property scan">Find POV</button>
       <button class="btn" onclick="bridgeCmd('__cam_mem_read')" title="Read x/y/z/pitch/yaw/roll/fov from FMinimalViewInfo">Read</button>
-      <button class="btn" onclick="bridgeCmd('__cam_mem_on')" title="Enable per-tick 1000Hz memory override (races with UpdateCamera)">OV On</button>
+      <button class="btn" onclick="bridgeCmd('__cam_mem_on')" title="Enable per-tick 1000Hz memory override">OV On</button>
       <button class="btn" onclick="bridgeCmd('__cam_mem_off')" title="Disable 1000Hz override">OV Off</button>
     </div>
 
-    <!-- IGCS-style code-patch intercept -->
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;border-top:1px solid #333;padding-top:6px;align-items:center">
-      <span style="color:#aaa;font-size:11px;min-width:56px" title="IGCS-style patch of game's own camera-write MOV">Intercept:</span>
-      <button class="btn" onclick="bridgeCmd('__cam_intercept_list')" title="List installed sites">List</button>
-      <button class="btn btn-accent" onclick="if(confirm('NOP all sites? Game's UpdateCamera writes will be blocked.'))bridgeCmd('__cam_intercept_nop')" title="Switch all sites to NOP (override mode)">NOP</button>
-      <button class="btn" onclick="bridgeCmd('__cam_intercept_pass')" title="Restore original bytes (game drives camera)">Pass</button>
-      <button class="btn" onclick="if(confirm('Restore bytes + clear all sites?'))bridgeCmd('__cam_intercept_uninstall')" title="Restore + forget all sites">Uninstall</button>
-    </div>
-    <!-- Intercept install form (own row because AOB can be long) -->
-    <div style="display:flex;gap:4px;margin-bottom:8px;align-items:center">
-      <input id="interceptSize" style="width:56px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="size" value="24" title="Bytes to patch (total length of MOV block)">
-      <input id="interceptName" style="width:90px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="name" value="camwrite" title="Label for logs">
-      <input id="interceptAob" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="AOB: F2 0F 11 ?? ?? ?? ?? ??" onkeydown="if(event.key==='Enter')interceptInstall()" title="Byte pattern, '??' for wildcards">
-      <button class="btn" onclick="interceptInstall()" title="Install intercept at first AOB match">Install</button>
-    </div>
+    <!-- Advanced AOB operations (collapsed by default) -->
+    <div style="border-top:1px solid #333;padding-top:6px;margin-bottom:6px">
+      <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;cursor:pointer;user-select:none" onclick="toggleAdvancedAob()">
+        <span id="advAobCaret" style="color:#888;font-family:monospace;font-size:11px;width:14px">&#9654;</span>
+        <b style="color:#888;font-size:11px">Advanced: AOB intercept + per-game profile</b>
+      </div>
+      <div id="advAobBody" style="display:none">
 
-    <!-- Game Profile: one-click auto-install per game (configs/hacks/*.json) -->
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;align-items:center;border-top:1px solid #333;padding-top:6px">
-      <span style="color:#aaa;font-size:11px;min-width:56px" title="Per-game hack profile (AOB + offsets)">Profile:</span>
-      <select id="hackProfileSelect" style="flex:1;min-width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px">
-        <option value="">-- select game --</option>
-      </select>
-      <button class="btn btn-accent" onclick="hackApply()" title="Uninstall then install all intercepts from profile">Apply</button>
-      <button class="btn" onclick="hackLock()" title="Lock camera (all sites NOP)">Lock</button>
-      <button class="btn" onclick="hackUnlock()" title="Unlock camera (pass-through)">Unlock</button>
-      <button class="btn" onclick="hackUninstall()" title="Clear all sites">Clear</button>
-      <button class="btn" onclick="hackRefresh()" title="Reload profile list from disk">↻</button>
-    </div>
-    <!-- Capture + Test row: wait for first UpdateCamera to snapshot base reg, then poke an offset to verify -->
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
-      <span style="color:#aaa;font-size:11px;min-width:56px" title="Captured camera struct pointer (first UpdateCamera frame fills this)">Capture:</span>
-      <button class="btn" onclick="hackCapture()" title="Switch all sites to CAPTURE mode: NOP + snapshot base register">Capture</button>
-      <button class="btn" onclick="hackGetCapture()" title="Read the captured pointer for slot 0">Read Addr</button>
-      <span id="hackCapAddr" style="flex:1;color:#888;font-family:monospace;font-size:11px;padding:3px 6px;background:#0f0f23;border:1px solid #333;border-radius:4px">(no capture yet)</span>
-      <button class="btn" onclick="hackTestWrite()" title="Push a test pose (x+100, current yaw+45°) to verify the full write path">Test</button>
+        <!-- IGCS-style code-patch intercept -->
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;align-items:center">
+          <span style="color:#aaa;font-size:11px;min-width:56px" title="IGCS-style patch of game's own camera-write MOV">Intercept:</span>
+          <button class="btn" onclick="bridgeCmd('__cam_intercept_list')" title="List installed sites">List</button>
+          <button class="btn btn-accent" onclick="if(confirm('NOP all sites? Game\u0027s UpdateCamera writes will be blocked.'))bridgeCmd('__cam_intercept_nop')" title="Switch all sites to NOP (override mode)">NOP</button>
+          <button class="btn" onclick="bridgeCmd('__cam_intercept_pass')" title="Restore original bytes (game drives camera)">Pass</button>
+          <button class="btn" onclick="if(confirm('Restore bytes + clear all sites?'))bridgeCmd('__cam_intercept_uninstall')" title="Restore + forget all sites">Uninstall</button>
+        </div>
+        <!-- Intercept install form (own row because AOB can be long) -->
+        <div style="display:flex;gap:4px;margin-bottom:8px;align-items:center">
+          <input id="interceptSize" style="width:56px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="size" value="24" title="Bytes to patch (total length of MOV block)">
+          <input id="interceptName" style="width:90px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="name" value="camwrite" title="Label for logs">
+          <input id="interceptAob" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="AOB: F2 0F 11 ?? ?? ?? ?? ??" onkeydown="if(event.key==='Enter')interceptInstall()" title="Byte pattern, '??' for wildcards">
+          <button class="btn" onclick="interceptInstall()" title="Install intercept at first AOB match">Install</button>
+        </div>
+
+        <!-- Game Profile: one-click auto-install per game (configs/hacks/*.json) -->
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;align-items:center">
+          <span style="color:#aaa;font-size:11px;min-width:56px" title="Per-game hack profile (AOB + offsets)">Profile:</span>
+          <select id="hackProfileSelect" style="flex:1;min-width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px">
+            <option value="">-- select game --</option>
+          </select>
+          <button class="btn btn-accent" onclick="hackApply()" title="Uninstall then install all intercepts from profile">Apply</button>
+          <button class="btn" onclick="hackLock()" title="Lock camera (all sites NOP)">Lock</button>
+          <button class="btn" onclick="hackUnlock()" title="Unlock camera (pass-through)">Unlock</button>
+          <button class="btn" onclick="hackUninstall()" title="Clear all sites">Clear</button>
+          <button class="btn" onclick="hackRefresh()" title="Reload profile list from disk">&#x21bb;</button>
+        </div>
+        <!-- Capture + Test row: wait for first UpdateCamera to snapshot base reg, then poke an offset to verify -->
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;align-items:center">
+          <span style="color:#aaa;font-size:11px;min-width:56px" title="Captured camera struct pointer (first UpdateCamera frame fills this)">Capture:</span>
+          <button class="btn" onclick="hackCapture()" title="Switch all sites to CAPTURE mode: NOP + snapshot base register">Capture</button>
+          <button class="btn" onclick="hackGetCapture()" title="Read the captured pointer for slot 0">Read Addr</button>
+          <span id="hackCapAddr" style="flex:1;color:#888;font-family:monospace;font-size:11px;padding:3px 6px;background:#0f0f23;border:1px solid #333;border-radius:4px">(no capture yet)</span>
+          <button class="btn" onclick="hackTestWrite()" title="Push a test pose (x+100, current yaw+45 deg) to verify the full write path">Test</button>
+        </div>
+
+        <!-- Arm break (dev-only; still useful but hidden) -->
+        <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
+          <span style="color:#aaa;font-size:11px;min-width:56px">Dev:</span>
+          <button class="btn" id="btnArmBreak" onclick="bridgeArmBreak()" title="Arm __debugbreak() in bridge -- fires on next UWorld/LP discovery. Attach WinDbg first.">Arm Break</button>
+          <button class="btn" onclick="bridgeStatus()" title="Dump full __bridge_status">Status</button>
+        </div>
+      </div>
     </div>
 
     <!-- Trajectory preset + 60Hz player (Commit B) -->
     <div style="border-top:1px solid #333;padding-top:6px;margin-bottom:6px">
       <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <span style="color:#aaa;font-size:11px;min-width:56px" title="Parametric camera trajectories streamed at 60Hz to the captured camera struct">Trajectory:</span>
-        <select id="trajPreset" style="background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" onchange="trajRenderParams()">
+        <select id="trajPreset" style="background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" onchange="trajPresetChanged()">
           <option value="">-- preset --</option>
         </select>
+        <select id="trajSaved" style="min-width:120px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" onchange="trajLoadSaved()" title="Load a saved custom trajectory from configs/trajectories/">
+          <option value="">-- saved --</option>
+        </select>
+        <button class="btn" onclick="trajSave()" title="Save current preset + params to configs/trajectories/&lt;name&gt;.json">Save</button>
+        <button class="btn" onclick="trajDeleteSaved()" title="Delete the saved trajectory currently selected">Del</button>
         <input id="trajRate" type="number" min="1" max="240" step="1" value="60" style="width:56px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" title="Write rate (Hz)">
         <label style="color:#aaa;font-size:11px" title="Repeat the trajectory"><input type="checkbox" id="trajLoop" style="vertical-align:middle"> loop</label>
+        <label style="color:#aaa;font-size:11px" title="Auto-refresh the 3D preview when preset / params change"><input type="checkbox" id="trajAutoPreview" checked style="vertical-align:middle"> auto-preview</label>
+        <label style="color:#aaa;font-size:11px" title="Trigger a RenderDoc capture at each waypoint + export to output/ at the end (wire-up in Phase 2)"><input type="checkbox" id="trajRdcCapture" style="vertical-align:middle"> RDC capture</label>
         <button class="btn btn-accent" onclick="trajPlay()" title="Start streaming pose at selected rate">Play</button>
         <button class="btn" onclick="trajPause()" title="Hold at current t">Pause</button>
         <button class="btn" onclick="trajResume()" title="Resume from pause">Resume</button>
@@ -2929,6 +2940,35 @@ function trajLoadPresets(){
     .catch(e=>debugAppend('ERROR: traj/presets '+e));
 }
 
+function trajPresetChanged(){
+  // Reset the "saved" dropdown -- picking a base preset invalidates
+  // the "I am viewing Saved X" state.
+  var savedSel=document.getElementById('trajSaved');
+  if(savedSel) savedSel.value='';
+  trajRenderParams();
+  trajAutoPreviewMaybe();
+}
+
+// Debounced auto-preview triggered whenever preset or params change.
+// Guarded by the trajAutoPreview checkbox so a power-user can disable
+// it during fine-tuning of a tight helix.
+var _trajPreviewTimer=null;
+function trajAutoPreviewMaybe(){
+  var cb=document.getElementById('trajAutoPreview');
+  if(!cb || !cb.checked) return;
+  var preset=document.getElementById('trajPreset').value;
+  if(!preset) return;
+  if(_trajPreviewTimer) clearTimeout(_trajPreviewTimer);
+  _trajPreviewTimer=setTimeout(function(){
+    _trajPreviewTimer=null;
+    // Only auto-open the 3D tab the first time -- do not hijack the
+    // user if they are on Log.
+    var canvas=document.getElementById('view3d');
+    var reopen=canvas && canvas.style.display!=='none';
+    trajPreview3d({staySilent:true, reopenTab:reopen});
+  }, 250);
+}
+
 function trajRenderParams(){
   var name=document.getElementById('trajPreset').value;
   var box=document.getElementById('trajParams');
@@ -2941,16 +2981,19 @@ function trajRenderParams(){
     var id='trajParam_'+item.key;
     var def=item.default;
     var label='<label style="color:#aaa;margin-right:4px" title="'+(item.help||'')+'">'+item.key+':</label>';
+    // All inputs wire oninput/onchange to trajAutoPreviewMaybe() so the
+    // 3D canvas refreshes as the user tweaks values.
+    var hook=' oninput="trajAutoPreviewMaybe()" onchange="trajAutoPreviewMaybe()"';
     if(item.kind==='vec3'){
       html+='<div style="display:flex;gap:3px;align-items:center;margin-bottom:3px">'+label;
       ['x','y','z'].forEach(function(axis,i){
-        html+='<input id="'+id+'_'+i+'" type="number" step="any" value="'+def[i]+'" style="width:64px;background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px" title="'+axis+'">';
+        html+='<input id="'+id+'_'+i+'" type="number" step="any" value="'+def[i]+'"'+hook+' style="width:64px;background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px" title="'+axis+'">';
       });
       html+='</div>';
     } else if(item.kind==='bool'){
-      html+='<div style="display:inline-block;margin-right:10px"><label style="color:#aaa"><input type="checkbox" id="'+id+'"'+(def?' checked':'')+' style="vertical-align:middle"> '+item.key+'</label></div>';
+      html+='<div style="display:inline-block;margin-right:10px"><label style="color:#aaa"><input type="checkbox" id="'+id+'"'+(def?' checked':'')+hook+' style="vertical-align:middle"> '+item.key+'</label></div>';
     } else if(item.kind==='choice'){
-      html+='<div style="display:inline-block;margin-right:10px">'+label+'<select id="'+id+'" style="background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-size:11px">';
+      html+='<div style="display:inline-block;margin-right:10px">'+label+'<select id="'+id+'"'+hook+' style="background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-size:11px">';
       (item.choices||[]).forEach(function(c){
         html+='<option value="'+c+'"'+(c===def?' selected':'')+'>'+c+'</option>';
       });
@@ -2958,7 +3001,7 @@ function trajRenderParams(){
     } else {
       // num / int
       var step=(item.kind==='int')?'1':'any';
-      html+='<div style="display:inline-block;margin-right:10px">'+label+'<input id="'+id+'" type="number" step="'+step+'" value="'+def+'" style="width:80px;background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px" title="'+(item.help||'')+'"></div>';
+      html+='<div style="display:inline-block;margin-right:10px">'+label+'<input id="'+id+'" type="number" step="'+step+'" value="'+def+'"'+hook+' style="width:80px;background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px" title="'+(item.help||'')+'"></div>';
     }
   });
   box.innerHTML=html;
@@ -2998,9 +3041,10 @@ function trajPlay(){
     profile_id:profile_id,
     rate_hz:parseFloat(document.getElementById('trajRate').value)||60,
     loop:document.getElementById('trajLoop').checked,
+    renderdoc_capture:document.getElementById('trajRdcCapture').checked,
     slot:0,
   };
-  debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop);
+  debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop+' rdc='+body.renderdoc_capture);
   fetch('/api/trajectory/play',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -3043,11 +3087,15 @@ function trajResume(){
 var trajPreview = null;
 var trajPreviewPlayIdx = -1;  // index into points matching current player t
 
-function trajPreview3d(){
+// opts: { staySilent: true => suppress the debugLog line; reopenTab: true
+// => keep current tab, only redraw }.  Called both from the manual
+// Preview 3D button (opts=undefined) and from trajAutoPreviewMaybe().
+function trajPreview3d(opts){
+  opts = opts || {};
   var preset=document.getElementById('trajPreset').value;
-  if(!preset){debugAppend('ERROR: pick a preset first');return;}
+  if(!preset){ if(!opts.staySilent) debugAppend('ERROR: pick a preset first'); return; }
   var params=trajCollectParams()||{};
-  debugAppend('> traj/preview '+preset);
+  if(!opts.staySilent) debugAppend('> traj/preview '+preset);
   fetch('/api/trajectory/preview',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -3055,11 +3103,17 @@ function trajPreview3d(){
   })
     .then(r=>r.json())
     .then(d=>{
-      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      if(!d.ok){
+        if(!opts.staySilent) debugAppend('ERROR: '+(d.error||'unknown'));
+        return;
+      }
       trajPreview = { name: preset, points: d.points || [] };
-      debugAppend('preview: '+d.count+' pts, '+d.duration.toFixed(2)+'s -- fitting camera');
-      // Switch to 3D tab if not already + auto-fit the orbit.
-      if (typeof switchCenterTab === 'function') switchCenterTab('3d');
+      if(!opts.staySilent){
+        debugAppend('preview: '+d.count+' pts, '+d.duration.toFixed(2)+'s -- fitting camera');
+      }
+      // Manual click switches to 3D; auto-preview only redraws when
+      // already on 3D (reopenTab flag signals this path).
+      if (!opts.reopenTab && typeof switchCenterTab === 'function') switchCenterTab('3d');
       trajPreviewAutoFit();
       if (typeof draw3d === 'function') draw3d();
     })
@@ -3071,6 +3125,112 @@ function trajClearPreview(){
   trajPreviewPlayIdx = -1;
   if (typeof draw3d === 'function' && view3dActive) draw3d();
   debugAppend('preview cleared');
+}
+
+// ── Saved trajectories (configs/trajectories/*.json) ──
+function trajLoadSavedList(){
+  fetch('/api/trajectory/saved')
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok) return;
+      var sel=document.getElementById('trajSaved');
+      var keep=sel.value;
+      sel.innerHTML='<option value="">-- saved --</option>';
+      (d.items||[]).forEach(function(name){
+        var o=document.createElement('option');
+        o.value=name; o.textContent=name;
+        sel.appendChild(o);
+      });
+      if(keep) sel.value=keep;
+    })
+    .catch(_=>{});
+}
+
+function trajSave(){
+  var preset=document.getElementById('trajPreset').value;
+  if(!preset){debugAppend('ERROR: no preset selected');return;}
+  var defaultName=document.getElementById('trajSaved').value || (preset+'_'+new Date().toISOString().replace(/[:\.T-]/g,'').slice(0,14));
+  var name=prompt('Save as (filename, no extension):', defaultName);
+  if(!name || !name.trim()) return;
+  name=name.trim();
+  // Keep filename slug-safe: a-z A-Z 0-9 _ - dot.
+  var clean=name.replace(/[^a-zA-Z0-9_\-\.]/g,'_');
+  var body={
+    name: clean,
+    preset: preset,
+    params: trajCollectParams()||{},
+    rate_hz: parseFloat(document.getElementById('trajRate').value)||60,
+    loop: document.getElementById('trajLoop').checked,
+  };
+  debugAppend('> traj/save '+clean);
+  fetch('/api/trajectory/save',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body),
+  })
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      debugAppend('saved: '+d.path);
+      trajLoadSavedList();
+      document.getElementById('trajSaved').value=clean;
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+
+function trajLoadSaved(){
+  var name=document.getElementById('trajSaved').value;
+  if(!name) return;
+  debugAppend('> traj/load '+name);
+  fetch('/api/trajectory/saved/'+encodeURIComponent(name))
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      // Apply preset selection + re-render the param form, then populate
+      // the form with the saved values.
+      var presetSel=document.getElementById('trajPreset');
+      presetSel.value=d.preset || '';
+      trajRenderParams();
+      var params=d.params||{};
+      if(_trajSchemas[d.preset]){
+        _trajSchemas[d.preset].forEach(function(item){
+          var v=params[item.key];
+          if(v===undefined) return;
+          var id='trajParam_'+item.key;
+          if(item.kind==='vec3'){
+            for(var i=0;i<3;i++){
+              var el=document.getElementById(id+'_'+i);
+              if(el && v[i]!==undefined) el.value=v[i];
+            }
+          } else if(item.kind==='bool'){
+            var el=document.getElementById(id);
+            if(el) el.checked=!!v;
+          } else {
+            var el=document.getElementById(id);
+            if(el) el.value=v;
+          }
+        });
+      }
+      if(d.rate_hz) document.getElementById('trajRate').value=d.rate_hz;
+      if(d.loop!==undefined) document.getElementById('trajLoop').checked=!!d.loop;
+      debugAppend('loaded: '+name+' ('+(d.preset||'?')+')');
+      trajAutoPreviewMaybe();
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+
+function trajDeleteSaved(){
+  var name=document.getElementById('trajSaved').value;
+  if(!name){debugAppend('ERROR: pick a saved trajectory first');return;}
+  if(!confirm('Delete saved trajectory "'+name+'"?'))return;
+  fetch('/api/trajectory/saved/'+encodeURIComponent(name),{method:'DELETE'})
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      debugAppend('deleted: '+name);
+      trajLoadSavedList();
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
 }
 
 // Compute AABB of preview points (after Z-up -> Y-up swap) and park the
@@ -3164,9 +3324,21 @@ function trajStopStatusPoll(){
       p.dataset.hacksLoaded='1';
       hackRefresh();
       trajLoadPresets();
+      trajLoadSavedList();
       trajPollStatusOnce();
     }
   };
+
+// Toggle the collapsible AOB intercept + per-game profile section.
+function toggleAdvancedAob(){
+  var body=document.getElementById('advAobBody');
+  var caret=document.getElementById('advAobCaret');
+  if(!body||!caret)return;
+  var open=body.style.display!=='none';
+  body.style.display=open?'none':'block';
+  // Right-triangle vs down-triangle HTML entities.
+  caret.innerHTML=open?'&#9654;':'&#9660;';
+}
 })();
 function _scanBadge(found, label){
   return found

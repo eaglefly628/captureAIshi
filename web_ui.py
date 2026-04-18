@@ -7,6 +7,7 @@ All capture logic is reused from main.py — this is just a GUI shell.
 
 import json
 import logging
+import re
 import shutil
 import threading
 import time
@@ -337,6 +338,7 @@ def trajectory_play():
             rate_hz=float(body.get("rate_hz", 60.0)),
             loop=bool(body.get("loop", False)),
             preset_name=preset,
+            renderdoc_capture=bool(body.get("renderdoc_capture", False)),
         )
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "profile not found"}), 404
@@ -371,6 +373,101 @@ def trajectory_resume():
 def trajectory_status():
     from drivers.trajectory_player import get_default_player
     return jsonify({"ok": True, "status": get_default_player().status()})
+
+
+# -- Saved trajectories -----------------------------------------------------
+#
+# Files at configs/trajectories/<name>.json carry a full
+# {preset, params, rate_hz, loop, notes} blob so the UI can round-trip a
+# custom trajectory (including the user's waypoint list). The "name" is
+# pass-through user input, so we slug it before touching disk and reject
+# anything that tries to escape the directory.
+
+_TRAJECTORY_DIR = Path("configs/trajectories")
+_TRAJECTORY_SLUG_RE = re.compile(r"[^a-zA-Z0-9_\-\.]+")
+
+
+def _trajectory_slug(name: str) -> str:
+    s = _TRAJECTORY_SLUG_RE.sub("_", (name or "").strip())
+    if not s or s in (".", "..") or s.startswith("."):
+        return ""
+    return s[:120]
+
+
+def _trajectory_path(name: str) -> Path | None:
+    slug = _trajectory_slug(name)
+    if not slug:
+        return None
+    return _TRAJECTORY_DIR / f"{slug}.json"
+
+
+@app.route("/api/trajectory/saved", methods=["GET"])
+def trajectory_saved_list():
+    if not _TRAJECTORY_DIR.exists():
+        return jsonify({"ok": True, "items": []})
+    items = sorted(p.stem for p in _TRAJECTORY_DIR.glob("*.json"))
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/trajectory/saved/<name>", methods=["GET"])
+def trajectory_saved_get(name: str):
+    path = _trajectory_path(name)
+    if path is None:
+        return jsonify({"ok": False, "error": "bad name"}), 400
+    if not path.exists():
+        return jsonify({"ok": False, "error": "not found"}), 404
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    data["ok"] = True
+    return jsonify(data)
+
+
+@app.route("/api/trajectory/save", methods=["POST"])
+def trajectory_saved_save():
+    body = request.get_json(silent=True) or {}
+    name = body.get("name")
+    path = _trajectory_path(name) if isinstance(name, str) else None
+    if path is None:
+        return jsonify({"ok": False, "error": "bad name"}), 400
+    preset = body.get("preset")
+    from drivers import trajectory_presets as tp
+    if not isinstance(preset, str) or preset not in tp.PRESETS:
+        return jsonify({"ok": False, "error": "preset must be one of "
+                        + str(sorted(tp.PRESETS))}), 400
+    params = body.get("params", {})
+    if not isinstance(params, dict):
+        return jsonify({"ok": False, "error": "'params' must be an object"}), 400
+    # Validate by generating -- catches bad param values early.
+    try:
+        tp.generate(preset, params)
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify({"ok": False, "error": f"invalid params: {e}"}), 400
+
+    payload = {
+        "schema_version": 1,
+        "name": path.stem,
+        "preset": preset,
+        "params": params,
+        "rate_hz": float(body.get("rate_hz", 60.0)),
+        "loop": bool(body.get("loop", False)),
+        "notes": str(body.get("notes", "")),
+    }
+    _TRAJECTORY_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return jsonify({"ok": True, "path": str(path), "name": path.stem})
+
+
+@app.route("/api/trajectory/saved/<name>", methods=["DELETE"])
+def trajectory_saved_delete(name: str):
+    path = _trajectory_path(name)
+    if path is None:
+        return jsonify({"ok": False, "error": "bad name"}), 400
+    if not path.exists():
+        return jsonify({"ok": False, "error": "not found"}), 404
+    path.unlink()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/bridge/scan_status", methods=["GET"])

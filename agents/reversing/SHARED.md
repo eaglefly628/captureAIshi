@@ -337,6 +337,67 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] (pending push) -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
+
+Phase 1 of the operator workflow re-focus. Phase 2 (backend capture
+migration + removing legacy volume/spacing/cone pipeline) lands in a
+separate CL.
+
+UI:
+- `web/templates/index.html` Bridge Debug panel:
+  - REMOVED: slomo / Normal / FPS / Stat Off / DebugCam / HUD Off / HUD
+    On / Pause / Status / Arm Break (test cmds) from the always-visible
+    row. Status + Arm Break survived into the new Advanced section.
+  - KEPT visible: Re-scan UE (needed for UE5 debugging) and Cam POV
+    (Find POV / Read / OV On / OV Off).
+  - COLLAPSED under new "Advanced: AOB intercept + per-game profile"
+    disclosure: Intercept (List/NOP/Pass/Uninstall + install form),
+    per-game Profile (Apply/Lock/Unlock/Clear/refresh + Profile
+    select), Capture (Capture/Read Addr/Test), plus Arm Break / Status
+    as dev tools.
+- Trajectory panel:
+  - New `Save` / `Del` buttons + saved-trajectory dropdown (loads
+    configs/trajectories/*.json round-trip with preset + params +
+    rate_hz + loop).
+  - New `auto-preview` checkbox (default ON): debounced
+    (250ms) trajAutoPreviewMaybe() runs after every preset select or
+    param tweak and refreshes the 3D canvas if the user is on it.
+  - New `RDC capture` checkbox: plumbed through `/api/trajectory/play`
+    into TrajectoryPlayer.play(renderdoc_capture=...) and surfaced in
+    status(). Backend trigger is wired in Phase 2.
+
+Backend:
+- `drivers/trajectory_presets.py`: new `custom` preset -- accepts
+  3/6/7-tuple waypoints, linear subdivision via samples_per_segment,
+  optional look_at that overrides per-waypoint rotation.
+- `web_ui.py`:
+  - `/api/trajectory/save` + `/api/trajectory/saved/<name>`
+    (GET/DELETE) + `/api/trajectory/saved` (list) -- read/write
+    configs/trajectories/<slug>.json. Name is slugged before disk
+    touches to block path traversal; save rejects unknown presets and
+    params that fail tp.generate().
+  - `/api/trajectory/play` accepts new `renderdoc_capture` flag.
+- `drivers/trajectory_player.py`: PlayerStatus carries
+  `renderdoc_capture` bool; surfaced in status().
+
+Tests: `tests/test_trajectory.py` grew to 46 (custom preset coverage +
+7 saved-trajectory flask tests incl. path-traversal rejection). All
+green.
+
+Phase 2 TODO (next CL):
+- Migrate main.py capture entry to trajectory-driven: iterate waypoints
+  from the selected trajectory, write camera at each, trigger RDC
+  capture, then batch-export to output/<session>/.
+- Remove volume/spacing/cone UI form entries (they live in a cascade
+  detail panel today; remove once Phase 2 backend lands).
+- Repurpose cone (as a per-waypoint sweep modifier) into the trajectory
+  JSON so preview can visualize it.
+- The unresolved items from 老白 STATUS row (cmd_queue / socket UAF /
+  SuspendThread deadlock / cam_mem_find lock) were all landed in
+  2c0ea17 -- STATUS dashboard is stale.
+
+
+
 ### [v0.2.0] ee9a5db -- xiaoni -- Game library trim to 6 active titles
 
 - `configs/game_library.json`: 332 entries -> 6. The active list:

@@ -289,7 +289,7 @@ class TestTrajectoryFlask:
         assert r.status_code == 200
         d = r.get_json()
         assert d["ok"]
-        assert set(d["presets"]) == {"orbit", "helix", "line", "figure8"}
+        assert set(d["presets"]) == {"orbit", "helix", "line", "figure8", "custom"}
         for name in d["presets"]:
             assert name in d["schemas"]
             assert isinstance(d["schemas"][name], list)
@@ -337,6 +337,152 @@ class TestTrajectoryFlask:
         d = r.get_json()
         assert d["ok"]
         assert d["status"]["state"] in ("idle", "playing", "paused", "error")
+
+
+class TestCustomPreset:
+    def test_position_only_waypoints(self):
+        pts = tp.generate("custom", {
+            "waypoints": [[0, 0, 0], [10, 0, 0], [20, 0, 5]],
+            "duration": 4.0,
+        })
+        assert len(pts) == 3
+        assert pts[0].t == pytest.approx(0.0)
+        assert pts[-1].t == pytest.approx(4.0)
+        # First waypoint should face travel direction (+X).
+        assert abs(pts[0].yaw) < 1e-6
+
+    def test_full_waypoints_with_fov(self):
+        pts = tp.generate("custom", {
+            "waypoints": [[0, 0, 0, 0, 0, 0, 60], [5, 0, 0, 10, 90, 0, 80]],
+            "duration": 2.0,
+        })
+        assert len(pts) == 2
+        assert pts[0].fov == pytest.approx(60.0)
+        assert pts[-1].fov == pytest.approx(80.0)
+        assert pts[-1].yaw == pytest.approx(90.0)
+
+    def test_subdivision(self):
+        pts = tp.generate("custom", {
+            "waypoints": [[0, 0, 0], [10, 0, 0]],
+            "duration": 1.0,
+            "samples_per_segment": 3,
+        })
+        # 2 raw + 3 inserts = 5 total (N+1 after inserts for N segments).
+        assert len(pts) == 5
+        # Linear interp in X.
+        xs = [p.x for p in pts]
+        assert xs == sorted(xs)
+
+    def test_rejects_single_waypoint(self):
+        with pytest.raises(ValueError):
+            tp.generate("custom", {"waypoints": [[0, 0, 0]]})
+
+    def test_look_at_overrides_rotation(self):
+        pts = tp.generate("custom", {
+            "waypoints": [[0, 0, 0], [10, 0, 0]],
+            "duration": 1.0,
+            "look_at": [5, 0, 10],
+        })
+        # Both should pitch up toward the look_at target above.
+        for p in pts:
+            assert p.pitch > 0
+
+
+# ---------------------------------------------------------------------------
+# Saved trajectories (Flask /api/trajectory/saved + save + delete)
+# ---------------------------------------------------------------------------
+
+
+class TestSavedTrajectories:
+    @pytest.fixture
+    def tmp_trajectory_dir(self, monkeypatch, tmp_path):
+        from pathlib import Path as _P
+        import web_ui
+        d = tmp_path / "trajectories"
+        monkeypatch.setattr(web_ui, "_TRAJECTORY_DIR", _P(d))
+        return _P(d)
+
+    def test_list_empty(self, flask_client, tmp_trajectory_dir):
+        r = flask_client.get("/api/trajectory/saved")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] and d["items"] == []
+
+    def test_save_and_load_roundtrip(self, flask_client, tmp_trajectory_dir):
+        r = flask_client.post("/api/trajectory/save", json={
+            "name": "my_orbit",
+            "preset": "orbit",
+            "params": {"center": [0, 0, 0], "radius": 5.0, "samples": 8},
+            "rate_hz": 30.0,
+            "loop": True,
+        })
+        assert r.status_code == 200
+        assert r.get_json()["ok"]
+
+        r = flask_client.get("/api/trajectory/saved")
+        assert r.get_json()["items"] == ["my_orbit"]
+
+        r = flask_client.get("/api/trajectory/saved/my_orbit")
+        d = r.get_json()
+        assert d["ok"]
+        assert d["preset"] == "orbit"
+        assert d["rate_hz"] == 30.0
+        assert d["loop"] is True
+
+    def test_save_rejects_bad_preset(self, flask_client, tmp_trajectory_dir):
+        r = flask_client.post("/api/trajectory/save", json={
+            "name": "bad", "preset": "nope", "params": {},
+        })
+        assert r.status_code == 400
+
+    def test_save_rejects_bad_params(self, flask_client, tmp_trajectory_dir):
+        r = flask_client.post("/api/trajectory/save", json={
+            "name": "bad", "preset": "orbit",
+            "params": {"center": [0, 0, 0], "radius": 5.0, "samples": 1},
+        })
+        assert r.status_code == 400
+
+    def test_save_rejects_traversal(self, flask_client, tmp_trajectory_dir):
+        # "../etc/passwd" style name must be slugged; the result should
+        # NOT escape the trajectory dir.
+        r = flask_client.post("/api/trajectory/save", json={
+            "name": "../../etc/passwd",
+            "preset": "orbit",
+            "params": {"center": [0, 0, 0], "radius": 5.0, "samples": 8},
+        })
+        d = r.get_json()
+        if d.get("ok"):
+            # If accepted, the path must be under the trajectory dir.
+            assert str(tmp_trajectory_dir) in d["path"]
+            assert "/etc/" not in d["path"]
+        # Nothing written outside of the trajectory dir.
+        assert not (tmp_trajectory_dir.parent / "etc").exists()
+
+    def test_delete(self, flask_client, tmp_trajectory_dir):
+        flask_client.post("/api/trajectory/save", json={
+            "name": "to_delete", "preset": "orbit",
+            "params": {"center": [0, 0, 0], "radius": 5.0, "samples": 8},
+        })
+        r = flask_client.delete("/api/trajectory/saved/to_delete")
+        assert r.status_code == 200 and r.get_json()["ok"]
+        r = flask_client.get("/api/trajectory/saved")
+        assert "to_delete" not in r.get_json()["items"]
+
+    def test_delete_missing(self, flask_client, tmp_trajectory_dir):
+        r = flask_client.delete("/api/trajectory/saved/nonexistent")
+        assert r.status_code == 404
+
+    def test_get_missing(self, flask_client, tmp_trajectory_dir):
+        r = flask_client.get("/api/trajectory/saved/nonexistent")
+        assert r.status_code == 404
+
+
+class TestPresetsIncludesCustom:
+    def test_custom_in_list(self, flask_client):
+        r = flask_client.get("/api/trajectory/presets")
+        d = r.get_json()
+        assert "custom" in d["presets"]
+        assert "custom" in d["schemas"]
 
 
 class TestPokeSession:
