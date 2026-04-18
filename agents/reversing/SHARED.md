@@ -337,7 +337,7 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- Commit C: trajectory 3D preview
+### [v0.2.0] 46cb892 -- xiaoni -- Commit C: trajectory 3D preview
 
 Hooks `/api/trajectory/preview` into the existing `view3d` canvas so an
 operator can see orbit/helix/line/figure8 waypoints before hitting Play.
