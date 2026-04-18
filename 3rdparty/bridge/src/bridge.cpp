@@ -94,7 +94,12 @@ void bridge_log(const char* fmt, ...)
  * UUU calls this "movement interpolation factor".
  */
 
-static float g_smooth_factor = 1.0f;   /* 1 = no smoothing */
+/* Smoothing factor is read by the tick thread every iteration and
+ * written by the TCP thread on __smooth.  MSVC /O2 was hoisting the
+ * plain-float read out of the tick loop, so TCP writes were never
+ * observed.  atomic<float> with relaxed ordering gives us a memory
+ * barrier on every read without measurable overhead. */
+static std::atomic<float> g_smooth_factor{1.0f};
 static Vec3  g_smooth_pos = {0, 0, 0};
 static float g_smooth_pitch = 0, g_smooth_yaw = 0, g_smooth_roll = 0;
 /* Read by tick thread, written by TCP thread -- atomic avoids torn read. */
@@ -102,7 +107,8 @@ static std::atomic<bool> g_smooth_initialized{false};
 
 static InterpolatedCamera apply_smoothing(const InterpolatedCamera& raw)
 {
-    if (g_smooth_factor <= 1.0f || !g_smooth_initialized.load()) {
+    float smooth = g_smooth_factor.load(std::memory_order_relaxed);
+    if (smooth <= 1.0f || !g_smooth_initialized.load()) {
         g_smooth_pos = raw.pos;
         g_smooth_pitch = raw.pitch;
         g_smooth_yaw = raw.yaw;
@@ -112,7 +118,7 @@ static InterpolatedCamera apply_smoothing(const InterpolatedCamera& raw)
     }
 
     /* EMA: new = old + (raw - old) / factor */
-    float alpha = 1.0f / g_smooth_factor;
+    float alpha = 1.0f / smooth;
     g_smooth_pos.x += (raw.pos.x - g_smooth_pos.x) * alpha;
     g_smooth_pos.y += (raw.pos.y - g_smooth_pos.y) * alpha;
     g_smooth_pos.z += (raw.pos.z - g_smooth_pos.z) * alpha;
@@ -203,6 +209,41 @@ static void reply(SOCKET sock, const std::string& msg)
     send(sock, msg.c_str(), (int)msg.size(), 0);
 }
 
+/* Locale-independent ASCII float parser. strtof honors LC_NUMERIC and
+ * UE5 init has been observed to flip the CRT locale, making "10.5" parse
+ * as 10 under DE/RU.  This parser only recognizes '.' and ignores the
+ * locale entirely. */
+static float ascii_strtof(const char* s, const char** end = nullptr)
+{
+    const char* p = s;
+    while (*p == ' ' || *p == '\t') p++;
+    bool neg = false;
+    if (*p == '+') { p++; }
+    else if (*p == '-') { neg = true; p++; }
+    double val = 0.0;
+    bool any = false;
+    while (*p >= '0' && *p <= '9') { val = val*10.0 + (*p-'0'); p++; any=true; }
+    if (*p == '.') {
+        p++;
+        double f = 0.1;
+        while (*p >= '0' && *p <= '9') { val += (*p-'0')*f; f*=0.1; p++; any=true; }
+    }
+    if (!any) { if (end) *end = s; return 0.0f; }
+    if (*p == 'e' || *p == 'E') {
+        p++;
+        bool neg_exp = false;
+        if (*p == '+') p++; else if (*p == '-') { neg_exp=true; p++; }
+        int exp = 0;
+        while (*p >= '0' && *p <= '9') { exp = exp*10 + (*p-'0'); p++; }
+        double mult = 1.0;
+        for (int i = 0; i < exp; i++) mult *= 10.0;
+        if (neg_exp) val /= mult; else val *= mult;
+    }
+    if (neg) val = -val;
+    if (end) *end = p;
+    return (float)val;
+}
+
 /* Helper: parse floats from a command string after a prefix */
 static int parse_floats(const char* str, float* out, int max_count)
 {
@@ -211,8 +252,8 @@ static int parse_floats(const char* str, float* out, int max_count)
     while (count < max_count && *p) {
         while (*p == ' ' || *p == ',') p++;
         if (!*p) break;
-        char* end = nullptr;
-        float v = strtof(p, &end);
+        const char* end = nullptr;
+        float v = ascii_strtof(p, &end);
         if (end == p) break;
         out[count++] = v;
         p = end;
@@ -244,7 +285,7 @@ static bool route_command(SOCKET client, const std::string& cmd)
                  (int)g_debug_camera_active, (int)g_paused.load(),
                  (int)g_hud_visible,
                  g_camera_path.count(), (int)g_camera_path.is_active(),
-                 g_smooth_factor);
+                 g_smooth_factor.load());
         reply(client, buf);
         return true;
     }
@@ -287,7 +328,7 @@ static bool route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__cam_speed ", 0) == 0) {
-        float speed = strtof(cmd.c_str() + 12, NULL);
+        float speed = ascii_strtof(cmd.c_str() + 12, NULL);
         if (!std::isfinite(speed) || speed < 0.0f || speed > 1e6f) speed = 1.0f;
         set_game_speed(speed);
         reply(client, "ok\n");
@@ -313,12 +354,12 @@ static bool route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__smooth ", 0) == 0) {
-        float v = strtof(cmd.c_str() + 9, NULL);
+        float v = ascii_strtof(cmd.c_str() + 9, NULL);
         if (!std::isfinite(v) || v < 1.0f || v > 1000.0f) v = 1.0f;
-        g_smooth_factor = v;
+        g_smooth_factor.store(v, std::memory_order_relaxed);
         g_smooth_initialized.store(false);
         char buf[64];
-        snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", g_smooth_factor);
+        snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", v);
         reply(client, buf);
         return true;
     }
@@ -387,7 +428,7 @@ static bool route_command(SOCKET client, const std::string& cmd)
     if (cmd == "__path_play" || cmd.rfind("__path_play ", 0) == 0) {
         float speed = 1.0f;
         if (cmd.size() > 12) {
-            float v = strtof(cmd.c_str() + 12, NULL);
+            float v = ascii_strtof(cmd.c_str() + 12, NULL);
             if (std::isfinite(v) && v > 0.0f && v <= 1e6f) speed = v;
         }
         g_camera_path.play(speed);

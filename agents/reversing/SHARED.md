@@ -300,21 +300,21 @@ Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个�
 
 五条全部有效。3 条我们完全漏掉（坑1/坑3/坑5），2 条我们抓了相邻问题但漏了这个侧面（坑2/坑4）。
 
-- [ ] **P0: strtof locale 陷阱** (spotted by Gemini) — `parse_floats()`、`__cam_mem_write` 等所有 strtof 调用依赖系统 Locale。德语/俄语等 Locale 下小数点是逗号，UE5 自身初始化也可能修改 C runtime Locale，导致 `10.5` 在 `__path_add` 里被截断为 `10.0`，坐标彻底错误。**修复：换 `std::from_chars`（C++17，无视 Locale）或自写仅认 `.` 的 ASCII float 解析器。** 3rdparty 和 renderdoc 两棵树都要改。
+- [x] **P0: strtof locale 陷阱** (spotted by Gemini) — fixed in pending CL: new `ascii_strtof` / `ascii_strtod` parsers in both trees (renderdoc console_server.h + 3rdparty bridge.cpp). All 10 strtof + 1 strtod call sites replaced. Accepts only `.` as decimal separator; ignores LC_NUMERIC entirely.
 
-- [ ] **P1: handle_client 退出不从 g_client_socks 移除** (spotted by Gemini) — Python 脚本断开后 recv 返回 0，线程退出但 dead socket 仍留在 vector。频繁重连导致无限膨胀；DLL 卸载时遍历野句柄。**修复：handle_client 末尾加锁 erase 自己的 socket。** 与之前抓的 UAF 是不同 bug（UAF 是 32→33 槽位，这里是正常断开后的清理遗漏）。
+- [x] **P1: handle_client 退出不从 g_client_socks 移除** (spotted by Gemini) — fixed in pending CL. 3rdparty tree already had the erase (lines 551-555). Renderdoc tree: added slot-cleanup block at end of `cs_handle_client_thread` that finds this thread's slot by SOCKET value, marks it INVALID_SOCKET + CloseHandle, and compacts trailing invalid entries so `cs_client_count` reflects live clients.
 
-- [ ] **P1: g_smooth_factor 裸读写数据竞争** (spotted by Gemini) — `g_smooth_initialized` 改成 atomic 了，但 `g_smooth_factor` 本身仍是 `static float`，TCP 线程写、Tick 线程读，C++ UB。MSVC /O2 可能 hoist 到寄存器导致 Tick 线程永远看不到更新。**修复：`std::atomic<float> g_smooth_factor{1.0f}`，用 `.store()/.load(relaxed)`。** 3rdparty bridge.cpp 和 renderdoc console_server.h 都要改。
+- [x] **P1: g_smooth_factor 裸读写数据竞争** (spotted by Gemini) — fixed in pending CL: both trees now use `std::atomic<float>`. Tick thread loads once per iteration via `.load(memory_order_relaxed)`, __smooth TCP handler uses `.store(memory_order_relaxed)`. Printf format uses the local loaded value (not a second load).
 
-- [ ] **P2: __try 块内 C++ 对象析构跳过** (spotted by Gemini) — `cam_seh_memcpy` 已经把 `__try` 隔离到纯 C 子函数（小逆已知这个问题），但需确认 `cam_patch_write` 调用链上没有在 `__try` 作用域内存活的 `lock_guard` 或 `std::string`。如果 `cam_suspend_others` 内有 C++ 对象，ACCESS_VIOLATION 后析构跳过 = 永久死锁。**修复：审查 cam_patch_write 完整调用链，确保 __try 块只在纯 C 叶子函数中出现。**
+- [ ] **P2: __try 块内 C++ 对象析构跳过** (spotted by Gemini) — audit note in pending CL: `cam_patch_write` now does all C++ destructors (std::vector<HANDLE> suspended, bridge_log calls) OUTSIDE the suspend window; only `cam_seh_memcpy` (pure-C leaf with __try) runs between suspend/resume. Full recursive audit across other __try sites: TODO (next CL).
 
-- [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — 当前实现是均匀 (Uniform) Catmull-Rom，假设各段时间间隔相等。但 CameraKeyframe 允许自定义 duration（如 A→B 2秒、B→C 10秒），不均匀间隔下切线计算产生过冲/抽搐。**修复：升级为向心 (Centripetal) Catmull-Rom，将 `sqrt(chord_length)` 或 `duration` 差代入切线权重。** 纯算法改动，不涉及线程安全。
+- [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — DEFERRED to next session. Pure algorithm rewrite (Uniform -> Centripetal); doesn't block any blocker-level capture bug. Tracked here.
 
 ### Gemini 第二轮外审 (2026-04-18, 主程序员 Opus 4.7 核查)
 
 四条中三条定性错误或已修，只有一条需要行动。战绩 1/4。
 
-- [ ] **P1: UObject GC lifecycle 校验缺失** (flagged by Gemini, 严重性修正 by 主程序员 Opus) — Gemini 原文说"控制流劫持级别崩溃"夸张了：`write_camera_mem` 写的偏移是 FMinimalViewInfo（PlayerCameraManager + 0x200~0x800），与 vtable (offset 0x00) 不重叠，不会 vtable 劫持。但真实风险仍在：如果 CameraManager 被 GC、内存被重用为 UMaterial 等其他对象，60Hz 往那块内存砸 double 会延迟触发渲染线程 crash 或数据腐败。SEH 抓不住这个（页仍可写）。**修复方案：** `g_ue_layout` 加 `ue_obj_flags_off` 字段（UE4/5 通常是 0x08），每次 tick 写入前读 `*(uint32_t*)(ptr + obj_flags_off)` 检查 `RF_Unreachable | RF_PendingKill | RF_BeginDestroyed`，命中则清空 `g_cam_pov_ptr` 重新 find_cam_pov。UE4SS PDB 已记录 flag bit 值，小逆可复用。
+- [x] **P1: UObject GC lifecycle 校验缺失** (flagged by Gemini, 严重性修正 by 主程序员 Opus) — fixed in pending CL. `UEVersionLayout` gained `ue_obj_flags_off` field (0x08 for UE4/5). New `cam_manager_alive()` helper in ue5_scan_camera.h SEH-reads the CameraManager's ObjectFlags and masks `RF_Unreachable|RF_PendingKill|RF_BeginDestroyed|RF_FinishDestroyed`. `write_camera_mem` calls it first; on positive match it clears `g_cam_pov_ptr` + `g_camera_manager_ptr` so the next `__cam_mem_find` re-scans against fresh layout. 3rdparty tree doesn't use `UEVersionLayout` so the check is renderdoc-only for now.
 
 **驳回（附理由归档）：**
 
@@ -364,6 +364,43 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] (pending push) -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
+
+Gemini external + round-2 review items, plus 2 UI bugs reported by the
+user after testing the Phase 1 build. Next session = UI Phase 2
+(main.py trajectory-driven capture + legacy form removal).
+
+Fixed (bridge, both trees where applicable):
+- P0 strtof locale trap (Gemini): new ascii_strtof/ascii_strtod parsers;
+  all strtof/strtod sites in console_server.h + bridge.cpp replaced.
+- P1 handle_client dead socket not removed (Gemini): renderdoc tree
+  slot cleanup on thread exit + trailing-compaction. 3rdparty tree
+  already did this.
+- P1 g_smooth_factor atomic (Gemini): std::atomic<float> with relaxed
+  ordering on both trees.
+- P1 UObject GC lifecycle (Gemini round-2, verified by Opus 4.7):
+  UEVersionLayout.ue_obj_flags_off field + cam_manager_alive() SEH
+  probe + clear-on-GC-mark.  Renderdoc-tree only (3rdparty lacks the
+  layout struct).
+
+Fixed (UI, reported by user against 2325ee6):
+- Bridge Debug "Advanced" toggle did nothing: `toggleAdvancedAob()` was
+  defined inside the IIFE that wraps `toggleDebugPanel`, so it wasn't
+  on window. Moved to global scope.
+- Cascade Lv2 menu still listed Capture Area / Path / Cone Rotation.
+  Removed those 3 items from the lv2 menu. The DOM nodes they opened
+  (catArea/catPath/catCone inside cascadeLv3) are intentionally kept
+  so stale JS reading vol_min_x/spacing/cone_angle ids keeps seeing
+  the default values; full removal lands with the Phase 2 main.py
+  migration.
+
+Deferred to next session:
+- P2 __try call-chain audit (review-only, partial done -- cam_patch_write
+  is clean, but other __try sites need a full sweep).
+- P2 Catmull-Rom uniform -> centripetal.
+
+https://claude.ai/code/session_011gm4yH7ZdsXKye9apKa9yw
 
 ### [v0.2.0] 2325ee6 -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
 

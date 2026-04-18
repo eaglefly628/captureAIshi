@@ -691,9 +691,51 @@ static bool read_camera_mem(CameraMemState& out)
 /* Write camera state directly to FMinimalViewInfo.
  * Called from tick thread every frame while g_camera_override is true.
  * This fights the game's per-frame camera update without needing hooks. */
+/* UE EObjectFlags bits we refuse to write through.  If any of these are
+ * set on APlayerCameraManager's UObjectBase::ObjectFlags, the object is
+ * being GC'd or already collected; writing through a stale g_cam_pov_ptr
+ * at that point corrupts whatever the allocator reclaims next frame. */
+static const uint32_t UE_RF_FINISHDESTROYED = 0x01000000u;
+static const uint32_t UE_RF_BEGINDESTROYED  = 0x02000000u;
+static const uint32_t UE_RF_UNREACHABLE     = 0x40000000u;
+static const uint32_t UE_RF_PENDINGKILL     = 0x00200000u;
+
+/* Returns true if the CameraManager the cam_pov_ptr lives inside is
+ * alive (not GC-marked).  Falls open on read failure so we don't stall
+ * camera override just because the flags probe SEH'd -- SEH on the
+ * actual write path catches a truly dead pointer separately.
+ *
+ * NB: we probe g_camera_manager_ptr rather than g_cam_pov_ptr since
+ * the flags field is at the start of UObjectBase, not at
+ * FMinimalViewInfo.
+ */
+static bool cam_manager_alive()
+{
+    if (!g_camera_manager_ptr || !g_ue_layout) return true;
+    if (g_ue_layout->ue_obj_flags_off == 0) return true;
+    uint32_t flags = 0;
+    uint8_t* p = (uint8_t*)g_camera_manager_ptr + g_ue_layout->ue_obj_flags_off;
+    __try { flags = *(uint32_t*)p; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return true; }
+    const uint32_t dead = UE_RF_UNREACHABLE | UE_RF_PENDINGKILL
+                        | UE_RF_BEGINDESTROYED | UE_RF_FINISHDESTROYED;
+    return (flags & dead) == 0;
+}
+
 static bool write_camera_mem(const CameraMemState& s)
 {
     if (!g_cam_pov_ptr) return false;
+    /* GC lifecycle gate: if the CameraManager is marked Unreachable or
+     * *Destroyed, the memory behind g_cam_pov_ptr will be reclaimed
+     * for something unrelated (UMaterial, audio buffer, etc.) on the
+     * next GC pass.  Drop the write and invalidate the pointer so the
+     * next __cam_mem_find re-scans. */
+    if (!cam_manager_alive()) {
+        bridge_log("  write_camera_mem: CameraManager GC'd -- clearing pov ptr");
+        g_cam_pov_ptr = nullptr;
+        g_camera_manager_ptr = nullptr;
+        return false;
+    }
     __try {
         if (g_cam_pov_is_lwc) {
             *(double*)(g_cam_pov_ptr + g_ue_layout->fmvi_loc_x) = s.x;

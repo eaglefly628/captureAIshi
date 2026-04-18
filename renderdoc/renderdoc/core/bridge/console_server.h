@@ -82,7 +82,10 @@ static const int CONSOLE_MAX_CMD_LEN  = 4096;
 
 /* -- Camera Smoothing -------------------------------------------- */
 
-static float cs_smooth_factor = 1.0f;
+/* atomic<float>: plain float was being hoisted to a register on /O2 so
+ * the tick thread never observed __smooth updates.  Relaxed ordering is
+ * enough (no data-dependent paired stores). */
+static std::atomic<float> cs_smooth_factor{1.0f};
 static Vec3  cs_smooth_pos = {0, 0, 0};
 static float cs_smooth_pitch = 0, cs_smooth_yaw = 0, cs_smooth_roll = 0;
 /* Read by tick thread, written by TCP thread (__smooth command resets it).
@@ -91,7 +94,8 @@ static std::atomic<bool> cs_smooth_initialized{false};
 
 static InterpolatedCamera cs_apply_smoothing(const InterpolatedCamera& raw)
 {
-    if (cs_smooth_factor <= 1.0f || !cs_smooth_initialized.load()) {
+    float smooth = cs_smooth_factor.load(std::memory_order_relaxed);
+    if (smooth <= 1.0f || !cs_smooth_initialized.load()) {
         cs_smooth_pos = raw.pos;
         cs_smooth_pitch = raw.pitch;
         cs_smooth_yaw = raw.yaw;
@@ -99,7 +103,7 @@ static InterpolatedCamera cs_apply_smoothing(const InterpolatedCamera& raw)
         cs_smooth_initialized.store(true);
         return raw;
     }
-    float alpha = 1.0f / cs_smooth_factor;
+    float alpha = 1.0f / smooth;
     cs_smooth_pos.x += (raw.pos.x - cs_smooth_pos.x) * alpha;
     cs_smooth_pos.y += (raw.pos.y - cs_smooth_pos.y) * alpha;
     cs_smooth_pos.z += (raw.pos.z - cs_smooth_pos.z) * alpha;
@@ -205,6 +209,113 @@ static void cs_reply(SOCKET sock, const std::string& msg) {
     send(sock, msg.c_str(), (int)msg.size(), 0);
 }
 
+/* Locale-independent ASCII float parser.
+ *
+ * strtof/strtod honor LC_NUMERIC -- under German/Russian/French locale
+ * the decimal separator is ',' and "10.5" parses as 10 with '.5' as the
+ * unconsumed tail. UE5's own initialization has been observed to flip
+ * the CRT locale, so we cannot rely on the process-wide value either.
+ *
+ * This parser only recognizes `.`, never `,`. Accepts optional sign,
+ * integer digits, optional fraction, optional 'e'/'E' exponent.
+ * Does NOT accept NaN/Inf tokens -- callers must still run values
+ * through cs_sanitize_float() for that.
+ *
+ * Returns 0.0f and leaves *end == s when no digits are parsed.
+ */
+static float ascii_strtof(const char* s, const char** end = nullptr)
+{
+    const char* p = s;
+    while (*p == ' ' || *p == '\t') p++;
+    bool neg = false;
+    if (*p == '+') { p++; }
+    else if (*p == '-') { neg = true; p++; }
+    double val = 0.0;
+    bool any = false;
+    while (*p >= '0' && *p <= '9') {
+        val = val * 10.0 + (double)(*p - '0');
+        p++; any = true;
+    }
+    if (*p == '.') {
+        p++;
+        double f = 0.1;
+        while (*p >= '0' && *p <= '9') {
+            val += (double)(*p - '0') * f;
+            f *= 0.1;
+            p++; any = true;
+        }
+    }
+    if (!any) {
+        if (end) *end = s;
+        return 0.0f;
+    }
+    if (*p == 'e' || *p == 'E') {
+        p++;
+        bool neg_exp = false;
+        if (*p == '+') p++;
+        else if (*p == '-') { neg_exp = true; p++; }
+        int exp = 0;
+        while (*p >= '0' && *p <= '9') {
+            exp = exp * 10 + (*p - '0');
+            p++;
+        }
+        double mult = 1.0;
+        for (int i = 0; i < exp; i++) mult *= 10.0;
+        if (neg_exp) val /= mult;
+        else        val *= mult;
+    }
+    if (neg) val = -val;
+    if (end) *end = p;
+    return (float)val;
+}
+
+/* double variant -- bit-exact for LWC coords up to 1e7 cm. */
+static double ascii_strtod(const char* s, const char** end = nullptr)
+{
+    const char* p = s;
+    while (*p == ' ' || *p == '\t') p++;
+    bool neg = false;
+    if (*p == '+') { p++; }
+    else if (*p == '-') { neg = true; p++; }
+    double val = 0.0;
+    bool any = false;
+    while (*p >= '0' && *p <= '9') {
+        val = val * 10.0 + (double)(*p - '0');
+        p++; any = true;
+    }
+    if (*p == '.') {
+        p++;
+        double f = 0.1;
+        while (*p >= '0' && *p <= '9') {
+            val += (double)(*p - '0') * f;
+            f *= 0.1;
+            p++; any = true;
+        }
+    }
+    if (!any) {
+        if (end) *end = s;
+        return 0.0;
+    }
+    if (*p == 'e' || *p == 'E') {
+        p++;
+        bool neg_exp = false;
+        if (*p == '+') p++;
+        else if (*p == '-') { neg_exp = true; p++; }
+        int exp = 0;
+        while (*p >= '0' && *p <= '9') {
+            exp = exp * 10 + (*p - '0');
+            p++;
+        }
+        double mult = 1.0;
+        for (int i = 0; i < exp; i++) mult *= 10.0;
+        if (neg_exp) val /= mult;
+        else        val *= mult;
+    }
+    if (neg) val = -val;
+    if (end) *end = p;
+    return val;
+}
+
 /* Sanitize a user-supplied float. Rejects NaN, infinities, and values
  * outside [lo, hi]. strtof happily returns INF for "1e40" and NaN for
  * "nan"; feeding those into slomo / path_play / smooth_factor would
@@ -223,8 +334,8 @@ static int cs_parse_floats(const char* str, float* out, int max_count) {
     while (count < max_count && *p) {
         while (*p == ' ' || *p == ',') p++;
         if (!*p) break;
-        char* end = NULL;
-        float v = strtof(p, &end);
+        const char* end = NULL;
+        float v = ascii_strtof(p, &end);
         if (end == p) break;
         out[count++] = v;
         p = end;
@@ -272,7 +383,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             (int)g_paused.load(),
             (int)g_hud_visible,
             g_camera_path.count(), (int)g_camera_path.is_active(),
-            cs_smooth_factor,
+            cs_smooth_factor.load(),
             (unsigned long long)g_engine_global_addr,
             (int)g_gamethread_dispatch_ready.load(),
             cam_intercept_count(),
@@ -428,8 +539,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         while (n < 7 && *p) {
             while (*p == ' ' || *p == ',') p++;
             if (!*p) break;
-            char* end = nullptr;
-            vals[n++] = strtof(p, &end);
+            const char* end = nullptr;
+            vals[n++] = ascii_strtof(p, &end);
             if (end == p) break;
             p = end;
         }
@@ -635,11 +746,15 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         /* value */
         uint64_t bits = 0;
         if (type == 0) {
-            float f = strtof(p, &end);
+            const char* fe = p;
+            float f = ascii_strtof(p, &fe);
+            end = (char*)fe;
             uint32_t u = 0; memcpy(&u, &f, 4);
             bits = u;
         } else if (type == 1) {
-            double d = strtod(p, &end);
+            const char* de = p;
+            double d = ascii_strtod(p, &de);
+            end = (char*)de;
             memcpy(&bits, &d, 8);
         } else if (type == 2) {
             long v = strtol(p, &end, 10);
@@ -663,7 +778,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__cam_speed ", 0) == 0) {
-        float sp = cs_sanitize_float(strtof(cmd.c_str() + 12, NULL),
+        float sp = cs_sanitize_float(ascii_strtof(cmd.c_str() + 12, NULL),
                                      0.0f, 1e6f, 1.0f);
         set_game_speed(sp);
         cs_reply(client, "ok\n");
@@ -681,10 +796,11 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__smooth ", 0) == 0) {
-        cs_smooth_factor = cs_sanitize_float(
-            strtof(cmd.c_str() + 9, NULL), 1.0f, 1000.0f, 1.0f);
+        float v = cs_sanitize_float(
+            ascii_strtof(cmd.c_str() + 9, NULL), 1.0f, 1000.0f, 1.0f);
+        cs_smooth_factor.store(v, std::memory_order_relaxed);
         cs_smooth_initialized.store(false);
-        char buf[64]; snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", cs_smooth_factor);
+        char buf[64]; snprintf(buf, sizeof(buf), "smooth_factor=%.1f\n", v);
         cs_reply(client, buf);
         return true;
     }
@@ -729,7 +845,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
     if (cmd == "__path_list") { cs_reply(client, g_camera_path.list_keyframes()); return true; }
     if (cmd == "__path_play" || cmd.rfind("__path_play ",0)==0) {
-        float raw = cmd.size()>12 ? strtof(cmd.c_str()+12,NULL) : 1.0f;
+        float raw = cmd.size()>12 ? ascii_strtof(cmd.c_str()+12,NULL) : 1.0f;
         float spd = cs_sanitize_float(raw, 0.0001f, 1e6f, 1.0f);
         if (spd <= 0) spd = 1.0f;
         g_camera_path.play(spd); cs_reply(client, "ok\n");
@@ -834,6 +950,31 @@ static DWORD WINAPI cs_handle_client_thread(LPVOID arg)
         }
     }
     closesocket(client);
+
+    /* Free this thread's slot so a reconnect can reuse it. Without this
+     * step the slot stays occupied after every normal disconnect and the
+     * next accept eventually hits the 32-slot cap even though no clients
+     * are actually attached. */
+    EnterCriticalSection(&cs_client_cs);
+    for (int i = 0; i < cs_client_count; i++) {
+        if (cs_client_slots[i].sock == client) {
+            cs_client_slots[i].sock = INVALID_SOCKET;
+            if (cs_client_slots[i].thread) {
+                CloseHandle(cs_client_slots[i].thread);
+                cs_client_slots[i].thread = NULL;
+            }
+            break;
+        }
+    }
+    /* Compact from the tail: drop trailing INVALID_SOCKET entries so
+     * cs_client_count reflects live clients and the accept loop's
+     * full-check stays accurate. */
+    while (cs_client_count > 0 &&
+           cs_client_slots[cs_client_count-1].sock == INVALID_SOCKET) {
+        cs_client_count--;
+    }
+    LeaveCriticalSection(&cs_client_cs);
+
     BRIDGE_LOG("Client disconnected");
     return 0;
 }

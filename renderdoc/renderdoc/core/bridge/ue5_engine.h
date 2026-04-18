@@ -161,6 +161,12 @@ struct UEVersionLayout {
     int  fuobjectitem_stride;    /* 24=Shipping, 32=Dev/WithVerseVM */
     int  fuobjectitem_obj_off;   /* offset of UObjectBase* inside item */
 
+    /* UObjectBase::ObjectFlags -- 32-bit EObjectFlags.  0x08 for UE4/5.
+     * RF_Unreachable=0x40000000 / RF_PendingKill=... / RF_BeginDestroyed=
+     * 0x02000000 / RF_FinishDestroyed=0x01000000.  Used by the tick
+     * thread to skip writes into GC-reclaimed memory. */
+    int  ue_obj_flags_off;
+
     /* FField chain (UStruct::ChildProperties walk) */
     int  ffield_next_off;        /* FField::Next pointer */
     int  ffield_name_off;        /* FField::NamePrivate (FName ComparisonIndex) */
@@ -203,6 +209,7 @@ struct UEVersionLayout {
 static const UEVersionLayout k_layout_ue57 = {
     "UE5.7",
     32,   0x08,                          /* FUObjectItem stride=32, obj at +0x08 */
+    0x08,                                /* ue_obj_flags_off: UObjectBase::ObjectFlags */
     0x18, 0x20, 0x44, 0x50, 0x40,       /* FField era2 */
     0x30, 0x78,                          /* UPlayer chain */
     0x200, 0x78,                         /* UEngine/GVC */
@@ -219,6 +226,7 @@ static const UEVersionLayout k_layout_ue57 = {
 static const UEVersionLayout k_layout_ue53 = {
     "UE5.3-5.6",
     24,   0x00,
+    0x08,                                /* ue_obj_flags_off */
     0x18, 0x20, 0x44, 0x50, 0x40,
     0x30, 0x78,
     0x200, 0x78,
@@ -235,6 +243,7 @@ static const UEVersionLayout k_layout_ue53 = {
 static const UEVersionLayout k_layout_ue50 = {
     "UE5.0-5.2",
     24,   0x00,
+    0x08,                                /* ue_obj_flags_off */
     0x20, 0x28, 0x4C, 0x50, 0x40,       /* FField era1 */
     0x30, 0x78,
     0x200, 0x78,
@@ -251,6 +260,7 @@ static const UEVersionLayout k_layout_ue50 = {
 static const UEVersionLayout k_layout_ue427 = {
     "UE4.27",
     24,   0x00,
+    0x08,                                /* ue_obj_flags_off */
     0x20, 0x28, 0x4C, 0x50, 0x40,
     0x30, 0x78,
     0x200, 0x78,

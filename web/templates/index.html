@@ -1052,10 +1052,13 @@ body {
       <span class="cascade-title" id="cascadeGameName"></span>
       <button class="cascade-close" onclick="closeCascade(2)">&times;</button>
     </div>
-    <div class="cascade-item" data-cat="area" onclick="openCascadeLv3('area')">Capture Area <span class="arr-r">&#9654;&#xFE0E;</span></div>
-    <div class="cascade-item" data-cat="path" onclick="openCascadeLv3('path')">Path <span class="arr-r">&#9654;&#xFE0E;</span></div>
+    <!-- Capture Area / Path / Cone Rotation removed (UI Phase 1).
+         These are replaced by the Trajectory panel (Debug -> Trajectory)
+         which drives capture via preset + custom waypoints. Backend
+         migration (main.py) lands in UI Phase 2; DOM nodes with
+         matching ids are still present below so stale JS reading
+         them keeps getting the default values. -->
     <div class="cascade-item" data-cat="rendering" onclick="openCascadeLv3('rendering')">Rendering <span class="arr-r">&#9654;&#xFE0E;</span></div>
-    <div class="cascade-item" data-cat="cone" onclick="openCascadeLv3('cone')">Cone Rotation <span class="arr-r">&#9654;&#xFE0E;</span></div>
     <div class="cascade-item" data-cat="connection" onclick="openCascadeLv3('connection')">Connection <span class="arr-r">&#9654;&#xFE0E;</span></div>
     <div class="cascade-item" data-cat="streaming" onclick="openCascadeLv3('streaming')">Streaming <span class="arr-r">&#9654;&#xFE0E;</span></div>
     <div class="cascade-item" data-cat="output" onclick="openCascadeLv3('output')">Output <span class="arr-r">&#9654;&#xFE0E;</span></div>
@@ -3328,8 +3331,11 @@ function trajStopStatusPoll(){
       trajPollStatusOnce();
     }
   };
+})();
 
 // Toggle the collapsible AOB intercept + per-game profile section.
+// Must be at global scope so the onclick="toggleAdvancedAob()" attribute
+// on the header div can find it (IIFE scope was blocking the call).
 function toggleAdvancedAob(){
   var body=document.getElementById('advAobBody');
   var caret=document.getElementById('advAobCaret');
@@ -3339,7 +3345,6 @@ function toggleAdvancedAob(){
   // Right-triangle vs down-triangle HTML entities.
   caret.innerHTML=open?'&#9654;':'&#9660;';
 }
-})();
 function _scanBadge(found, label){
   return found
     ? '<span style="color:#4f4">'+label+': OK</span>'
