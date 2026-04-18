@@ -296,6 +296,20 @@ Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个�
 - [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
 - [x] **P2: g_gvc_ptr binary-address bug** — fixed in d82c2b4: always compare GEngine+0x200 with LP+0x78; if they differ, LP wins (raw ptr, authoritative).
 
+### Gemini 独立外审发现 (2026-04-18, 主程序员转发)
+
+五条全部有效。3 条我们完全漏掉（坑1/坑3/坑5），2 条我们抓了相邻问题但漏了这个侧面（坑2/坑4）。
+
+- [ ] **P0: strtof locale 陷阱** (spotted by Gemini) — `parse_floats()`、`__cam_mem_write` 等所有 strtof 调用依赖系统 Locale。德语/俄语等 Locale 下小数点是逗号，UE5 自身初始化也可能修改 C runtime Locale，导致 `10.5` 在 `__path_add` 里被截断为 `10.0`，坐标彻底错误。**修复：换 `std::from_chars`（C++17，无视 Locale）或自写仅认 `.` 的 ASCII float 解析器。** 3rdparty 和 renderdoc 两棵树都要改。
+
+- [ ] **P1: handle_client 退出不从 g_client_socks 移除** (spotted by Gemini) — Python 脚本断开后 recv 返回 0，线程退出但 dead socket 仍留在 vector。频繁重连导致无限膨胀；DLL 卸载时遍历野句柄。**修复：handle_client 末尾加锁 erase 自己的 socket。** 与之前抓的 UAF 是不同 bug（UAF 是 32→33 槽位，这里是正常断开后的清理遗漏）。
+
+- [ ] **P1: g_smooth_factor 裸读写数据竞争** (spotted by Gemini) — `g_smooth_initialized` 改成 atomic 了，但 `g_smooth_factor` 本身仍是 `static float`，TCP 线程写、Tick 线程读，C++ UB。MSVC /O2 可能 hoist 到寄存器导致 Tick 线程永远看不到更新。**修复：`std::atomic<float> g_smooth_factor{1.0f}`，用 `.store()/.load(relaxed)`。** 3rdparty bridge.cpp 和 renderdoc console_server.h 都要改。
+
+- [ ] **P2: __try 块内 C++ 对象析构跳过** (spotted by Gemini) — `cam_seh_memcpy` 已经把 `__try` 隔离到纯 C 子函数（小逆已知这个问题），但需确认 `cam_patch_write` 调用链上没有在 `__try` 作用域内存活的 `lock_guard` 或 `std::string`。如果 `cam_suspend_others` 内有 C++ 对象，ACCESS_VIOLATION 后析构跳过 = 永久死锁。**修复：审查 cam_patch_write 完整调用链，确保 __try 块只在纯 C 叶子函数中出现。**
+
+- [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — 当前实现是均匀 (Uniform) Catmull-Rom，假设各段时间间隔相等。但 CameraKeyframe 允许自定义 duration（如 A→B 2秒、B→C 10秒），不均匀间隔下切线计算产生过冲/抽搐。**修复：升级为向心 (Centripetal) Catmull-Rom，将 `sqrt(chord_length)` 或 `duration` 差代入切线权重。** 纯算法改动，不涉及线程安全。
+
 ## [v0.2.0] UUU / UE4SS Camera Research
 
 **UUU (Universal Unreal Engine Unlocker) approach:**
