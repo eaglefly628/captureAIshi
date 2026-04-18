@@ -9,6 +9,7 @@ captures/
 screenshots/
 ce_camera_pose.json
 ce_streaming_pos.json
+configs/_recent.json
 *.rdc
 
 # Virtual environment
