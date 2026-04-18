@@ -365,7 +365,7 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
+### [v0.2.0] c656837 -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
 
 Gemini external + round-2 review items, plus 2 UI bugs reported by the
 user after testing the Phase 1 build. Next session = UI Phase 2
