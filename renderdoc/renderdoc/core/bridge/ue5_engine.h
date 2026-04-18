@@ -296,7 +296,7 @@ struct FExecHookEntry {
 };
 
 static FExecHookEntry     g_fexec_hook_table[64];
-static volatile LONG      g_fexec_hook_count = 0;
+static std::atomic<LONG>  g_fexec_hook_count{0};
 
 /* (passive g_localplayer_fexec removed: all object lookup via GUA+FName) */
 

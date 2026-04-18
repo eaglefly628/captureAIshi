@@ -139,26 +139,36 @@ static bool cam_patch_write(uint8_t* addr, const uint8_t* data, size_t n)
      * game thread may be executing the instruction we are replacing. */
     auto suspended = cam_suspend_others();
 
+    /* CRITICAL: No bridge_log / OutputDebugStringA between suspend and
+     * resume -- DBWIN / CSRSS mutex may be held by one of the suspended
+     * threads, which would deadlock the entire process. Stash any error
+     * into a stack buffer and emit it after resume. */
+    char err[256];
+    err[0] = '\0';
+    bool ok = true;
+
     DWORD old_prot = 0;
     if (!VirtualProtect(addr, n, PAGE_EXECUTE_READWRITE, &old_prot)) {
-        bridge_log("[intercept] VirtualProtect(0x%p, %zu) failed: %lu",
-                   addr, n, GetLastError());
-        cam_resume_others(suspended);
-        return false;
+        snprintf(err, sizeof(err),
+                 "[intercept] VirtualProtect(0x%p, %zu) failed: %lu",
+                 addr, n, (unsigned long)GetLastError());
+        ok = false;
+    } else {
+        if (!cam_seh_memcpy(addr, data, n)) {
+            snprintf(err, sizeof(err),
+                     "[intercept] memcpy faulted writing %zu bytes at 0x%p "
+                     "(AC may have blocked VirtualProtect)", n, addr);
+            ok = false;
+        }
+        DWORD tmp = 0;
+        VirtualProtect(addr, n, old_prot, &tmp);
+        FlushInstructionCache(GetCurrentProcess(), addr, n);
     }
-    bool ok = cam_seh_memcpy(addr, data, n);
-    DWORD tmp = 0;
-    VirtualProtect(addr, n, old_prot, &tmp);
-    FlushInstructionCache(GetCurrentProcess(), addr, n);
 
     cam_resume_others(suspended);
 
-    if (!ok) {
-        bridge_log("[intercept] memcpy faulted writing %zu bytes at 0x%p "
-                   "(AC may have blocked VirtualProtect)", n, addr);
-        return false;
-    }
-    return true;
+    if (err[0]) bridge_log("%s", err);
+    return ok;
 }
 
 /* -- AOB parsing ------------------------------------------------------ */

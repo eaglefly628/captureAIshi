@@ -19,7 +19,7 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
                                    uintptr_t primary_vptr,
                                    uintptr_t mod_start, uintptr_t mod_end)
 {
-    if (g_fexec_hook_count >= 64) {
+    if (g_fexec_hook_count.load() >= 64) {
         /* Silent: table full, stop scanning */
         return false;
     }
@@ -28,7 +28,8 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
     if (fexec_vtable == primary_vptr) return false;
 
     /* Check if already hooked */
-    for (int i = 0; i < g_fexec_hook_count; i++) {
+    LONG n = g_fexec_hook_count.load();
+    for (int i = 0; i < n; i++) {
         if (g_fexec_hook_table[i].vtable_base == fexec_vtable)
             return false;  /* already done */
     }
@@ -49,12 +50,12 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
     *slot = (uintptr_t)hooked_fexec_exec;
     VirtualProtect(slot, 8, old_prot, &old_prot);
 
-    LONG idx = g_fexec_hook_count;
+    LONG idx = g_fexec_hook_count.load();
     FExecHookEntry& e = g_fexec_hook_table[idx];
     e.vtable_base = fexec_vtable;
     e.slot        = slot;
     e.original    = orig;
-    InterlockedIncrement(&g_fexec_hook_count);
+    g_fexec_hook_count.fetch_add(1);   /* publish after entry filled */
     return true;
 }
 
@@ -123,7 +124,8 @@ static void scan_guobjectarray_for_fexec_hooks()
     }
 
     bridge_log("  GUObjectArray scan done: checked=%d, new_hooks=%d "
-               "total_hooks=%d", checked, hooked_new, g_fexec_hook_count);
+               "total_hooks=%d", checked, hooked_new,
+               (int)g_fexec_hook_count.load());
 }
 
 
@@ -164,7 +166,8 @@ static bool __fastcall hooked_fexec_exec(
      * this_fexec points to the FExec subobject; its first qword is
      * the secondary vtable pointer (same key we stored at install). */
     uintptr_t vtable = seh_read_ptr(this_fexec);
-    for (int i = 0; i < g_fexec_hook_count; i++) {
+    LONG hook_n = g_fexec_hook_count.load();
+    for (int i = 0; i < hook_n; i++) {
         if (g_fexec_hook_table[i].vtable_base == vtable)
             return g_fexec_hook_table[i].original(
                 this_fexec, world, cmd, ar);
@@ -197,10 +200,10 @@ static bool install_all_fexec_hooks()
     /* Always hook GEngine's FExec (already found by find_fexec_vtable) */
     uint8_t* eng = (uint8_t*)g_engine_ptr;
     uintptr_t engine_fexec_vtable = seh_read_ptr(eng + g_fexec_offset);
-    int n = g_fexec_hook_count;
+    int n = g_fexec_hook_count.load();
     install_fexec_hook_on(engine_fexec_vtable, primary_vptr,
                           mod_start, mod_end);
-    if (g_fexec_hook_count > n)
+    if (g_fexec_hook_count.load() > n)
         bridge_log("  GEngine FExec hooked (vtable=0x%llX)",
                    (unsigned long long)engine_fexec_vtable);
 
@@ -208,14 +211,15 @@ static bool install_all_fexec_hooks()
     if (g_guobjectarray_found)
         scan_guobjectarray_for_fexec_hooks();
 
-    bridge_log("  Total FExec hooks: %d", g_fexec_hook_count);
-    return g_fexec_hook_count > 0;
+    bridge_log("  Total FExec hooks: %d", (int)g_fexec_hook_count.load());
+    return g_fexec_hook_count.load() > 0;
 }
 
 static void uninstall_all_fexec_hooks()
 {
-    bridge_log("=== Uninstalling FExec hooks (%d) ===", g_fexec_hook_count);
-    for (int i = 0; i < g_fexec_hook_count; i++) {
+    LONG n = g_fexec_hook_count.load();
+    bridge_log("=== Uninstalling FExec hooks (%d) ===", (int)n);
+    for (int i = 0; i < n; i++) {
         FExecHookEntry& e = g_fexec_hook_table[i];
         DWORD old_prot = 0;
         VirtualProtect(e.slot, 8, PAGE_READWRITE, &old_prot);
@@ -224,7 +228,7 @@ static void uninstall_all_fexec_hooks()
         bridge_log("  Restored vtable=0x%llX",
                    (unsigned long long)e.vtable_base);
     }
-    g_fexec_hook_count = 0;
+    g_fexec_hook_count.store(0);
 }
 
 /* -- Console command execution ------------------------------------- */
@@ -254,7 +258,13 @@ static bool validate_function_ptr(void* fn)
 
 static const int CMD_QUEUE_MAX = 256;
 static char     g_cmd_queue[CMD_QUEUE_MAX][512];
-static volatile LONG g_cmd_queue_head = 0;   /* write index (TCP thread) */
+/* Per-slot ready flag -- set by producer AFTER strncpy is committed,
+ * cleared by consumer via CAS before reading. Prevents consumer from
+ * reading a slot whose content is not yet written (reservation-queue
+ * commit pattern: head may be advanced past N+1 while slot N's
+ * strncpy is still in flight). */
+static volatile LONG g_cmd_queue_ready[CMD_QUEUE_MAX] = {0};
+static volatile LONG g_cmd_queue_head = 0;   /* write reservation index */
 static volatile LONG g_cmd_queue_tail = 0;   /* read index (game thread) */
 
 static HWND    g_game_hwnd = NULL;
@@ -269,6 +279,14 @@ static void gamethread_drain_queue()
 {
     while (g_cmd_queue_tail != g_cmd_queue_head) {
         LONG idx = g_cmd_queue_tail % CMD_QUEUE_MAX;
+        /* Only drain slots the producer has finished writing. CAS the
+         * ready flag from 1 -> 0 so we don't observe the slot twice. */
+        if (InterlockedCompareExchange(&g_cmd_queue_ready[idx], 0, 1) != 1) {
+            /* Producer claimed the slot but hasn't committed strncpy yet.
+             * Bail out of this drain -- WM will be posted again when the
+             * producer finishes, which re-wakes us. */
+            break;
+        }
         exec_console_command_internal(g_cmd_queue[idx]);
         InterlockedIncrement(&g_cmd_queue_tail);
     }
@@ -344,6 +362,10 @@ static bool exec_console_command(const char* cmd)
         strncpy(g_cmd_queue[idx], cmd, 511);
         g_cmd_queue[idx][511] = '\0';
 
+        /* Publish: consumer only reads slots where ready==1. This barrier
+         * ensures strncpy above happens-before the consumer's CAS. */
+        InterlockedExchange(&g_cmd_queue_ready[idx], 1);
+
         PostMessageA(g_game_hwnd, g_wm_bridge_exec, 0, 0);
 
         bridge_log("CMD: %s (queued for game thread)", cmd);
@@ -392,7 +414,7 @@ static bool exec_console_command_internal(const char* cmd)
     /* Use GEngine's original Exec to avoid recursion.
      * GEngine hook is always the first entry in g_fexec_hook_table. */
     FExecExecFn exec_fn = g_fexec_exec;
-    if (g_fexec_hook_count > 0)
+    if (g_fexec_hook_count.load() > 0)
         exec_fn = g_fexec_hook_table[0].original;
 
     bool cmd_ret = false;
@@ -432,7 +454,8 @@ static bool exec_console_command_internal(const char* cmd)
         FExecExecFn lp_fn = nullptr;
 
         /* Look up in hook table first (use original if hooked) */
-        for (int i = 0; i < g_fexec_hook_count; i++) {
+        LONG hook_n = g_fexec_hook_count.load();
+        for (int i = 0; i < hook_n; i++) {
             if (g_fexec_hook_table[i].vtable_base == lp_vtable) {
                 lp_fn = g_fexec_hook_table[i].original;
                 break;

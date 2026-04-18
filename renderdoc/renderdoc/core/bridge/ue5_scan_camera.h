@@ -239,8 +239,15 @@ static bool find_camera_manager()
  */
 
 /* Pointer to FMinimalViewInfo inside APlayerCameraManager.
- * Set by find_cam_pov().  Written by write_camera_mem() every tick. */
-static uint8_t* g_cam_pov_ptr = nullptr;
+ * Set by find_cam_pov().  Written by write_camera_mem() every tick.
+ *
+ * Concurrency: guarded by g_cam_pov_mutex.  Tick thread takes a
+ * try_lock snapshot each iteration; __cam_mem_find holds it across
+ * the whole clear+scan+set sequence so no mid-scan tick can observe
+ * a cleared pointer or an in-flight SEH clear.
+ */
+static uint8_t*   g_cam_pov_ptr = nullptr;
+static std::mutex g_cam_pov_mutex;
 
 /* True when the FMinimalViewInfo at g_cam_pov_ptr uses LWC double layout
  * (UE5 with Large World Coordinates: FVector/FRotator are double).

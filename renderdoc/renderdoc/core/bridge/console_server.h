@@ -134,6 +134,16 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
         float dt = (float)(now.QuadPart - last.QuadPart) / (float)freq.QuadPart;
         last = now;
 
+        /* Serialize every pov_ptr access against __cam_mem_find's scan.
+         * If the scan is in progress, skip this tick (scan holds the
+         * lock for the full clear+scan+set sequence, so retrying next
+         * tick gives the scan a chance to finish). */
+        std::unique_lock<std::mutex> pov_lk(g_cam_pov_mutex, std::try_to_lock);
+        if (!pov_lk.owns_lock()) {
+            Sleep(1);
+            continue;
+        }
+
         if (g_camera_path.is_playing()) {
             InterpolatedCamera cam = {};
             bool still = g_camera_path.tick(dt, cam);
@@ -179,6 +189,7 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
             write_camera_mem(snap);
         }
 
+        pov_lk.unlock();
         Sleep(1);   /* ~1000 Hz -- outpaces UpdateCamera (once per frame ~60 Hz) */
     }
     BRIDGE_LOG("Camera tick thread stopped");
@@ -251,7 +262,7 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             "intercept_sites=%zu intercept_nopped=%d\n",
             (int)g_engine_found.load(), g_engine_ptr,
             (void*)g_fexec_exec, (int)g_fexec_offset,
-            g_fexec_hook_count,
+            (int)g_fexec_hook_count.load(),
             (int)g_guobjectarray_found.load(), g_guobjectarray,
             g_world_ptr, g_localplayer_ptr,
             g_camera_manager_ptr, g_cam_pov_ptr,
@@ -354,17 +365,19 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         BRIDGE_LOG("=== __cam_mem_find: starting full camera scan ===");
         BRIDGE_LOG("  LP=0x%p  World=0x%p  GEngine=0x%p",
                    g_localplayer_ptr, g_world_ptr, g_engine_ptr);
-        /* Pause tick thread so it does not read g_cam_pov_ptr while
-         * we clear and rescan.  Tick will see the new pointer when it
-         * resumes. */
-        bool was_overriding = g_camera_override.load();
-        g_camera_override = false;
-        g_cam_pov_ptr = nullptr;          /* force re-scan */
-        g_camera_manager_ptr = nullptr;   /* re-run all paths */
-        find_camera_manager();            /* Path A: FName scan */
-        cross_validate_camera();          /* Paths B+C+D: LP chain + render + UUU probe */
-        bool ok = find_cam_pov();
-        if (was_overriding) g_camera_override = true;
+        bool ok;
+        {
+            /* Hold g_cam_pov_mutex for the whole clear+scan+set so no
+             * tick iteration can observe a cleared pointer between
+             * `g_cam_pov_ptr = nullptr` and `find_cam_pov()`. Tick
+             * thread's try_lock lets it skip ticks during the scan. */
+            std::lock_guard<std::mutex> lk(g_cam_pov_mutex);
+            g_cam_pov_ptr = nullptr;          /* force re-scan */
+            g_camera_manager_ptr = nullptr;   /* re-run all paths */
+            find_camera_manager();            /* Path A: FName scan */
+            cross_validate_camera();          /* Paths B+C+D: LP chain + render + UUU probe */
+            ok = find_cam_pov();
+        }
         BRIDGE_LOG("=== __cam_mem_find done: mgr=0x%p pov=0x%p ok=%d ===",
                    g_camera_manager_ptr, g_cam_pov_ptr, (int)ok);
         char buf[128];
@@ -884,29 +897,39 @@ static void cs_server_main(int port)
         if (select(0, &fds, NULL, NULL, &tv) > 0) {
             SOCKET c = accept(cs_listen_socket, NULL, NULL);
             if (c != INVALID_SOCKET) {
+                /* Reject BEFORE CreateThread when slots are full. Spawning a
+                 * thread that is never tracked leads to a socket-value-reuse
+                 * UAF: main thread closesocket(c) -> kernel reclaims value ->
+                 * next accept() hands the same value to a new connection ->
+                 * the rejected thread's closesocket() then kills a live one. */
+                EnterCriticalSection(&cs_client_cs);
+                bool full = (cs_client_count >= 32);
+                LeaveCriticalSection(&cs_client_cs);
+                if (full) {
+                    BRIDGE_LOG("Client rejected: 32 slots full");
+                    shutdown(c, SD_BOTH);
+                    closesocket(c);
+                    continue;
+                }
+
                 ClientArg* arg = new ClientArg;
                 arg->sock = c;
                 HANDLE h = CreateThread(NULL, 0, cs_handle_client_thread, arg, 0, NULL);
                 if (h) {
+                    /* Single-accept-thread model: cs_client_count is only
+                     * mutated by this loop + ConsoleServer_Stop (after exit),
+                     * so the full-check above stays valid here. */
                     EnterCriticalSection(&cs_client_cs);
-                    if (cs_client_count < 32) {
-                        cs_client_slots[cs_client_count].thread = h;
-                        cs_client_slots[cs_client_count].sock = c;
-                        cs_client_count++;
-                    } else {
-                        /* Slots full: thread is running but untracked.
-                         * Force-close its socket so it errors out of
-                         * recv() and exits, then close the handle. */
-                        shutdown(c, SD_BOTH);
-                        closesocket(c);
-                        CloseHandle(h);
-                    }
+                    cs_client_slots[cs_client_count].thread = h;
+                    cs_client_slots[cs_client_count].sock = c;
+                    cs_client_count++;
                     LeaveCriticalSection(&cs_client_cs);
                 } else {
                     /* CreateThread failed -- thread never ran, so it can't
                      * free arg or close the socket. Clean up here. */
                     BRIDGE_LOG("CreateThread(client) failed: %lu", GetLastError());
                     delete arg;
+                    shutdown(c, SD_BOTH);
                     closesocket(c);
                 }
             }
@@ -1039,7 +1062,8 @@ static DWORD WINAPI cs_engine_scan_thread(LPVOID)
 
     /* === Step 6: FExec hooks (GEngine + GUObjectArray scan) === */
     install_all_fexec_hooks();
-    BRIDGE_LOG("[5/7] FExec hooks: %d installed", g_fexec_hook_count);
+    BRIDGE_LOG("[5/7] FExec hooks: %d installed",
+               (int)g_fexec_hook_count.load());
 
     /* === Step 7: UWorld via GUObjectArray + FName("World") ===
      * Active scan -- works at cold start without waiting for game to call FExec. */

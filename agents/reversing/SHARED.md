@@ -132,30 +132,22 @@ Want feedback before next step on:
 
 **最严重 — 真正的新 bug（必须再修）：**
 
-- [ ] **P0: cmd_queue CAS 修了生产者竞争但引入消费者读半写槽 bug** (spotted by 主程序员 Opus 二次) —
-  生产者 A CAS 取槽 N，生产者 B CAS 取槽 N+1，B 先写完 strncpy，A 还没写完时消费者看到 head=N+2 开始从 N 读 — 读到的是旧 wrap 残留数据或 zero。
-  classic reservation-queue 错误：head 已推进但槽内容尚未 commit。
-  修法：每槽加 "ready" flag，消费者只读 ready==1 的槽；或生产者先写完再 CAS 推进 head（不是现在这种先 CAS 取槽后写内容）。
+- [x] **P0: cmd_queue CAS 修了生产者竞争但引入消费者读半写槽 bug** (spotted by 主程序员 Opus 二次) —
+  fixed: added `g_cmd_queue_ready[CMD_QUEUE_MAX]` per-slot flag. Producer writes strncpy THEN `InterlockedExchange(&ready, 1)`. Consumer drains via `InterlockedCompareExchange(&ready, 0, 1)` — only reads committed slots. If producer hasn't published yet, drain breaks and re-runs when next WM arrives.
 
-- [ ] **P1: 33rd client socket-reuse UAF** (spotted by 主程序员 Opus 二次) —
-  修复把 `shutdown(c);closesocket(c);CloseHandle(h)` 做在主线程，但被拒绝的 client 线程已经创建并持有同一 socket 值。
-  主线程 closesocket(c) 之后 c 被 kernel 回收，下一次 accept() 可能把同一 socket 值给新连接；然后被拒绝的线程里的 `closesocket(client)` 跑完 — 关掉了一个不相干的活连接。
-  修法：slots 满时**根本不要 CreateThread**，直接 `shutdown+closesocket+log` 返回；或扩展 slots 为 vector 动态增长。
+- [x] **P1: 33rd client socket-reuse UAF** (spotted by 主程序员 Opus 二次) —
+  fixed: slot-full check now happens BEFORE CreateThread. If `cs_client_count >= 32`, the accept loop does `shutdown(c)+closesocket(c)+log+continue` synchronously — no thread is spawned, so no socket-value aliasing against later accepts.
 
 **PARTIAL — 功能修了但留死角：**
 
-- [ ] **P1: cam_patch_write SuspendThread 保护下 bridge_log 有死锁风险** (spotted by 主程序员 Opus 二次) —
-  SuspendThread 后若 VirtualProtect 失败或 memcpy AV，走 bridge_log 路径 → OutputDebugStringA → CSRSS / DBWIN mutex，若被挂起的线程正好持有该 mutex，整个进程死锁。
-  修法：`cam_resume_others()` 必须在任何 log 调用**之前**，失败信息用栈缓冲暂存，resume 后再 log。
+- [x] **P1: cam_patch_write SuspendThread 保护下 bridge_log 有死锁风险** (spotted by 主程序员 Opus 二次) —
+  fixed: no bridge_log between cam_suspend_others() and cam_resume_others(). Errors go to a 256-byte stack buffer; after resume, we `bridge_log("%s", err)`. Also cleaned up VirtualProtect fail path so we still resume before early-return.
 
-- [ ] **P1: __cam_mem_find 暂停 override 仍留竞争窗口** (spotted by 主程序员 Opus 二次) —
-  (a) 暂停不与**正在执行中**的 tick iteration 同步 — 若 tick 已通过 `if (override && pov_ptr)` 进入 write_camera_mem，rescan 清 pov_ptr 后 tick 的 SEH 会把**新安装的**指针误清成 nullptr。
-  (b) 并发 TCP 客户端发 `__cam_mem_on` 可在 rescan 进行中把 override 改回 true，pause 不是 mutex 保护。
-  修法：rescan 用全局 CRITICAL_SECTION 包住 pause+clear+scan+set+resume，所有 TCP 命令都走该锁。
+- [x] **P1: __cam_mem_find 暂停 override 仍留竞争窗口** (spotted by 主程序员 Opus 二次) —
+  fixed: added `g_cam_pov_mutex` guarding `g_cam_pov_ptr`. Tick thread now `try_lock`s each iteration and skips the tick on failure. `__cam_mem_find` holds the mutex for the entire `clear + find_camera_manager + cross_validate + find_cam_pov` sequence, so no tick can observe a half-cleared pointer or see SEH clobber a freshly-set one. Removed the brittle `g_camera_override = false` dance.
 
-- [ ] **P2: g_fexec_hook_count 用 volatile 而非 atomic** (spotted by 主程序员 Opus 二次) —
-  MSVC x64 /volatile:ms 有 acquire 语义，现在能工作。但严格讲不可移植。`uninstall_all_fexec_hooks()` 用 plain assignment 置零也非 Interlocked。
-  修法：换 `std::atomic<LONG>`，uninstall 用 `.store(0)`。
+- [x] **P2: g_fexec_hook_count 用 volatile 而非 atomic** (spotted by 主程序员 Opus 二次) —
+  fixed: changed to `std::atomic<LONG> g_fexec_hook_count{0}`. All 16 read sites use `.load()`, install uses `.fetch_add(1)` after entry is filled, uninstall uses `.store(0)`. Portable across compilers.
 
 **OK with caveat：**
 
@@ -341,6 +333,36 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] (pending push) -- xiaoni -- Opus 4.7 round-2 review (5 items)
+
+Fixes for the 2 new bugs + 3 PARTIAL items from 老白's second-round review
+of 1a10b3d.
+
+P0:
+- `ue5_exec_hook.h` cmd_queue: per-slot ready flag
+  (g_cmd_queue_ready[CMD_QUEUE_MAX]). Producer commits strncpy THEN
+  InterlockedExchange(ready, 1). Consumer drains via
+  InterlockedCompareExchange(ready, 0, 1) -- only reads committed slots.
+
+P1:
+- `console_server.h` 33rd-client: slot-full check runs BEFORE
+  CreateThread. When full we shutdown+closesocket the accepted socket
+  synchronously and `continue`; no untracked thread ever gets the
+  socket value -> no value-reuse UAF against later accepts.
+- `camera_intercept.h` cam_patch_write: error strings now go to a
+  stack buffer, bridge_log is only called AFTER cam_resume_others().
+  Prevents DBWIN / CSRSS mutex deadlock when a suspended thread held
+  OutputDebugStringA's lock.
+- `ue5_scan_camera.h` + `console_server.h`: added g_cam_pov_mutex.
+  Tick thread try_locks each iteration; __cam_mem_find holds it for
+  clear+scan+set so no tick observes a cleared/half-set pointer.
+  Removed the brittle override-pause workaround.
+
+P2:
+- `ue5_engine.h` g_fexec_hook_count: std::atomic<LONG>. All 16 read
+  sites use .load(), install uses .fetch_add(1) after entry filled,
+  uninstall uses .store(0). Portable across compilers.
 
 ### [v0.2.0] 1a10b3d -- xiaoni -- Opus 4.7 review sweep (13 items)
 
