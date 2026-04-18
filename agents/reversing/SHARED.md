@@ -84,9 +84,12 @@ index.html debug panel   -- Profile dropdown + Apply/Lock/Unlock/Clear/Refresh �
 - `web/templates/index.html`: Debug panel Trajectory row (preset dropdown + dynamic form + Play/Pause/Resume/Stop + live status)
 - `tests/test_trajectory.py`: 26 tests, all green
 
-**Commit C -- 3D editor integration** (用户强调的可视化):
-- 现有 `view3d` canvas + trajectory.json 对接新轨迹系统
-- Preset -> 3D 显示 waypoints -> 可拖拽调整 -> "Apply to Game" 开始 Play
+**Commit C -- 3D editor integration** DONE (this CL)
+- `view3d` canvas 新增 "trajectory preview" 图层 (青色线 + start/end 标记 + 朝向箭头 + 红色 playhead)
+- Trajectory 面板新增 `Preview 3D` / `Clear 3D` 按钮; 按 Preview -> 自动切到 3D tab -> auto-fit 相机
+- 播放期间 status 轮询会把当前 `t` bisect 到 preview 点并高亮 playhead
+- UE 游戏坐标 Z-up 到 canvas Y-up 的 y<->z swap 在 JS 里做, 不改后端
+- 6 个新 Flask test (presets list / preview orbit / unknown preset / bad params / missing preset / status) -- 32 test 全绿
 
 **Commit D -- UE 自动探测 (StackOBot 并轨)**:
 - 基于 `g_cam_pov_ptr - g_camera_manager_ptr = disp32`
@@ -333,6 +336,25 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] (pending push) -- xiaoni -- Commit C: trajectory 3D preview
+
+Hooks `/api/trajectory/preview` into the existing `view3d` canvas so an
+operator can see orbit/helix/line/figure8 waypoints before hitting Play.
+
+- `web/templates/index.html`: new Trajectory-panel buttons `Preview 3D`
+  and `Clear 3D`. `Preview 3D` posts to `/api/trajectory/preview`,
+  stashes the result in `trajPreview`, flips the center tab to 3D, and
+  auto-fits the orbit camera on the sample AABB (min radius 10 game
+  units so tight helices stay in view).
+- `draw3d()` new overlay layer: cyan path line, cyan start dot + orange
+  end dot, sparse yaw/pitch arrows (~20 regardless of sample count),
+  and a red playhead that tracks the player's current `t` by bisect.
+  Preview points are UE-style (Z up, cm); swap is done in the draw pass
+  so backend math stays game-native.
+- `tests/test_trajectory.py`: 6 new Flask tests for
+  `/api/trajectory/{presets,preview,status}`. `pytest tests/test_trajectory.py`
+  -> 32 passed.
 
 ### [v0.2.0] 2c0ea17 -- xiaoni -- Opus 4.7 round-2 review (5 items)
 

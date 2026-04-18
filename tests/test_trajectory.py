@@ -269,6 +269,76 @@ def ok_server():
     srv.stop()
 
 
+# ---------------------------------------------------------------------------
+# Flask endpoints (Commit C relies on these -- /presets and /preview are the
+# read-only pair that the 3D canvas uses before any bridge is involved).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def flask_client():
+    from web_ui import app
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        yield c
+
+
+class TestTrajectoryFlask:
+    def test_presets_list(self, flask_client):
+        r = flask_client.get("/api/trajectory/presets")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"]
+        assert set(d["presets"]) == {"orbit", "helix", "line", "figure8"}
+        for name in d["presets"]:
+            assert name in d["schemas"]
+            assert isinstance(d["schemas"][name], list)
+
+    def test_preview_orbit(self, flask_client):
+        r = flask_client.post("/api/trajectory/preview", json={
+            "preset": "orbit",
+            "params": {"center": [0, 0, 0], "radius": 300.0, "samples": 16,
+                       "duration": 4.0, "look_at_center": True},
+        })
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"]
+        assert d["count"] == 16
+        assert d["duration"] == pytest.approx(4.0)
+        # Each point is [t,x,y,z,pitch,yaw,roll,fov]
+        assert len(d["points"][0]) == 8
+        assert d["points"][0][0] == pytest.approx(0.0)         # t=0
+        assert d["points"][-1][0] == pytest.approx(4.0)        # t=duration
+        assert d["points"][0][1] == pytest.approx(300.0)       # x=radius
+        assert abs(d["points"][0][2]) < 1e-6                   # y=0
+
+    def test_preview_unknown_preset(self, flask_client):
+        r = flask_client.post("/api/trajectory/preview", json={
+            "preset": "does_not_exist", "params": {},
+        })
+        assert r.status_code == 400
+        assert r.get_json()["ok"] is False
+
+    def test_preview_bad_params(self, flask_client):
+        r = flask_client.post("/api/trajectory/preview", json={
+            "preset": "orbit",
+            "params": {"center": [0, 0, 0], "radius": 5.0, "samples": 1},
+        })
+        assert r.status_code == 400
+        assert "samples" in r.get_json()["error"].lower()
+
+    def test_preview_missing_preset(self, flask_client):
+        r = flask_client.post("/api/trajectory/preview", json={"params": {}})
+        assert r.status_code == 400
+
+    def test_status_idle(self, flask_client):
+        r = flask_client.get("/api/trajectory/status")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"]
+        assert d["status"]["state"] in ("idle", "playing", "paused", "error")
+
+
 class TestPokeSession:
     def test_roundtrip_and_wire_format(self, ok_server):
         sess = _PokeSession(host="127.0.0.1", port=ok_server.port, timeout=2.0)

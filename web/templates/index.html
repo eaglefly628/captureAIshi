@@ -1904,6 +1904,82 @@ function draw3d() {
     });
   }
 
+  // ── Trajectory preview overlay (Commit C) ──
+  // trajPreview.points are [t,x,y,z,pitch,yaw,roll,fov] in UE game-space
+  // (Z-up, cm). Swap y<->z so game.z rises on the canvas's Y axis.
+  if (trajPreview && trajPreview.points.length > 1) {
+    const pts = trajPreview.points;
+    // Path line -- cyan so it's distinct from the orange path editor and
+    // green trajectory.json markers.
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.beginPath();
+    let started = false;
+    pts.forEach(p => {
+      const pp = project3d(p[1], p[3], p[2], w, h);
+      if (pp) { if (!started) { ctx.moveTo(pp.x, pp.y); started = true; } else ctx.lineTo(pp.x, pp.y); }
+    });
+    ctx.stroke();
+
+    // Start + end markers so direction is obvious.
+    const p0 = pts[0], pN = pts[pts.length - 1];
+    const s0 = project3d(p0[1], p0[3], p0[2], w, h);
+    const sN = project3d(pN[1], pN[3], pN[2], w, h);
+    if (s0) {
+      ctx.fillStyle = '#22d3ee';
+      ctx.beginPath(); ctx.arc(s0.x, s0.y, 5 * devicePixelRatio, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+      ctx.fillText('start', s0.x + 6 * devicePixelRatio, s0.y - 3 * devicePixelRatio);
+    }
+    if (sN) {
+      ctx.fillStyle = '#fb923c';
+      ctx.beginPath(); ctx.arc(sN.x, sN.y, 5 * devicePixelRatio, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText('end', sN.x + 6 * devicePixelRatio, sN.y - 3 * devicePixelRatio);
+    }
+
+    // Sparse orientation tics so the viewer can read the camera's yaw.
+    // Draw ~20 arrows regardless of sample count.
+    const step = Math.max(1, Math.floor(pts.length / 20));
+    ctx.strokeStyle = 'rgba(34,211,238,0.55)';
+    ctx.lineWidth = 1 * devicePixelRatio;
+    for (let i = 0; i < pts.length; i += step) {
+      const p = pts[i];
+      const yawRad = p[5] * Math.PI / 180;
+      const pitchRad = p[4] * Math.PI / 180;
+      // Forward vector in UE convention (yaw 0 -> +X, pitch+ -> look up).
+      // Length is a small fraction of the orbit radius so arrows don't
+      // clutter tight helices.
+      const arrowLen = Math.max(cam3d.dist * 0.02, 2);
+      const fx = Math.cos(yawRad) * Math.cos(pitchRad);
+      const fy = Math.sin(yawRad) * Math.cos(pitchRad);
+      const fz = Math.sin(pitchRad);
+      const a = project3d(p[1], p[3], p[2], w, h);
+      const b = project3d(p[1] + fx * arrowLen,
+                          p[3] + fz * arrowLen,
+                          p[2] + fy * arrowLen, w, h);
+      if (a && b) {
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+    }
+
+    // Playhead -- highlight current player position if Play is streaming
+    // the same preset.
+    if (trajPreviewPlayIdx >= 0 && trajPreviewPlayIdx < pts.length) {
+      const ph = pts[trajPreviewPlayIdx];
+      const pp = project3d(ph[1], ph[3], ph[2], w, h);
+      if (pp) {
+        ctx.fillStyle = '#f43f5e';
+        ctx.beginPath();
+        ctx.arc(pp.x, pp.y, 7 * devicePixelRatio, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2 * devicePixelRatio;
+        ctx.beginPath();
+        ctx.arc(pp.x, pp.y, 9 * devicePixelRatio, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+  }
+
   // Axes indicator (bottom-left)
   const axLen = 30 * devicePixelRatio;
   const ox = 40 * devicePixelRatio, oy = h - 40 * devicePixelRatio;
@@ -2663,6 +2739,8 @@ pollSessions();pollCaptures();
         <button class="btn" onclick="trajPause()" title="Hold at current t">Pause</button>
         <button class="btn" onclick="trajResume()" title="Resume from pause">Resume</button>
         <button class="btn" onclick="trajStop()" title="Stop writer thread">Stop</button>
+        <button class="btn" onclick="trajPreview3d()" title="Sample preset + show waypoints on the 3D canvas (opens 3D tab)">Preview 3D</button>
+        <button class="btn" onclick="trajClearPreview()" title="Remove the 3D preview overlay">Clear 3D</button>
       </div>
       <div id="trajParams" style="background:#0f0f23;border:1px solid #333;border-radius:4px;padding:4px 6px;margin-bottom:6px;font-size:11px;color:#aaa;display:none"></div>
       <div id="trajStatus" style="background:#0f0f23;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:11px;font-family:monospace;color:#888">idle</div>
@@ -2955,6 +3033,73 @@ function trajResume(){
   });
 }
 
+// ── Commit C: 3D preview ──
+// trajPreview holds {name, points: [[t,x,y,z,p,y,r,fov], ...]} sampled from
+// /api/trajectory/preview. Rendered by draw3d() as a separate layer on top
+// of trajectory.json and the path editor. Coordinates are game-space (UE
+// convention: Z up, cm). draw3d swaps y<->z and lets the operator auto-fit
+// the orbit camera on first preview so the sample points land in view
+// regardless of scene scale.
+var trajPreview = null;
+var trajPreviewPlayIdx = -1;  // index into points matching current player t
+
+function trajPreview3d(){
+  var preset=document.getElementById('trajPreset').value;
+  if(!preset){debugAppend('ERROR: pick a preset first');return;}
+  var params=trajCollectParams()||{};
+  debugAppend('> traj/preview '+preset);
+  fetch('/api/trajectory/preview',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({preset:preset, params:params}),
+  })
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      trajPreview = { name: preset, points: d.points || [] };
+      debugAppend('preview: '+d.count+' pts, '+d.duration.toFixed(2)+'s -- fitting camera');
+      // Switch to 3D tab if not already + auto-fit the orbit.
+      if (typeof switchCenterTab === 'function') switchCenterTab('3d');
+      trajPreviewAutoFit();
+      if (typeof draw3d === 'function') draw3d();
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+
+function trajClearPreview(){
+  trajPreview = null;
+  trajPreviewPlayIdx = -1;
+  if (typeof draw3d === 'function' && view3dActive) draw3d();
+  debugAppend('preview cleared');
+}
+
+// Compute AABB of preview points (after Z-up -> Y-up swap) and park the
+// orbit camera so the whole trajectory is on screen. Uses a heuristic dist
+// = bound_radius * 2.5 which keeps both tight (radius=50) and wide (radius=
+// 5000) orbits framed.
+function trajPreviewAutoFit(){
+  if (!trajPreview || !trajPreview.points.length) return;
+  var pts = trajPreview.points;
+  var minX= Infinity,maxX=-Infinity;
+  var minY= Infinity,maxY=-Infinity;
+  var minZ= Infinity,maxZ=-Infinity;
+  pts.forEach(function(p){
+    // p = [t,x,y,z,pitch,yaw,roll,fov] with z=up in game coords.
+    // Canvas is Y-up, so we map game.z -> canvas.y and game.y -> canvas.z.
+    var cx=p[1], cy=p[3], cz=p[2];
+    if(cx<minX)minX=cx; if(cx>maxX)maxX=cx;
+    if(cy<minY)minY=cy; if(cy>maxY)maxY=cy;
+    if(cz<minZ)minZ=cz; if(cz>maxZ)maxZ=cz;
+  });
+  cam3d.cx = (minX+maxX)*0.5;
+  cam3d.cy = (minY+maxY)*0.5;
+  cam3d.cz = (minZ+maxZ)*0.5;
+  var rx=(maxX-minX)*0.5, ry=(maxY-minY)*0.5, rz=(maxZ-minZ)*0.5;
+  var radius = Math.max(rx, ry, rz, 10);   // min 10 game-units so tiny
+                                            // trajectories don't zoom to 0
+  cam3d.dist = radius * 2.5;
+}
+
 function trajPollStatusOnce(){
   fetch('/api/trajectory/status')
     .then(r=>r.json())
@@ -2981,6 +3126,22 @@ function trajPollStatusOnce(){
         +(s.last_error?(' err='+s.last_error):'')
         +poseStr;
       if(s.state==='error'){trajStopStatusPoll();}
+      // Hook playback head into 3D preview if it's showing the same preset.
+      if(trajPreview && trajPreview.name===s.preset_name && trajPreview.points.length>1){
+        var total=trajPreview.points[trajPreview.points.length-1][0];
+        var target=Math.min(s.t, total);
+        // Bisect for nearest t.
+        var lo=0, hi=trajPreview.points.length-1;
+        while(hi-lo>1){
+          var mid=(lo+hi)>>1;
+          if(trajPreview.points[mid][0]<=target) lo=mid; else hi=mid;
+        }
+        trajPreviewPlayIdx=lo;
+        if(view3dActive && typeof draw3d==='function') draw3d();
+      } else if(trajPreviewPlayIdx>=0 && s.state==='idle'){
+        trajPreviewPlayIdx=-1;
+        if(view3dActive && typeof draw3d==='function') draw3d();
+      }
     });
 }
 
