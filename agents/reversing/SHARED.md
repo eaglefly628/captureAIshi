@@ -337,7 +337,7 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
+### [v0.2.0] 2325ee6 -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
 
 Phase 1 of the operator workflow re-focus. Phase 2 (backend capture
 migration + removing legacy volume/spacing/cone pipeline) lands in a
