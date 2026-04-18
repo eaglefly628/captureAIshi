@@ -337,7 +337,7 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- Game library trim to 6 active titles
+### [v0.2.0] ee9a5db -- xiaoni -- Game library trim to 6 active titles
 
 - `configs/game_library.json`: 332 entries -> 6. The active list:
   StackOBot (UE5, self-built), Batman: Arkham Knight (UE3),
