@@ -310,6 +310,20 @@ Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个�
 
 - [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — 当前实现是均匀 (Uniform) Catmull-Rom，假设各段时间间隔相等。但 CameraKeyframe 允许自定义 duration（如 A→B 2秒、B→C 10秒），不均匀间隔下切线计算产生过冲/抽搐。**修复：升级为向心 (Centripetal) Catmull-Rom，将 `sqrt(chord_length)` 或 `duration` 差代入切线权重。** 纯算法改动，不涉及线程安全。
 
+### Gemini 第二轮外审 (2026-04-18, 主程序员 Opus 4.7 核查)
+
+四条中三条定性错误或已修，只有一条需要行动。战绩 1/4。
+
+- [ ] **P1: UObject GC lifecycle 校验缺失** (flagged by Gemini, 严重性修正 by 主程序员 Opus) — Gemini 原文说"控制流劫持级别崩溃"夸张了：`write_camera_mem` 写的偏移是 FMinimalViewInfo（PlayerCameraManager + 0x200~0x800），与 vtable (offset 0x00) 不重叠，不会 vtable 劫持。但真实风险仍在：如果 CameraManager 被 GC、内存被重用为 UMaterial 等其他对象，60Hz 往那块内存砸 double 会延迟触发渲染线程 crash 或数据腐败。SEH 抓不住这个（页仍可写）。**修复方案：** `g_ue_layout` 加 `ue_obj_flags_off` 字段（UE4/5 通常是 0x08），每次 tick 写入前读 `*(uint32_t*)(ptr + obj_flags_off)` 检查 `RF_Unreachable | RF_PendingKill | RF_BeginDestroyed`，命中则清空 `g_cam_pov_ptr` 重新 find_cam_pov。UE4SS PDB 已记录 flag bit 值，小逆可复用。
+
+**驳回（附理由归档）：**
+
+- **LWC double 写入内存崩坏（Gemini P0）→ 实际 P2 精度问题**：renderdoc 树 `write_camera_mem` 已根据 `g_cam_pov_is_lwc` 分支写 `*(double*)` vs `*(float*)`，`CameraMemState` 字段已是 double。真实残留是 `__cam_mem_write` 入口 `strtof` → `float vals[]` 中转损失精度（10^7 cm 级约 1cm 误差），不是 Gemini 描述的"结构体后续字段被脏数据覆盖"。3rdparty 树缺 LWC 支持是另一个问题（Commit D 范围）。
+
+- **TCP Nagle 导致 60fps 抽搐（Gemini P1）→ 架构不适用**：Python 驱动不是每帧 TCP 发 pose，而是 `__path_add` 下发关键帧 + DLL 内部 1000Hz 插值；`TrajectoryPlayer` 的 `_PokeSession` 走 RPM/WPM 不走 TCP。Nagle 只影响 coarse 命令的单次 40ms 延迟，不是 60fps 流式传输瓶颈。加 `TCP_NODELAY` 作为防御性一行修复可以接受，但属 P3 nice-to-have。
+
+- **accept() 阻塞导致 DLL 卸载死锁（Gemini P2）→ 代码里已修**：`bridge.cpp:574-580` 和 `console_server.h:893-898` 两棵树都是 `select()` + 1 秒超时 + 外层 `g_server_running` 循环，`ConsoleServer_Stop` 还额外 `closesocket(g_listen_socket)` 双保险。Gemini 描述的裸 `accept()` 在这个 codebase 根本不存在。
+
 ## [v0.2.0] UUU / UE4SS Camera Research
 
 **UUU (Universal Unreal Engine Unlocker) approach:**
