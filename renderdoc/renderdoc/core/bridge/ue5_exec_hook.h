@@ -49,10 +49,12 @@ static bool install_fexec_hook_on(uintptr_t fexec_vtable,
     *slot = (uintptr_t)hooked_fexec_exec;
     VirtualProtect(slot, 8, old_prot, &old_prot);
 
-    FExecHookEntry& e = g_fexec_hook_table[g_fexec_hook_count++];
+    LONG idx = g_fexec_hook_count;
+    FExecHookEntry& e = g_fexec_hook_table[idx];
     e.vtable_base = fexec_vtable;
     e.slot        = slot;
     e.original    = orig;
+    InterlockedIncrement(&g_fexec_hook_count);
     return true;
 }
 
@@ -291,26 +293,7 @@ static bool setup_gamethread_dispatch()
         return false;
     }
 
-    /* Find the game window (same logic as hotsample) */
-    struct FindCtx { DWORD pid; HWND result; };
-    FindCtx ctx = { GetCurrentProcessId(), NULL };
-
-    EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
-        FindCtx* c = (FindCtx*)lp;
-        DWORD wnd_pid = 0;
-        GetWindowThreadProcessId(hwnd, &wnd_pid);
-        if (wnd_pid == c->pid && IsWindowVisible(hwnd)) {
-            char title[256];
-            GetWindowTextA(hwnd, title, sizeof(title));
-            if (strlen(title) > 0) {
-                c->result = hwnd;
-                return FALSE;
-            }
-        }
-        return TRUE;
-    }, (LPARAM)&ctx);
-
-    g_game_hwnd = ctx.result;
+    g_game_hwnd = find_game_window();
     if (!g_game_hwnd) {
         bridge_log("WARNING: Game window not found for dispatch hook. "
                    "Commands will run on TCP thread (may crash).");
@@ -341,25 +324,26 @@ static bool setup_gamethread_dispatch()
 static bool exec_console_command(const char* cmd)
 {
     if (g_gamethread_dispatch_ready && g_game_hwnd) {
-        /* Reject if the ring buffer is full; otherwise a slow game
-         * thread (stuck in a loading screen, blocking sync) would let
-         * the TCP thread wrap head past tail and silently overwrite
-         * unconsumed commands. */
-        LONG head = g_cmd_queue_head;
-        LONG tail = g_cmd_queue_tail;
-        if ((LONG)(head - tail) >= CMD_QUEUE_MAX) {
-            bridge_log("CMD: '%s' DROPPED -- queue full (%d pending)",
-                       cmd, (int)(head - tail));
-            return false;
+        /* Atomically claim a slot via CAS so two TCP threads cannot
+         * read the same head and stomp each other's data. */
+        LONG head;
+        for (;;) {
+            head = g_cmd_queue_head;
+            LONG tail = g_cmd_queue_tail;
+            if ((LONG)(head - tail) >= CMD_QUEUE_MAX) {
+                bridge_log("CMD: '%s' DROPPED -- queue full (%d pending)",
+                           cmd, (int)(head - tail));
+                return false;
+            }
+            if (InterlockedCompareExchange(&g_cmd_queue_head,
+                                           head + 1, head) == head)
+                break;
         }
 
-        /* Push to queue */
         LONG idx = head % CMD_QUEUE_MAX;
         strncpy(g_cmd_queue[idx], cmd, 511);
         g_cmd_queue[idx][511] = '\0';
-        InterlockedIncrement(&g_cmd_queue_head);
 
-        /* Wake the game thread */
         PostMessageA(g_game_hwnd, g_wm_bridge_exec, 0, 0);
 
         bridge_log("CMD: %s (queued for game thread)", cmd);

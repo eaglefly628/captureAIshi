@@ -138,55 +138,45 @@ Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个�
 
 **P0 — 崩溃 / 数据污染（Opus 4.7 deep review，2026-04-17）：**
 
-- [ ] **P0: ue5_exec_hook.h cmd_queue 多生产者竞争** (spotted by 主程序员 Opus) —
-  两个 TCP 客户端并发 `exec_console_command()` 时读到同一 `head`，写同一槽，各自 `InterlockedIncrement`。
-  结果：命令丢失 + 槽内容混杂。修法：push 前加 CRITICAL_SECTION。
+- [x] **P0: ue5_exec_hook.h cmd_queue 多生产者竞争** (spotted by 主程序员 Opus) —
+  fixed: InterlockedCompareExchange CAS loop to atomically claim slot before strncpy.
 
-- [ ] **P0: cam_patch_write() patch 时未暂停游戏线程** (spotted by 主程序员 Opus) —
-  `memcpy(addr, data, n)` 最多 64 字节写入时游戏线程可能正在执行该代码，x64 不保证多字节写原子性。
-  修法：`SuspendThread` 所有游戏线程 → patch → `FlushInstructionCache` → `ResumeThread`。
+- [x] **P0: cam_patch_write() patch 时未暂停游戏线程** (spotted by 主程序员 Opus) —
+  fixed: cam_suspend_others() via CreateToolhelp32Snapshot + SuspendThread before patch, cam_resume_others() after.
 
 **P1 — 功能/正确性（Opus 4.7 deep review）：**
 
-- [ ] **P1: camera_intercept.h:166 VirtualQuery 未检查 size 跨页** (spotted by 主程序员 Opus) —
-  若 `size` 跨页边界进入 PAGE_NOACCESS 页，`memcpy(site.orig, addr, size)` AV。
-  修法：检查 `(uint8_t*)addr + size <= (uint8_t*)mbi.BaseAddress + mbi.RegionSize`。
+- [x] **P1: camera_intercept.h:166 VirtualQuery 未检查 size 跨页** (spotted by 主程序员 Opus) —
+  fixed: addr+size vs mbi.BaseAddress+mbi.RegionSize check; rejects cross-boundary installs.
 
-- [ ] **P1: console_server.h InterpolatedCamera cam 未初始化** (spotted by 主程序员 Opus) —
-  `cam` 是未初始化 POD；`tick()` keyframes<2 时 `return false` 不写 `out`，随后用 garbage 写入游戏内存。
-  修法：`InterpolatedCamera cam = {};`。
+- [x] **P1: console_server.h InterpolatedCamera cam 未初始化** (spotted by 主程序员 Opus) —
+  fixed: `InterpolatedCamera cam = {};` zero-init.
 
-- [ ] **P1: camera_path.h play()/stop() 未持有 m_mutex** (spotted by 主程序员 Opus) —
-  `play()` 无锁读 `m_keyframes.size()`（UB vector race）；`stop()` 无锁写 `m_play_time`（data race with tick）。
-  修法：加 lock_guard；`clear()` 内部调 stop 需加 `stop_unlocked()` 变体。
+- [x] **P1: camera_path.h play()/stop() 未持有 m_mutex** (spotted by 主程序员 Opus) —
+  fixed: lock_guard on play(), stop(), toggle_pause(); added stop_unlocked() for clear().
 
-- [ ] **P1: __cam_mem_write 未做 NaN/Inf 过滤** (spotted by 主程序员 Opus) —
-  `cs_parse_floats` 直接用 strtof，NaN/Inf 进 FMinimalViewInfo 导致相机矩阵崩溃。
-  修法：对 vals[0..6] 跑 `cs_sanitize_float`（坐标 ±1e8，角度 ±360，FOV 1..179）。
+- [x] **P1: __cam_mem_write 未做 NaN/Inf 过滤** (spotted by 主程序员 Opus) —
+  fixed: cs_sanitize_float on coords (±1e8), angles (±360), FOV (1..179) after strtof parse.
 
-- [ ] **P1: g_cam_pov_ptr 无同步** (spotted by 主程序员 Opus) —
-  TCP 线程 `__cam_mem_find` 清空指针再重扫，tick 线程可能在 if/write_camera_mem 之间读到被清零的指针。
-  修法：`std::atomic<uint8_t*>` 或 rescan 前停 tick 线程。
+- [x] **P1: g_cam_pov_ptr 无同步** (spotted by 主程序员 Opus) —
+  fixed: __cam_mem_find pauses g_camera_override before clearing pointer; tick thread skips write when override=false. Pointer is only set (never cleared) while override is active.
 
-- [ ] **P1: ConsoleServer_Stop WSACleanup 时序** (spotted by 主程序员 Opus) —
-  WaitForSingleObject 1s 超时后 CloseHandle 但线程仍活，WSACleanup 清零引用计数，
-  存活线程再调 closesocket → WSANOTINITIALISED UB。
-  修法：等所有客户端线程退出后再 WSACleanup。
+- [x] **P1: ConsoleServer_Stop WSACleanup 时序** (spotted by 主程序员 Opus) —
+  fixed: WSACleanup moved from cs_server_main() to ConsoleServer_Stop() after all client threads are joined.
 
 **P2 — 次要/代码质量（Opus 4.7 deep review）：**
 
-- [ ] **P2: BRIDGE_LOG vsnprintf truncation 数学错误** (spotted by 主程序员 Opus) —
-  vsnprintf 截断返回"本应写入数"而非实际写入数，`buf[total]='\n'` 可能越界。
-  修法：clamp n: `int nc = (n<0||n>=(int)(sizeof(buf)-prefix_len-2)) ? (int)(sizeof(buf)-prefix_len-3) : n;`
+- [x] **P2: BRIDGE_LOG vsnprintf truncation 数学错误** (spotted by 主程序员 Opus) —
+  fixed: clamp n to avail-1 so buf[total] stays in bounds.
 
-- [ ] **P2: g_fexec_hook_count 非原子递增** (spotted by 主程序员 Opus) —
-  plain `int++` 竞争游戏线程 hook 分发。修法：填满 entry 后再 `InterlockedIncrement`。
+- [x] **P2: g_fexec_hook_count 非原子递增** (spotted by 主程序员 Opus) —
+  fixed: changed to `volatile LONG`, fill entry first then `InterlockedIncrement`.
 
-- [ ] **P2: 第 33 个客户端 socket 泄漏** (spotted by 主程序员 Opus) —
-  slots 满时 `CloseHandle(h)` 但未 `closesocket(c)`，线程持有 socket 永不释放。
+- [x] **P2: 第 33 个客户端 socket 泄漏** (spotted by 主程序员 Opus) —
+  fixed: shutdown(SD_BOTH) + closesocket(c) before CloseHandle(h) when slots full.
 
-- [ ] **P2: ue5_scan_engine.h Sleep(100) 违反 no-sleep.md** (spotted by 主程序员 Opus) —
-  用于协作让步但违反项目规则。修法：换成 `SwitchToThread()`。
+- [x] **P2: ue5_scan_engine.h Sleep(100) 违反 no-sleep.md** (spotted by 主程序员 Opus) —
+  fixed: replaced with SwitchToThread().
 
 两个 P1 修复后 camera_intercept.h 可用于生产。
 回答小逆的问题:
@@ -245,7 +235,7 @@ Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个�
 
 - [x] **P1: console_server.h 无 WSAStartup** (spotted by 主程序员 4.7 review) — fixed in pending CL: WSAStartup at entry of cs_server_main, WSACleanup at exit (ref-counted, safe).
 
-- [ ] **P1: ue5_actions.h:85 + ue5_exec_hook.h:294 重复 EnumWindows 代码** (spotted by 主程序员 4.7 review) — not done; cosmetic refactor, kept on TODO.
+- [x] **P1: ue5_actions.h:85 + ue5_exec_hook.h:294 重复 EnumWindows 代码** (spotted by 主程序员 4.7 review) — fixed: extracted `find_game_window()` in ue5_engine.h, both callers use it.
 
 - [x] **P1: ue5_exec_hook.h:346 cmd_queue 生产者无溢出保护** (spotted by 主程序员 4.7 review) — fixed in pending CL: check (head - tail) >= CMD_QUEUE_MAX and drop with log.
 
@@ -314,6 +304,30 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
 
 ## Changelog (latest)
+
+### [v0.2.0] (pending push) -- xiaoni -- Opus 4.7 review sweep (13 items)
+
+All 13 items from the Opus 4.7 deep review are now fixed (2 P0, 7 P1, 4 P2):
+
+P0:
+- `ue5_exec_hook.h`: cmd_queue producer race -> CAS loop (InterlockedCompareExchange)
+- `camera_intercept.h`: cam_patch_write() now suspends all game threads via
+  CreateToolhelp32Snapshot + SuspendThread before patching, resumes after
+
+P1:
+- `camera_intercept.h`: VirtualQuery cross-page check (addr+size vs region end)
+- `console_server.h`: `InterpolatedCamera cam = {};` zero-init
+- `camera_path.h`: lock_guard on play()/stop()/toggle_pause() + stop_unlocked()
+- `console_server.h`: __cam_mem_write NaN/Inf filter via cs_sanitize_float
+- `console_server.h`: __cam_mem_find pauses g_camera_override during rescan
+- `console_server.h`: WSACleanup moved to ConsoleServer_Stop after client join
+- `ue5_engine.h` + `ue5_actions.h` + `ue5_exec_hook.h`: EnumWindows -> find_game_window()
+
+P2:
+- `console_server.h`: BRIDGE_LOG vsnprintf truncation clamp
+- `ue5_engine.h` + `ue5_exec_hook.h`: g_fexec_hook_count volatile LONG + InterlockedIncrement
+- `console_server.h`: 33rd client socket leak -> shutdown + closesocket
+- `ue5_scan_engine.h`: Sleep(100) -> SwitchToThread()
 
 ### [v0.2.0] 76cbd5a -- xiaoni -- Commit B: trajectory presets + 60 Hz player
 

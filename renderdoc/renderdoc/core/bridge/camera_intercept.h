@@ -24,6 +24,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <tlhelp32.h>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -95,23 +96,68 @@ static bool cam_seh_memcpy(void* dst, const void* src, size_t n)
     }
 }
 
+/* Suspend all threads in this process except our own.
+ * Returns their handles so cam_resume_others() can wake them. */
+static std::vector<HANDLE> cam_suspend_others()
+{
+    std::vector<HANDLE> out;
+    DWORD me = GetCurrentThreadId();
+    DWORD pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return out;
+    THREADENTRY32 te = {};
+    te.dwSize = sizeof(te);
+    if (Thread32First(snap, &te)) {
+        do {
+            if (te.th32OwnerProcessID == pid && te.th32ThreadID != me) {
+                HANDLE h = OpenThread(THREAD_SUSPEND_RESUME, FALSE,
+                                      te.th32ThreadID);
+                if (h) {
+                    SuspendThread(h);
+                    out.push_back(h);
+                }
+            }
+        } while (Thread32Next(snap, &te));
+    }
+    CloseHandle(snap);
+    return out;
+}
+
+static void cam_resume_others(std::vector<HANDLE>& handles)
+{
+    for (HANDLE h : handles) {
+        ResumeThread(h);
+        CloseHandle(h);
+    }
+    handles.clear();
+}
+
 static bool cam_patch_write(uint8_t* addr, const uint8_t* data, size_t n)
 {
+    /* Suspend game threads while patching executable code.
+     * x64 does not guarantee atomicity of multi-byte writes, and the
+     * game thread may be executing the instruction we are replacing. */
+    auto suspended = cam_suspend_others();
+
     DWORD old_prot = 0;
     if (!VirtualProtect(addr, n, PAGE_EXECUTE_READWRITE, &old_prot)) {
         bridge_log("[intercept] VirtualProtect(0x%p, %zu) failed: %lu",
                    addr, n, GetLastError());
+        cam_resume_others(suspended);
         return false;
     }
     bool ok = cam_seh_memcpy(addr, data, n);
     DWORD tmp = 0;
     VirtualProtect(addr, n, old_prot, &tmp);
+    FlushInstructionCache(GetCurrentProcess(), addr, n);
+
+    cam_resume_others(suspended);
+
     if (!ok) {
         bridge_log("[intercept] memcpy faulted writing %zu bytes at 0x%p "
                    "(AC may have blocked VirtualProtect)", n, addr);
         return false;
     }
-    FlushInstructionCache(GetCurrentProcess(), addr, n);
     return true;
 }
 
@@ -312,6 +358,14 @@ static bool cam_intercept_install_addr_locked(uint8_t* addr, size_t size,
     if (!(mbi.Protect & CAM_READABLE_MASK)) {
         bridge_log("[intercept] install: 0x%p protect=0x%lx not readable",
                    addr, (unsigned long)mbi.Protect);
+        return false;
+    }
+    /* Reject if addr+size crosses into another page region. */
+    if ((uint8_t*)addr + size >
+        (uint8_t*)mbi.BaseAddress + mbi.RegionSize) {
+        bridge_log("[intercept] install: 0x%p + %zu crosses page boundary "
+                   "(region ends at 0x%p)", addr, size,
+                   (uint8_t*)mbi.BaseAddress + mbi.RegionSize);
         return false;
     }
     if (!cam_seh_memcpy(site.orig, addr, size)) {

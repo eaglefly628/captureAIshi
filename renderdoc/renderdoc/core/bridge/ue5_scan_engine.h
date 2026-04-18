@@ -78,9 +78,8 @@ static bool find_gengine_via_string_xref()
         const SearchEntry& se = search_entries[si];
         const uint8_t* str_addr = NULL;
 
-        /* Yield between entries to avoid starving game threads.
-         * Also helps if game is still loading sections. */
-        if (si > 0) Sleep(100);
+        /* Yield between entries to avoid starving game threads. */
+        if (si > 0) SwitchToThread();
 
         bridge_log("  [SCAN] Searching %s (%d/%d)...",
                    se.label, si + 1, num_entries);

@@ -82,29 +82,7 @@ static bool set_fov(float fov)
 
 static bool hotsample(int width, int height)
 {
-    /* Find the game window */
-    HWND game_wnd = NULL;
-
-    /* Walk all top-level windows, find one belonging to our process */
-    struct FindCtx { DWORD pid; HWND result; };
-    FindCtx ctx = { GetCurrentProcessId(), NULL };
-
-    EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
-        FindCtx* c = (FindCtx*)lp;
-        DWORD wnd_pid = 0;
-        GetWindowThreadProcessId(hwnd, &wnd_pid);
-        if (wnd_pid == c->pid && IsWindowVisible(hwnd)) {
-            char title[256];
-            GetWindowTextA(hwnd, title, sizeof(title));
-            if (strlen(title) > 0) {
-                c->result = hwnd;
-                return FALSE;  /* stop */
-            }
-        }
-        return TRUE;
-    }, (LPARAM)&ctx);
-
-    game_wnd = ctx.result;
+    HWND game_wnd = find_game_window();
     if (!game_wnd) {
         bridge_log("ERROR: Could not find game window for hotsampling");
         return false;

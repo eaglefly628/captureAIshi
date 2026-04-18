@@ -296,7 +296,7 @@ struct FExecHookEntry {
 };
 
 static FExecHookEntry     g_fexec_hook_table[64];
-static int                g_fexec_hook_count = 0;
+static volatile LONG      g_fexec_hook_count = 0;
 
 /* (passive g_localplayer_fexec removed: all object lookup via GUA+FName) */
 
@@ -429,6 +429,29 @@ static std::atomic<bool> g_camera_override{false};
 static float g_game_speed = 1.0f;
 static std::atomic<bool> g_paused{false};
 
+
+/* -- Shared helper: find the main game window ---------------------- */
+
+static HWND find_game_window()
+{
+    struct FindCtx { DWORD pid; HWND result; };
+    FindCtx ctx = { GetCurrentProcessId(), NULL };
+    EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
+        FindCtx* c = (FindCtx*)lp;
+        DWORD wnd_pid = 0;
+        GetWindowThreadProcessId(hwnd, &wnd_pid);
+        if (wnd_pid == c->pid && IsWindowVisible(hwnd)) {
+            char title[256];
+            GetWindowTextA(hwnd, title, sizeof(title));
+            if (strlen(title) > 0) {
+                c->result = hwnd;
+                return FALSE;
+            }
+        }
+        return TRUE;
+    }, (LPARAM)&ctx);
+    return ctx.result;
+}
 
 /* -- Implementation (split for readability) -------------------------
  * Each file is ONLY ever included from here -- never standalone.

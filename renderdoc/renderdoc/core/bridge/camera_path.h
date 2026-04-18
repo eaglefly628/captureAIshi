@@ -246,7 +246,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_keyframes.clear();
-        stop();
+        stop_unlocked();
         bridge_log("[PATH] Cleared all keyframes");
     }
 
@@ -268,6 +268,7 @@ public:
 
     void play(float speed = 1.0f)
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         if (m_keyframes.size() < 2) {
             bridge_log("[PATH] Need at least 2 keyframes to play");
             return;
@@ -283,13 +284,13 @@ public:
 
     void stop()
     {
-        m_playing = false;
-        m_play_paused = false;
-        m_play_time = 0.0f;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        stop_unlocked();
     }
 
     void toggle_pause()
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         m_play_paused = !m_play_paused;
         bridge_log("[PATH] Playback %s",
                    m_play_paused ? "paused" : "resumed");
@@ -421,7 +422,13 @@ private:
     float              m_speed = 1.0f;
     float              m_play_time = 0.0f;  /* seconds into playback */
 
-    /* Unlocked total_duration for callers that already hold m_mutex. */
+    void stop_unlocked()
+    {
+        m_playing = false;
+        m_play_paused = false;
+        m_play_time = 0.0f;
+    }
+
     float total_duration_unlocked() const
     {
         float dur = 0.0f;

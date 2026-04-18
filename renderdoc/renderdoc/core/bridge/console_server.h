@@ -44,10 +44,14 @@ static void BRIDGE_LOG(const char* fmt, ...)
 
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf(buf + prefix_len, sizeof(buf) - prefix_len - 2, fmt, args);
+    int avail = (int)(sizeof(buf) - prefix_len - 2);
+    int n = vsnprintf(buf + prefix_len, avail, fmt, args);
     va_end(args);
 
-    int total = prefix_len + (n > 0 ? n : 0);
+    /* vsnprintf returns "would have written" on truncation, which can
+     * exceed avail.  Clamp so buf[total] stays in bounds. */
+    int nc = (n < 0) ? 0 : (n >= avail ? avail - 1 : n);
+    int total = prefix_len + nc;
     if (total > 0 && buf[total - 1] != '\n') { buf[total] = '\n'; buf[total + 1] = '\0'; }
     OutputDebugStringA(buf);
 }
@@ -131,7 +135,7 @@ static DWORD WINAPI cs_camera_tick(LPVOID)
         last = now;
 
         if (g_camera_path.is_playing()) {
-            InterpolatedCamera cam;
+            InterpolatedCamera cam = {};
             bool still = g_camera_path.tick(dt, cam);
             cam = cs_apply_smoothing(cam);
             /* Primary: write directly to FMinimalViewInfo if available.
@@ -350,11 +354,17 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         BRIDGE_LOG("=== __cam_mem_find: starting full camera scan ===");
         BRIDGE_LOG("  LP=0x%p  World=0x%p  GEngine=0x%p",
                    g_localplayer_ptr, g_world_ptr, g_engine_ptr);
+        /* Pause tick thread so it does not read g_cam_pov_ptr while
+         * we clear and rescan.  Tick will see the new pointer when it
+         * resumes. */
+        bool was_overriding = g_camera_override.load();
+        g_camera_override = false;
         g_cam_pov_ptr = nullptr;          /* force re-scan */
         g_camera_manager_ptr = nullptr;   /* re-run all paths */
         find_camera_manager();            /* Path A: FName scan */
         cross_validate_camera();          /* Paths B+C+D: LP chain + render + UUU probe */
         bool ok = find_cam_pov();
+        if (was_overriding) g_camera_override = true;
         BRIDGE_LOG("=== __cam_mem_find done: mgr=0x%p pov=0x%p ok=%d ===",
                    g_camera_manager_ptr, g_cam_pov_ptr, (int)ok);
         char buf[128];
@@ -414,6 +424,13 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
             cs_reply(client, "error: usage __cam_mem_write X Y Z P Y R [FOV]\n");
             return true;
         }
+        /* Reject NaN/Inf from strtof before they poison the camera. */
+        for (int vi = 0; vi < 3; vi++)
+            vals[vi] = cs_sanitize_float(vals[vi], -1e8f, 1e8f, 0.0f);
+        for (int vi = 3; vi < 6; vi++)
+            vals[vi] = cs_sanitize_float(vals[vi], -360.0f, 360.0f, 0.0f);
+        if (n >= 7)
+            vals[6] = cs_sanitize_float(vals[6], 1.0f, 179.0f, 90.0f);
         CameraMemState st;
         st.x = vals[0]; st.y = vals[1]; st.z = vals[2];
         st.pitch = vals[3]; st.yaw = vals[4]; st.roll = vals[5];
@@ -877,6 +894,11 @@ static void cs_server_main(int port)
                         cs_client_slots[cs_client_count].sock = c;
                         cs_client_count++;
                     } else {
+                        /* Slots full: thread is running but untracked.
+                         * Force-close its socket so it errors out of
+                         * recv() and exits, then close the handle. */
+                        shutdown(c, SD_BOTH);
+                        closesocket(c);
                         CloseHandle(h);
                     }
                     LeaveCriticalSection(&cs_client_cs);
@@ -893,7 +915,8 @@ static void cs_server_main(int port)
 
     closesocket(cs_listen_socket);
     cs_listen_socket = INVALID_SOCKET;
-    WSACleanup();
+    /* WSACleanup deferred to ConsoleServer_Stop() so that client
+     * threads can still call closesocket() during their shutdown. */
     BRIDGE_LOG("Console server stopped");
 }
 
@@ -1190,6 +1213,9 @@ static inline void ConsoleServer_Stop()
 
     /* Restore any code-patched camera-write sites */
     cam_intercept_uninstall_all();
+
+    /* All threads are joined; safe to clean up Winsock now. */
+    WSACleanup();
 
     BRIDGE_LOG("Console server shutdown complete");
 }
