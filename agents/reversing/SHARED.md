@@ -313,6 +313,66 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] (pending push) -- xiaoni -- Commit B: trajectory presets + 60 Hz player
+
+Builds on Commit A (`306395b`, IGCS-style pointer capture). Streams
+parametric camera trajectories to the captured camera struct at 60 Hz.
+
+**New files**:
+- `drivers/trajectory_presets.py` -- `orbit / helix / line / figure8`
+  generators. Returns `list[PosePoint]` in game-space (UE convention:
+  Z up). Each preset is parameterized (center, radius, height, turns,
+  duration, samples, fov) and has an auto-look-at-center option that
+  solves yaw/pitch from camera position. Shared helpers: `generate()`
+  dispatcher used by the Flask API, `interp_linear()` with bisection
+  lookup + shortest-path yaw wrapping, `total_duration()`.
+
+- `drivers/trajectory_player.py` -- `TrajectoryPlayer` class owns one
+  background writer thread that ticks at configurable rate (default
+  60 Hz). Per-tick: interpolate the current `t` -> pose, poke each
+  field of the camera struct over a **persistent** TCP session
+  (`_PokeSession`, reuses one socket for the full playback to avoid
+  420 connect/close/s). Profile offsets + types are baked once at
+  `play()` time into a `_PokeField` plan. Supports pause / resume /
+  loop, aborts after 8 consecutive poke failures, exposes live
+  `status()` (state, t, ticks, writes_ok/fail, last_pose). Module
+  singleton `get_default_player()` backs the Flask routes.
+
+- `tests/test_trajectory.py` -- 26 tests: preset geometry
+  (circle-on-radius, helix monotonic rise, line endpoints, figure-8
+  passes through center), interpolation (midpoint, clamping, yaw
+  shortest-path at 350->10 seam, bisect on dense orbit),
+  `_PokeSession` wire format verified against a local echo server.
+
+**Modified**:
+- `web_ui.py`: seven new routes under `/api/trajectory/*`:
+  `presets` (+ schemas for UI form rendering), `preview` (no-play
+  generation for 3D viz), `play`, `stop`, `pause`, `resume`, `status`.
+  Validates `profile_id` slug for path-traversal, maps ValueError ->
+  400, RuntimeError (already running) -> 409, FileNotFoundError -> 404,
+  ConnectionError -> 503.
+
+- `web/templates/index.html`: new "Trajectory" row in the Debug panel
+  with preset dropdown, per-preset dynamic form rendered from
+  `PRESET_SCHEMA` (vec3 / num / int / bool / choice), rate + loop
+  inputs, Play/Pause/Resume/Stop buttons, live status banner polled
+  every 500 ms while not idle. Reuses the existing game-profile
+  dropdown to pick which game to stream to.
+
+**Known limitations (carried to Commit C/D)**:
+- No 3D visualization of the generated path yet -- `/api/trajectory/preview`
+  returns all sampled points ready for the `view3d` canvas overlay
+  (Commit C wires it up).
+- UE3 packed-int rotation (Batman) still casts pitch/yaw/roll floats
+  verbatim to i32 at the bridge layer. Correct `deg * (0x10000/360)`
+  conversion not yet in the player; pass rotations 0 for first test.
+- Cyberpunk 2077 (quaternion rotation) `camera_write_profile` remains
+  disabled -- player rejects profiles with `enabled: false`.
+- StackOBot multi-site captures (3/4 byte sites < 14 threshold) wait
+  for Commit D UE auto-discovery.
+
+**Tests**: `pytest tests/test_trajectory.py -v` -> 26 passed.
+
 ### [v0.2.0] (pending push) -- xiaoni -- IGCS-style camera intercept (MVP)
 
 **New file**: `renderdoc/renderdoc/core/bridge/camera_intercept.h`

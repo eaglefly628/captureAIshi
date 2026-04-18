@@ -261,6 +261,118 @@ def hacks_write(profile_id: str):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# Trajectory presets + 60 Hz player (Commit B)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/trajectory/presets", methods=["GET"])
+def trajectory_presets():
+    """List available presets and their input schemas (for UI forms)."""
+    from drivers import trajectory_presets as tp
+    return jsonify({
+        "ok": True,
+        "presets": sorted(tp.PRESETS.keys()),
+        "schemas": tp.PRESET_SCHEMA,
+    })
+
+
+def _generate_points(body: dict):
+    """Parse {preset, params} and return (preset_name, points)."""
+    from drivers import trajectory_presets as tp
+    preset = body.get("preset")
+    if not isinstance(preset, str):
+        raise ValueError("missing 'preset'")
+    params = body.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("'params' must be an object")
+    return preset, tp.generate(preset, params)
+
+
+@app.route("/api/trajectory/preview", methods=["POST"])
+def trajectory_preview():
+    """Generate a preset and return the sampled points (no playback).
+
+    JSON body: {"preset": "orbit", "params": {...}}
+    Response:  {"ok": true, "duration": 10.0, "points": [[t,x,y,z,p,y,r,fov], ...]}
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        _, pts = _generate_points(body)
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({
+        "ok": True,
+        "duration": pts[-1].t if pts else 0.0,
+        "count": len(pts),
+        "points": [p.as_tuple() for p in pts],
+    })
+
+
+@app.route("/api/trajectory/play", methods=["POST"])
+def trajectory_play():
+    """Start streaming a generated trajectory at ``rate_hz``.
+
+    JSON body: {
+        "preset": str, "params": {...},
+        "profile_id": str,
+        "rate_hz": float (default 60), "loop": bool, "slot": int
+    }
+    """
+    body = request.get_json(silent=True) or {}
+    profile_id = body.get("profile_id", "")
+    if not isinstance(profile_id, str) or not profile_id.replace("_", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile_id"}), 400
+    try:
+        preset, pts = _generate_points(body)
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    from drivers.trajectory_player import get_default_player
+    try:
+        result = get_default_player().play(
+            profile_id=profile_id,
+            points=pts,
+            slot=int(body.get("slot", 0)),
+            rate_hz=float(body.get("rate_hz", 60.0)),
+            loop=bool(body.get("loop", False)),
+            preset_name=preset,
+        )
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": f"bridge unreachable: {e}"}), 503
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify(result)
+
+
+@app.route("/api/trajectory/stop", methods=["POST"])
+def trajectory_stop():
+    from drivers.trajectory_player import get_default_player
+    return jsonify(get_default_player().stop())
+
+
+@app.route("/api/trajectory/pause", methods=["POST"])
+def trajectory_pause():
+    from drivers.trajectory_player import get_default_player
+    return jsonify(get_default_player().pause())
+
+
+@app.route("/api/trajectory/resume", methods=["POST"])
+def trajectory_resume():
+    from drivers.trajectory_player import get_default_player
+    return jsonify(get_default_player().resume())
+
+
+@app.route("/api/trajectory/status", methods=["GET"])
+def trajectory_status():
+    from drivers.trajectory_player import get_default_player
+    return jsonify({"ok": True, "status": get_default_player().status()})
+
+
 @app.route("/api/bridge/scan_status", methods=["GET"])
 def bridge_scan_status():
     """Query current UWorld + LocalPlayer + CameraManager scan state."""

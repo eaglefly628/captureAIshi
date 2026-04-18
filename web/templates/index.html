@@ -2650,6 +2650,24 @@ pollSessions();pollCaptures();
       <button class="btn" onclick="hackTestWrite()" title="Push a test pose (x+100, current yaw+45°) to verify the full write path">Test</button>
     </div>
 
+    <!-- Trajectory preset + 60Hz player (Commit B) -->
+    <div style="border-top:1px solid #333;padding-top:6px;margin-bottom:6px">
+      <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <span style="color:#aaa;font-size:11px;min-width:56px" title="Parametric camera trajectories streamed at 60Hz to the captured camera struct">Trajectory:</span>
+        <select id="trajPreset" style="background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" onchange="trajRenderParams()">
+          <option value="">-- preset --</option>
+        </select>
+        <input id="trajRate" type="number" min="1" max="240" step="1" value="60" style="width:56px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" title="Write rate (Hz)">
+        <label style="color:#aaa;font-size:11px" title="Repeat the trajectory"><input type="checkbox" id="trajLoop" style="vertical-align:middle"> loop</label>
+        <button class="btn btn-accent" onclick="trajPlay()" title="Start streaming pose at selected rate">Play</button>
+        <button class="btn" onclick="trajPause()" title="Hold at current t">Pause</button>
+        <button class="btn" onclick="trajResume()" title="Resume from pause">Resume</button>
+        <button class="btn" onclick="trajStop()" title="Stop writer thread">Stop</button>
+      </div>
+      <div id="trajParams" style="background:#0f0f23;border:1px solid #333;border-radius:4px;padding:4px 6px;margin-bottom:6px;font-size:11px;color:#aaa;display:none"></div>
+      <div id="trajStatus" style="background:#0f0f23;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:11px;font-family:monospace;color:#888">idle</div>
+    </div>
+
     <div style="display:flex;gap:4px">
       <input id="debugCmdInput" style="flex:1;background:#0f0f23;color:#eee;border:1px solid #444;padding:4px 8px;border-radius:4px;font-family:monospace" placeholder="Custom command..." onkeydown="if(event.key==='Enter')bridgeCmd(this.value)">
       <button class="btn" onclick="bridgeCmd(document.getElementById('debugCmdInput').value)">Send</button>
@@ -2809,6 +2827,172 @@ function hackTestWrite(){
     })
     .catch(e=>debugAppend('ERROR: '+e));
 }
+// --- Trajectory presets + 60Hz player (Commit B) ---
+var _trajSchemas = {};
+var _trajStatusTimer = null;
+
+function trajLoadPresets(){
+  fetch('/api/trajectory/presets')
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: traj/presets '+(d.error||''));return;}
+      _trajSchemas = d.schemas||{};
+      var sel=document.getElementById('trajPreset');
+      var keep=sel.value;
+      sel.innerHTML='<option value="">-- preset --</option>';
+      (d.presets||[]).forEach(function(name){
+        var o=document.createElement('option');
+        o.value=name; o.textContent=name;
+        sel.appendChild(o);
+      });
+      if(keep) sel.value=keep;
+      trajRenderParams();
+    })
+    .catch(e=>debugAppend('ERROR: traj/presets '+e));
+}
+
+function trajRenderParams(){
+  var name=document.getElementById('trajPreset').value;
+  var box=document.getElementById('trajParams');
+  if(!name || !_trajSchemas[name]){
+    box.style.display='none'; box.innerHTML=''; return;
+  }
+  var schema=_trajSchemas[name];
+  var html='';
+  schema.forEach(function(item){
+    var id='trajParam_'+item.key;
+    var def=item.default;
+    var label='<label style="color:#aaa;margin-right:4px" title="'+(item.help||'')+'">'+item.key+':</label>';
+    if(item.kind==='vec3'){
+      html+='<div style="display:flex;gap:3px;align-items:center;margin-bottom:3px">'+label;
+      ['x','y','z'].forEach(function(axis,i){
+        html+='<input id="'+id+'_'+i+'" type="number" step="any" value="'+def[i]+'" style="width:64px;background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px" title="'+axis+'">';
+      });
+      html+='</div>';
+    } else if(item.kind==='bool'){
+      html+='<div style="display:inline-block;margin-right:10px"><label style="color:#aaa"><input type="checkbox" id="'+id+'"'+(def?' checked':'')+' style="vertical-align:middle"> '+item.key+'</label></div>';
+    } else if(item.kind==='choice'){
+      html+='<div style="display:inline-block;margin-right:10px">'+label+'<select id="'+id+'" style="background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-size:11px">';
+      (item.choices||[]).forEach(function(c){
+        html+='<option value="'+c+'"'+(c===def?' selected':'')+'>'+c+'</option>';
+      });
+      html+='</select></div>';
+    } else {
+      // num / int
+      var step=(item.kind==='int')?'1':'any';
+      html+='<div style="display:inline-block;margin-right:10px">'+label+'<input id="'+id+'" type="number" step="'+step+'" value="'+def+'" style="width:80px;background:#16213e;color:#eee;border:1px solid #444;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px" title="'+(item.help||'')+'"></div>';
+    }
+  });
+  box.innerHTML=html;
+  box.style.display='block';
+}
+
+function trajCollectParams(){
+  var name=document.getElementById('trajPreset').value;
+  if(!name || !_trajSchemas[name]) return null;
+  var out={};
+  _trajSchemas[name].forEach(function(item){
+    var id='trajParam_'+item.key;
+    if(item.kind==='vec3'){
+      out[item.key]=[0,1,2].map(function(i){return parseFloat(document.getElementById(id+'_'+i).value)||0;});
+    } else if(item.kind==='bool'){
+      out[item.key]=document.getElementById(id).checked;
+    } else if(item.kind==='choice'){
+      out[item.key]=document.getElementById(id).value;
+    } else if(item.kind==='int'){
+      out[item.key]=parseInt(document.getElementById(id).value,10)||0;
+    } else {
+      out[item.key]=parseFloat(document.getElementById(id).value)||0;
+    }
+  });
+  return out;
+}
+
+function trajPlay(){
+  var preset=document.getElementById('trajPreset').value;
+  if(!preset){debugAppend('ERROR: pick a preset first');return;}
+  var profile_id=document.getElementById('hackProfileSelect').value;
+  if(!profile_id){debugAppend('ERROR: pick a game profile first (Profile dropdown above)');return;}
+  var params=trajCollectParams()||{};
+  var body={
+    preset:preset,
+    params:params,
+    profile_id:profile_id,
+    rate_hz:parseFloat(document.getElementById('trajRate').value)||60,
+    loop:document.getElementById('trajLoop').checked,
+    slot:0,
+  };
+  debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop);
+  fetch('/api/trajectory/play',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body),
+  })
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
+      debugAppend('play: addr='+d.addr+' samples='+d.samples+' dur='+d.duration.toFixed(2)+'s');
+      trajStartStatusPoll();
+    })
+    .catch(e=>debugAppend('ERROR: '+e));
+}
+
+function trajStop(){
+  fetch('/api/trajectory/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+    debugAppend('stop: '+(d.ok?'ok':(d.error||'?')));
+    trajStopStatusPoll();
+    trajPollStatusOnce();
+  });
+}
+function trajPause(){
+  fetch('/api/trajectory/pause',{method:'POST'}).then(r=>r.json()).then(d=>{
+    debugAppend('pause: '+(d.ok?'ok':(d.error||'?')));
+  });
+}
+function trajResume(){
+  fetch('/api/trajectory/resume',{method:'POST'}).then(r=>r.json()).then(d=>{
+    debugAppend('resume: '+(d.ok?'ok':(d.error||'?')));
+  });
+}
+
+function trajPollStatusOnce(){
+  fetch('/api/trajectory/status')
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok)return;
+      var s=d.status||{};
+      var box=document.getElementById('trajStatus');
+      if(s.state==='idle'){
+        box.textContent='idle';
+        box.style.color='#888';
+        trajStopStatusPoll();
+        return;
+      }
+      var color={'playing':'#4f4','paused':'#ff4','error':'#f55'}[s.state]||'#888';
+      box.style.color=color;
+      var pose=s.last_pose||{};
+      var poseStr=pose.x!==undefined
+        ? ' xyz=('+pose.x.toFixed(1)+','+pose.y.toFixed(1)+','+pose.z.toFixed(1)+') '
+          +'pyr=('+pose.pitch.toFixed(1)+','+pose.yaw.toFixed(1)+','+pose.roll.toFixed(1)+') '
+          +'fov='+pose.fov.toFixed(1)
+        : '';
+      box.textContent=s.state+' '+s.preset_name+' t='+s.t.toFixed(2)+'/'+s.duration.toFixed(2)+'s '
+        +'ticks='+s.ticks+' ok='+s.writes_ok+' fail='+s.writes_fail
+        +(s.last_error?(' err='+s.last_error):'')
+        +poseStr;
+      if(s.state==='error'){trajStopStatusPoll();}
+    });
+}
+
+function trajStartStatusPoll(){
+  if(_trajStatusTimer)return;
+  _trajStatusTimer=setInterval(trajPollStatusOnce,500);
+  trajPollStatusOnce();
+}
+function trajStopStatusPoll(){
+  if(_trajStatusTimer){clearInterval(_trajStatusTimer);_trajStatusTimer=null;}
+}
+
 // Auto-populate dropdown the first time the debug panel opens.
 (function(){
   var orig=window.toggleDebugPanel;
@@ -2818,6 +3002,8 @@ function hackTestWrite(){
     if(p.style.display!=='none' && !p.dataset.hacksLoaded){
       p.dataset.hacksLoaded='1';
       hackRefresh();
+      trajLoadPresets();
+      trajPollStatusOnce();
     }
   };
 })();
