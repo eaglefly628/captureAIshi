@@ -126,6 +126,43 @@ Want feedback before next step on:
     the bot can: (a) install AOB, (b) flip nop/pass, (c) verify via
     `__bridge_status`.
 
+### 主程序员 peer review: 1a10b3d (Opus 4.7 review sweep 的二次验证)
+
+小逆 claimed 修了 13 项，Opus 4.7 二次 review 结果：**7 OK, 1 OK with caveat, 3 PARTIAL, 2 新 bug**。
+
+**最严重 — 真正的新 bug（必须再修）：**
+
+- [ ] **P0: cmd_queue CAS 修了生产者竞争但引入消费者读半写槽 bug** (spotted by 主程序员 Opus 二次) —
+  生产者 A CAS 取槽 N，生产者 B CAS 取槽 N+1，B 先写完 strncpy，A 还没写完时消费者看到 head=N+2 开始从 N 读 — 读到的是旧 wrap 残留数据或 zero。
+  classic reservation-queue 错误：head 已推进但槽内容尚未 commit。
+  修法：每槽加 "ready" flag，消费者只读 ready==1 的槽；或生产者先写完再 CAS 推进 head（不是现在这种先 CAS 取槽后写内容）。
+
+- [ ] **P1: 33rd client socket-reuse UAF** (spotted by 主程序员 Opus 二次) —
+  修复把 `shutdown(c);closesocket(c);CloseHandle(h)` 做在主线程，但被拒绝的 client 线程已经创建并持有同一 socket 值。
+  主线程 closesocket(c) 之后 c 被 kernel 回收，下一次 accept() 可能把同一 socket 值给新连接；然后被拒绝的线程里的 `closesocket(client)` 跑完 — 关掉了一个不相干的活连接。
+  修法：slots 满时**根本不要 CreateThread**，直接 `shutdown+closesocket+log` 返回；或扩展 slots 为 vector 动态增长。
+
+**PARTIAL — 功能修了但留死角：**
+
+- [ ] **P1: cam_patch_write SuspendThread 保护下 bridge_log 有死锁风险** (spotted by 主程序员 Opus 二次) —
+  SuspendThread 后若 VirtualProtect 失败或 memcpy AV，走 bridge_log 路径 → OutputDebugStringA → CSRSS / DBWIN mutex，若被挂起的线程正好持有该 mutex，整个进程死锁。
+  修法：`cam_resume_others()` 必须在任何 log 调用**之前**，失败信息用栈缓冲暂存，resume 后再 log。
+
+- [ ] **P1: __cam_mem_find 暂停 override 仍留竞争窗口** (spotted by 主程序员 Opus 二次) —
+  (a) 暂停不与**正在执行中**的 tick iteration 同步 — 若 tick 已通过 `if (override && pov_ptr)` 进入 write_camera_mem，rescan 清 pov_ptr 后 tick 的 SEH 会把**新安装的**指针误清成 nullptr。
+  (b) 并发 TCP 客户端发 `__cam_mem_on` 可在 rescan 进行中把 override 改回 true，pause 不是 mutex 保护。
+  修法：rescan 用全局 CRITICAL_SECTION 包住 pause+clear+scan+set+resume，所有 TCP 命令都走该锁。
+
+- [ ] **P2: g_fexec_hook_count 用 volatile 而非 atomic** (spotted by 主程序员 Opus 二次) —
+  MSVC x64 /volatile:ms 有 acquire 语义，现在能工作。但严格讲不可移植。`uninstall_all_fexec_hooks()` 用 plain assignment 置零也非 Interlocked。
+  修法：换 `std::atomic<LONG>`，uninstall 用 `.store(0)`。
+
+**OK with caveat：**
+
+- [x] **P1: WSACleanup ordering 修了，但 scan 线程超时 2s 后仍活可能引起后续问题** — scan 线程不碰 Winsock 所以不是 Winsock 问题，但未来若 scan 扩展要小心。
+
+**完全 OK（7 项）：** 3 VirtualQuery cross-page / 4 InterpolatedCamera zero-init / 5 camera_path play/stop mutex / 6 __cam_mem_write sanitize / 9 find_game_window dedup / 10 BRIDGE_LOG clamp / 13 SwitchToThread。
+
 ### 主程序员 peer review: e9f764e (IGCS intercept infrastructure)
 
 Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个新问题：
