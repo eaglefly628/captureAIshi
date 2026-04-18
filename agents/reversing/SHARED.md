@@ -334,7 +334,7 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- Opus 4.7 round-2 review (5 items)
+### [v0.2.0] 2c0ea17 -- xiaoni -- Opus 4.7 round-2 review (5 items)
 
 Fixes for the 2 new bugs + 3 PARTIAL items from 老白's second-round review
 of 1a10b3d.
