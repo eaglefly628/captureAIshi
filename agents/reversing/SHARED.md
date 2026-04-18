@@ -77,10 +77,12 @@ index.html debug panel   -- Profile dropdown + Apply/Lock/Unlock/Clear/Refresh �
 - UE3 packed_int 旋转 (16.16 fixed point) 当前直接 cast 浮点为 i32。Batman Test 写 `pitch/yaw/roll=0` 能验证 XYZ 通路，正确换算 `deg * (0x10000/360.0)` 放进轨迹层 (Commit B)
 - Cyberpunk 2077 用四元数旋转，`camera_write_profile` 仍 disabled，需加 `quat_f32` 类型
 
-**Commit B -- Trajectory presets + player**:
-- `drivers/trajectory_presets.py`: 螺旋 / 绕环 / 直线 / 8 字 (参数化 generator)
-- `drivers/trajectory_player.py`: 60Hz 循环插值 -> `write_camera()`
-- UI: Trajectory 面板 (preset 下拉 + 参数 + Play/Stop)
+**Commit B -- Trajectory presets + player** DONE in sha `76cbd5a`
+- `drivers/trajectory_presets.py`: orbit / helix / line / figure8 (PosePoint, interp_linear, schema)
+- `drivers/trajectory_player.py`: TrajectoryPlayer + 60Hz writer thread + persistent _PokeSession
+- `web_ui.py`: /api/trajectory/{presets,preview,play,stop,pause,resume,status}
+- `web/templates/index.html`: Debug panel Trajectory row (preset dropdown + dynamic form + Play/Pause/Resume/Stop + live status)
+- `tests/test_trajectory.py`: 26 tests, all green
 
 **Commit C -- 3D editor integration** (用户强调的可视化):
 - 现有 `view3d` canvas + trajectory.json 对接新轨迹系统
@@ -313,7 +315,7 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
-### [v0.2.0] (pending push) -- xiaoni -- Commit B: trajectory presets + 60 Hz player
+### [v0.2.0] 76cbd5a -- xiaoni -- Commit B: trajectory presets + 60 Hz player
 
 Builds on Commit A (`306395b`, IGCS-style pointer capture). Streams
 parametric camera trajectories to the captured camera struct at 60 Hz.
