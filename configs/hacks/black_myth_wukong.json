@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "black_myth_wukong",
+  "display_name": "Black Myth: Wukong",
+  "process_names": ["b1-Win64-Shipping.exe", "BlackMythWukong.exe"],
+  "engine": "UE5",
+  "engine_version": "5.x (LWC + DLSS / FSR upscalers)",
+  "credits": "(none yet)",
+  "source": "https://store.steampowered.com/app/2358720/Black_Myth_Wukong/",
+  "notes": "STUB profile -- AOB pending. Game Science ships a custom DRM-style launcher; SP gameplay process itself has no online anti-cheat reported, but VERIFY for your build before injecting (look for EAC / BattlEye sibling DLLs). Apply will only run __cam_intercept_uninstall (no installs) until intercepts[] is filled. To populate: (1) launch + bridge attach, (2) __cam_mem_find for camera_manager + pov, (3) Commit D auto-discovery (or CE manual scan) for the MOV write site.",
+
+  "intercepts": [],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

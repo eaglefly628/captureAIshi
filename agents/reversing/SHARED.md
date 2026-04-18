@@ -337,6 +337,27 @@ Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge
 
 ## Changelog (latest)
 
+### [v0.2.0] (pending push) -- xiaoni -- Game library trim to 6 active titles
+
+- `configs/game_library.json`: 332 entries -> 6. The active list:
+  StackOBot (UE5, self-built), Batman: Arkham Knight (UE3),
+  Hellblade: Senua's Sacrifice (UE4), Cyberpunk 2077 (REDengine 4),
+  Unreal Physics (UE5, https://store.steampowered.com/app/2837320/),
+  Black Myth: Wukong (UE5).
+- `configs/game_library_full.json`: backup of the original 332-entry
+  UUU library, in case future expansion needs it.
+- `configs/hacks/unreal_physics.json` + `configs/hacks/black_myth_wukong.json`:
+  STUB profiles, intercepts[]=[] and camera_write_profile.enabled=false.
+  apply_profile() will only run __cam_intercept_uninstall on these
+  until intercepts[] is populated by Commit D auto-discovery or CE.
+- `/api/games` now returns 6, `/api/hacks/list` returns 6 -- the
+  Profile dropdown + Game Library panel will both show only these
+  titles after a hard refresh.
+- AOB schema lives in `configs/hacks/_schema.md`; AOB data lives in
+  `configs/hacks/<id>.json` `intercepts[]`. UI install paths:
+  Debug Panel "Intercept" row (manual AOB) or Profile -> Apply
+  (auto from JSON).
+
 ### [v0.2.0] 46cb892 -- xiaoni -- Commit C: trajectory 3D preview
 
 Hooks `/api/trajectory/preview` into the existing `view3d` canvas so an

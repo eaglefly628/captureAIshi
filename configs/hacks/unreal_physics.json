@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "unreal_physics",
+  "display_name": "Unreal Physics",
+  "process_names": ["UnrealPhysics.exe", "UnrealPhysics-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "TBD (Steam app 2837320)",
+  "credits": "(none yet) -- Epic-published physics demo",
+  "source": "https://store.steampowered.com/app/2837320/Unreal_Physics/",
+  "notes": "STUB profile -- AOB pending. Apply will only run __cam_intercept_uninstall (no installs). To populate: (1) launch with bridge attached, (2) __cam_mem_find to discover camera_manager + pov, (3) Commit D auto-discovery (or CE manual scan) for the MOV write site, (4) fill intercepts[] + camera_write_profile below.",
+
+  "intercepts": [],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}
