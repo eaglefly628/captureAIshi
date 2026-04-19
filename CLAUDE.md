@@ -79,6 +79,7 @@ The grabber MUST launch and confirm the game is running BEFORE the driver attemp
 |   +-- edit-discipline.md     Edit tool safety rules
 |   +-- versioning.md          Version bump + CL rules + changelog
 |   +-- peer-review.md         Competitive review + agent names
+|   +-- coding-discipline.md  Think/Simplicity/Surgical/Goal-driven rules
 +-- commands/                  Slash commands
 |   +-- review.md              /project:review
 |   +-- status.md              /project:status
