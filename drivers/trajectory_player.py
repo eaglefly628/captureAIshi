@@ -452,7 +452,7 @@ class TrajectoryPlayer:
                         # accumulated drift doesn't skip frames.
                         overshoot = elapsed - duration
                         whole = int(overshoot // duration) + 1
-                        pause_budget -= whole * duration
+                        pause_budget += whole * duration
                         elapsed = (now - start - pause_budget)
                     else:
                         break
