@@ -79,11 +79,12 @@ class EchoServer:
         self._thread.start()
 
     def _run(self):
-        self._server.settimeout(2.0)
+        # Short accept/recv poll so stop() returns in <100ms instead of ~2s.
+        self._server.settimeout(0.1)
         while self._running:
             try:
                 conn, _ = self._server.accept()
-                conn.settimeout(1.0)
+                conn.settimeout(0.1)
                 while self._running:
                     try:
                         data = conn.recv(4096)
@@ -102,9 +103,14 @@ class EchoServer:
 
     def stop(self):
         self._running = False
+        # shutdown before close so a blocked accept() wakes immediately
+        try:
+            self._server.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         self._server.close()
         if self._thread:
-            self._thread.join(timeout=3)
+            self._thread.join(timeout=1)
 
     @property
     def received_text(self) -> str:

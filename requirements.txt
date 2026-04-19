@@ -3,3 +3,5 @@ Pillow>=9.0.0
 flask>=2.0.0
 mss>=6.0.0
 pywebview>=4.0.0
+pytest>=7.0.0
+pytest-timeout>=2.3.0
