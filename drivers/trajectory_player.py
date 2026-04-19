@@ -112,6 +112,37 @@ def _build_plan(profile_id: str) -> list[_PokeField]:
     return plan
 
 
+_AUTO_CAPTURE_TIMEOUT = 2.0
+_AUTO_CAPTURE_POLL = 0.05
+
+
+def _auto_capture(slot: int) -> int:
+    """Switch sites to CAPTURE, poll for addr, restore PASS. Raise on timeout.
+
+    One-shot helper so callers don't need to orchestrate capture_all +
+    game-tick + unlock_camera manually. The game must be running and
+    executing the hooked code path at least once inside the timeout.
+    """
+    logger.info("slot %d not captured; triggering one-shot capture", slot)
+    game_profile.capture_all()
+    try:
+        deadline = time.monotonic() + _AUTO_CAPTURE_TIMEOUT
+        while time.monotonic() < deadline:
+            addr = game_profile.get_captured_addr(slot)
+            if addr:
+                return addr
+            time.sleep(_AUTO_CAPTURE_POLL)
+    finally:
+        game_profile.unlock_camera()
+    logger.warning("auto-capture timed out after %.1fs at slot %d",
+                   _AUTO_CAPTURE_TIMEOUT, slot)
+    raise RuntimeError(
+        f"no capture at slot {slot}: auto-capture timed out after "
+        f"{_AUTO_CAPTURE_TIMEOUT:.1f}s. Verify the game is running "
+        "and the hooked code path is being executed."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Persistent bridge session
 # ---------------------------------------------------------------------------
@@ -259,10 +290,7 @@ class TrajectoryPlayer:
             plan = _build_plan(profile_id)
             addr = game_profile.get_captured_addr(slot)
             if not addr:
-                raise RuntimeError(
-                    f"no capture at slot {slot}: run capture_all and let "
-                    "game tick at least once"
-                )
+                addr = _auto_capture(slot)
 
             self._stop_evt.clear()
             self._pause_evt.clear()
