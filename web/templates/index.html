@@ -3344,6 +3344,13 @@ function toggleAdvancedAob(){
   body.style.display=open?'none':'block';
   // Right-triangle vs down-triangle HTML entities.
   caret.innerHTML=open?'&#9654;':'&#9660;';
+  // On small/Windows viewports the newly-opened body lands below the
+  // scrollable panel's visible area, so the user sees no visible change
+  // and thinks the click didn't register. Scroll it into view.
+  if(!open){
+    try{ body.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+    catch(e){ body.scrollIntoView(); }
+  }
 }
 function _scanBadge(found, label){
   return found
