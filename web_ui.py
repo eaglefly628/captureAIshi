@@ -932,6 +932,8 @@ _DEFAULT_GAME_CONFIG = {
     "driver_host": "127.0.0.1",
     "driver_port": 9998,
     "grabber": "renderdoc",
+    "target_exe": "",
+    "output_dir": "./output",
     "notes": "",
 }
 
