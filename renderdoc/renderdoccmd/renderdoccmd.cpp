@@ -27,6 +27,7 @@
 #include <app/renderdoc_app.h>
 #include <replay/version.h>
 #include <chrono>
+#include <set>
 #include <string>
 
 rdcstr conv(const std::string &s)
@@ -1122,6 +1123,10 @@ public:
 
     int totalOK = 0;
     int totalFailed = 0;
+    // Depth range from first frame, reused for all subsequent frames in the batch.
+    // Per-frame percentile mapping causes inconsistent depth across a capture sequence.
+    float batchDepthBp = -1.0f;
+    float batchDepthWp = -1.0f;
 
     for(size_t fi = 0; fi < filenames.size(); fi++)
     {
@@ -1337,35 +1342,48 @@ public:
 
         // Compute percentile range from raw data for black/white point mapping
         float bpVal = 0.0f, wpVal = 1.0f;
-        bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
-        if(!rawData.empty())
+        if(batchDepthBp >= 0.0f)
         {
-          size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
-          size_t floatCount = rawData.size() / sizeof(float);
-
-          if(floatCount >= pixelCount)
+          // Reuse first-frame range for consistent depth across the batch
+          bpVal = batchDepthBp;
+          wpVal = batchDepthWp;
+          std::cout << "  depth range (batch ref): [" << bpVal << ", " << wpVal << "]" << std::endl;
+        }
+        else
+        {
+          bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
+          if(!rawData.empty())
           {
-            const float *src = (const float *)rawData.data();
-            std::vector<float> validDepths;
-            validDepths.reserve(pixelCount);
-            for(size_t p = 0; p < pixelCount; p++)
+            size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
+            size_t floatCount = rawData.size() / sizeof(float);
+
+            if(floatCount >= pixelCount)
             {
-              float d = src[p];
-              if(d >= 0.0f && d <= 1.0f)
-                validDepths.push_back(d);
-            }
-            if(!validDepths.empty())
-            {
-              std::sort(validDepths.begin(), validDepths.end());
-              size_t n = validDepths.size();
-              bpVal = validDepths[(size_t)(n * 0.01)];    // 1st percentile
-              wpVal = validDepths[(size_t)(n * 0.99)];    // 99th percentile
-              if(wpVal - bpVal < 1e-10f)
+              const float *src = (const float *)rawData.data();
+              std::vector<float> validDepths;
+              validDepths.reserve(pixelCount);
+              for(size_t p = 0; p < pixelCount; p++)
               {
-                bpVal = 0.0f;
-                wpVal = 1.0f;
+                float d = src[p];
+                if(d >= 0.0f && d <= 1.0f)
+                  validDepths.push_back(d);
               }
-              std::cout << "  depth range (1-99%%): [" << bpVal << ", " << wpVal << "]" << std::endl;
+              if(!validDepths.empty())
+              {
+                std::sort(validDepths.begin(), validDepths.end());
+                size_t n = validDepths.size();
+                bpVal = validDepths[(size_t)(n * 0.01)];    // 1st percentile
+                wpVal = validDepths[(size_t)(n * 0.99)];    // 99th percentile
+                if(wpVal - bpVal < 1e-10f)
+                {
+                  bpVal = 0.0f;
+                  wpVal = 1.0f;
+                }
+                std::cout << "  depth range (1-99%%, will reuse for batch): ["
+                          << bpVal << ", " << wpVal << "]" << std::endl;
+                batchDepthBp = bpVal;
+                batchDepthWp = wpVal;
+              }
             }
           }
         }
@@ -1423,11 +1441,11 @@ public:
       }
     }
 
-    // ── Normal auto-detection via content analysis ──
-    // Format-based detection is unreliable across games. Instead, we check
-    // the actual pixel data: a real WorldNormal fills the entire viewport
-    // (high coverage), while atlases/particles have mostly empty pixels.
-    // We also check that the blue channel is dominant (normals pointing up).
+    // ── Normal detection: R10G10B10A2 format + pipeline state ──
+    // UE5 GBufferA (WorldNormal) always uses R10G10B10A2 format.
+    // If exactly one such ColorTarget exists at viewport size, use it directly.
+    // If multiple exist, scan pipeline state to find which is bound at MRT slot 1
+    // during the GBuffer base pass. Slot 1 is where UE5 writes WorldNormal.
     if(exportNormal && !foundNormal && swapWidth > 0)
     {
       if(normalIndex >= 0 && (size_t)normalIndex < textures.size())
@@ -1451,10 +1469,122 @@ public:
       }
       else
       {
-        // No --normal-index specified. C++ exports all ColorTargets as
-        // ct_{index}.png. Python side will analyze the PNGs with PIL
-        // (coverage + blue ratio on proper RGBA8 data) and pick the best.
-        std::cout << "Normal: no --normal-index, Python auto-detect will analyze ct_*.png" << std::endl;
+        // Auto-detect: find R10G10B10A2 ColorTargets at viewport size
+        std::vector<std::pair<size_t, ResourceId>> normalCandidates;
+        for(size_t i = 0; i < textures.size(); i++)
+        {
+          const TextureDescription &tex = textures[i];
+          uint32_t flags = (uint32_t)tex.creationFlags;
+          if((flags & (uint32_t)TextureCategory::ColorTarget) &&
+             !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
+             tex.width == swapWidth && tex.height == swapHeight &&
+             tex.format.type == ResourceFormatType::R10G10B10A2)
+          {
+            normalCandidates.push_back({i, tex.resourceId});
+            std::cout << "  [" << i << "] R10G10B10A2 normal candidate" << std::endl;
+          }
+        }
+
+        ResourceId normalResId;
+
+        if(normalCandidates.size() == 1)
+        {
+          // Unique match: no ambiguity, use directly
+          normalResId = normalCandidates[0].second;
+          std::cout << "Normal: unique R10G10B10A2 match at [" << normalCandidates[0].first << "]" << std::endl;
+        }
+        else if(normalCandidates.size() > 1)
+        {
+          // Multiple candidates: scan pipeline state for the one bound at MRT slot 1
+          // (UE5 deferred GBuffer layout: slot 0=SceneColor, slot 1=GBufferA/WorldNormal)
+          std::cout << "Normal: " << normalCandidates.size()
+                    << " R10G10B10A2 candidates, scanning pipeline state for RT slot 1..."
+                    << std::endl;
+
+          std::set<ResourceId> candidateSet;
+          for(const auto &c : normalCandidates)
+            candidateSet.insert(c.second);
+
+          // Iterative DFS over action tree, check first kMaxDrawScan draw calls
+          const int kMaxDrawScan = 500;
+          int drawsChecked = 0;
+          std::vector<const ActionDescription *> stack;
+          for(int ai = (int)actions.size() - 1; ai >= 0; ai--)
+            stack.push_back(&actions[ai]);
+
+          while(!stack.empty() && drawsChecked < kMaxDrawScan)
+          {
+            const ActionDescription *act = stack.back();
+            stack.pop_back();
+
+            for(int ci = (int)act->children.size() - 1; ci >= 0; ci--)
+              stack.push_back(&act->children[ci]);
+
+            if(!((uint32_t)act->flags & (uint32_t)ActionFlags::Drawcall))
+              continue;
+
+            drawsChecked++;
+            controller->SetFrameEvent(act->eventId, false);
+            const PipeState &pipe = controller->GetPipelineState();
+            rdcarray<Descriptor> outputs = pipe.GetOutputTargets();
+
+            if(outputs.size() < 2)
+              continue;
+
+            ResourceId rt1 = outputs[1].resource;
+            if(candidateSet.count(rt1))
+            {
+              normalResId = rt1;
+              std::cout << "Normal: GBufferA found at event " << act->eventId
+                        << " RT slot 1 (scanned " << drawsChecked << " draws)" << std::endl;
+              break;
+            }
+          }
+
+          if(normalResId == ResourceId())
+          {
+            std::cout << "Normal: pipeline scan exhausted " << drawsChecked
+                      << " draws, no R10G10B10A2 at RT slot 1" << std::endl;
+          }
+
+          // Restore to last event so subsequent SaveTexture calls see full frame state
+          if(!actions.empty())
+          {
+            const ActionDescription *last = &actions.back();
+            while(!last->children.empty())
+              last = &last->children.back();
+            controller->SetFrameEvent(last->eventId, true);
+          }
+        }
+
+        if(normalResId != ResourceId())
+        {
+          std::string normalPath = fileOutdir + sep + "normal.png";
+          TextureSave texsave;
+          texsave.resourceId = normalResId;
+          texsave.mip = 0;
+          texsave.slice.sliceIndex = 0;
+          texsave.alpha = AlphaMapping::Discard;
+          texsave.destType = FileType::PNG;
+          ResultDetails saveRes = controller->SaveTexture(texsave, conv(normalPath));
+          if(saveRes.OK())
+          {
+            std::cout << "OK normal (R10G10B10A2"
+                      << (normalCandidates.size() > 1 ? " pipeline-scan" : " unique")
+                      << ") -> " << normalPath << std::endl;
+            foundNormal = true;
+          }
+          else
+          {
+            std::cerr << "Failed to save normal: " << saveRes.Message() << std::endl;
+          }
+        }
+
+        if(!foundNormal)
+        {
+          // Final fallback: Python will analyze ct_*.png with pixel heuristics
+          std::cout << "Normal: no R10G10B10A2 target found; Python will analyze ct_*.png" << std::endl;
+        }
       }
     }
 
