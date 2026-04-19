@@ -988,8 +988,6 @@ def get_game_config(slug):
             return jsonify({"error": str(e)}), 500
     config["_slug"] = slug
     return jsonify(config)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/games/<slug>/config", methods=["POST"])
