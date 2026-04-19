@@ -2679,13 +2679,13 @@ pollSessions();pollCaptures();
       <button class="btn" onclick="bridgeCmd('__cam_mem_off')" title="Disable 1000Hz override">OV Off</button>
     </div>
 
-    <!-- Advanced AOB operations (collapsed by default) -->
+    <!-- Advanced AOB operations (expanded by default; collapse disabled until UI simplification) -->
     <div style="border-top:1px solid #333;padding-top:6px;margin-bottom:6px">
-      <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;cursor:pointer;user-select:none" onclick="toggleAdvancedAob()">
-        <span id="advAobCaret" style="color:#888;font-family:monospace;font-size:11px;width:14px">&#9654;</span>
+      <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;user-select:none" onclick="toggleAdvancedAob()">
+        <span id="advAobCaret" style="color:#888;font-family:monospace;font-size:11px;width:14px">&#9660;</span>
         <b style="color:#888;font-size:11px">Advanced: AOB intercept + per-game profile</b>
       </div>
-      <div id="advAobBody" style="display:none">
+      <div id="advAobBody" style="display:block">
 
         <!-- IGCS-style code-patch intercept -->
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;align-items:center">

@@ -2,6 +2,23 @@
 
 ## Active TODO
 
+### [v0.2.0] 2026-04-19 -- pytest 永久解 (lead message to xiaoni)
+
+pytest 之前整体卡死的问题已在 mainbranch 永久修好 (老白 sha `30dc4f3` +
+`26caba2`)。每次开新 session 先：
+
+```bash
+git checkout claudeMainBranch && git pull origin claudeMainBranch
+```
+
+然后用项目根的 `pytest.ini` 自带的 `timeout=20` (thread method) 跑测试。
+单个 test 卡超过 20s 会被 pytest-timeout 自动杀掉并继续下一个，再也
+不会整体挂死。`test_teardown_terminates_process` 里的 killpg 自杀 bug
+也一并 patch 了。
+
+依赖：`requirements.txt` 已 pin `pytest>=7` + `pytest-timeout>=2.3`，
+缺了就 `pip install -r requirements.txt`。
+
 ### 2026-04-17 (late) session handoff -- xiaoni -- Batman AK E2E 验证 + profile DB + Commit A pointer capture
 
 **Session 成果（10 次 push）**:
