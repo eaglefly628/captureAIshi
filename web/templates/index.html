@@ -1024,25 +1024,6 @@ body {
         <div class="sec-body"><div class="preset-list" id="presetList"></div></div>
       </div>
 
-      <!-- Saved Configs -->
-      <div class="sec">
-        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Saved Configs</button>
-        <div class="sec-body open">
-          <div class="cfg-actions">
-            <button class="btn" onclick="promptSaveProfile()">Save As...</button>
-          </div>
-          <div id="profileList"><div class="cfg-empty">No saved configs</div></div>
-        </div>
-      </div>
-
-      <!-- Recent -->
-      <div class="sec">
-        <button class="sec-head open" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Recent</button>
-        <div class="sec-body open">
-          <div id="recentList"><div class="cfg-empty">No recent runs</div></div>
-        </div>
-      </div>
-
     </div>
   </div>
 
@@ -1429,7 +1410,6 @@ async function startCapture() {
     btn.style.display='none';
     document.getElementById('btnStop').style.display='';
     startPolling();
-    loadRecent();
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
 async function stopCapture() {
@@ -2551,105 +2531,14 @@ function _autoSaveGameConfig() {
   }).catch(()=>{});
 }
 
-// ─── Config Save/Load ───
-async function loadSavedConfig() {
-  try {
-    const resp = await fetch('/api/config');
-    const p = await resp.json();
-    applyParams(p);
-    addLog('Config restored from last session', 'info');
-  } catch(_) {}
-}
-
-function saveConfig() {
-  const data = getFormData();
-  fetch('/api/config', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(data),
-  }).catch(()=>{});
-}
-
-// Auto-save on any form change (global + per-game)
+// Auto-save on any form change (per-game)
 document.querySelectorAll('input, select').forEach(el => {
-  el.addEventListener('change', () => { saveConfig(); _autoSaveGameConfig(); });
+  el.addEventListener('change', () => { _autoSaveGameConfig(); });
 });
 
-// ─── Profiles ───
-async function loadProfiles() {
-  try {
-    const resp = await fetch('/api/config/profiles');
-    const profiles = await resp.json();
-    const el = document.getElementById('profileList');
-    if (!profiles.length) { el.innerHTML = '<div class="cfg-empty">No saved configs</div>'; return; }
-    el.innerHTML = '';
-    profiles.forEach(p => {
-      const row = document.createElement('div');
-      row.className = 'cfg-row';
-      row.onclick = () => loadProfile(p.name);
-      row.innerHTML = `<span class="cfg-name">${p.name}</span><span class="cfg-meta">${p.driver}/${p.grabber}</span><button class="cfg-del" onclick="event.stopPropagation();deleteProfile('${p.name}')" title="Delete">&times;</button>`;
-      el.appendChild(row);
-    });
-  } catch(_) {}
-}
-
-async function loadProfile(name) {
-  try {
-    const resp = await fetch(`/api/config/profiles/${encodeURIComponent(name)}`);
-    const p = await resp.json();
-    if (p.ok === false) { addLog('Profile not found: ' + name, 'error'); return; }
-    applyParams(p);
-    saveConfig();
-    addLog(`Loaded config: ${name}`, 'success');
-  } catch(_) {}
-}
-
-async function promptSaveProfile() {
-  const name = prompt('Config name:');
-  if (!name || !name.trim()) return;
-  const clean = name.trim().replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_');
-  try {
-    await fetch(`/api/config/profiles/${encodeURIComponent(clean)}`, {
-      method: 'PUT',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(getFormData()),
-    });
-    addLog(`Config saved: ${clean}`, 'success');
-    loadProfiles();
-  } catch(_) {}
-}
-
-async function deleteProfile(name) {
-  try {
-    await fetch(`/api/config/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    loadProfiles();
-  } catch(_) {}
-}
-
-// ─── Recent ───
-async function loadRecent() {
-  try {
-    const resp = await fetch('/api/config/recent');
-    const recent = await resp.json();
-    const el = document.getElementById('recentList');
-    if (!recent.length) { el.innerHTML = '<div class="cfg-empty">No recent runs</div>'; return; }
-    el.innerHTML = '';
-    recent.slice(-3).forEach(r => {
-      const row = document.createElement('div');
-      row.className = 'cfg-row';
-      row.onclick = () => { applyParams(r.config); saveConfig(); addLog('Restored recent config', 'info'); };
-      row.innerHTML = `<span class="cfg-name">${r.driver}/${r.grabber} ${r.spacing}m</span><span class="cfg-meta">${r.timestamp}</span>`;
-      el.appendChild(row);
-    });
-  } catch(_) {}
-}
-
 // ─── Init ───
-loadSavedConfig();
 updateVisibility();
 loadPresets();
-loadProfiles();
-loadRecent();
 searchGames();
 setInterval(()=>{pollSessions();pollCaptures();},2000);
 pollSessions();pollCaptures();

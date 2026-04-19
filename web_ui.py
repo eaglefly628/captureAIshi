@@ -83,8 +83,6 @@ def start_capture():
         _capture_state["error"] = None
         _capture_state["output_dir"] = str(args.output_dir)
 
-    _push_recent(data)
-
     thread = threading.Thread(target=_run_in_thread, args=(args,), daemon=True)
     thread.start()
 
@@ -522,128 +520,6 @@ def bridge_rescan():
         return jsonify({"ok": False, "error": "Bridge connection failed"}), 500
     finally:
         s.close()
-
-
-_CONFIG_DIR = Path("./configs")
-_CONFIG_FILE = _CONFIG_DIR / "_last.json"
-_RECENT_FILE = _CONFIG_DIR / "_recent.json"
-_MAX_RECENT = 10
-
-
-def _ensure_config_dir():
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-
-@app.route("/api/config", methods=["GET"])
-def load_config():
-    """Load saved config from disk. Falls back to defaults."""
-    if _CONFIG_FILE.exists():
-        try:
-            data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
-            return jsonify(data)
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to load config from {_CONFIG_FILE}: {e}")
-    return defaults()
-
-
-@app.route("/api/config", methods=["POST"])
-def save_config():
-    """Auto-save current form config to disk."""
-    data = request.json
-    if data is None:
-        return jsonify({"ok": False}), 400
-    _ensure_config_dir()
-    _CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    return jsonify({"ok": True})
-
-
-@app.route("/api/config/profiles", methods=["GET"])
-def list_profiles():
-    """List all saved config profiles."""
-    _ensure_config_dir()
-    profiles = []
-    for f in sorted(_CONFIG_DIR.glob("*.json")):
-        if f.name.startswith("_"):
-            continue
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            profiles.append({
-                "name": f.stem,
-                "driver": data.get("driver", "?"),
-                "grabber": data.get("grabber", "?"),
-                "spacing": data.get("spacing", "?"),
-            })
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to parse profile {f.name}: {e}")
-            profiles.append({"name": f.stem, "driver": "?", "grabber": "?", "spacing": "?"})
-    return jsonify(profiles)
-
-
-@app.route("/api/config/profiles/<name>", methods=["GET"])
-def load_profile(name):
-    """Load a named config profile."""
-    path = _CONFIG_DIR / f"{name}.json"
-    if not path.exists():
-        return jsonify({"ok": False, "error": "Profile not found"}), 404
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return jsonify(data)
-
-
-@app.route("/api/config/profiles/<name>", methods=["PUT"])
-def save_profile(name):
-    """Save current form data as a named profile."""
-    data = request.json
-    if data is None:
-        return jsonify({"ok": False}), 400
-    _ensure_config_dir()
-    path = _CONFIG_DIR / f"{name}.json"
-    data.pop("_profile_name", None)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    return jsonify({"ok": True})
-
-
-@app.route("/api/config/profiles/<name>", methods=["DELETE"])
-def delete_profile(name):
-    """Delete a named config profile."""
-    path = _CONFIG_DIR / f"{name}.json"
-    if path.exists():
-        path.unlink()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/config/recent", methods=["GET"])
-def list_recent():
-    """List recent capture configs (last N runs)."""
-    if _RECENT_FILE.exists():
-        try:
-            data = json.loads(_RECENT_FILE.read_text(encoding="utf-8"))
-            return jsonify(data)
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to load recent history: {e}")
-    return jsonify([])
-
-
-def _push_recent(config: dict):
-    """Add a config to the recent history."""
-    _ensure_config_dir()
-    recent = []
-    if _RECENT_FILE.exists():
-        try:
-            recent = json.loads(_RECENT_FILE.read_text(encoding="utf-8"))
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to parse recent file: {e}")
-            recent = []
-    import datetime
-    entry = {
-        "timestamp": datetime.datetime.now().strftime("%m-%d %H:%M"),
-        "driver": config.get("driver", "?"),
-        "grabber": config.get("grabber", "?"),
-        "spacing": config.get("spacing", "?"),
-        "config": config,
-    }
-    recent.insert(0, entry)
-    recent = recent[:_MAX_RECENT]
-    _RECENT_FILE.write_text(json.dumps(recent, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 @app.route("/api/defaults")
@@ -1104,14 +980,14 @@ def get_game_config(slug):
     if not slug:
         return jsonify({"error": "Invalid game slug"}), 400
     path = _GAME_CONFIGS_DIR / f"{slug}.json"
-    if not path.exists():
-        config = dict(_DEFAULT_GAME_CONFIG)
-        config["_slug"] = slug
-        return jsonify(config)
-    try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-        config["_slug"] = slug
-        return jsonify(config)
+    config = dict(_DEFAULT_GAME_CONFIG)
+    if path.exists():
+        try:
+            config.update(json.loads(path.read_text(encoding="utf-8")))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    config["_slug"] = slug
+    return jsonify(config)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
