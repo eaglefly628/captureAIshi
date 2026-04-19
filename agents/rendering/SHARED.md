@@ -118,6 +118,13 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## Changelog
 
+### [v0.2.0] 75ce117 — 小萱
+- P0 fix: Normal 检测改用 R10G10B10A2 格式过滤 + pipeline state 扫描 MRT slot 1
+  - 放弃像素启发式（帧间不稳定、彩虹 debug buffer 干扰）
+  - 唯一匹配直接用，多个候选时扫描前 500 个 draw call 查 RT slot 1
+  - 直接导出 normal.png，Python ct_*.png fallback 仅对非 UE5 游戏触发
+- P1 fix: Depth 归一化改用第一帧 range 全批复用，消除帧间漂移
+
 ### [v0.2.0] b542e7e — 小萱
 - trajectory.json 输出格式，四元数旋转，camera intrinsics (FOV/aspect)
 - Normal buffer 自动导出 (R10G10B10A2, fmtType=12)
@@ -151,96 +158,15 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 - C++ 导出所有 ColorTarget 为 ct_{index}.png
 - 覆盖率 + 蓝色占比启发式
 
-## Known Issues (待下个 session 修)
+## Known Issues
 
-### ★ 当前 session 结束点 (2026-04-08)
-
-**测试情况**：真实游戏 Batman 跑通，但渲染输出有三个问题：
-- Depth 太淡（归一化范围不对）
-- RGB 太暗（可能取到了 linear-space 的 SceneColor，未做 tone mapping）
-- Normal 有时对有时错（像素启发式不稳定）
-
-**下个 session 的核心方向：放弃像素启发式，改用 RenderDoc pipeline state 精确定位 GBuffer pass。**
-
-### P0: 用 pipeline state 精确定位 GBuffer buffers
-
-**核心洞察**：UE5 的 GBuffer 是一次 render pass 用 MRT (Multiple Render Targets) 同时输出的。找到那个 pass，按固定 slot 顺序读 outputs[] 就是精确的 GBufferA/B/C/D。
-
-**RenderDoc API**：每个 `ActionDescription` 有：
-```cpp
-rdcstr customName;                       // UE5 marker 名："BasePass"/"GBuffer"
-rdcfixedarray<ResourceId, 8> outputs;    // MRT 绑定
-ResourceId depthOut;
-rdcarray<ActionDescription> children;    // marker 嵌套
-ActionFlags flags;
-```
-
-**实现路径**（在 `renderdoc/renderdoccmd/renderdoccmd.cpp` 的 `exportframe`）：
-
-```cpp
-const ActionDescription* FindGBufferPass(const rdcarray<ActionDescription>& actions) {
-  for(const auto& action : actions) {
-    if(action.children.size() > 0) {
-      auto* found = FindGBufferPass(action.children);
-      if(found) return found;
-    }
-    if(!(action.flags & ActionFlags::Drawcall))
-      continue;
-
-    // 优先按 marker 名匹配
-    std::string name = action.customName.c_str();
-    if(name.find("BasePass") != std::string::npos ||
-       name.find("GBuffer") != std::string::npos)
-      return &action;
-
-    // 备选：MRT >= 3 的 draw call
-    int mrtCount = 0;
-    for(int i = 0; i < 8; i++)
-      if(action.outputs[i] != ResourceId()) mrtCount++;
-    if(mrtCount >= 3) return &action;
-  }
-  return nullptr;
-}
-```
-
-定位后：
-- UE5 约定：`outputs[0]`=SceneColor, `outputs[1]`=GBufferA(Normal), `outputs[2]`=GBufferB, `outputs[3]`=GBufferC(BaseColor)
-- `depthOut` 直接拿到 SceneDepth（比现在扫所有 DepthTarget 准）
-
-加 CLI 参数：`--gbuffer-slot-normal N`, `--gbuffer-slot-basecolor N` 支持手动覆盖。
-
-### P0: RGB 太暗 — Tone mapping / gamma 问题
-
-SceneColor 是 linear-space HDR (RGBA16F)，直接存 PNG 会很暗。需要：
-- 要么做 Reinhard/ACES tone mapping
-- 要么改从 Post-Process 后的 LDR buffer 取（SwapBuffer 是 tone-mapped 的但含 UI）
-- 或者直接取 TAA 输出（post-process 前、tone map 后）—— 需要 pipeline 分析
-
-`TextureSave` 有 `typeCast` 和 `comp.blackPoint/whitePoint` 可以做简单映射，但 Gamma 2.2 是底线。
-
-### P0: Depth 归一化帧间不一致 + 整体太淡
-
-两个问题：
-1. **帧间不一致**：每帧独立算 1st-99th 百分位，场景变化导致黑白点不同。修：第一帧算完后固定 range 给后续帧用。
-2. **整体太淡**：百分位可能选到过远的值导致大部分像素映射到灰色。修：改用 log-space 映射，或者取 depth 反投影到真实距离（m）后做固定 range 归一化。
-
-更彻底的方案：Depth 导出成 16-bit PNG 或 EXR float32，保留精度，让训练侧自己归一化。
-
-### P1: Normal 帧间选错（当前 session 遗留）
-p1-p3 检测正确，p0 选错。被上面的 GBuffer pass 精确定位方案取代后，这个问题自动消失（所有帧都从同一个 pass 取 slot[1]）。
-
-### P1: 无 Float SceneColor 的游戏 RGB 取自 SwapBuffer（含 UI）
+### P1: 无 Float SceneColor 的游戏 RGB 含 UI
 部分游戏没有 RGBA16F SceneColor，fallback 到 SwapBuffer 导致 UI overlay 残留。
-修复方案：需要在 RenderDoc replay 层面过滤 UI draw calls（已有 `ui_hiders/renderdoc_hider.py` 但未集成到 batch export 路径）。
+修复：需要在 RenderDoc replay 层面过滤 UI draw calls（`ui_hiders/renderdoc_hider.py` 未集成到 batch export 路径）。
 
-## 新 session 起手任务清单
-
-1. 读本文件（rendering SHARED.md）到 Known Issues 部分
-2. 读 `renderdoc/renderdoccmd/renderdoccmd.cpp` line 1180+ 了解当前 exportframe 实现
-3. 读 `renderdoc/renderdoc/api/replay/data_types.h:1976` 了解 `ActionDescription` 结构
-4. 实现 `FindGBufferPass()` 替换当前的格式猜测逻辑
-5. 先跑 EagleWalkLJB（小场景，迭代快），再跑 Batman 验证
-6. 实现 depth 帧间一致性（第一帧算 range 缓存）
+### P1: RGB 太暗（tone mapping）
+SceneColor 是 linear-space HDR (RGBA16F)，直接存 PNG 会很暗。
+选项：(a) Reinhard/ACES tone map；(b) 改取 Post-Process 后 LDR buffer；(c) 输出 EXR 让训练侧处理。
 
 ## Backlog (v0.3.0+, 等破解流程跑通后)
 
