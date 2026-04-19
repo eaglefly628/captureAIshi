@@ -198,6 +198,12 @@ class TestRenderDocGrabber:
         g = RenderDocGrabber(capture_dir=str(tmp_path / "caps"))
         mock_proc = MagicMock()
         g._process = mock_proc
-        g.teardown()
+        # teardown kills the process tree via taskkill (Win) or killpg (Linux).
+        # Patch both so the test doesn't actually signal the test runner's
+        # process group (MagicMock().pid coerces to int(1); killpg(getpgid(1), ...)
+        # resolves to PGID 0 = "my own group" on Linux and kills pytest).
+        with patch("subprocess.run", side_effect=Exception("boom")), \
+             patch("os.killpg", side_effect=Exception("boom")):
+            g.teardown()
         mock_proc.terminate.assert_called_once()
         assert g._process is None
