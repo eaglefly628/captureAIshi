@@ -114,6 +114,10 @@ def _build_plan(profile_id: str) -> list[_PokeField]:
 
 _AUTO_CAPTURE_TIMEOUT = 2.0
 _AUTO_CAPTURE_POLL = 0.05
+# UX delay so the user can alt-tab to the game window before we snapshot
+# or start writing. Diagnostic aid for focus-dependent camera paths.
+_PRE_CAPTURE_DELAY = 5.0
+_PRE_PLAY_DELAY = 5.0
 
 
 def _auto_capture(slot: int) -> int:
@@ -123,7 +127,10 @@ def _auto_capture(slot: int) -> int:
     game-tick + unlock_camera manually. The game must be running and
     executing the hooked code path at least once inside the timeout.
     """
-    logger.info("slot %d not captured; triggering one-shot capture", slot)
+    logger.info("slot %d not captured; waiting %.1fs for you to focus "
+                "the game window...", slot, _PRE_CAPTURE_DELAY)
+    time.sleep(_PRE_CAPTURE_DELAY)
+    logger.info("triggering one-shot capture at slot %d", slot)
     game_profile.capture_all()
     try:
         deadline = time.monotonic() + _AUTO_CAPTURE_TIMEOUT
@@ -389,7 +396,6 @@ class TrajectoryPlayer:
     ) -> None:
         dt = 1.0 / rate_hz
         duration = total_duration(points)
-        start = time.monotonic()
         # Accumulated paused time so ``t`` stays at the pause point.
         pause_budget = 0.0
         consecutive_fails = 0
@@ -404,6 +410,19 @@ class TrajectoryPlayer:
             logger.error("[PLAYER] could not open bridge session: %s", e)
             return
 
+        logger.info(
+            "[PLAYER] waiting %.1fs before streaming (focus the game window)...",
+            _PRE_PLAY_DELAY,
+        )
+        # Break the sleep into small chunks so stop() can abort the wait.
+        deadline = time.monotonic() + _PRE_PLAY_DELAY
+        while time.monotonic() < deadline and not self._stop_evt.is_set():
+            time.sleep(0.1)
+        if self._stop_evt.is_set():
+            session.close()
+            return
+
+        start = time.monotonic()
         logger.info(
             "[PLAYER] start profile_id=%s samples=%d rate=%.1fHz duration=%.2fs loop=%s addr=0x%X",
             self._status.profile_id, len(points), rate_hz, duration, loop, addr,
