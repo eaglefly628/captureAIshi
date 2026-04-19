@@ -2385,6 +2385,8 @@ function openCascadeLv3(cat) {
 }
 
 function closeCascade(level) {
+  if (document.activeElement && document.activeElement !== document.body)
+    document.activeElement.blur();
   if (level <= 2) {
     document.getElementById('cascadeLv2').classList.remove('open');
     document.getElementById('cascadeLv3').classList.remove('open');
