@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "sekiro",
+  "display_name": "Sekiro: Shadows Die Twice",
+  "process_names": ["sekiro.exe"],
+  "engine": "FromSoftware Engine",
+  "engine_version": "v1.06 (IGCS-GITC v2.10)",
+  "credits": "ghostinthecamera (IGCS-GITC)",
+  "source": "docs/refCode/igcs-gitc/sekiro/",
+  "notes": "Uses 3x3 rotation matrix at rbx+0x10 (NOT quaternion). Schema currently supports only quaternion/euler. Matrix-to-quaternion conversion needed in driver layer. struct_base_reg = rbx confirmed by MOVDQU [rbx+0x10].",
+
+  "intercepts": [
+    {
+      "name": "activecam_matrix",
+      "description": "Camera matrix write -- rbx = camera struct base. Matrix 3x3 at 0x10, coords at 0x40, FOV at 0x50.",
+      "size": 12,
+      "aob_literal":  "21 19 C1 FF 0F 28 00 66 0F 7F 43 10",
+      "aob_wildcard": "?? ?? C1 FF 0F 28 00 66 0F 7F 43 10",
+      "prefer": "literal",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "PARTIAL: rotation is 3x3 float matrix at 0x10 (9 floats, row-major). Schema needs matrix_rotation type. Coords at 0x40 and FOV at 0x50 are straightforward once matrix is handled.",
+    "struct_base_reg": "rbx",
+    "capture_from_intercept": "activecam_matrix",
+    "location": { "x": "0x40", "y": "0x44", "z": "0x48", "type": "float32" },
+    "rotation_matrix": { "off": "0x10", "rows": 3, "cols": 3, "type": "float32" },
+    "fov": { "off": "0x50", "type": "float32" }
+  }
+}

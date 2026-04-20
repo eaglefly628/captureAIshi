@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "ac_odyssey",
+  "display_name": "Assassin's Creed Odyssey",
+  "process_names": ["ACOdyssey.exe"],
+  "engine": "Anvil Next",
+  "engine_version": "v1.5.0+ (IGCS-GITC v1.0.13)",
+  "credits": "Otis_Inf / ghostinthecamera (IGCS-GITC)",
+  "source": "docs/refCode/igcs-gitc/ac_odyssey/",
+  "notes": "Camera struct intercept: MOVDQU [rsi+0x90], xmm0 -> rsi = base. Quaternion XYZW at 0xA0..0xAC. Coords at 0x90..0x98. FOV at 0xB0.",
+
+  "intercepts": [
+    {
+      "name": "activecam_write",
+      "description": "Camera address intercept -- rsi = camera struct base. Coords at rsi+0x90.",
+      "size": 12,
+      "aob_literal":  "66 0F 7F 86 90 00 00 00 66 0F 7F 0F",
+      "aob_wildcard": "66 0F 7F 86 ?? 00 00 00 66 0F 7F ??",
+      "prefer": "literal",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "rsi = camera struct at intercept. Quaternion XYZW at 0xA0..0xAC. Coords XYZ at 0x90..0x98. FOV at 0xB0. Verify quat component order (game may use WXYZ or XYZW).",
+    "struct_base_reg": "rsi",
+    "capture_from_intercept": "activecam_write",
+    "location": { "x": "0x90", "y": "0x94", "z": "0x98", "type": "float32" },
+    "rotation_quaternion": { "x": "0xA0", "y": "0xA4", "z": "0xA8", "w": "0xAC", "type": "float32" },
+    "fov": { "off": "0xB0", "type": "float32" }
+  }
+}

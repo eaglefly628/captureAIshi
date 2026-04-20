@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "dmc5",
+  "display_name": "Devil May Cry 5",
+  "process_names": ["DevilMayCry5.exe"],
+  "engine": "RE Engine",
+  "engine_version": "1.0.1+ (IGCS reference)",
+  "credits": "Otis_Inf / ghostinthecamera (IGCS-GITC)",
+  "source": "docs/refCode/igcs-gitc/dmc5/",
+  "notes": "RE Engine. Camera struct has NEGATIVE offsets: coords at ptr-0xF0, quat at ptr-0xE0. FOV at rsi+0x38 (positive). Current schema does not support negative offsets -- needs CE verification to find the correct positive-offset intercept point or schema extension.",
+
+  "intercepts": [
+    {
+      "name": "activecam_fov",
+      "description": "FOV write at rsi+0x38 -- rsi = camera object. Coords/quat at negative offsets, TBD.",
+      "size": 18,
+      "aob_literal":  "F3 0F 11 46 38 48 8B 43 50 48 83 78 18 00 75 00 F3 0F",
+      "aob_wildcard": "F3 0F 11 46 38 48 8B 43 50 48 83 78 18 00 75 ?? F3 0F",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "DISABLED: negative struct offsets (-0xF0 coords, -0xE0 quat) not supported by schema. Once schema supports negative offsets or a secondary intercept is found with positive offsets, enable and set struct_base_reg + offsets.",
+    "struct_base_reg": "rsi",
+    "capture_from_intercept": "activecam_fov",
+    "location": { "x": "TODO_negative", "y": "TODO_negative", "z": "TODO_negative", "type": "float32" },
+    "rotation_quaternion": { "x": "TODO_negative", "y": "TODO_negative", "z": "TODO_negative", "w": "TODO_negative", "type": "float32" },
+    "fov": { "off": "0x38", "type": "float32" }
+  }
+}

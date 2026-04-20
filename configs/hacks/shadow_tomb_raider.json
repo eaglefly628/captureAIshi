@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "shadow_tomb_raider",
+  "display_name": "Shadow of the Tomb Raider",
+  "process_names": ["SOTTR.exe"],
+  "engine": "Foundation",
+  "engine_version": "v1.0.6 (IGCS reference)",
+  "credits": "Otis_Inf / ghostinthecamera (IGCS-GITC)",
+  "source": "docs/refCode/igcs-gitc/shadow_tomb_raider/",
+  "notes": "Foundation engine. CAMERA_WRITE1: MOVDQU [rcx+0x80], xmm0 -> rcx = camera struct. Quaternion at rcx+0xA0. FOV at 0xB0. Same layout shape as AC Odyssey.",
+
+  "intercepts": [
+    {
+      "name": "activecam_write",
+      "description": "Camera coord+quat write -- rcx = camera struct base. Coords at 0x80, quat at 0xA0, FOV at 0xB0.",
+      "size": 24,
+      "aob_literal":  "66 0F 7F 81 80 00 00 00 0F 28 8A A0 00 00 00 0F 29 89 A0 00 00 00 8B 82",
+      "aob_wildcard": "66 0F 7F 81 ?? 00 00 00 0F 28 8A ?? 00 00 00 0F 29 89 ?? 00 00 00 8B 82",
+      "prefer": "literal",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "rcx = camera struct at intercept. Coords XYZ at 0x80..0x88. Quaternion XYZW at 0xA0..0xAC. FOV at 0xB0. Verify quat component order (XYZW vs WXYZ) with CE.",
+    "struct_base_reg": "rcx",
+    "capture_from_intercept": "activecam_write",
+    "location": { "x": "0x80", "y": "0x84", "z": "0x88", "type": "float32" },
+    "rotation_quaternion": { "x": "0xA0", "y": "0xA4", "z": "0xA8", "w": "0xAC", "type": "float32" },
+    "fov": { "off": "0xB0", "type": "float32" }
+  }
+}

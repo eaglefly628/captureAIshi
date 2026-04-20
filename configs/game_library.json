@@ -80,6 +80,117 @@
       "ac": "warn -- Denuvo on launcher; SP gameplay has no online AC. RenderDoc injection should work.",
       "test_status": "untested",
       "aob_source": "pending -- UE5 mem scanner (no EAC, Denuvo only)"
+    },
+    {
+      "name": "Resident Evil 2",
+      "engine": "RE Engine",
+      "engine_version": "1.0.2+",
+      "profile_id": "re2",
+      "process_name": "re2.exe",
+      "source": "Steam",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.2",
+      "aob_source": "igcs-gitc/re2"
+    },
+    {
+      "name": "Resident Evil 3",
+      "engine": "RE Engine",
+      "engine_version": "1.0.3+",
+      "profile_id": "re3",
+      "process_name": "re3.exe",
+      "source": "Steam",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.3",
+      "aob_source": "igcs-gitc/re3"
+    },
+    {
+      "name": "Devil May Cry 5",
+      "engine": "RE Engine",
+      "engine_version": "1.0.1+",
+      "profile_id": "dmc5",
+      "process_name": "DevilMayCry5.exe",
+      "source": "Steam",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.2",
+      "aob_source": "igcs-gitc/dmc5",
+      "note": "Negative struct offsets (-0xF0 coords, -0xE0 quat). Profile has camera_write_profile disabled until schema supports negative offsets."
+    },
+    {
+      "name": "Sekiro: Shadows Die Twice",
+      "engine": "FromSoftware Engine",
+      "engine_version": "v1.06",
+      "profile_id": "sekiro",
+      "process_name": "sekiro.exe",
+      "source": "Steam",
+      "ac": "warn -- EAC present; launch via sekiro.exe directly (not EAC launcher) for SP injection.",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v2.10",
+      "aob_source": "igcs-gitc/sekiro",
+      "note": "Rotation is 3x3 float matrix (not quaternion). Profile disabled until matrix rotation supported."
+    },
+    {
+      "name": "Assassin's Creed Odyssey",
+      "engine": "Anvil Next",
+      "engine_version": "v1.5.0+",
+      "profile_id": "ac_odyssey",
+      "process_name": "ACOdyssey.exe",
+      "source": "Steam / Ubisoft Connect / Epic",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.13",
+      "aob_source": "igcs-gitc/ac_odyssey"
+    },
+    {
+      "name": "Assassin's Creed Origins",
+      "engine": "AnvilNext 2.0",
+      "engine_version": "v1.51+",
+      "profile_id": "ac_origins",
+      "process_name": "ACOrigins.exe",
+      "source": "Steam / Ubisoft Connect / Epic",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.10",
+      "aob_source": "igcs-gitc/ac_origins",
+      "note": "Camera write AOB pattern not in public IGCS source. Struct offsets documented; needs CE scan for AOB."
+    },
+    {
+      "name": "Prey (2017)",
+      "engine": "CryEngine V",
+      "engine_version": "v1.0.4+",
+      "profile_id": "prey2017",
+      "process_name": "Prey.exe",
+      "source": "Steam / GOG",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.5",
+      "aob_source": "igcs-gitc/prey2017"
+    },
+    {
+      "name": "Watch Dogs 2",
+      "engine": "Disrupt",
+      "engine_version": "v1.016+",
+      "profile_id": "watchdogs2",
+      "process_name": "WatchDogs2.exe",
+      "source": "Steam / Ubisoft Connect / Epic",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS-GITC (ghostinthecamera) v1.0.5",
+      "aob_source": "igcs-gitc/watchdogs2"
+    },
+    {
+      "name": "Shadow of the Tomb Raider",
+      "engine": "Foundation",
+      "engine_version": "v1.0.6",
+      "profile_id": "shadow_tomb_raider",
+      "process_name": "SOTTR.exe",
+      "source": "Steam / Epic",
+      "ac": "none",
+      "test_status": "untested",
+      "aob_version": "IGCS reference / ghostinthecamera",
+      "aob_source": "igcs-gitc/shadow_tomb_raider"
     }
   ]
 }
