@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "version": "0.4.0",
-    "updated": "2026-04-18",
-    "note": "Active list. The 6 games the user actually targets. Each has a matching profile in configs/hacks/<id>.json (some are AOB stubs pending CE / Commit D auto-discovery). Full 332-game UUU library is backed up at configs/game_library_full.json -- restore from there if you need to re-expand."
+    "version": "0.5.0",
+    "updated": "2026-04-20",
+    "note": "Active list. test_status: 'ok'=tested+working, 'version_mismatch'=tested but AOB needs update for installed build, 'untested'=not yet verified. aob_source tracks where bytes came from."
   },
   "games": [
     {
@@ -12,7 +12,9 @@
       "profile_id": "stackobot_ue5",
       "process_name": "StackOBot.exe",
       "source": "Epic free UE5 sample, self-compiled by user",
-      "ac": "none"
+      "ac": "none",
+      "test_status": "untested",
+      "aob_source": "UE5 mem scanner (no AOB needed)"
     },
     {
       "name": "Batman: Arkham Knight",
@@ -22,44 +24,62 @@
       "process_name": "BatmanAK.exe",
       "source": "Steam / Epic / GOG",
       "ac": "none",
-      "uuu": "v3"
+      "uuu": "v3",
+      "test_status": "ok",
+      "tested_build": "Steam (any patch)",
+      "aob_version": "IGCS reference / Otis_Inf",
+      "aob_source": "igcs/Cameras/BatmanAK"
     },
     {
       "name": "Hellblade: Senua's Sacrifice",
       "engine": "UE4",
+      "engine_version": "4.x",
       "profile_id": "hellblade_ue4",
-      "process_name": "Hellblade.exe",
+      "process_name": "HellbladeGame-Win64-Shipping.exe",
       "source": "Steam / Game Pass",
       "ac": "none",
-      "uuu": "v3"
+      "uuu": "v3",
+      "test_status": "version_mismatch",
+      "tested_build": "Steam build 7800612 (Definitive Edition / D3D12)",
+      "aob_version": "IGCS reference (Otis_Inf) -- original 2017 D3D11 build",
+      "aob_source": "igcs/Cameras/Hellblade",
+      "note": "AOB verified for 2017 D3D11 build. DE / D3D12 build has different binary. Needs CE rescan."
     },
     {
       "name": "Cyberpunk 2077",
       "engine": "REDengine 4",
-      "engine_version": "2.x",
+      "engine_version": "2.12 (Phantom Liberty)",
       "profile_id": "cyberpunk2077",
       "process_name": "Cyberpunk2077.exe",
       "source": "Steam / Epic / GOG",
-      "ac": "none"
+      "ac": "none",
+      "test_status": "version_mismatch",
+      "tested_build": "Steam build 20383525 (v2.12)",
+      "aob_version": "IGCS reference (Otis_Inf / Jim2Point0) -- v1.0.11",
+      "aob_source": "igcs/Cameras/Cyberpunk2077",
+      "note": "IGCS public repo only has 1.0.11 AOB. 2.x patterns are Patreon-private. Wildcard fallback added -- may or may not match."
     },
     {
       "name": "Unreal Physics",
       "engine": "UE5",
+      "engine_version": "5.x",
       "profile_id": "unreal_physics",
       "process_name": "UnrealPhysics.exe",
       "source": "https://store.steampowered.com/app/2837320/Unreal_Physics/",
       "ac": "none",
-      "_todo": "AOB pending -- run Commit D auto-discovery or CE manual scan against the live process"
+      "test_status": "untested",
+      "aob_source": "pending -- UE5 mem scanner or Commit D auto-discovery"
     },
     {
       "name": "Black Myth: Wukong",
       "engine": "UE5",
-      "engine_version": "5.x (LWC, with NVIDIA DLSS 3.5 / FSR 3.0)",
+      "engine_version": "5.x (LWC, Nanite/Lumen, Denuvo)",
       "profile_id": "black_myth_wukong",
       "process_name": "b1-Win64-Shipping.exe",
       "source": "Steam / Epic",
-      "ac": "warn -- Game Science custom DRM on the launcher; SP gameplay process has no online AC. Verify in your build before injecting.",
-      "_todo": "AOB pending -- run Commit D auto-discovery or CE manual scan against the live process"
+      "ac": "warn -- Denuvo on launcher; SP gameplay has no online AC. RenderDoc injection should work.",
+      "test_status": "untested",
+      "aob_source": "pending -- UE5 mem scanner (no EAC, Denuvo only)"
     }
   ]
 }

@@ -2452,7 +2452,6 @@ function renderGameList() {
     list.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary);padding:8px;text-align:center">No games found</div>';
     return;
   }
-  // Virtual scroll: show first 50
   const visible = allGames.slice(0, 50);
   list.innerHTML = '';
   visible.forEach(g => {
@@ -2461,9 +2460,19 @@ function renderGameList() {
     row.style.padding = '4px 6px';
     if (selectedGame && selectedGame.slug === g.slug) row.style.background = 'var(--accent-dim)';
     row.onclick = () => selectGame(g);
+
+    // Status dot color
+    const statusColor = g.test_status === 'ok' ? '#3ecf8e'
+                      : g.test_status === 'version_mismatch' ? '#f03e3e'
+                      : '#f0b03e'; // untested
+    const statusLabel = g.test_status === 'ok' ? 'Tested OK'
+                      : g.test_status === 'version_mismatch' ? 'Version mismatch — AOB needs update'
+                      : 'Untested';
+    const testedInfo = g.tested_build ? ` | ${g.tested_build}` : (g.aob_version ? ` | ${g.aob_version}` : '');
+    const tooltip = `${statusLabel}${testedInfo}${g.note ? '\n' + g.note : ''}`;
+
     const engineBadge = g.engine === 'UE5' ? 'color:var(--accent)' : 'color:var(--text-tertiary)';
-    const configDot = g.has_config ? '<span style="color:var(--success);margin-right:3px" title="Has config">*</span>' : '';
-    row.innerHTML = `${configDot}<span class="cfg-name" style="font-size:11px">${g.name}</span><span class="cfg-meta" style="${engineBadge}">${g.engine||'?'}</span>`;
+    row.innerHTML = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${statusColor};margin-right:5px;flex-shrink:0;vertical-align:middle" title="${tooltip.replace(/"/g,'&quot;')}"></span><span class="cfg-name" style="font-size:11px">${g.name}</span><span class="cfg-meta" style="${engineBadge}">${g.engine||'?'}</span>`;
     list.appendChild(row);
   });
   if (allGames.length > 50) {
