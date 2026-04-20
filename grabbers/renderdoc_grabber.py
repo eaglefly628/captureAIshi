@@ -94,6 +94,7 @@ class RenderDocGrabber(FrameGrabber):
         self.startup_timeout = startup_timeout
         self.wait_for_port = wait_for_port
         self._process = None
+        self._game_direct_process = None
         self._capture_count = 0
         self.export_normal = export_normal
         self._use_native = _HAS_NATIVE_BRIDGE
@@ -115,6 +116,8 @@ class RenderDocGrabber(FrameGrabber):
         if self.inject_mode and self.target_exe:
             import os
             process_name = os.path.basename(self.target_exe)
+            if self.auto_launch:
+                self._launch_game_direct()
             self._inject_into_process(process_name)
         elif self.auto_launch and self.target_exe:
             # If user put exe + args all in one string, split them apart
@@ -173,6 +176,21 @@ class RenderDocGrabber(FrameGrabber):
                 f"or launch with: {self.renderdoc_path} capture <game.exe>"
             )
 
+    def _launch_game_direct(self) -> None:
+        """Launch the game exe directly without renderdoccmd (for inject mode).
+
+        Used when the game crashes if launched through RenderDoc (e.g. Cyberpunk 2.x).
+        We just spawn the exe and let the OS handle it; _inject_into_process() will
+        then poll for the PID and inject renderdoc.dll once the process appears.
+        """
+        cmd = [self.target_exe] + self.target_args
+        logger.info(f"Inject mode: launching game directly: {' '.join(cmd)}")
+        self._game_direct_process = subprocess.Popen(cmd)
+        logger.info(
+            f"Game process spawned (PID={self._game_direct_process.pid}). "
+            f"Waiting for it to initialize before injecting..."
+        )
+
     def _find_pid_by_name(self, process_name: str) -> Optional[int]:
         """Return PID of first running process matching name, or None."""
         import sys
@@ -229,6 +247,18 @@ class RenderDocGrabber(FrameGrabber):
                 f"Game process '{process_name}' not found within {self.startup_timeout}s. "
                 f"Start the game manually then retry."
             )
+
+        # For inject mode the process must have already initialized D3D12 before we
+        # inject, otherwise RenderDoc's hook fires during device creation and we get
+        # the same crash as the launch mode. Wait until the bridge port responds
+        # (meaning a previous bridge is alive) OR a fixed delay if no port check.
+        # The port check below in _wait_for_game_ready handles the "ready" signal;
+        # here we just need the D3D12 device to be past creation. In practice the
+        # game loading screen keeps D3D12 busy for several seconds -- polling the
+        # exe for a few seconds is sufficient.
+        if self._game_direct_process is not None:
+            logger.info("Waiting 5s for D3D12 device initialization before injecting...")
+            time.sleep(5.0)
 
         rdoc_cmd = self._resolve_renderdoccmd()
         inject_cmd = [rdoc_cmd, "inject", "--pid", str(pid)]

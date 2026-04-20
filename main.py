@@ -94,7 +94,7 @@ def create_grabber(args):
             capture_dir=str(args.output_dir / "captures"),
             target_exe=args.target_exe,
             target_args=getattr(args, 'target_args', []),
-            auto_launch=bool(args.target_exe) and not inject_mode,
+            auto_launch=bool(args.target_exe),
             inject_mode=inject_mode,
             ui_hider=rdoc_ui_hider,
             wait_for_port=int(driver_port) if driver_port else None,

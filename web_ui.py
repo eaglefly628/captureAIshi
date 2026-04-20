@@ -1083,20 +1083,18 @@ _VALID_GRABBERS = {"none", "renderdoc", "screenshot"}
 _VALID_CE_MODES = {"file", "socket"}
 
 
-def _hack_profile_launch_style(profile_id: str, target_exe: str = "") -> str:
-    """Return the launch_arg_style for a hack profile ('unreal' if absent).
+def _hack_profile_data(profile_id: str, target_exe: str = "") -> dict:
+    """Return the hack profile JSON dict, or {} if not found.
 
     Looks up by profile_id first; if empty or unknown, falls back to matching
-    the basename of target_exe against each profile's process_names. This lets
-    direct-exe-entry users (skipping the Game Library) still get correct args.
+    the basename of target_exe against each profile's process_names.
     """
     hacks_dir = Path(__file__).resolve().parent / "configs" / "hacks"
 
     if profile_id and profile_id.replace("_", "").isalnum():
         path = hacks_dir / f"{profile_id}.json"
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data.get("launch_arg_style", "unreal")
+            return json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
 
@@ -1111,9 +1109,13 @@ def _hack_profile_launch_style(profile_id: str, target_exe: str = "") -> str:
                 continue
             for name in data.get("process_names", []):
                 if name.lower() == exe_name:
-                    return data.get("launch_arg_style", "unreal")
+                    return data
+    return {}
 
-    return "unreal"
+
+def _hack_profile_launch_style(profile_id: str, target_exe: str = "") -> str:
+    """Return the launch_arg_style for a hack profile ('unreal' if absent)."""
+    return _hack_profile_data(profile_id, target_exe).get("launch_arg_style", "unreal")
 
 
 def _validate_float_list(val, length: int, name: str) -> list:
@@ -1166,12 +1168,15 @@ def _build_args(data: dict) -> Namespace:
     launch_args = []
     resx = int(data.get("launch_resx", 0) or 0)
     resy = int(data.get("launch_resy", 0) or 0)
-    launch_arg_style = _hack_profile_launch_style(
+    _profile = _hack_profile_data(
         str(data.get("hack_profile_id", "")),
         str(data.get("target_exe", "")),
     )
+    launch_arg_style = _profile.get("launch_arg_style", "unreal")
+    launch_mode = _profile.get("launch_mode", "capture")
+    args.inject = (launch_mode == "inject")
     logging.info(
-        f"[LAUNCH] arg_style={launch_arg_style} "
+        f"[LAUNCH] arg_style={launch_arg_style} launch_mode={launch_mode} "
         f"(profile_id={data.get('hack_profile_id', '')!r}, "
         f"exe={Path(str(data.get('target_exe', ''))).name!r})"
     )
