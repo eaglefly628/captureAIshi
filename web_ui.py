@@ -260,6 +260,19 @@ def hacks_write(profile_id: str):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/hacks/read_pose/<profile_id>", methods=["GET"])
+def hacks_read_pose(profile_id: str):
+    """Read current camera pose from captured struct using profile offsets."""
+    if not profile_id.replace("_", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile id"}), 400
+    try:
+        from drivers import game_profile
+        slot = int(request.args.get("slot", 0))
+        return jsonify(game_profile.read_camera_pose(profile_id, slot))
+    except ConnectionRefusedError:
+        return jsonify({"ok": False, "error": "Bridge connection failed"}), 500
+
+
 # ---------------------------------------------------------------------------
 # Trajectory presets + 60 Hz player (Commit B)
 # ---------------------------------------------------------------------------
@@ -337,6 +350,7 @@ def trajectory_play():
             loop=bool(body.get("loop", False)),
             preset_name=preset,
             renderdoc_capture=bool(body.get("renderdoc_capture", False)),
+            relative_origin=bool(body.get("relative_origin", False)),
         )
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "profile not found"}), 404

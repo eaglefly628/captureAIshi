@@ -629,12 +629,20 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
     }
 
     if (cmd.rfind("__cam_intercept_install_aob ", 0) == 0) {
-        /* format: __cam_intercept_install_aob <size> <name> | <AOB hex> */
+        /* format: __cam_intercept_install_aob <size> <occurrence> <name> | <AOB hex>
+         * occurrence >= 1; 1 = first match (default). */
         const char* p = cmd.c_str() + 28;
         char* end = NULL;
         long size = strtol(p, &end, 10);
         if (end == p || size <= 0 || size > 64) {
-            cs_reply(client, "error: usage __cam_intercept_install_aob <size> <name> | <AOB>\n");
+            cs_reply(client, "error: usage __cam_intercept_install_aob <size> <occurrence> <name> | <AOB>\n");
+            return true;
+        }
+        p = end;
+        while (*p == ' ') p++;
+        long occurrence = strtol(p, &end, 10);
+        if (end == p || occurrence < 1) {
+            cs_reply(client, "error: missing occurrence (>= 1) after size\n");
             return true;
         }
         p = end;
@@ -650,7 +658,8 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         const char* aob = bar + 1;
         while (*aob == ' ') aob++;
         bool ok = cam_intercept_install_aob(aob, (size_t)size,
-                                             name.empty() ? "aob" : name.c_str());
+                                             name.empty() ? "aob" : name.c_str(),
+                                             (int)occurrence);
         cs_reply(client, ok ? "ok\n" : "error: install failed (see log)\n");
         return true;
     }
@@ -766,6 +775,54 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         if (end == p) { cs_reply(client, "error: bad value\n"); return true; }
         bool ok = cam_mem_poke(addr, off, type, bits);
         cs_reply(client, ok ? "ok\n" : "error: poke faulted\n");
+        return true;
+    }
+
+    /* Read a typed value from a raw address.
+     * Format: __cam_mem_peek <addr_hex> <offset_hex_or_dec> <type>
+     * Returns: value=<number>
+     */
+    if (cmd.rfind("__cam_mem_peek ", 0) == 0) {
+        const char* p = cmd.c_str() + 15;
+        char* end = NULL;
+        uint64_t addr = strtoull(p, &end, 16);
+        if (end == p || addr == 0) { cs_reply(client, "error: bad addr\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        uint64_t off = 0;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+            off = strtoull(p + 2, &end, 16);
+        } else {
+            off = strtoull(p, &end, 10);
+        }
+        if (end == p) { cs_reply(client, "error: bad offset\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        char tbuf[8] = {0};
+        int ti = 0;
+        while (*p && *p != ' ' && ti < 7) { tbuf[ti++] = *p++; }
+        int type = -1;
+        if (strcmp(tbuf, "f32") == 0) type = 0;
+        else if (strcmp(tbuf, "f64") == 0) type = 1;
+        else if (strcmp(tbuf, "i32") == 0) type = 2;
+        else if (strcmp(tbuf, "u32") == 0) type = 3;
+        if (type < 0) { cs_reply(client, "error: type must be f32|f64|i32|u32\n"); return true; }
+        uint64_t bits = 0;
+        if (!cam_mem_peek(addr, off, type, &bits)) {
+            cs_reply(client, "error: peek faulted\n");
+            return true;
+        }
+        char buf[64];
+        if (type == 0) {
+            float f; memcpy(&f, &bits, 4);
+            snprintf(buf, sizeof(buf), "value=%.6g\n", (double)f);
+        } else if (type == 1) {
+            double d; memcpy(&d, &bits, 8);
+            snprintf(buf, sizeof(buf), "value=%.6g\n", d);
+        } else {
+            snprintf(buf, sizeof(buf), "value=%d\n", (int32_t)(uint32_t)bits);
+        }
+        cs_reply(client, buf);
         return true;
     }
 

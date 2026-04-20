@@ -279,8 +279,13 @@ class TrajectoryPlayer:
         loop: bool = False,
         preset_name: str = "",
         renderdoc_capture: bool = False,
+        relative_origin: bool = False,
     ) -> dict:
         """Start streaming ``points`` to the camera at ``rate_hz``.
+
+        If ``relative_origin`` is True, the current camera pose is read from
+        the captured struct and its (x, y, z) is added to every trajectory
+        point so the path starts from the player's current position.
 
         Returns immediately; writer runs on a background thread. Raises
         ``RuntimeError`` if a trajectory is already playing; call
@@ -298,6 +303,21 @@ class TrajectoryPlayer:
             addr = game_profile.get_captured_addr(slot)
             if not addr:
                 addr = _auto_capture(slot)
+
+            if relative_origin:
+                pose = game_profile.read_camera_pose(profile_id, slot)
+                if pose.get("ok"):
+                    ox, oy, oz = pose["x"], pose["y"], pose["z"]
+                    points = [
+                        PosePoint(t=p.t, x=p.x + ox, y=p.y + oy, z=p.z + oz,
+                                  pitch=p.pitch, yaw=p.yaw, roll=p.roll, fov=p.fov)
+                        for p in points
+                    ]
+                    logger.info("[PLAYER] relative_origin: offset (%.2f, %.2f, %.2f)",
+                                ox, oy, oz)
+                else:
+                    logger.warning("[PLAYER] relative_origin requested but pose read failed: %s",
+                                   pose.get("error"))
 
             self._stop_evt.clear()
             self._pause_evt.clear()
@@ -327,6 +347,7 @@ class TrajectoryPlayer:
             "duration": total_duration(points),
             "rate_hz": rate_hz,
             "loop": loop,
+            "relative_origin": relative_origin,
         }
 
     def stop(self, timeout: float = 2.0) -> dict:

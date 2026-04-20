@@ -192,6 +192,28 @@ static inline const uint8_t* scan_main_module(
     return pattern_scan(rgn.base, rgn.size, pattern, mask, pat_len);
 }
 
+/* Convenience: scan main module, return Nth match (occurrence >= 1). */
+static inline const uint8_t* scan_main_module_nth(
+    const uint8_t* pattern, const char* mask, size_t pat_len, int occurrence)
+{
+    ModuleRegion rgn;
+    if (!get_main_module(rgn)) return nullptr;
+    if (occurrence <= 1)
+        return pattern_scan(rgn.base, rgn.size, pattern, mask, pat_len);
+    const uint8_t* base = rgn.base;
+    size_t remaining = rgn.size;
+    int found = 0;
+    while (remaining >= pat_len) {
+        const uint8_t* m = pattern_scan(base, remaining, pattern, mask, pat_len);
+        if (!m) return nullptr;
+        if (++found == occurrence) return m;
+        size_t advance = (size_t)(m - base) + 1;
+        base += advance;
+        remaining -= advance;
+    }
+    return nullptr;
+}
+
 /* -- String search (safe) ------------------------------------------ */
 
 /*

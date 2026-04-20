@@ -46,6 +46,7 @@ class Intercept:
     prefer: str = "literal"          # "literal" or "wildcard"
     default_mode: str = "pass"       # "pass" or "nop"
     description: str = ""
+    occurrence: int = 1              # which match to install (1 = first)
 
 
 @dataclass
@@ -73,6 +74,7 @@ class Profile:
                 prefer=i.get("prefer", "literal"),
                 default_mode=i.get("default_mode", "pass"),
                 description=i.get("description", ""),
+                occurrence=max(1, int(i.get("occurrence", 1))),
             )
             for i in data.get("intercepts", [])
         ]
@@ -190,7 +192,7 @@ def _install_one(inter: Intercept) -> tuple[bool, str]:
 
     last = ""
     for kind, aob in order:
-        cmd = f"__cam_intercept_install_aob {inter.size} {inter.name}_{kind} | {aob}"
+        cmd = f"__cam_intercept_install_aob {inter.size} {inter.occurrence} {inter.name}_{kind} | {aob}"
         last = _send(cmd)
         if last.strip() == "ok":
             return True, f"{kind}: ok"
@@ -298,6 +300,64 @@ def mem_poke(addr: int, offset: int, v_type: str, value: float | int) -> str:
     return _send(cmd)
 
 
+def _coerce_type(t: str) -> str:
+    """Convert schema type name to bridge poke/peek type token."""
+    if t in ("float32", "f32"): return "f32"
+    if t in ("double64", "f64"): return "f64"
+    if t in ("int32", "i32", "ue3_packed_int"): return "i32"
+    if t in ("uint32", "u32"): return "u32"
+    return "f32"
+
+
+def mem_peek(addr: int, offset: int, v_type: str) -> float | None:
+    """Read one typed value from addr+offset. Returns float or None on error."""
+    r = _send(f"__cam_mem_peek {addr:X} 0x{offset:X} {v_type}")
+    r = (r or "").strip()
+    if r.startswith("value="):
+        try:
+            return float(r[6:])
+        except ValueError:
+            return None
+    return None
+
+
+def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
+    """Read current camera pose from captured struct using profile offsets.
+
+    Returns {"ok": bool, "x","y","z","pitch","yaw","roll","fov": float}.
+    """
+    prof = load_profile(profile_id)
+    cam = prof.camera_write_profile
+    if not cam.get("enabled"):
+        return {"ok": False, "error": f"profile {profile_id} camera_write_profile disabled"}
+    addr = get_captured_addr(slot)
+    if not addr:
+        return {"ok": False, "error": f"no capture at slot {slot}"}
+    loc = cam.get("location", {})
+    rot = cam.get("rotation", {})
+    fov_cfg = cam.get("fov", {})
+    loc_t = _coerce_type(loc.get("type", "float32"))
+    rot_t = _coerce_type(rot.get("type", "float32"))
+    fov_t = _coerce_type(fov_cfg.get("type", "float32"))
+
+    def rd(off_str: str, vt: str) -> float:
+        off = _parse_hex_or_dec(off_str)
+        v = mem_peek(addr, off, vt)
+        return v if v is not None else 0.0
+
+    return {
+        "ok": True,
+        "addr": f"0x{addr:X}",
+        "x":     rd(loc.get("x", "0"), loc_t),
+        "y":     rd(loc.get("y", "0"), loc_t),
+        "z":     rd(loc.get("z", "0"), loc_t),
+        "pitch": rd(rot.get("pitch", "0"), rot_t),
+        "yaw":   rd(rot.get("yaw",   "0"), rot_t),
+        "roll":  rd(rot.get("roll",  "0"), rot_t),
+        "fov":   rd(fov_cfg.get("off", "0"), fov_t),
+    }
+
+
 def _parse_hex_or_dec(s: Any) -> int:
     if isinstance(s, int):
         return s
@@ -336,14 +396,6 @@ def write_camera(profile_id: str,
     rot_type = rot.get("type", "float32")
     fov_type = fov_cfg.get("type", "float32")
 
-    def tc(t: str) -> str:
-        # schema types -> bridge poke types
-        if t in ("float32", "f32"): return "f32"
-        if t in ("double64", "f64"): return "f64"
-        if t in ("int32", "i32", "ue3_packed_int"): return "i32"
-        if t in ("uint32", "u32"): return "u32"
-        return "f32"
-
     writes: list[dict[str, Any]] = []
 
     def push(field: str, off_key: str, where: dict[str, Any], type_: str,
@@ -351,7 +403,7 @@ def write_camera(profile_id: str,
         if off_key not in where:
             return
         off = _parse_hex_or_dec(where[off_key])
-        tn = tc(type_)
+        tn = _coerce_type(type_)
         resp = mem_poke(addr, off, tn, val)
         writes.append({
             "field": field,
@@ -370,8 +422,8 @@ def write_camera(profile_id: str,
     push("roll", "roll", rot, rot_type, roll)
     if "off" in fov_cfg:
         off = _parse_hex_or_dec(fov_cfg["off"])
-        resp = mem_poke(addr, off, tc(fov_type), fov)
-        writes.append({"field": "fov", "offset": f"0x{off:X}", "type": tc(fov_type),
+        resp = mem_poke(addr, off, _coerce_type(fov_type), fov)
+        writes.append({"field": "fov", "offset": f"0x{off:X}", "type": _coerce_type(fov_type),
                        "value": fov, "ok": resp.strip() == "ok", "response": resp})
 
     return {

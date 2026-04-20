@@ -403,7 +403,7 @@ static bool cam_intercept_install_addr(uint8_t* addr, size_t size,
 /* AOB scan in main module; install at first match. Also parses ModRM
  * for future capture mode. */
 static bool cam_intercept_install_aob(const char* aob_hex, size_t size,
-                                       const char* name)
+                                       const char* name, int occurrence = 1)
 {
     uint8_t bytes[128];
     char    mask[129];
@@ -412,15 +412,16 @@ static bool cam_intercept_install_aob(const char* aob_hex, size_t size,
         bridge_log("[intercept] install_aob: malformed pattern");
         return false;
     }
-    const uint8_t* match = scan_main_module(bytes, mask, (size_t)pat_len);
+    const uint8_t* match = scan_main_module_nth(bytes, mask, (size_t)pat_len,
+                                                occurrence);
     if (!match) {
-        bridge_log("[intercept] install_aob: pattern not found (%d tokens)",
-                   pat_len);
+        bridge_log("[intercept] install_aob: pattern not found (tokens=%d occ=%d)",
+                   pat_len, occurrence);
         return false;
     }
     int base_reg = cam_parse_base_reg(bytes, mask, pat_len);
-    bridge_log("[intercept] install_aob: match 0x%p (pat=%d bytes, base_reg=%d)",
-               (void*)match, pat_len, base_reg);
+    bridge_log("[intercept] install_aob: match 0x%p (pat=%d bytes, base_reg=%d, occ=%d)",
+               (void*)match, pat_len, base_reg, occurrence);
 
     bool ok = cam_intercept_install_addr((uint8_t*)match, size, name);
     if (!ok) return false;
@@ -605,6 +606,36 @@ static bool cam_mem_poke(uint64_t addr, uint64_t offset, int type,
             case 2: /* i32 */
             case 3: /* u32 */
                 *(uint32_t*)target = (uint32_t)(value_bits & 0xFFFFFFFFu);
+                return true;
+            default:
+                return false;
+        }
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+/* Read a typed value from addr+offset. Returns true and fills value_bits on
+ * success. Wraps in SEH so a bogus address doesn't crash the DLL. */
+static bool cam_mem_peek(uint64_t addr, uint64_t offset, int type,
+                         uint64_t* value_bits)
+{
+    if (addr == 0 || !value_bits) return false;
+    const uint8_t* src = (const uint8_t*)(uintptr_t)addr + offset;
+    __try {
+        switch (type) {
+            case 0: { /* f32 */
+                uint32_t v = *(const uint32_t*)src;
+                *value_bits = v;
+                return true;
+            }
+            case 1: /* f64 */
+                *value_bits = *(const uint64_t*)src;
+                return true;
+            case 2: /* i32 */
+            case 3: /* u32 */
+                *value_bits = *(const uint32_t*)src;
                 return true;
             default:
                 return false;

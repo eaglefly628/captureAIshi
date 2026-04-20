@@ -7,7 +7,7 @@
   "engine_version": "1.0.11+ (IGCS reference)",
   "credits": "Otis_Inf / Jim2Point0 (IGCS)",
   "source": "docs/refCode/igcs/Cameras/Cyberpunk2077/",
-  "notes": "ActiveCam write at second occurrence of this pattern (IGCS uses occurrence=2). Our scanner currently returns the first match -- first install will likely NOP the wrong write. TODO: add occurrence support. Until then, user needs to uninstall and manually re-target. Uses quaternion rotation (0xF0) + coords at +0xE0. Camera base register is rbx.",
+  "notes": "ActiveCam write at second occurrence of this pattern (IGCS reference). occurrence=2 set in intercept. Uses quaternion rotation (0xF0) + coords at +0xE0. Camera base register is rbx.",
 
   "intercepts": [
     {
@@ -17,7 +17,7 @@
       "aob_literal":  "F2 0F 11 83 E0 00 00 00 0F 28 44 24 30 89 8B E8 00 00 00 0F 11 83 F0 00 00 00",
       "prefer": "literal",
       "default_mode": "pass",
-      "_occurrence_todo": 2
+      "occurrence": 2
     }
   ],
 
