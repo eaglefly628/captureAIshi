@@ -44,6 +44,7 @@ Enables trajectory playback. Currently only UE4/UE5 auto-populate this via `find
 | `capture_from_intercept` | string | Name of intercept whose trampoline captures the register. |
 | `location` | object | `{ x, y, z, type }` where `type` is `float32` or `double64`. |
 | `rotation` | object | `{ pitch, yaw, roll, type }` where `type` is `float32`, `double64`, or `ue3_packed_int`. |
+| `rotation_matrix` | object | `{ row0, row1, row2, type, rotation_convention }`. Offsets to the 3 basis-vector rows (each 3 floats, stride 4 bytes). `rotation_convention` is `"ac6"` (default, IGCS-GITC DirectX LH: M=Mz(-r)·Mx(-p)·My(y)) or `"metro"` (4A Engine cryengine-specific: M=Mx(-r)·Mz(-p)·My(y)). |
 | `fov` | object | `{ off, type }`. |
 
 All `_off` / `x` / `y` / ... fields accept either `"0x574"` (hex string) or `1396` (decimal int).

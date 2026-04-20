@@ -294,26 +294,52 @@ def _poke_str(v_type: str, v: float | int) -> str:
     return str(int(v))
 
 
-def _euler_deg_to_matrix(pitch_deg: float, yaw_deg: float, roll_deg: float) -> list[list[float]]:
-    """ZYX euler (degrees) to row-major 3x3 rotation matrix: R = Rz(yaw)*Ry(pitch)*Rx(roll)."""
+def _euler_deg_to_matrix(
+    pitch_deg: float, yaw_deg: float, roll_deg: float, convention: str = "ac6"
+) -> list[list[float]]:
+    """Build a 3x3 rotation matrix (rows = right/up/fwd) from euler angles.
+
+    convention="ac6"   : M = Mz(-roll)*Mx(-pitch)*My(yaw)  [IGCS-GITC, DirectX LH row-vector]
+    convention="metro" : M = Mx(-roll)*Mz(-pitch)*My(yaw)  [4A Engine cryengine-specific]
+    """
     import math
     p, y, r = math.radians(pitch_deg), math.radians(yaw_deg), math.radians(roll_deg)
     cp, sp = math.cos(p), math.sin(p)
     cy, sy = math.cos(y), math.sin(y)
     cr, sr = math.cos(r), math.sin(r)
+    if convention == "metro":
+        # M = Mx(-r)*Mz(-p)*My(y)
+        return [
+            [ cp*cy,                sp,   cp*sy              ],
+            [-cr*sp*cy - sr*sy,  cr*cp,  -cr*sp*sy + sr*cy   ],
+            [ sr*sp*cy - cr*sy, -sr*cp,   sr*sp*sy + cr*cy   ],
+        ]
+    # "ac6" default: M = Mz(-r)*Mx(-p)*My(y)
     return [
-        [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
-        [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
-        [-sp,    cp*sr,             cp*cr            ],
+        [ cy*cr + sy*sp*sr,  sr*cp,   sy*cr - cy*sp*sr],
+        [-cy*sr + sy*sp*cr,  cr*cp,  -sy*sr - cy*sp*cr],
+        [-sy*cp,              sp,     cy*cp             ],
     ]
 
 
-def _matrix_to_euler_deg(m: list[list[float]]) -> tuple[float, float, float]:
-    """Row-major 3x3 rotation matrix to ZYX euler (pitch, yaw, roll) in degrees."""
+def _matrix_to_euler_deg(
+    m: list[list[float]], convention: str = "ac6"
+) -> tuple[float, float, float]:
+    """Decompose 3x3 rotation matrix (rows = right/up/fwd) to (pitch, yaw, roll) degrees.
+
+    Inverse of _euler_deg_to_matrix for the same convention.
+    """
     import math
-    pitch = math.degrees(math.asin(max(-1.0, min(1.0, -m[2][0]))))
-    yaw   = math.degrees(math.atan2(m[1][0], m[0][0]))
-    roll  = math.degrees(math.atan2(m[2][1], m[2][2]))
+    clamp = lambda v: max(-1.0, min(1.0, v))
+    if convention == "metro":
+        pitch = math.degrees(math.asin(clamp(m[0][1])))
+        yaw   = math.degrees(math.atan2(m[0][2], m[0][0]))
+        roll  = math.degrees(math.atan2(-m[2][1], m[1][1]))
+        return pitch, yaw, roll
+    # "ac6" default
+    pitch = math.degrees(math.asin(clamp(m[2][1])))
+    yaw   = math.degrees(math.atan2(-m[2][0], m[2][2]))
+    roll  = math.degrees(math.atan2(m[0][1], m[1][1]))
     return pitch, yaw, roll
 
 
@@ -372,6 +398,7 @@ def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
     pitch, yaw, roll = 0.0, 0.0, 0.0
     if rot_mat:
         mat_t = _coerce_type(rot_mat.get("type", "float32"))
+        convention = rot_mat.get("rotation_convention", "ac6")
         def _rd_row(row_key: str) -> list[float]:
             base = _parse_hex_or_dec(rot_mat[row_key])
             return [
@@ -379,7 +406,7 @@ def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
                 for i in range(3)
             ]
         m = [_rd_row("row0"), _rd_row("row1"), _rd_row("row2")]
-        pitch, yaw, roll = _matrix_to_euler_deg(m)
+        pitch, yaw, roll = _matrix_to_euler_deg(m, convention)
     else:
         rot_t = _coerce_type(rot.get("type", "float32"))
         pitch = rd(rot, "pitch", rot_t)
@@ -461,7 +488,8 @@ def write_camera(profile_id: str,
 
     if rot_mat:
         mat_t = _coerce_type(rot_mat.get("type", "float32"))
-        m = _euler_deg_to_matrix(pitch, yaw, roll)
+        convention = rot_mat.get("rotation_convention", "ac6")
+        m = _euler_deg_to_matrix(pitch, yaw, roll, convention)
         for row_idx, row_key in enumerate(("row0", "row1", "row2")):
             if row_key not in rot_mat:
                 continue

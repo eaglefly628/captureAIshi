@@ -62,6 +62,6 @@
     "struct_base_reg": "rsi",
     "capture_from_intercept": "activecam_write2",
     "location": { "x": "0x0", "y": "0x4", "z": "0x8", "type": "float32" },
-    "rotation_matrix": { "row0": "0x10", "row1": "0x20", "row2": "0x30", "type": "float32" }
+    "rotation_matrix": { "row0": "0x10", "row1": "0x20", "row2": "0x30", "type": "float32", "rotation_convention": "metro" }
   }
 }
