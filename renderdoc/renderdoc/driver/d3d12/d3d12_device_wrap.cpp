@@ -2410,11 +2410,11 @@ HRESULT WrappedID3D12Device::CheckFeatureSupport(D3D12_FEATURE Feature, void *pF
     if(FeatureSupportDataSize != sizeof(D3D12_FEATURE_DATA_SHADER_MODEL))
       return E_INVALIDARG;
 
+    // Pass through the real GPU shader model without clamping.
+    // Clamping to 6.7 blocks games that require SM 6.8+ (e.g. Cyberpunk 2.x NRC shaders),
+    // causing RT pipeline creation to fail.
     if(dolog)
-      RDCLOG("Clamping shader model from 0x%x to 6.7", model->HighestShaderModel);
-
-    // clamp SM to what we support
-    model->HighestShaderModel = RDCMIN(model->HighestShaderModel, D3D_SHADER_MODEL_6_7);
+      RDCLOG("Shader model: 0x%x (pass-through, no clamp)", model->HighestShaderModel);
 
     return S_OK;
   }
