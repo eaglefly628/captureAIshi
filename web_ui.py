@@ -1030,16 +1030,37 @@ _VALID_GRABBERS = {"none", "renderdoc", "screenshot"}
 _VALID_CE_MODES = {"file", "socket"}
 
 
-def _hack_profile_launch_style(profile_id: str) -> str:
-    """Return the launch_arg_style for a hack profile id ('unreal' if absent)."""
-    if not profile_id or not profile_id.replace("_", "").isalnum():
-        return "unreal"
-    path = Path(__file__).resolve().parent / "configs" / "hacks" / f"{profile_id}.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data.get("launch_arg_style", "unreal")
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return "unreal"
+def _hack_profile_launch_style(profile_id: str, target_exe: str = "") -> str:
+    """Return the launch_arg_style for a hack profile ('unreal' if absent).
+
+    Looks up by profile_id first; if empty or unknown, falls back to matching
+    the basename of target_exe against each profile's process_names. This lets
+    direct-exe-entry users (skipping the Game Library) still get correct args.
+    """
+    hacks_dir = Path(__file__).resolve().parent / "configs" / "hacks"
+
+    if profile_id and profile_id.replace("_", "").isalnum():
+        path = hacks_dir / f"{profile_id}.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data.get("launch_arg_style", "unreal")
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
+    exe_name = Path(target_exe).name.lower() if target_exe else ""
+    if exe_name and hacks_dir.exists():
+        for path in hacks_dir.glob("*.json"):
+            if path.name.startswith("_"):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            for name in data.get("process_names", []):
+                if name.lower() == exe_name:
+                    return data.get("launch_arg_style", "unreal")
+
+    return "unreal"
 
 
 def _validate_float_list(val, length: int, name: str) -> list:
@@ -1092,7 +1113,15 @@ def _build_args(data: dict) -> Namespace:
     launch_args = []
     resx = int(data.get("launch_resx", 0) or 0)
     resy = int(data.get("launch_resy", 0) or 0)
-    launch_arg_style = _hack_profile_launch_style(str(data.get("hack_profile_id", "")))
+    launch_arg_style = _hack_profile_launch_style(
+        str(data.get("hack_profile_id", "")),
+        str(data.get("target_exe", "")),
+    )
+    logging.info(
+        f"[LAUNCH] arg_style={launch_arg_style} "
+        f"(profile_id={data.get('hack_profile_id', '')!r}, "
+        f"exe={Path(str(data.get('target_exe', ''))).name!r})"
+    )
     if launch_arg_style == "redengine":
         if resx > 0:
             launch_args.append(f"-width={resx}")
