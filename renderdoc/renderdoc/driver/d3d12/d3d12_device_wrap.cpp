@@ -2439,11 +2439,13 @@ HRESULT WrappedID3D12Device::CheckFeatureSupport(D3D12_FEATURE Feature, void *pF
     if(FeatureSupportDataSize != sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS5))
       return E_INVALIDARG;
 
-    // don't support DXR 1.2
-    opts->RaytracingTier = RDCMIN(opts->RaytracingTier, D3D12_RAYTRACING_TIER_1_1);
+    // Pass through the real GPU raytracing tier without clamping.
+    // Clamping to 1.1 causes Cyberpunk 2.x (and other DXR 1.2 games) to crash
+    // during RT initialization when the game queries for 1.2 support, finds 1.1,
+    // but the GPU's actual resources were created with 1.2 capabilities.
 
     if(dolog)
-      RDCLOG("Clamping raytracing tier support");
+      RDCLOG("Raytracing tier: %d (pass-through, no clamp)", (int)opts->RaytracingTier);
 
     return S_OK;
   }
