@@ -2,19 +2,21 @@
   "schema_version": 1,
   "id": "re7",
   "display_name": "Resident Evil 7",
+  "launch_arg_style": "redengine",
   "process_names": ["re7.exe"],
   "engine": "RE Engine",
   "engine_version": "1.0 (2017)",
-  "credits": "TODO -- CE scan needed",
-  "notes": "RE Engine, same family as RE2/RE3. Camera struct pointer expected in rdx at intercept. TODO: CE scan to find camera write AOB and struct offsets for this build.",
+  "credits": "ghostinthecamera (IGCS-GITC)",
+  "source": "docs/refCode/igcs-gitc/re7/",
+  "notes": "Two separate write intercepts for position and rotation. We intercept the position write -- rcx = camera struct base. Position at rcx+0x30, quaternion at rcx+0x40, FOV at rcx+0x158. AOB from IGCS-GITC Interceptor.asm.",
 
   "intercepts": [
     {
-      "name": "activecam_write",
-      "description": "TODO: CE scan needed. Based on RE2 pattern -- verify offsets for RE7 build.",
-      "size": 18,
-      "aob_literal":  "TODO",
-      "aob_wildcard": "TODO",
+      "name": "camera_position_write",
+      "description": "Camera position write. rcx = camera struct base. Writes XYZ to rcx+0x30/34/38.",
+      "size": 27,
+      "aob_literal":  "89 41 30 8B 42 30 89 41 30 8B 42 30 89 41 30 80 B9 00 00 00 00 00 C6 81 00 00 00",
+      "aob_wildcard": "89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 80 B9 ?? ?? ?? ?? 00 C6 81 ?? ?? ?? ??",
       "prefer": "wildcard",
       "default_mode": "pass",
       "occurrence": 1
@@ -22,12 +24,12 @@
   ],
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "TODO: fill in after CE scan. RE2 reference: coords at 0x80, quat at 0x90, fov at 0xA4 off rdx.",
-    "struct_base_reg": "rdx",
-    "capture_from_intercept": "activecam_write",
-    "location": { "x": "0x80", "y": "0x84", "z": "0x88", "type": "float32" },
-    "rotation_quaternion": { "x": "0x90", "y": "0x94", "z": "0x98", "w": "0x9C", "type": "float32" },
-    "fov": { "off": "0xA4", "type": "float32" }
+    "enabled": true,
+    "_comment": "rcx = camera struct base at position write intercept. Quaternion XYZW at 0x40..0x4C. Coords XYZ at 0x30..0x38. FOV at 0x158.",
+    "struct_base_reg": "rcx",
+    "capture_from_intercept": "camera_position_write",
+    "location": { "x": "0x30", "y": "0x34", "z": "0x38", "type": "float32" },
+    "rotation_quaternion": { "x": "0x40", "y": "0x44", "z": "0x48", "w": "0x4C", "type": "float32" },
+    "fov": { "off": "0x158", "type": "float32" }
   }
 }
