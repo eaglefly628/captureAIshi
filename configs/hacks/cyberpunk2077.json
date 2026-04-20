@@ -12,9 +12,10 @@
   "intercepts": [
     {
       "name": "activecam_write1",
-      "description": "ActiveCam coord (0xE0) + quaternion (0xF0) write. Occurrence 2 per IGCS.",
+      "description": "ActiveCam coord+quaternion write. literal=1.0.11, wildcard tries 2.x (same opcodes, wildcarded offsets). occurrence=2 per IGCS.",
       "size": 26,
       "aob_literal":  "F2 0F 11 83 E0 00 00 00 0F 28 44 24 30 89 8B E8 00 00 00 0F 11 83 F0 00 00 00",
+      "aob_wildcard": "F2 0F 11 83 ?? ?? ?? ?? 0F 28 44 24 ?? 89 8B ?? ?? ?? ?? 0F 11 83 ?? ?? ?? ??",
       "prefer": "literal",
       "default_mode": "pass",
       "occurrence": 2
