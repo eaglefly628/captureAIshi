@@ -141,7 +141,6 @@ class RenderDocGrabber(FrameGrabber):
             # See renderdoc/renderdoccmd/renderdoccmd.cpp lines 1628-1687.
             cmd = [
                 rdoc_cmd, "capture",
-                "--opt-hook-children",
                 "--capture-file", str(self.capture_dir / "frame"),
                 "--wait-for-exit",
                 self.target_exe,
