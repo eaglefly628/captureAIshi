@@ -57,6 +57,7 @@ class RenderDocGrabber(FrameGrabber):
         capture_key: str = "F12",
         auto_launch: bool = False,
         inject_mode: bool = False,
+        inject_delay: float = 5.0,
         ui_hider=None,
         ui_tail_fraction: float = 0.2,
         ui_extra_keywords: Optional[list] = None,
@@ -93,6 +94,7 @@ class RenderDocGrabber(FrameGrabber):
         self.ui_extra_keywords = ui_extra_keywords or []
         self.startup_timeout = startup_timeout
         self.wait_for_port = wait_for_port
+        self.inject_delay = inject_delay
         self._process = None
         self._game_direct_process = None
         self._capture_count = 0
@@ -118,7 +120,7 @@ class RenderDocGrabber(FrameGrabber):
             process_name = os.path.basename(self.target_exe)
             if self.auto_launch:
                 self._launch_game_direct()
-            self._inject_into_process(process_name)
+            self._inject_into_process(process_name, self.inject_delay)
         elif self.auto_launch and self.target_exe:
             # If user put exe + args all in one string, split them apart
             if not Path(self.target_exe).is_file() and " " in self.target_exe:
@@ -218,7 +220,7 @@ class RenderDocGrabber(FrameGrabber):
                             pass
         return None
 
-    def _inject_into_process(self, process_name: str) -> None:
+    def _inject_into_process(self, process_name: str, inject_delay: float = 5.0) -> None:
         """Wait for game process to appear, then inject renderdoc.dll into it.
 
         Used for games like Cyberpunk 2077 2.x where launching via renderdoccmd
@@ -256,9 +258,9 @@ class RenderDocGrabber(FrameGrabber):
         # here we just need the D3D12 device to be past creation. In practice the
         # game loading screen keeps D3D12 busy for several seconds -- polling the
         # exe for a few seconds is sufficient.
-        if self._game_direct_process is not None:
-            logger.info("Waiting 5s for D3D12 device initialization before injecting...")
-            time.sleep(5.0)
+        if self._game_direct_process is not None and inject_delay > 0:
+            logger.info(f"Waiting {inject_delay:.0f}s for D3D12 device initialization before injecting...")
+            time.sleep(inject_delay)
 
         rdoc_cmd = self._resolve_renderdoccmd()
         inject_cmd = [rdoc_cmd, "inject", "--pid", str(pid)]

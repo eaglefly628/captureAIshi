@@ -96,6 +96,7 @@ def create_grabber(args):
             target_args=getattr(args, 'target_args', []),
             auto_launch=bool(args.target_exe),
             inject_mode=inject_mode,
+            inject_delay=getattr(args, 'inject_delay', 5.0),
             ui_hider=rdoc_ui_hider,
             wait_for_port=int(driver_port) if driver_port else None,
         )

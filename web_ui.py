@@ -1175,6 +1175,7 @@ def _build_args(data: dict) -> Namespace:
     launch_arg_style = _profile.get("launch_arg_style", "unreal")
     launch_mode = _profile.get("launch_mode", "capture")
     args.inject = (launch_mode == "inject")
+    args.inject_delay = float(_profile.get("inject_delay", 5.0))
     logging.info(
         f"[LAUNCH] arg_style={launch_arg_style} launch_mode={launch_mode} "
         f"(profile_id={data.get('hack_profile_id', '')!r}, "
