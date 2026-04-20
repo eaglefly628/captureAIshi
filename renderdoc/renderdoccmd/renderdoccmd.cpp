@@ -1525,8 +1525,13 @@ public:
 
             drawsChecked++;
             controller->SetFrameEvent(act->eventId, false);
-            const PipeState &pipe = controller->GetPipelineState();
-            rdcarray<Descriptor> outputs = pipe.GetOutputTargets();
+            // GetOutputTargets() is non-virtual and not exported from renderdoc.dll.
+            // Read render targets directly via the exported typed pipeline getters instead.
+            rdcarray<Descriptor> outputs;
+            if(const D3D12Pipe::State *d3d12 = controller->GetD3D12PipelineState())
+              outputs = d3d12->outputMerger.renderTargets;
+            else if(const D3D11Pipe::State *d3d11 = controller->GetD3D11PipelineState())
+              outputs = d3d11->outputMerger.renderTargets;
 
             if(outputs.size() < 2)
               continue;
