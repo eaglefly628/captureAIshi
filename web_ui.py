@@ -199,7 +199,7 @@ def inject_bridge():
         return jsonify({"ok": False, "error": f"Process '{process_name}' not found. Start the game first."}), 404
 
     try:
-        inject_cmd = [renderdoc_path, "inject", "--pid", str(pid)]
+        inject_cmd = [renderdoc_path, "inject", "--PID", str(pid)]
         result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()

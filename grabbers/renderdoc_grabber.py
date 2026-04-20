@@ -263,7 +263,7 @@ class RenderDocGrabber(FrameGrabber):
             time.sleep(inject_delay)
 
         rdoc_cmd = self._resolve_renderdoccmd()
-        inject_cmd = [rdoc_cmd, "inject", "--pid", str(pid)]
+        inject_cmd = [rdoc_cmd, "inject", "--PID", str(pid)]
         logger.info(f"Injecting: {' '.join(inject_cmd)}")
         result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
