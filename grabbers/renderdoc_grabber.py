@@ -266,12 +266,16 @@ class RenderDocGrabber(FrameGrabber):
         inject_cmd = [rdoc_cmd, "inject", "--PID", str(pid)]
         logger.info(f"Injecting: {' '.join(inject_cmd)}")
         result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
+        out = (result.stdout or result.stderr or "").strip()
+        # renderdoccmd inject returns the injected PID as exit code on success,
+        # so any large positive rc is success. Known error codes are 1-7 (small ints).
+        inject_ok = (result.returncode == pid) or (result.returncode > 100) or \
+                    (result.returncode == 0) or "Launched as ID" in out
+        if not inject_ok:
             raise RuntimeError(
-                f"renderdoccmd inject failed (rc={result.returncode}): "
-                f"{result.stderr.strip() or result.stdout.strip()}"
+                f"renderdoccmd inject failed (rc={result.returncode}): {out}"
             )
-        logger.info(f"Bridge injected into '{process_name}' (PID={pid})")
+        logger.info(f"Bridge injected into '{process_name}' (PID={pid}, rc={result.returncode})")
         # Now wait for bridge TCP port to come up
         self._wait_for_game_ready()
 

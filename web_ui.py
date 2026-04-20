@@ -201,9 +201,11 @@ def inject_bridge():
     try:
         inject_cmd = [renderdoc_path, "inject", "--PID", str(pid)]
         result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or "").strip()
-            return jsonify({"ok": False, "error": f"renderdoccmd inject failed: {err}"}), 500
+        out = (result.stdout or result.stderr or "").strip()
+        inject_ok = (result.returncode == pid) or (result.returncode > 100) or \
+                    (result.returncode == 0) or "Launched as ID" in out
+        if not inject_ok:
+            return jsonify({"ok": False, "error": f"renderdoccmd inject failed: {out}"}), 500
         return jsonify({"ok": True, "pid": pid, "msg": f"Bridge injected into {process_name} (PID={pid})"})
     except FileNotFoundError:
         return jsonify({"ok": False, "error": f"renderdoccmd not found at: {renderdoc_path}"}), 500
