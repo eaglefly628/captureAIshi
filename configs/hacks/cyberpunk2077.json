@@ -6,8 +6,6 @@
   "process_names": ["Cyberpunk2077.exe"],
   "engine": "REDengine 4",
   "engine_version": "2.12 (Phantom Liberty)",
-  "launch_mode": "inject",
-  "inject_delay": 5,
   "credits": "Otis_Inf / Jim2Point0 (IGCS)",
   "source": "docs/refCode/igcs/Cameras/Cyberpunk2077/",
   "notes": "ActiveCam write at second occurrence of this pattern (IGCS reference). occurrence=2 set in intercept. Uses quaternion rotation (0xF0) + coords at +0xE0. Camera base register is rbx.",
