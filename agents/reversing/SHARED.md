@@ -1,386 +1,103 @@
 # Reverse Engineering Agent (小逆) — Shared Notes
 
+Current context lives here. Completed items and old CL entries move to
+`agents/reversing/ARCHIVE.md`. Auto-archive rule: CL entries older than
+**14 days** are moved to ARCHIVE.md on next session (see
+`.claude/rules/versioning.md`).
+
 ## Active TODO
 
-### [v0.2.0] 2026-04-19 -- pytest 永久解 (lead message to xiaoni)
+### Open items
 
-pytest 之前整体卡死的问题已在 mainbranch 永久修好 (老白 sha `30dc4f3` +
-`26caba2`)。每次开新 session 先：
+- [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
+  UpdateCamera() 每帧写回玩家摄像机位置，无法从外部争抢。正确解: hook
+  `ULocalPlayer::GetViewPoint` (virtual, vtable-hookable). GetViewPoint 在渲染
+  线程 FSceneView 构建前被调用，是数据流进渲染器的最后门。钩子直接返回
+  g_cam_override_state，完全跳过 UpdateCamera 写的 POV。vtable index 因 UE 版本
+  而异，需从 UE4SS PDB 数据或运行时扫描确定。
 
-```bash
-git checkout claudeMainBranch && git pull origin claudeMainBranch
-```
+- [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds
+  GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find,
+  confirm scan fallback finds POV.
 
-然后用项目根的 `pytest.ini` 自带的 `timeout=20` (thread method) 跑测试。
-单个 test 卡超过 20s 会被 pytest-timeout 自动杀掉并继续下一个，再也
-不会整体挂死。`test_teardown_terminates_process` 里的 killpg 自杀 bug
-也一并 patch 了。
+- [ ] **P0: Path D 逆向补全** — pass 2 now scans PC+[0x100..0x800] for exact
+  manager ptr. On next run, log "PC+0xXXX == Path-A manager [XVAL OK]" ->
+  update k_layout_ue57.pc_pcm_start/end to that discovered offset.
 
-依赖：`requirements.txt` 已 pin `pytest>=7` + `pytest-timeout>=2.3`，
-缺了就 `pip install -r requirements.txt`。
+- [ ] **P0 (UUU 功能复刻, from 小由 2026-04-05, 老白 confirmed)**:
+  per-node FOV 支持; 播放时长控制 `__path_play <total_seconds>`;
+  Loop `__path_loop 1/0`; 暂停/恢复 `__path_pause` / `__path_resume`;
+  当前位置查询 `__camera_get`.
 
-### 2026-04-17 (late) session handoff -- xiaoni -- Batman AK E2E 验证 + profile DB + Commit A pointer capture
+- [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe。
 
-**Session 成果（10 次 push）**:
+- [ ] **P2: CL 条目缺失** (spotted by 主程序员 4.7 review) — `c088120` 在
+  SHARED.md 里仍是 `(pending push)`，已 push 应填实际 sha。`43ac097`
+  完全无 CL 条目。按 versioning.md 规则补上。
 
-1. `8994179` -- 老白 P0/P1/P2 bug sweep (12 of 14)
-2. `2accaeb` -- docs/refCode/igcs/ (IGCS 32 款游戏参考源码)
-3. `e9f764e` -- `camera_intercept.h` 基础设施 (AOB scan + VirtualProtect 字节 swap)
-4. `79b64a5` -- 老白 peer review findings (2 x P1)
-5. `e2cd967` -- 老白 sync 3rdparty/bridge/src tree
-6. `06b88ca` -- 2 x P1 SEH hardening + C4505 cleanup
-7. `c6e622d` -- UI: camera POV + intercept 按钮 + AOB install form
-8. `def25e6` -- 游戏 hack profile 系统 (`configs/hacks/*.json` + drivers + Flask + UI dropdown)
-9. `1fecdee` -- Hellblade (UE4) + Cyberpunk 2077 profile 加入 dropdown
-10. `306395b` -- **Commit A: pointer capture + manual write (Batman 能推姿态)**
+- [ ] **P2: __try 块内 C++ 对象析构跳过** (spotted by Gemini) — `cam_patch_write`
+  已清理（所有 C++ 析构全在 suspend 窗口外），只 `cam_seh_memcpy` 在 __try 里。
+  **待办**: 递归审计其他 __try 站点，确保全 pure-C 叶子。
 
-**Batman AK 实战验证通过** (用户实测):
-- Desktop UI -> Profile dropdown 选 Batman -> Apply -> Lock
-- `__cam_intercept_install_aob` 装上 60-byte block
-- `__cam_intercept_nop` 切 NOP -> **镜头完全锁死**
-- `__cam_intercept_pass` 还原 -> 游戏恢复控制
-- 验证 IGCS AOB 直接可用，NOP-only 路径不需要 trampoline
+- [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — 当前 Uniform
+  Catmull-Rom 在不均匀 duration 下产生过冲。**修复**: 升级 Centripetal，将
+  chord length 或 duration 差代入切线权重。
 
-**StackOBot AOB 定位记录** (CE 实测，手工未完成):
-- UE5 LWC 用的是 `movups [reg+0],xmm0` + `movups [reg+10],xmm1`，非 IGCS 的 `movsd [reg+disp32]` 形式
-- Hot site 在 `+0x75DA888` (count 14474): `rsi` 写 Location.X+Y + `rsi+10` 写 Z+Pitch
-- 另外两个 rbx / rcx 写点 (各 7237 次) 未捕获，可能 Rot.Yaw/Roll / photomode / cutscene
-- 手工 AOB 装第 2 个 site 对了位置，第 1 个 site AOB 不够独特匹配到 22 MB 外的无关位置
-- **结论**: UE5 需要**自动探测**基于 `find_cam_pov` 反推 disp (下个 session)
+- [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
 
-**游戏数据库架构** (全部推送到 claudeMainBranch):
-```
-configs/hacks/
-  _schema.md           -- JSON 字段文档
-  batman_ak.json       -- UE3, 60 bytes, rbx, float coord + ue3_packed_int rot
-  hellblade_ue4.json   -- UE4, 43 bytes, rdi, float coord + float rot
-  stackobot_ue5.json   -- UE5 LWC, 3+4 bytes (split), rsi, double + double rot
-  cyberpunk2077.json   -- REDengine 4, 26 bytes, rbx, float coord + quaternion rot (occurrence=2 TODO)
+- [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback。
 
-drivers/game_profile.py  -- load/apply/lock/unlock/uninstall + CLI
-web_ui.py /api/hacks/*   -- list / apply / lock / unlock / uninstall
-index.html debug panel   -- Profile dropdown + Apply/Lock/Unlock/Clear/Refresh 按钮
-```
+### Commit D (next major) -- UE 自动探测 (StackOBot 并轨)
 
-### 请老白 review 的两个点
-
-1. **`camera_intercept.h` 整体架构评审**
-   - AOB + VirtualProtect + SEH 全路径 (pattern_scan -> get_readable_ranges -> 页保护校验 -> SEH memcpy)
-   - 16 sites cap / 64 bytes cap 是否合理
-   - `cam_seh_memcpy` 隔离 __try 避免 C2712 (C++ 析构冲突) -- 这个手法可以吗
-   - 老白之前 review 的 2 个 P1 全修了 (`06b88ca`)
-
-2. **JSON schema 设计**
-   - `configs/hacks/_schema.md` 字段清单
-   - `intercepts[]` 支持 aob_literal + aob_wildcard + prefer，install 失败自动 fallback
-   - `camera_write_profile` (暂时 disabled) 为下个 session 的 manual write 路径预留字段
-   - occurrence 字段暂缺 (Cyberpunk 需要第 2 个 match) -- 下个 session 补
-
-### 下个 session 路线图 (三连发)
-
-**Commit A -- Pointer capture + Manual write** ✅ DONE in sha `306395b`
-
-已实现全部内容，待用户实测验证：
-- `CamMode` 枚举 + `cam_parse_base_reg` (ModRM 解析) + 29 字节 asm stub
-- `g_cap_addr[CAM_INTERCEPT_MAX_SITES]` 稳定槽位
-- 新 TCP 命令 `__cam_intercept_capture` / `__cam_intercept_get_capture` / `__cam_mem_poke`
-- Python `capture_all` / `get_captured_addr` / `write_camera` / `mem_poke` + CLI `capture` / `get-capture` / `write`
-- Flask `/api/hacks/capture` / `/get_capture` / `/write`
-- UI "Capture" 行: Capture / Read Addr / 徽章 / Test 按钮
-- Batman + Hellblade profile `camera_write_profile.enabled = true`
-
-**已知限制 (留给下个 session)**:
-- StackOBot 两个 site 只有 3 / 4 字节，< 14 无法装 CAPTURE。等 UE 自动探测 (Commit D) 合并成一个大 site
-- UE3 packed_int 旋转 (16.16 fixed point) 当前直接 cast 浮点为 i32。Batman Test 写 `pitch/yaw/roll=0` 能验证 XYZ 通路，正确换算 `deg * (0x10000/360.0)` 放进轨迹层 (Commit B)
-- Cyberpunk 2077 用四元数旋转，`camera_write_profile` 仍 disabled，需加 `quat_f32` 类型
-
-**Commit B -- Trajectory presets + player** DONE in sha `76cbd5a`
-- `drivers/trajectory_presets.py`: orbit / helix / line / figure8 (PosePoint, interp_linear, schema)
-- `drivers/trajectory_player.py`: TrajectoryPlayer + 60Hz writer thread + persistent _PokeSession
-- `web_ui.py`: /api/trajectory/{presets,preview,play,stop,pause,resume,status}
-- `web/templates/index.html`: Debug panel Trajectory row (preset dropdown + dynamic form + Play/Pause/Resume/Stop + live status)
-- `tests/test_trajectory.py`: 26 tests, all green
-
-**Commit C -- 3D editor integration** DONE (this CL)
-- `view3d` canvas 新增 "trajectory preview" 图层 (青色线 + start/end 标记 + 朝向箭头 + 红色 playhead)
-- Trajectory 面板新增 `Preview 3D` / `Clear 3D` 按钮; 按 Preview -> 自动切到 3D tab -> auto-fit 相机
-- 播放期间 status 轮询会把当前 `t` bisect 到 preview 点并高亮 playhead
-- UE 游戏坐标 Z-up 到 canvas Y-up 的 y<->z swap 在 JS 里做, 不改后端
-- 6 个新 Flask test (presets list / preview orbit / unknown preset / bad params / missing preset / status) -- 32 test 全绿
-
-**Commit D -- UE 自动探测 (StackOBot 并轨)**:
 - 基于 `g_cam_pov_ptr - g_camera_manager_ptr = disp32`
 - 扫 `.text` 里 `movups/movsd [reg + disp32], xmm?` 指令
 - 识别连续 3-4 条 (x/y/z/w for LWC 或 x/y/z/float) 自动装 multi-site
 - StackOBot 端到端就自动化了，无需 CE 手工
 
-### 2026-04-17 汇报给老白 -- xiaoni -- IGCS intercept MVP 进度
-
-Session focus this round:
-  1. **DONE** 老白 bug fix sweep (12 of 14 review items) -- sha `8994179`.
-  2. **DONE** Copy IGCS source to `docs/refCode/igcs/` -- sha `2accaeb`.
-     Reference for the inline MOV-patch technique.
-  3. **IN PROGRESS** Implement IGCS-style camera intercept -- current CL.
-     Infrastructure done: `camera_intercept.h` + TCP commands +
-     shutdown cleanup + `__bridge_status` reporting.
-
-Decision recorded (per 老白 direction):
-  - Keep current FName/GUObjectArray discovery. Actors / UWorld /
-    LocalPlayer / CameraManager still found the same way.
-  - Per-game AOB signatures acceptable (target-game list is small).
-  - Starting with simple byte-swap (NOP game writes) instead of a
-    full IGCS conditional-asm trampoline. Trampoline is a follow-up
-    if NOPs corrupt anything.
-
-Want feedback before next step on:
-  - **(auto-discovery)** After `find_cam_pov` succeeds we know
-    `camera_manager_ptr + cc_off + pov_x_off`. Scanning `.text` for
-    `movsd [reg + <that disp32>], xmm0` should land us on the write
-    site automatically. Worth doing next or wait for field data from
-    StackOBot?
-  - **(trampoline)** If NOPs break audio/animation (they shouldn't,
-    but UE may read these fields after writing), do we go IGCS-full
-    with a conditional asm stub, or just live with write-then-restore?
-  - **(Slack bot practice target)** User plans to test this on a Slack
-    Bot-exercised game today. Need a minimal driver-side recipe so
-    the bot can: (a) install AOB, (b) flip nop/pass, (c) verify via
-    `__bridge_status`.
-
-### 主程序员 peer review: 1a10b3d (Opus 4.7 review sweep 的二次验证)
-
-小逆 claimed 修了 13 项，Opus 4.7 二次 review 结果：**7 OK, 1 OK with caveat, 3 PARTIAL, 2 新 bug**。
-
-**最严重 — 真正的新 bug（必须再修）：**
-
-- [x] **P0: cmd_queue CAS 修了生产者竞争但引入消费者读半写槽 bug** (spotted by 主程序员 Opus 二次) —
-  fixed: added `g_cmd_queue_ready[CMD_QUEUE_MAX]` per-slot flag. Producer writes strncpy THEN `InterlockedExchange(&ready, 1)`. Consumer drains via `InterlockedCompareExchange(&ready, 0, 1)` — only reads committed slots. If producer hasn't published yet, drain breaks and re-runs when next WM arrives.
-
-- [x] **P1: 33rd client socket-reuse UAF** (spotted by 主程序员 Opus 二次) —
-  fixed: slot-full check now happens BEFORE CreateThread. If `cs_client_count >= 32`, the accept loop does `shutdown(c)+closesocket(c)+log+continue` synchronously — no thread is spawned, so no socket-value aliasing against later accepts.
-
-**PARTIAL — 功能修了但留死角：**
-
-- [x] **P1: cam_patch_write SuspendThread 保护下 bridge_log 有死锁风险** (spotted by 主程序员 Opus 二次) —
-  fixed: no bridge_log between cam_suspend_others() and cam_resume_others(). Errors go to a 256-byte stack buffer; after resume, we `bridge_log("%s", err)`. Also cleaned up VirtualProtect fail path so we still resume before early-return.
-
-- [x] **P1: __cam_mem_find 暂停 override 仍留竞争窗口** (spotted by 主程序员 Opus 二次) —
-  fixed: added `g_cam_pov_mutex` guarding `g_cam_pov_ptr`. Tick thread now `try_lock`s each iteration and skips the tick on failure. `__cam_mem_find` holds the mutex for the entire `clear + find_camera_manager + cross_validate + find_cam_pov` sequence, so no tick can observe a half-cleared pointer or see SEH clobber a freshly-set one. Removed the brittle `g_camera_override = false` dance.
-
-- [x] **P2: g_fexec_hook_count 用 volatile 而非 atomic** (spotted by 主程序员 Opus 二次) —
-  fixed: changed to `std::atomic<LONG> g_fexec_hook_count{0}`. All 16 read sites use `.load()`, install uses `.fetch_add(1)` after entry is filled, uninstall uses `.store(0)`. Portable across compilers.
-
-**OK with caveat：**
-
-- [x] **P1: WSACleanup ordering 修了，但 scan 线程超时 2s 后仍活可能引起后续问题** — scan 线程不碰 Winsock 所以不是 Winsock 问题，但未来若 scan 扩展要小心。
-
-**完全 OK（7 项）：** 3 VirtualQuery cross-page / 4 InterpolatedCamera zero-init / 5 camera_path play/stop mutex / 6 __cam_mem_write sanitize / 9 find_game_window dedup / 10 BRIDGE_LOG clamp / 13 SwitchToThread。
-
-### 主程序员 peer review: e9f764e (IGCS intercept infrastructure)
-
-Overall: 架构合理，代码整洁。Opus 4.7 深度 review 共发现 13 个新问题：
-
-- [x] **P1: camera_intercept.h:171 memcpy(site.orig, addr, size) 无 SEH** (spotted by 主程序员) —
-  fixed in `06b88ca`: added CAM_READABLE_MASK protect check + cam_seh_memcpy SEH wrapper。
-
-- [x] **P1: cam_patch_write() memcpy 无 SEH** (spotted by 主程序员) —
-  fixed in `06b88ca`: write goes through cam_seh_memcpy。
-
-**P0 — 崩溃 / 数据污染（Opus 4.7 deep review，2026-04-17）：**
-
-- [x] **P0: ue5_exec_hook.h cmd_queue 多生产者竞争** (spotted by 主程序员 Opus) —
-  fixed: InterlockedCompareExchange CAS loop to atomically claim slot before strncpy.
-
-- [x] **P0: cam_patch_write() patch 时未暂停游戏线程** (spotted by 主程序员 Opus) —
-  fixed: cam_suspend_others() via CreateToolhelp32Snapshot + SuspendThread before patch, cam_resume_others() after.
-
-**P1 — 功能/正确性（Opus 4.7 deep review）：**
-
-- [x] **P1: camera_intercept.h:166 VirtualQuery 未检查 size 跨页** (spotted by 主程序员 Opus) —
-  fixed: addr+size vs mbi.BaseAddress+mbi.RegionSize check; rejects cross-boundary installs.
-
-- [x] **P1: console_server.h InterpolatedCamera cam 未初始化** (spotted by 主程序员 Opus) —
-  fixed: `InterpolatedCamera cam = {};` zero-init.
-
-- [x] **P1: camera_path.h play()/stop() 未持有 m_mutex** (spotted by 主程序员 Opus) —
-  fixed: lock_guard on play(), stop(), toggle_pause(); added stop_unlocked() for clear().
-
-- [x] **P1: __cam_mem_write 未做 NaN/Inf 过滤** (spotted by 主程序员 Opus) —
-  fixed: cs_sanitize_float on coords (±1e8), angles (±360), FOV (1..179) after strtof parse.
-
-- [x] **P1: g_cam_pov_ptr 无同步** (spotted by 主程序员 Opus) —
-  fixed: __cam_mem_find pauses g_camera_override before clearing pointer; tick thread skips write when override=false. Pointer is only set (never cleared) while override is active.
-
-- [x] **P1: ConsoleServer_Stop WSACleanup 时序** (spotted by 主程序员 Opus) —
-  fixed: WSACleanup moved from cs_server_main() to ConsoleServer_Stop() after all client threads are joined.
-
-**P2 — 次要/代码质量（Opus 4.7 deep review）：**
-
-- [x] **P2: BRIDGE_LOG vsnprintf truncation 数学错误** (spotted by 主程序员 Opus) —
-  fixed: clamp n to avail-1 so buf[total] stays in bounds.
-
-- [x] **P2: g_fexec_hook_count 非原子递增** (spotted by 主程序员 Opus) —
-  fixed: changed to `volatile LONG`, fill entry first then `InterlockedIncrement`.
-
-- [x] **P2: 第 33 个客户端 socket 泄漏** (spotted by 主程序员 Opus) —
-  fixed: shutdown(SD_BOTH) + closesocket(c) before CloseHandle(h) when slots full.
-
-- [x] **P2: ue5_scan_engine.h Sleep(100) 违反 no-sleep.md** (spotted by 主程序员 Opus) —
-  fixed: replaced with SwitchToThread().
-
-两个 P1 修复后 camera_intercept.h 可用于生产。
-回答小逆的问题:
-  - **auto-discovery**: 值得做，但先用 StackOBot 验证手动 AOB 流程，确认 nop 不 crash 再做。
-  - **trampoline**: 先试 NOP 路线；UE5 POV 字段只在 UpdateCamera 写，不会被读，NOP 应安全。
-  - **driver-side recipe**: 见 drivers/ue5_console.py — 加 `cam_intercept_install_aob()` / `cam_intercept_nop()` 包装方法即可，与现有 `_send_cmd()` 机制一致。
-
-### 当前 session (from 主程序员 + 老白)
-
-- [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
-  - UpdateCamera() 每帧写回玩家摄像机位置，无法从外部争抢
-  - 正确解: hook `ULocalPlayer::GetViewPoint` (virtual, hookable via vtable)
-  - GetViewPoint 在渲染线程 FSceneView 构建前被调用，是数据流进渲染器的最后门
-  - UE4SS 方案: `RegisterHook("Function /Script/Engine.LocalPlayer.GetViewPoint", ...)`
-  - 我们方案: 找 LP vtable 中 GetViewPoint 的 slot，VirtualProtect + 写钩子函数
-  - 钩子直接返回 g_cam_override_state，完全跳过 UpdateCamera 写的 POV
-  - 注意: vtable index 因 UE 版本而异，需从 UE4SS PDB 数据或运行时扫描确定
-
-- [ ] **P0: ue5_engine.h 文件拆分** (from 老白) -- DONE in current commit
-  - [x] 拆成 ue5_scan_engine.h / ue5_scan_world.h / ue5_scan_camera.h / ue5_exec_hook.h / ue5_actions.h
-  - 主文件 430 行 (原 3839 行), 最大子文件 ~1237 行
-
-- [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find, confirm scan fallback finds POV.
-
-### 代码 bug（from 主程序员 review，基于 claudeMainBranch）
-
-- [x] **P0: 3rdparty/bridge/src/ 与 renderdoc/renderdoc/core/bridge/ 双树分叉** (spotted by 主程序员) — 老白 的 bug sweep (commit 8994179) 全部修在 renderdoc 树，但实际 CMake 构建目标是 3rdparty/bridge/src/bridge.cpp，该文件无任何修复。主程序员已同步全部 P0/P1/P2 修复到 3rdparty 树（直接修 ue5_engine.h + camera_path.h + bridge.cpp），见下方 CL。两树仍独立存在，建议小逆在后续 PR 中删除其中一棵或通过 target_include_directories 统一来源。
-
-- [x] **P0: line_buf 无大小上限** (spotted by 主程序员) — fixed in pending CL: 1 MB cap + explicit disconnect + split recv close/error.
-
-- [x] **P1: recv() 错误和关闭未区分** (spotted by 主程序员) — fixed in pending CL: n==0 logs close, n<0 logs WSAGetLastError() (skips WSAECONNRESET/WSAEINTR).
-
-- [x] **P1: `__path_delete` atoi 整数溢出** (spotted by 主程序员) — fixed in pending CL: strtol + bounds [0, 10000].
-
-- [x] **P1: camera_path.h count()/list_keyframes()/tick() 无 mutex** (spotted by 主程序员) — fixed in pending CL: m_mutex -> mutable, lock_guard on count/list/visualize/tick/total_duration; added total_duration_unlocked() helper.
-
-- [x] **P1: ClientArg CreateThread 失败泄漏** (spotted by 主程序员) — fixed in pending CL: delete arg + closesocket on CreateThread failure.
-
-- [x] **P2: cs_smooth_initialized 数据竞争** (spotted by 主程序员) — fixed in pending CL: std::atomic<bool>.
-
-### Opus 4.7 深度 review (2026-04-17, by 主程序员)
-
-**P0 新发现：**
-
-- [x] **P0: ue5_scan_engine.h:154 裸指针解引用无 SEH** (spotted by 主程序员 4.7 review) — fixed in pending CL: seh_read_ptr on string-xref candidate.
-
-- [x] **P0: ue5_scan_engine.h:248 同样裸解引用** (spotted by 主程序员 4.7 review) — fixed in pending CL: seh_read_ptr on manual-offset deref.
-
-- [x] **P0: ue5_scan_camera.h:445 + :799 FField 链裸解引用** (spotted by 主程序员 4.7 review) — fixed in pending CL: added seh_read_u32_ok helper; wrapped cls+0x18 reads in find_cam_pov and find_camera_manager_via_lp.
-
-- [x] **P0: g_cam_override_state 多线程撕裂读写** (spotted by 主程序员 4.7 review) — fixed in pending CL: g_cam_override_mutex guards every read/write; tick snapshots under lock then writes to FMinimalViewInfo outside it.
-
-**P1 新发现：**
-
-- [x] **P1: console_server.h:652 Sleep(5000) 违反 no-sleep.md** (spotted by 主程序员 4.7 review) — fixed in pending CL: module-size-stability poll (3 stable samples @ 500 ms, 30 s cap).
-
-- [x] **P1: console_server.h 无 WSAStartup** (spotted by 主程序员 4.7 review) — fixed in pending CL: WSAStartup at entry of cs_server_main, WSACleanup at exit (ref-counted, safe).
-
-- [x] **P1: ue5_actions.h:85 + ue5_exec_hook.h:294 重复 EnumWindows 代码** (spotted by 主程序员 4.7 review) — fixed: extracted `find_game_window()` in ue5_engine.h, both callers use it.
-
-- [x] **P1: ue5_exec_hook.h:346 cmd_queue 生产者无溢出保护** (spotted by 主程序员 4.7 review) — fixed in pending CL: check (head - tail) >= CMD_QUEUE_MAX and drop with log.
-
-**P2 新发现：**
-
-- [x] **P2: console_server.h:429/445/487 strtof 返回 INF/NaN 未拦截** (spotted by 主程序员 4.7 review) — fixed in pending CL: cs_sanitize_float applied to __cam_speed / __smooth / __path_play.
-
-- [x] **P2: console_server.h:892 client thread shutdown 不彻底** (spotted by 主程序员 4.7 review) — fixed in pending CL: ClientSlot tracks SOCKET+HANDLE; shutdown(SD_BOTH) before WaitForSingleObject.
-
-- [ ] **P2: CL 条目缺失** (spotted by 主程序员 4.7 review) — `c088120 "Remove ToggleDebugCamera; split ue5_engine.h; bump tick to 1000Hz"` 在 SHARED.md 里仍是 `(pending push)`，已 push 应填实际 sha。`43ac097 "Add ref/ to .gitignore"` 完全无 CL 条目。按 versioning.md 规则补上。
-
-### UUU 功能复刻 (from 小由 2026-04-05, 老白 confirmed)
-
-- [ ] **P0: per-node FOV 支持** — 路径每个关键帧可以设不同 FOV，播放时线性插值
-- [ ] **P0: 播放时长控制** — `__path_play <total_seconds>` 参数控制总播放时间
-- [ ] **P0: Loop 播放** — `__path_loop 1/0` 命令
-- [ ] **P0: 暂停/恢复** — `__path_pause` / `__path_resume`
-- [ ] **P0: 当前位置查询** — `__camera_get` 返回当前 pos/rot/fov
-
-### 其他
-
-- [ ] **P0: Path D 逆向补全** — pass 2 now scans PC+[0x100..0x800] for exact manager ptr. On next run, log "PC+0xXXX == Path-A manager [XVAL OK]" -- update k_layout_ue57.pc_pcm_start/end to that discovered offset.
-- [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe
-- [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
-- [x] **P2: hardcoded sleep(0.5)** (spotted by 主程序员) — fixed: replaced with cam_read() FOV poll.
-- [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback
-- [x] **P2: g_gvc_ptr binary-address bug** — fixed in d82c2b4: always compare GEngine+0x200 with LP+0x78; if they differ, LP wins (raw ptr, authoritative).
-
-### Gemini 独立外审发现 (2026-04-18, 主程序员转发)
-
-五条全部有效。3 条我们完全漏掉（坑1/坑3/坑5），2 条我们抓了相邻问题但漏了这个侧面（坑2/坑4）。
-
-- [x] **P0: strtof locale 陷阱** (spotted by Gemini) — fixed in pending CL: new `ascii_strtof` / `ascii_strtod` parsers in both trees (renderdoc console_server.h + 3rdparty bridge.cpp). All 10 strtof + 1 strtod call sites replaced. Accepts only `.` as decimal separator; ignores LC_NUMERIC entirely.
-
-- [x] **P1: handle_client 退出不从 g_client_socks 移除** (spotted by Gemini) — fixed in pending CL. 3rdparty tree already had the erase (lines 551-555). Renderdoc tree: added slot-cleanup block at end of `cs_handle_client_thread` that finds this thread's slot by SOCKET value, marks it INVALID_SOCKET + CloseHandle, and compacts trailing invalid entries so `cs_client_count` reflects live clients.
-
-- [x] **P1: g_smooth_factor 裸读写数据竞争** (spotted by Gemini) — fixed in pending CL: both trees now use `std::atomic<float>`. Tick thread loads once per iteration via `.load(memory_order_relaxed)`, __smooth TCP handler uses `.store(memory_order_relaxed)`. Printf format uses the local loaded value (not a second load).
-
-- [ ] **P2: __try 块内 C++ 对象析构跳过** (spotted by Gemini) — audit note in pending CL: `cam_patch_write` now does all C++ destructors (std::vector<HANDLE> suspended, bridge_log calls) OUTSIDE the suspend window; only `cam_seh_memcpy` (pure-C leaf with __try) runs between suspend/resume. Full recursive audit across other __try sites: TODO (next CL).
-
-- [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — DEFERRED to next session. Pure algorithm rewrite (Uniform -> Centripetal); doesn't block any blocker-level capture bug. Tracked here.
-
-### Gemini 第二轮外审 (2026-04-18, 主程序员 Opus 4.7 核查)
-
-四条中三条定性错误或已修，只有一条需要行动。战绩 1/4。
-
-- [x] **P1: UObject GC lifecycle 校验缺失** (flagged by Gemini, 严重性修正 by 主程序员 Opus) — fixed in pending CL. `UEVersionLayout` gained `ue_obj_flags_off` field (0x08 for UE4/5). New `cam_manager_alive()` helper in ue5_scan_camera.h SEH-reads the CameraManager's ObjectFlags and masks `RF_Unreachable|RF_PendingKill|RF_BeginDestroyed|RF_FinishDestroyed`. `write_camera_mem` calls it first; on positive match it clears `g_cam_pov_ptr` + `g_camera_manager_ptr` so the next `__cam_mem_find` re-scans against fresh layout. 3rdparty tree doesn't use `UEVersionLayout` so the check is renderdoc-only for now.
-
-**驳回（附理由归档）：**
-
-- **LWC double 写入内存崩坏（Gemini P0）→ 实际 P2 精度问题**：renderdoc 树 `write_camera_mem` 已根据 `g_cam_pov_is_lwc` 分支写 `*(double*)` vs `*(float*)`，`CameraMemState` 字段已是 double。真实残留是 `__cam_mem_write` 入口 `strtof` → `float vals[]` 中转损失精度（10^7 cm 级约 1cm 误差），不是 Gemini 描述的"结构体后续字段被脏数据覆盖"。3rdparty 树缺 LWC 支持是另一个问题（Commit D 范围）。
-
-- **TCP Nagle 导致 60fps 抽搐（Gemini P1）→ 架构不适用**：Python 驱动不是每帧 TCP 发 pose，而是 `__path_add` 下发关键帧 + DLL 内部 1000Hz 插值；`TrajectoryPlayer` 的 `_PokeSession` 走 RPM/WPM 不走 TCP。Nagle 只影响 coarse 命令的单次 40ms 延迟，不是 60fps 流式传输瓶颈。加 `TCP_NODELAY` 作为防御性一行修复可以接受，但属 P3 nice-to-have。
-
-- **accept() 阻塞导致 DLL 卸载死锁（Gemini P2）→ 代码里已修**：`bridge.cpp:574-580` 和 `console_server.h:893-898` 两棵树都是 `select()` + 1 秒超时 + 外层 `g_server_running` 循环，`ConsoleServer_Stop` 还额外 `closesocket(g_listen_socket)` 双保险。Gemini 描述的裸 `accept()` 在这个 codebase 根本不存在。
-
-## [v0.2.0] UUU / UE4SS Camera Research
-
-**UUU (Universal Unreal Engine Unlocker) approach:**
-- AOB scan for GEngine (not GUObjectArray) -- narrower but works
-- PlayerController via GEngine->GameViewport->LocalPlayer->PlayerController chain
-- APlayerCameraManager via PlayerController at a fixed offset (~0x2A8 UE5.x)
-- Free camera: background thread writes Location/Rotation/FOV to CameraCachePrivate.POV at ~60Hz
-- `UpdateCamera(float)` on APlayerCameraManager is NOT a C++ virtual -- CANNOT vtable-hook it
-- UUU's approach is identical to ours (background write). Our GUObjectArray+FName scan is more robust.
-
-**UE4SS community approach:**
-- Lua `RegisterHook("Function /Script/Engine.Actor.CalcCamera", ...)` hooks UFUNCTION (slow, Lua overhead)
-- `RegisterHook` on PlayerTick to set actor location per-tick (BP-level, not as direct as POV write)
-- `PlayerController.PlayerCameraManager` via FField reflection (same as our ffield_find_offset)
-- `ULocalPlayer::GetViewPoint(FMinimalViewInfo&)` IS virtual (UE4SS template line 1226-1227)
-  and is called by renderer before FSceneView construction -- possible hook point (no race condition)
-  but vtable index calculation requires counting full AActor+UPlayer+ULocalPlayer chain (~100+ entries)
-
-**Conclusion: current 60Hz write approach is correct and industry-standard.**
-Race condition fix = use timestop (g_paused) before capture sequence. With game paused,
-UpdateCamera stops running, our write wins trivially. No vtable hook needed for offline capture.
-
-**Compile fix:** duplicate `static std::atomic<bool> g_camera_override` at ue5_engine.h:294 and 2120
--- removed second declaration (would cause C++ redefinition error).
-
-## [v0.2.0] Bridge DLL Architecture
-
-Bridge DLL (`3rdparty/bridge/`): TCP 9998, GEngine string-xref scan, Exec() vtable, Camera path (Catmull-Rom + SLERP), timestop, HUD toggle, hotsampling.
-
-Driver: `ue5_console.py` auto-fallback bridge:9998 → UUU:1985, `_detect_bridge()` via `__bridge_ping`.
+## Architecture Reference
 
 ### Camera Control Methods
-- **Bridge DLL** — 注入 + console exec (UE4/UE5, 无反作弊)
-- **External Memory** — ReadProcessMemory (绕 user-mode AC)
-- **Cheat Engine** — 手动找 offset
+- **Bridge DLL** -- 注入 + console exec (UE4/UE5, 无反作弊)
+- **External Memory** -- ReadProcessMemory (绕 user-mode AC)
+- **Cheat Engine** -- 手动找 offset
 
-### GEngine Scanner
-8 个锚点 (5 wide + 3 ASCII, 含 UEVR 验证), 引擎通用 pattern, 无需 per-game 数据库。
+### UUU / UE4SS Camera Research (结论)
 
-## Changelog (latest)
+- UUU 和我们一样: 背景线程 60Hz 写 POV (industry standard)
+- `UpdateCamera` NOT virtual, vtable hook 不可用
+- `ULocalPlayer::GetViewPoint(FMinimalViewInfo&)` IS virtual (UE4SS line 1226-1227)
+  是可用 hook 点 (无竞态)，但 vtable index 计算需数完整 AActor+UPlayer+ULocalPlayer
+  链 (~100+ entries)
+- 当前 60Hz 写路径是正确且业界标准。Race 修复 = capture 前 timestop (g_paused)；
+  UpdateCamera 停转，我们写必赢。Offline capture 无需 vtable hook。
+
+### Bridge DLL
+
+- `3rdparty/bridge/`: TCP 9998, GEngine string-xref scan, Exec() vtable,
+  Camera path (Catmull-Rom + SLERP), timestop, HUD toggle, hotsampling
+- Driver `ue5_console.py` auto-fallback bridge:9998 → UUU:1985
+  (`_detect_bridge()` via `__bridge_ping`)
+- GEngine scanner: 8 anchors (5 wide + 3 ASCII, UEVR-verified), 引擎通用 pattern,
+  无需 per-game 数据库
+
+### Game Profiles (configs/hacks/)
+
+```
+_schema.md           -- JSON 字段文档
+batman_ak.json       -- UE3, 60B, rbx, float coord + ue3_packed_int rot
+hellblade_ue4.json   -- UE4, 43B, rdi, float coord + float rot
+stackobot_ue5.json   -- UE5 LWC, 3+4B split, rsi, double coord + double rot
+cyberpunk2077.json   -- REDengine 4, 26B, rbx, float + quaternion
+unreal_physics.json  -- UE5 stub (intercepts=[] until Commit D)
+black_myth_wukong.json -- UE5 stub
+```
+
+Dropdown in Web UI debug panel. Python: `drivers/game_profile.py`
+load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
+
+## Changelog (latest 3)
+
+Older entries live in `agents/reversing/ARCHIVE.md`.
 
 ### [v0.2.0] c656837 -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
 
@@ -398,7 +115,7 @@ Fixed (bridge, both trees where applicable):
   ordering on both trees.
 - P1 UObject GC lifecycle (Gemini round-2, verified by Opus 4.7):
   UEVersionLayout.ue_obj_flags_off field + cam_manager_alive() SEH
-  probe + clear-on-GC-mark.  Renderdoc-tree only (3rdparty lacks the
+  probe + clear-on-GC-mark. Renderdoc-tree only (3rdparty lacks the
   layout struct).
 
 Fixed (UI, reported by user against 2325ee6):
@@ -407,17 +124,14 @@ Fixed (UI, reported by user against 2325ee6):
   on window. Moved to global scope.
 - Cascade Lv2 menu still listed Capture Area / Path / Cone Rotation.
   Removed those 3 items from the lv2 menu. The DOM nodes they opened
-  (catArea/catPath/catCone inside cascadeLv3) are intentionally kept
-  so stale JS reading vol_min_x/spacing/cone_angle ids keeps seeing
-  the default values; full removal lands with the Phase 2 main.py
-  migration.
+  are intentionally kept so stale JS reading vol_min_x/spacing/cone_angle
+  ids keeps seeing the default values; full removal lands with the
+  Phase 2 main.py migration.
 
 Deferred to next session:
 - P2 __try call-chain audit (review-only, partial done -- cam_patch_write
   is clean, but other __try sites need a full sweep).
 - P2 Catmull-Rom uniform -> centripetal.
-
-https://claude.ai/code/session_011gm4yH7ZdsXKye9apKa9yw
 
 ### [v0.2.0] 2325ee6 -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
 
@@ -426,595 +140,45 @@ migration + removing legacy volume/spacing/cone pipeline) lands in a
 separate CL.
 
 UI:
-- `web/templates/index.html` Bridge Debug panel:
-  - REMOVED: slomo / Normal / FPS / Stat Off / DebugCam / HUD Off / HUD
-    On / Pause / Status / Arm Break (test cmds) from the always-visible
-    row. Status + Arm Break survived into the new Advanced section.
-  - KEPT visible: Re-scan UE (needed for UE5 debugging) and Cam POV
-    (Find POV / Read / OV On / OV Off).
-  - COLLAPSED under new "Advanced: AOB intercept + per-game profile"
-    disclosure: Intercept (List/NOP/Pass/Uninstall + install form),
-    per-game Profile (Apply/Lock/Unlock/Clear/refresh + Profile
-    select), Capture (Capture/Read Addr/Test), plus Arm Break / Status
-    as dev tools.
-- Trajectory panel:
-  - New `Save` / `Del` buttons + saved-trajectory dropdown (loads
-    configs/trajectories/*.json round-trip with preset + params +
-    rate_hz + loop).
-  - New `auto-preview` checkbox (default ON): debounced
-    (250ms) trajAutoPreviewMaybe() runs after every preset select or
-    param tweak and refreshes the 3D canvas if the user is on it.
-  - New `RDC capture` checkbox: plumbed through `/api/trajectory/play`
-    into TrajectoryPlayer.play(renderdoc_capture=...) and surfaced in
-    status(). Backend trigger is wired in Phase 2.
+- Bridge Debug panel trimmed. REMOVED from always-visible row:
+  slomo / Normal / FPS / Stat Off / DebugCam / HUD Off / HUD On / Pause
+  / Status / Arm Break. Status + Arm Break survived into new Advanced
+  section. KEPT visible: Re-scan UE, Cam POV (Find/Read/OV On/OV Off).
+- COLLAPSED under new "Advanced: AOB intercept + per-game profile":
+  Intercept (List/NOP/Pass/Uninstall + install form), per-game Profile
+  (Apply/Lock/Unlock/Clear + select), Capture (Capture/Read Addr/Test).
+- Trajectory panel: Save/Del + saved-trajectory dropdown
+  (configs/trajectories/*.json round-trip); auto-preview checkbox
+  (250 ms debounced); RDC capture checkbox plumbed into
+  TrajectoryPlayer.play(renderdoc_capture=...).
 
 Backend:
-- `drivers/trajectory_presets.py`: new `custom` preset -- accepts
-  3/6/7-tuple waypoints, linear subdivision via samples_per_segment,
-  optional look_at that overrides per-waypoint rotation.
-- `web_ui.py`:
-  - `/api/trajectory/save` + `/api/trajectory/saved/<name>`
-    (GET/DELETE) + `/api/trajectory/saved` (list) -- read/write
-    configs/trajectories/<slug>.json. Name is slugged before disk
-    touches to block path traversal; save rejects unknown presets and
-    params that fail tp.generate().
-  - `/api/trajectory/play` accepts new `renderdoc_capture` flag.
-- `drivers/trajectory_player.py`: PlayerStatus carries
-  `renderdoc_capture` bool; surfaced in status().
+- `drivers/trajectory_presets.py`: new `custom` preset (3/6/7-tuple
+  waypoints, linear subdivision, optional look_at).
+- `web_ui.py`: `/api/trajectory/save` + `/api/trajectory/saved/<name>`
+  GET/DELETE + list. Name slugged to block path traversal.
+- `drivers/trajectory_player.py`: PlayerStatus carries `renderdoc_capture`.
 
-Tests: `tests/test_trajectory.py` grew to 46 (custom preset coverage +
-7 saved-trajectory flask tests incl. path-traversal rejection). All
-green.
+Tests: 46 in test_trajectory.py (custom preset + 7 saved-trajectory
+flask tests incl. path-traversal rejection). All green.
 
-Phase 2 TODO (next CL):
-- Migrate main.py capture entry to trajectory-driven: iterate waypoints
-  from the selected trajectory, write camera at each, trigger RDC
-  capture, then batch-export to output/<session>/.
-- Remove volume/spacing/cone UI form entries (they live in a cascade
-  detail panel today; remove once Phase 2 backend lands).
-- Repurpose cone (as a per-waypoint sweep modifier) into the trajectory
-  JSON so preview can visualize it.
-- The unresolved items from 老白 STATUS row (cmd_queue / socket UAF /
-  SuspendThread deadlock / cam_mem_find lock) were all landed in
-  2c0ea17 -- STATUS dashboard is stale.
-
-
+Phase 2 TODO (next CL): main.py trajectory-driven capture; remove
+volume/spacing/cone UI form; repurpose cone as per-waypoint sweep into
+trajectory JSON; wire RDC capture trigger in backend.
 
 ### [v0.2.0] ee9a5db -- xiaoni -- Game library trim to 6 active titles
 
-- `configs/game_library.json`: 332 entries -> 6. The active list:
-  StackOBot (UE5, self-built), Batman: Arkham Knight (UE3),
-  Hellblade: Senua's Sacrifice (UE4), Cyberpunk 2077 (REDengine 4),
-  Unreal Physics (UE5, https://store.steampowered.com/app/2837320/),
-  Black Myth: Wukong (UE5).
-- `configs/game_library_full.json`: backup of the original 332-entry
-  UUU library, in case future expansion needs it.
-- `configs/hacks/unreal_physics.json` + `configs/hacks/black_myth_wukong.json`:
-  STUB profiles, intercepts[]=[] and camera_write_profile.enabled=false.
-  apply_profile() will only run __cam_intercept_uninstall on these
-  until intercepts[] is populated by Commit D auto-discovery or CE.
-- `/api/games` now returns 6, `/api/hacks/list` returns 6 -- the
-  Profile dropdown + Game Library panel will both show only these
-  titles after a hard refresh.
-- AOB schema lives in `configs/hacks/_schema.md`; AOB data lives in
-  `configs/hacks/<id>.json` `intercepts[]`. UI install paths:
-  Debug Panel "Intercept" row (manual AOB) or Profile -> Apply
-  (auto from JSON).
+- `configs/game_library.json`: 332 -> 6. Active: StackOBot (UE5 self-built),
+  Batman: Arkham Knight (UE3), Hellblade: Senua's Sacrifice (UE4),
+  Cyberpunk 2077 (REDengine 4), Unreal Physics (UE5), Black Myth: Wukong (UE5).
+- `configs/game_library_full.json`: backup of the original 332-entry UUU lib.
+- `configs/hacks/unreal_physics.json` + `black_myth_wukong.json`: STUB profiles
+  (intercepts=[], camera_write_profile.enabled=false). apply_profile() will
+  only run __cam_intercept_uninstall until intercepts[] populated by Commit D
+  auto-discovery or CE.
+- `/api/games` now returns 6, `/api/hacks/list` returns 6. Profile dropdown
+  and Game Library panel both show only these titles after hard refresh.
 
-### [v0.2.0] 46cb892 -- xiaoni -- Commit C: trajectory 3D preview
-
-Hooks `/api/trajectory/preview` into the existing `view3d` canvas so an
-operator can see orbit/helix/line/figure8 waypoints before hitting Play.
-
-- `web/templates/index.html`: new Trajectory-panel buttons `Preview 3D`
-  and `Clear 3D`. `Preview 3D` posts to `/api/trajectory/preview`,
-  stashes the result in `trajPreview`, flips the center tab to 3D, and
-  auto-fits the orbit camera on the sample AABB (min radius 10 game
-  units so tight helices stay in view).
-- `draw3d()` new overlay layer: cyan path line, cyan start dot + orange
-  end dot, sparse yaw/pitch arrows (~20 regardless of sample count),
-  and a red playhead that tracks the player's current `t` by bisect.
-  Preview points are UE-style (Z up, cm); swap is done in the draw pass
-  so backend math stays game-native.
-- `tests/test_trajectory.py`: 6 new Flask tests for
-  `/api/trajectory/{presets,preview,status}`. `pytest tests/test_trajectory.py`
-  -> 32 passed.
-
-### [v0.2.0] 2c0ea17 -- xiaoni -- Opus 4.7 round-2 review (5 items)
-
-Fixes for the 2 new bugs + 3 PARTIAL items from 老白's second-round review
-of 1a10b3d.
-
-P0:
-- `ue5_exec_hook.h` cmd_queue: per-slot ready flag
-  (g_cmd_queue_ready[CMD_QUEUE_MAX]). Producer commits strncpy THEN
-  InterlockedExchange(ready, 1). Consumer drains via
-  InterlockedCompareExchange(ready, 0, 1) -- only reads committed slots.
-
-P1:
-- `console_server.h` 33rd-client: slot-full check runs BEFORE
-  CreateThread. When full we shutdown+closesocket the accepted socket
-  synchronously and `continue`; no untracked thread ever gets the
-  socket value -> no value-reuse UAF against later accepts.
-- `camera_intercept.h` cam_patch_write: error strings now go to a
-  stack buffer, bridge_log is only called AFTER cam_resume_others().
-  Prevents DBWIN / CSRSS mutex deadlock when a suspended thread held
-  OutputDebugStringA's lock.
-- `ue5_scan_camera.h` + `console_server.h`: added g_cam_pov_mutex.
-  Tick thread try_locks each iteration; __cam_mem_find holds it for
-  clear+scan+set so no tick observes a cleared/half-set pointer.
-  Removed the brittle override-pause workaround.
-
-P2:
-- `ue5_engine.h` g_fexec_hook_count: std::atomic<LONG>. All 16 read
-  sites use .load(), install uses .fetch_add(1) after entry filled,
-  uninstall uses .store(0). Portable across compilers.
-
-### [v0.2.0] 1a10b3d -- xiaoni -- Opus 4.7 review sweep (13 items)
-
-All 13 items from the Opus 4.7 deep review are now fixed (2 P0, 7 P1, 4 P2):
-
-P0:
-- `ue5_exec_hook.h`: cmd_queue producer race -> CAS loop (InterlockedCompareExchange)
-- `camera_intercept.h`: cam_patch_write() now suspends all game threads via
-  CreateToolhelp32Snapshot + SuspendThread before patching, resumes after
-
-P1:
-- `camera_intercept.h`: VirtualQuery cross-page check (addr+size vs region end)
-- `console_server.h`: `InterpolatedCamera cam = {};` zero-init
-- `camera_path.h`: lock_guard on play()/stop()/toggle_pause() + stop_unlocked()
-- `console_server.h`: __cam_mem_write NaN/Inf filter via cs_sanitize_float
-- `console_server.h`: __cam_mem_find pauses g_camera_override during rescan
-- `console_server.h`: WSACleanup moved to ConsoleServer_Stop after client join
-- `ue5_engine.h` + `ue5_actions.h` + `ue5_exec_hook.h`: EnumWindows -> find_game_window()
-
-P2:
-- `console_server.h`: BRIDGE_LOG vsnprintf truncation clamp
-- `ue5_engine.h` + `ue5_exec_hook.h`: g_fexec_hook_count volatile LONG + InterlockedIncrement
-- `console_server.h`: 33rd client socket leak -> shutdown + closesocket
-- `ue5_scan_engine.h`: Sleep(100) -> SwitchToThread()
-
-### [v0.2.0] 76cbd5a -- xiaoni -- Commit B: trajectory presets + 60 Hz player
-
-Builds on Commit A (`306395b`, IGCS-style pointer capture). Streams
-parametric camera trajectories to the captured camera struct at 60 Hz.
-
-**New files**:
-- `drivers/trajectory_presets.py` -- `orbit / helix / line / figure8`
-  generators. Returns `list[PosePoint]` in game-space (UE convention:
-  Z up). Each preset is parameterized (center, radius, height, turns,
-  duration, samples, fov) and has an auto-look-at-center option that
-  solves yaw/pitch from camera position. Shared helpers: `generate()`
-  dispatcher used by the Flask API, `interp_linear()` with bisection
-  lookup + shortest-path yaw wrapping, `total_duration()`.
-
-- `drivers/trajectory_player.py` -- `TrajectoryPlayer` class owns one
-  background writer thread that ticks at configurable rate (default
-  60 Hz). Per-tick: interpolate the current `t` -> pose, poke each
-  field of the camera struct over a **persistent** TCP session
-  (`_PokeSession`, reuses one socket for the full playback to avoid
-  420 connect/close/s). Profile offsets + types are baked once at
-  `play()` time into a `_PokeField` plan. Supports pause / resume /
-  loop, aborts after 8 consecutive poke failures, exposes live
-  `status()` (state, t, ticks, writes_ok/fail, last_pose). Module
-  singleton `get_default_player()` backs the Flask routes.
-
-- `tests/test_trajectory.py` -- 26 tests: preset geometry
-  (circle-on-radius, helix monotonic rise, line endpoints, figure-8
-  passes through center), interpolation (midpoint, clamping, yaw
-  shortest-path at 350->10 seam, bisect on dense orbit),
-  `_PokeSession` wire format verified against a local echo server.
-
-**Modified**:
-- `web_ui.py`: seven new routes under `/api/trajectory/*`:
-  `presets` (+ schemas for UI form rendering), `preview` (no-play
-  generation for 3D viz), `play`, `stop`, `pause`, `resume`, `status`.
-  Validates `profile_id` slug for path-traversal, maps ValueError ->
-  400, RuntimeError (already running) -> 409, FileNotFoundError -> 404,
-  ConnectionError -> 503.
-
-- `web/templates/index.html`: new "Trajectory" row in the Debug panel
-  with preset dropdown, per-preset dynamic form rendered from
-  `PRESET_SCHEMA` (vec3 / num / int / bool / choice), rate + loop
-  inputs, Play/Pause/Resume/Stop buttons, live status banner polled
-  every 500 ms while not idle. Reuses the existing game-profile
-  dropdown to pick which game to stream to.
-
-**Known limitations (carried to Commit C/D)**:
-- No 3D visualization of the generated path yet -- `/api/trajectory/preview`
-  returns all sampled points ready for the `view3d` canvas overlay
-  (Commit C wires it up).
-- UE3 packed-int rotation (Batman) still casts pitch/yaw/roll floats
-  verbatim to i32 at the bridge layer. Correct `deg * (0x10000/360)`
-  conversion not yet in the player; pass rotations 0 for first test.
-- Cyberpunk 2077 (quaternion rotation) `camera_write_profile` remains
-  disabled -- player rejects profiles with `enabled: false`.
-- StackOBot multi-site captures (3/4 byte sites < 14 threshold) wait
-  for Commit D UE auto-discovery.
-
-**Tests**: `pytest tests/test_trajectory.py -v` -> 26 passed.
-
-### [v0.2.0] (pending push) -- xiaoni -- IGCS-style camera intercept (MVP)
-
-**New file**: `renderdoc/renderdoc/core/bridge/camera_intercept.h`
-
-Motivation: `APlayerCameraManager::UpdateCamera()` writes player-follow
-position into `FMinimalViewInfo` every frame, racing with our 1000 Hz
-tick. Instead of racing, patch the game's own MOV instruction(s): swap
-to NOPs when we want to block the game's writes, swap back when we
-want it to drive.
-
-Key decision (confirmed by 老白): **keep the entire existing discovery
-pipeline**. GEngine / UWorld / ULocalPlayer / APlayerCameraManager are
-still located via string-xref + GUObjectArray + FName. We still plan to
-walk actors with the same infrastructure. The intercept module replaces
-only the 1000 Hz override mechanism.
-
-Design mirrors IGCS Hellblade (UE4) reference at
-`docs/refCode/igcs/Cameras/Hellblade/InjectableGenericCameraSystem/`:
- - AOB-scan the game's write instruction in `.text`.
- - `VirtualProtect(PAGE_EXECUTE_READWRITE)` + `memcpy` + restore +
-   `FlushInstructionCache`. Per-site original bytes saved so toggles
-   between `pass` / `nop` are reversible.
- - Not using MinHook / Detours / inline trampoline generation yet --
-   simpler byte-swap first. Conditional asm trampoline is a follow-up
-   if per-game NOP turns out to corrupt game state.
-
-TCP commands (new):
-  - `__cam_intercept_install_addr <hex_addr> <size> [name]`
-  - `__cam_intercept_install_aob <size> <name> | <AOB hex>`
-  - `__cam_intercept_nop`       (override ON -- block game writes)
-  - `__cam_intercept_pass`      (override OFF -- restore originals)
-  - `__cam_intercept_list`
-  - `__cam_intercept_uninstall` (restore + clear list; also runs on DLL shutdown)
-
-`__bridge_status` now reports `intercept_sites=N intercept_nopped=0/1`.
-
-Not yet implemented (intentional scope):
-  - Auto-discovery of the write instruction from known
-    `g_camera_manager_ptr + cc_off + pov_x_off`. Currently per-game AOB
-    must be supplied from UI / config.
-  - Conditional asm trampoline (IGCS's `cameraStructInterceptor` PROC
-    with `g_cam_override_state` writes inside the asm). Byte-swap first.
-  - Integration with path playback: tick-thread path writes still go
-    through `write_camera_mem` unchanged. Once an intercept site is in
-    nop mode, the game doesn't fight those writes any more.
-
-Expected usage from UI side (xiaoyu to wire up):
-  1. Call `__cam_mem_find` as today -- confirms camera POV pointer.
-  2. For target game, pass the AOB (found offline in CE/x64dbg) +
-     byte-count via `__cam_intercept_install_aob`.
-  3. Before path playback: `__cam_intercept_nop` + `__cam_mem_on`.
-  4. After playback: `__cam_intercept_pass` (hand control back to game).
-  5. DLL unload or `__cam_intercept_uninstall` cleans up.
-
-### [v0.2.0] 8994179 -- xiaoni -- 老白 bug fix sweep
-
-Batch fix of 主程序员 review (base + Opus 4.7 deep review). All listed
-P0 / P1 / P2 items marked completed in the TODO section above.
-
-P0 crashes & races:
-- `ue5_scan_engine.h`: wrap `*(void**)resolved` (string-xref) and
-  `*(void**)addr` (manual-offset) with `seh_read_ptr`. Uncommitted pages
-  in DRM/AC-modified modules no longer take the whole process down.
-- `ue5_scan_camera.h`: add `seh_read_u32_ok` helper in `ue5_engine.h`;
-  replace bare `*(uint32_t*)(cls+0x18)` FName loads in `find_cam_pov`
-  and `find_camera_manager_via_lp` so a torn class-chain step logs
-  `<av>` instead of faulting.
-- `console_server.h`: add `g_cam_override_mutex` (declared next to
-  `g_cam_override_state` in `ue5_scan_camera.h`). Tick thread snapshots
-  the struct under lock before pushing to FMinimalViewInfo; TCP
-  `__cam_mem_write` updates it under the same lock. No more mid-struct
-  torn writes feeding NaN into the camera.
-- `console_server.h` client handler: cap `line_buf` at 1 MB (was
-  unbounded), split `recv <= 0` into explicit close (`n == 0`) vs
-  error (`n < 0` with `WSAGetLastError`).
-
-P1:
-- `__path_delete`: switch `atoi` -> `strtol` with explicit bounds
-  `[0, 10000]`; rejects `INT_MAX+1` etc.
-- `camera_path.h`: make `m_mutex` mutable, add `lock_guard` to
-  `count()`, `list_keyframes()`, `visualize()`, `tick()`, and the
-  public `total_duration()`. Introduced `total_duration_unlocked()`
-  for callers that already hold the lock.
-- `console_server.h`: clean up `ClientArg` + `closesocket(c)` on
-  `CreateThread` failure.
-- `console_server.h`: replace `Sleep(5000)` engine-scan preamble with
-  a module-size-stability poll (3 consecutive stable samples,
-  500 ms cadence, 30 s cap). Per `.claude/rules/no-sleep.md`.
-- `console_server.h`: call `WSAStartup`/`WSACleanup` inside
-  `cs_server_main` instead of relying on RenderDoc's `Network::Init()`
-  ordering.
-- `ue5_exec_hook.h`: bound-check `cmd_queue` before push
-  (`head - tail >= CMD_QUEUE_MAX` => drop with log). Prevents silent
-  overwrite when game thread is paused on a loading screen.
-
-P2:
-- `cs_smooth_initialized` -> `std::atomic<bool>`.
-- `__cam_speed` / `__smooth` / `__path_play` run incoming floats
-  through `cs_sanitize_float` (rejects NaN/INF and out-of-range).
-- Client-thread shutdown now records the SOCKET alongside the HANDLE
-  and calls `shutdown(SD_BOTH)` on each before `WaitForSingleObject`,
-  so a recv-blocked client does not leak its handle past the timeout.
-
-Notes / deferred:
-- P1 EnumWindows dedup in `ue5_actions.h` + `ue5_exec_hook.h`: not
-  done (cosmetic; separate refactor).
-- CL 条目缺失 for `c088120` / `43ac097`: still pending.
-
-### [v0.2.0] (pending push) -- 主程序员 peer review: 3rdparty build tree sync
-
-Review of commit 8994179 (老白 P0/P1/P2 bug sweep) found that ALL
-fixes were applied to `renderdoc/renderdoc/core/bridge/` only.
-The actual CMake build target (`3rdparty/bridge/src/bridge.cpp`) includes
-`ue5_engine.h`, `camera_path.h`, `pattern_scan.h` from `3rdparty/bridge/src/`
--- none of the renderdoc fixes were in the built DLL.
-
-Applied equivalent fixes to the 3rdparty build tree:
-
-**3rdparty/bridge/src/ue5_engine.h (P0 SEH)**
-- Line 218: bare `*(void**)resolved` in string-xref scan -- wrapped in
-  `__try/__except` block (inline, same pattern as seh_read_ptr).
-- Line 274: bare `*(void**)addr` in `find_gengine_via_offset` -- wrapped
-  in `__try/__except`; AV now logs and returns false instead of crashing.
-
-**3rdparty/bridge/src/camera_path.h (P1 mutex)**
-- `m_mutex` -> `mutable std::mutex`
-- `count()`: add lock_guard
-- `tick()`: add lock_guard + call total_duration_unlocked()
-- `total_duration()`: add lock_guard + call total_duration_unlocked()
-- `list_keyframes()`: add lock_guard
-- `visualize()`: add lock_guard
-- Added private `total_duration_unlocked()` helper
-
-**3rdparty/bridge/src/bridge.cpp (P1/P2)**
-- `g_smooth_initialized`: bool -> `std::atomic<bool>` (P2)
-- `__smooth` float: add NaN/INF/range check before storing (P2)
-- `__cam_speed` float: add NaN/INF/range check (P2)
-- `__path_play` float: add NaN/INF/range check (P2)
-- `__path_delete`: atoi -> strtol + bounds [0, 10000] (P1)
-- `line_buffer`: cap at 1 MB before append; disconnect on overflow (P1)
-- Client socket tracking: `g_client_socks` vector + mutex; registered
-  on connect, erased on disconnect. `shutdown()` calls `shutdown(SD_BOTH)`
-  on all before joining server thread (P1 recv-blocked thread leak)
-- Added `#include <algorithm>` and `#include <cmath>`
-
-Remaining open items:
-- Two trees still independent (CMake build-system decision TBD by 小逆)
-- EnumWindows dedup in renderdoc tree (cosmetic, deferred)
-- cmd_queue overflow comparison: `(LONG)(head - tail)` should be `(ULONG)` to
-  avoid UB when head/tail wrap past INT_MAX (P2, theoretical, ~2B ops)
-
-### [v0.2.0] (pending push, earlier) -- xiaoni
-- **Remove ToggleDebugCamera logic**: all `g_debug_camera_active` code removed from
-  `ue5_engine.h`, `console_server.h`, `ue5_console.py`, `test_camera_path.py`.
-  Shipping games have no ToggleDebugCamera; debug PCM approach is dev-build-only.
-  Removed `__cam_toggle`, `__cam_debug_on`, `__cam_debug_off` bridge commands.
-- **Tick thread bumped to 1000 Hz** (`Sleep(1)` was `Sleep(16)`): writes 16x per
-  game frame vs UpdateCamera's 1x. Temporary mitigation until GetViewPoint hook.
-  UpdateCamera root cause documented: correct fix is ULocalPlayer::GetViewPoint vtable
-  hook (virtual, called at game-to-render boundary, bypasses UpdateCamera entirely).
-- **ue5_engine.h split** (3839 -> 430 lines): implementation extracted into 5
-  sub-headers included in order from ue5_engine.h:
-  - `ue5_scan_engine.h` (1218 lines): GEngine, GUObjectArray, FNamePool, FExec vtable
-  - `ue5_scan_world.h` (379 lines): UWorld, ULocalPlayer
-  - `ue5_scan_camera.h` (1237 lines): PCM, cam_pov, R/W, cross-validation
-  - `ue5_exec_hook.h` (472 lines): FExec multi-hook, console exec, gamethread dispatch
-  - `ue5_actions.h` (129 lines): timestop, HUD, free camera, hotsampling
-
-### [v0.2.0] 1089807 -- xiaoni
-- **Fix camera not moving (without slomo)**: correct approach is debug PCM.
-  `slomo` is unreliable in cracked/modified games (TimeDilation may be disabled).
-  UUU-style fix: ToggleDebugCamera creates a debug PCM with no `UpdateCamera()`
-  position lock; writing to IT persists across frames. Original PCM is locked to
-  player position every frame.
-- `find_camera_manager()`: when `g_debug_camera_active && n_candidates > 1`,
-  select **NEWEST** (highest GUA index) candidate = debug PCM. Was always selecting
-  oldest (original position-locked PCM).
-- `cross_validate_camera()`: when `g_debug_camera_active && A != D`, **keep A**
-  (debug PCM). D scans LP+0x30 which may still point to original PC in UE5.7
-  (LP not updated by ToggleDebugCamera); D returns original PCM = wrong.
-- **New bridge commands**: `__cam_debug_on` / `__cam_debug_off` (idempotent).
-  Only toggles if state differs; replies `camera_active=0/1`. Caller runs
-  `__cam_mem_find` after enable so PCM re-selection takes effect.
-- **Driver**: `cam_debug_on()` / `cam_debug_off()` methods.
-  `enable_debug_camera()` now uses `cam_debug_on()` (idempotent) for bridge.
-- **test_camera_path.py**: removed slomo. Calls `cam_debug_on()` + `cam_find()`
-  before building path. Path starts from debug PCM position.
-
-### [v0.2.0] d82c2b4 -- xiaoni
-- **Fix camera not moving: slomo before path play** (`tools/test_camera_path.py`):
-  Root cause: `APlayerCameraManager::UpdateCamera()` runs every game frame and
-  writes the player-follow position back to CameraCachePrivate.POV -- the same
-  address our 60 Hz tick writes to. Game wins the race; camera stays at player pos.
-  Fix: issue `slomo 0.0001` before `path_play()`. At 1/10000 speed UpdateCamera
-  runs ~once per 167s; our 60 Hz tick dominates every rendered frame.
-  Speed restored to 1.0 after path ends or Ctrl+C.
-  Added `--no-slomo` flag for debug-camera-active scenarios (debug PCM has no
-  position lock, so no competition).
-- **Fix: GVC TObjectPtr detection extended to DLL range** (`ue5_engine.h`):
-  Previous check only caught GVC values in main EXE range. In StackOBot,
-  `GEngine+0x200 = 0x7FF457799DF8` is in a DLL range below the EXE base --
-  old check missed it, `g_gvc_ptr` got the fake value, LP cross-check logged
-  spurious MISMATCH, GVC-world update used wrong world causing GEngine FExec
-  crash on every subsequent command.
-  Fix: always read `LP+0x78` (raw ptr, UE4SS verified). If LP GVC != GEngine GVC,
-  adopt LP's value. `g_gvc_ptr` now equals `LP+0x78` so `verify_lp_via_gvc()` confirms.
-
-### [v0.2.0] a403a51 -- xiaoni
-- **Fix crash: Path D "CameraManager" filter** (was "Camera"):
-  After `ToggleDebugCamera`, `LP+0x30` -> `DebugCameraController`.
-  Path D was finding `DebugCameraHUD` (class contains "Camera") at
-  `DebugCameraController+0x388`. cross_validate switched to DebugCameraHUD.
-  Camera tick thread then wrote LWC doubles into DebugCameraHUD memory at
-  +0x360 (valid heap, no AV), corrupting internal HUD data -> fatal crash.
-  Fix: both pass 1 and pass 2 of `find_camera_manager_uuu_style()` now
-  require "CameraManager" substring. APlayerCameraManager and all BP subclasses
-  match; HUDs, components, controllers do not.
-- **Fix: FOV validation before A->D switch** in `cross_validate_camera()`:
-  Before switching from A (FName-found) to D (PC-direct), read D's direct-offset
-  FOV and validate it is in [1,179] and finite. If invalid, keep A.
-  Defense-in-depth against future false positives from Path D.
-- Root cause of fatal error confirmed: writing to wrong UObject (DebugCameraHUD)
-  at camera POV offsets = silent memory corruption + crash seconds later.
-
-### [v0.2.0] 738ea13 -- xiaoni
-- **Fix: GVC TObjectPtr encoding** (g_gvc_ptr binary-address P2 bug):
-  `GEngine+0x200` on StackOBot UE5.7 returns `0x7FF3E2BA9DF8` (inside game binary),
-  which is a TObjectPtr-encoded handle, not a heap object pointer.
-  Fix: `validate_engine_viewport_chain()` now checks if GVC is in `[module_base,
-  module_base+size)`. If yes, falls back to `LP+ulp_vc_off` (always raw pointer,
-  confirmed UE4SS layout). LP cross-check will now pass.
-- **k_layout_ue57 pc_pcm range**: updated to 0x388-0x398 (VERIFIED: PC+0x390 from
-  Path D pass-2 run, A==D [XVAL OK]).
-
-### [v0.2.0] 152fc53 -- xiaoni
-- **Path D: direct ptr scan fallback for UUU cross-validation**:
-  `find_camera_manager_uuu_style()` now has two passes:
-  - Pass 1: FName class check in layout-defined range [pc_pcm_start..pc_pcm_end]
-  - Pass 2: scan PC+[0x100..0x800] step=8 for exact `g_camera_manager_ptr` value.
-    When found: logs "PC+0xXXX == Path-A manager [XVAL OK]" -- use that offset to
-    tighten future pc_pcm range in layout struct.
-  User requirement: "UUU cross-validation must succeed, not 'known limitation'".
-  Fix: pass 2 is definitively correct regardless of FName range or TObjectPtr encoding.
-- `cross_validate_camera()`: logs "A==D [XVAL OK]" when pass-2 confirms Path A.
-- k_layout_ue57: pc_pcm_end extended 0x380 -> 0x500 (wider pass-1 coverage).
-- Design confirmed: per-game UEVersionLayout is correct approach (hardcode offsets
-  from reversing); scan fallback only when no game-specific config available.
-
-### [v0.2.0] d37d007 + 5a050ec -- xiaoni
-- **CRITICAL FIX: FMinimalViewInfo double layout (UE5 LWC)**:
-  UE5 FVector/FRotator are double (8B each), not float. All camera read/write was
-  using wrong offsets and types. Fixed:
-  - CameraMemState: x/y/z/pitch/yaw/roll now double
-  - g_cam_pov_is_lwc flag: set when POV found, used in read/write/scan
-  - find_cam_pov(): tries 3 POV-in-cache offsets (+0x08 LWC, +0x10 SIMD-float, +0x04)
-    with matching FOV offsets (+0x30 LWC, +0x18 float)
-  - find_cam_pov_scan(): split into find_cam_pov_scan_pass(is_lwc).
-    LWC pass (step=8, doubles) tried first; float pass (step=4) as fallback.
-  - read/write_camera_mem(): branch on g_cam_pov_is_lwc
-- **docs/ue_memory_layout.md**: New reference document covering all memory offsets
-  used by bridge DLL across UE4/UE5, with verification status per game.
-
-### [v0.2.0] 6879265 -- xiaoni
-- **find_cam_pov_scan()**: FField reflection fallback. When CameraCachePrivate is not reflected
-  (StackOBot: FField chain ends after 1 prop "PCOwner"), scans manager+0x200..+0x900 in 4-byte
-  steps for valid 7-float FMinimalViewInfo pattern (FOV[1,179], Pitch[-91,91], all finite).
-  Logs all candidates; picks first valid. Added forward declaration.
-- **GVC world locking**: set g_world_from_gua=true in all three paths (adopt/confirm/mismatch)
-  inside validate_engine_viewport_chain(). Prevents FExec sublevel-world spam after GVC confirms.
-- **ffield_find_offset_era() verbose logging**: walked counter, AV log, chain-end log.
-
-### [v0.2.0] (previously pending) -- xiaoni
-- **UUU/UE4SS camera research**: confirmed background 60Hz POV write is industry standard (same as UUU).
-  `UpdateCamera` is NOT virtual, vtable hook not applicable. Race condition fix = use timestop.
-- **Fix: duplicate `g_camera_override` declaration** (ue5_engine.h:2120) -- second `static std::atomic<bool>
-  g_camera_override{false}` removed; would cause C++ redefinition error at compile time.
-- **Path + mem integration**: camera path tick now writes directly to `g_cam_override_state` +
-  `write_camera_mem()` when `g_cam_pov_ptr` is available, falling back to console commands otherwise.
-  Camera path no longer requires DebugCamera when direct memory path is active.
-- **Path D (UUU-style fixed-offset probe)**: `find_camera_manager_uuu_style()` -- probes PC at 16
-  offsets (0x2A0-0x380, 8-byte steps) and checks class FName for "Camera" substring. Covers full
-  UE5.00-5.07 range (offset drifts upward each minor version). Used for cross-validation only;
-  Path B (FField) is authoritative.
-- **LP -> GVC cross-check**: `verify_lp_via_gvc()` -- confirms `g_localplayer_ptr` by reading
-  `LP+0x78` (ULocalPlayer::ViewportClient) and comparing with `g_gvc_ptr` saved from GVC chain.
-  Stable UE5 offset: UE4SS MemberVarLayout_5_07 confirmed ViewportClient=0x78.
-- `g_gvc_ptr` global saves GVC from `validate_engine_viewport_chain()` for reuse.
-- `cross_validate_camera()` now runs ALL four paths (A/B/C/D) and logs agreement/disagreement.
-  Priority B > A > D. Logs B==D or B!=D to confirm/deny UUU's claimed PCM offset for this game.
-
-### [v0.2.0] a0fe8c3 -- xiaoni
-- **Direct FMinimalViewInfo camera override** (complete implementation):
-  - `find_cam_pov()`: walks `UClass::ChildProperties` (FField linked list) at runtime
-    to find `CameraCachePrivate` offset; no PDB, no hardcoded per-game offsets.
-  - Handles two UE5 FField eras (UE4SS PDB verified):
-    UE5.00-5.02 (Next=+0x20, Name=+0x28, Offset_Internal=+0x4C);
-    UE5.03-5.07 (Next=+0x18, Name=+0x20, Offset_Internal=+0x44).
-    Key fix: `UStruct::ChildProperties` = **+0x50** (not +0x40 which is SuperStruct).
-  - FCameraCacheEntry::POV at +0x10 (float TimeStamp + 12-byte SIMD pad),
-    with +0x04 fallback for non-SIMD builds; validated by reading FOV in [1,179].
-  - FMinimalViewInfo: Location+0x00, Rotation+0x0C, FOV+0x18 (stable across UE5).
-  - Tick thread (60 Hz) writes `g_cam_override_state` to fight game's per-frame update.
-- **New TCP commands**: `__cam_mem_find`, `__cam_mem_read`,
-  `__cam_mem_write X Y Z P Y R [FOV]`, `__cam_mem_on`, `__cam_mem_off`.
-- **find_camera_manager()**: scans GUObjectArray for class FName
-  "PlayerCameraManager" or "BP_PlayerCameraManager_C"; skips CDOs; prefers
-  candidate whose OuterPrivate class is "PlayerController".
-- **__bridge_status** extended: `camera_manager_ptr`, `cam_pov_ptr`,
-  `camera_manager_found`, `cam_pov_found`, `cam_override`.
-- **__bridge_rescan_objects** now resets and re-finds camera_manager + cam_pov.
-- **Startup sequence** extended to 10 steps: step 9=CameraManager, step 10=POV.
-- **Python/UI**: `scan_status()`, `rescan_objects()` return `camera_manager_found/ptr`;
-  Web UI debug panel shows "CameraMgr:" badge alongside UWorld/LP.
-
-### [v0.2.0] 373cf2b -- xiaoni
-- **Toolbar '重新扫描 UE' button**: visible at all times, colored dot (gray/green/orange/red),
-  opens debug panel + triggers rescan in one click. No longer buried in debug panel.
-- **Arm Break mechanism**: g_debug_break_armed atomic toggle via __bridge_arm_break command.
-  find_uworld + find_localplayer each fire __debugbreak() (one-shot) when armed.
-  Workflow: attach WinDbg -> Arm Break -> Re-scan UE -> debugger catches at discovery.
-- **Debug panel 'Arm Break' button**: turns red when armed, shows attach-debugger instructions.
-
-### [v0.2.0] 711d8eb -- xiaoni
-- `__bridge_rescan_objects` TCP command: clears g_world_ptr/g_localplayer_ptr,
-  re-runs find_uworld + find_localplayer, returns `uworld_found= localplayer_found=`
-- `__bridge_status` extended with `uworld_found= localplayer_found= localplayer_ptr=`
-- `drivers/ue5_console.py`: scan_status(), rescan_objects(), is_objects_ready(),
-  wait_for_objects_ready() (polls 2s interval, up to 10 min)
-- `web_ui.py`: /api/bridge/scan_status GET, /api/bridge/rescan POST
-- `web/templates/index.html`: Debug panel scan status row (UWorld/LP indicators)
-  + "Re-scan UE" button; auto-refreshes on panel open
-- `main.py`: pre-capture gate: polls is_objects_ready() until ready or stop
-
-### [v0.2.0] aea22c7 -- xiaoni
-- **Ordered gated init**: console_server.h startup rewritten as 7-step sequential
-  init. Gate 1=GUObjectArray (poll 120s), Gate 2=FNamePool (poll 60s), Gate 3=GEngine
-  (poll 120s). All are mandatory -- bridge aborts (FATAL log) if any gate times out.
-  Steps labeled [1/7]..[7/7] for clean log readability.
-- **Removed per-hook log noise**: install_fexec_hook_on no longer logs per hook.
-  64 individual log lines -> 1 summary "[5/7] FExec hooks: N installed".
-- **Removed lazy world scan**: exec_console_command_internal no longer calls
-  find_uworld_via_guobjectarray() lazily on each command. UWorld must be found
-  at startup (step [6/7]) or captured by FExec hook.
-- **Removed passive LocalPlayer fallback**: g_localplayer_fexec global and hook
-  capture removed entirely. ULocalPlayer is found ONLY via GUA+FName("LocalPlayer")
-  active scan. Single exec path: GEngine first, ULocalPlayer (FName) second.
-
-### [v0.2.0] 951ee30 -- xiaoni
-- `find_localplayer()`: multi-block FName scan. 'LocalPlayer' confirmed in block 5+
-  (not block 0). Old code returned 0xFFFFFFFF silently. Now searches blocks 0..CurrentBlock.
-- `g_localplayer_ptr`: new global set by find_localplayer(). exec fallback uses it
-  as primary path; g_localplayer_fexec (passive hook) is secondary.
-- console_server.h: find_localplayer() called eagerly after find_uworld_via_guobjectarray.
-- Log confirmed root cause: FNamePool CurrentBlock=30, LocalPlayer not in block 0.
-
-### [v0.2.0] Fix stride detection + hook table + ULocalPlayer fallback -- xiaoni
-- **Root cause A: FUOBJECTITEM_STRIDE hardcoded 24** -- current branch rewrite removed runtime
-  stride detection. StackOBot UE5.7 Dev uses stride=32, obj_off=0x08, so guobjectarray_get()
-  was returning garbage pointers, causing GUObjectArray FExec scan to find zero ULocalPlayer hooks.
-  Fix: restored `g_fuobjectitem_stride`/`g_fuobjectitem_object_off` globals + `detect_fuobjectitem_stride()`
-  using GEngine.InternalIndex cross-validation. Called from console_server.h after GEngine found.
-- **Root cause B: hook table size 16 (regression)** -- rewrite reverted table to 16.
-  Fix: restored to 64; silent return when full (no spam).
-- **ULocalPlayer fallback in exec_console_command_internal** -- GEngine::Exec returns false for
-  gameplay commands (slomo, ToggleDebugCamera, etc.) in UE5. Added `g_localplayer_fexec` global
-  captured by hooked_fexec_exec on first non-GEngine FExec call with valid world. exec fallback
-  looks up vtable in hook table -> calls ULocalPlayer original. Lazy capture (passive, no FName scan).
-- **Crash retry on stale world** -- if GEngine::Exec AV-crashes (stale map-reload world pointer),
-  clear g_world_ptr and retry with nullptr. CVars/stat work without world.
-
-### [v0.2.0] Fix ProcessConsoleExec: wrong function + wrong vtable range — xiaoni
-- **Root cause**: calling wrong function (Exec) at wrong vtable range (110-130) with wrong param order
-- **Correct function**: `UObject::ProcessConsoleExec(TCHAR*, FOutputDevice&, UObject*)` at vtable[79] (UE5.7)
-- Fix: typedef param order `(this, cmd, ar, executor)` not `(this, world, cmd, ar)`
-- Fix: scan range 65-90 instead of 110-130
-- Built-in version DB (UE4SS PDB-verified): UE 4.27-5.07, 9 entries
-- Ar-callback validation: detect if candidate function actually calls FOutputDevice virtual methods
-- Dummy FOutputDevice with callback flag replaces NULL Ar
-- Research archived to `agents/reversing/ARCHIVE.md` (full vtable index table)
-
-### [v0.2.0] d32d2aa — xiaoni
-- TCP 秒启 + GEngine 后台 scan, launcher 秒退检测, 8 锚点, diagnostics, fallback, status
+---
 
 旧版 CL 和已完成 TODO 见 `agents/reversing/ARCHIVE.md`。

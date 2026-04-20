@@ -19,3 +19,4 @@
 - When an agent needs to tell another agent about a change, reference the version: "see rendering SHARED.md [v0.2.0]" -- not dates or commit hashes.
 - Agents reading SHARED.md should check the version tag to know if they've already consumed that update.
 - **Every push MUST include a changelog entry** in the agent's own SHARED.md. A push without a corresponding CL entry is an incomplete submission. Format: `### [v0.X.Y] <sha> -- <agent name>` with bullet summary. No exceptions.
+- **Auto-archive rule**: SHARED.md keeps only the **latest 3 CL entries** and **open TODO items**. On session start, move CL entries older than 14 days (or beyond the top 3) to `agents/<role>/ARCHIVE.md`. Closed `[x]` TODO items also move to ARCHIVE. Goal: SHARED.md stays under 300 lines / 15 KB.
