@@ -8,7 +8,7 @@
   "engine_version": "2.12 (Phantom Liberty)",
   "credits": "Otis_Inf / Jim2Point0 (IGCS)",
   "source": "docs/refCode/igcs/Cameras/Cyberpunk2077/",
-  "notes": "ActiveCam write at second occurrence of this pattern (IGCS reference). occurrence=2 set in intercept. Uses quaternion rotation (0xF0) + coords at +0xE0. Camera base register is rbx.",
+  "notes": "ActiveCam write at second occurrence of this pattern (IGCS reference). occurrence=2 set in intercept. Uses quaternion rotation (0xF0) + coords at +0xE0. Camera base register is rbx. --- RenderDoc injection: game does NOT crash (NVAPI+DXR+SM passthrough fixes applied). BUT overlay/F12 capture does not work in DX12 mode because Cyberpunk calls Present via internal CRenderNode::Present::DoInternal, bypassing the standard DXGI SwapChain::Present hook. WORKAROUND: launch with -vulkan flag (Steam/GOG launch options) -- Vulkan uses standard vkQueuePresentKHR which RenderDoc hooks correctly. Alternatively disable RT+DLSS to try legacy deferred path in DX12.",
 
   "intercepts": [
     {
