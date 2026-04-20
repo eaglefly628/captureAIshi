@@ -52,11 +52,43 @@ _BRIDGE_TIMEOUT = 2.0
 
 @dataclass(frozen=True)
 class _PokeField:
-    """One field to write per tick: offset + bridge type + pose attribute."""
+    """One field to write per tick: offset + bridge type + pose attribute.
+
+    If ``attr`` starts with ``"quat:"`` the value is derived from the pose's
+    Euler rotation (pitch/yaw/roll in degrees): ``quat:x``, ``quat:y``,
+    ``quat:z``, ``quat:w`` select the component.
+    """
     name: str
     offset: int
     v_type: str  # "f32" / "f64" / "i32" / "u32"
-    attr: str    # "x" / "y" / "z" / "pitch" / "yaw" / "roll" / "fov"
+    attr: str    # "x"/"y"/"z"/"pitch"/"yaw"/"roll"/"fov" or "quat:[xyzw]"
+
+
+def _euler_deg_to_quat(pitch: float, yaw: float, roll: float) -> tuple[float, float, float, float]:
+    """Standard XYZ intrinsic euler (deg) -> quaternion (x, y, z, w).
+
+    Convention may need per-engine sign/axis swaps; REDengine (Cyberpunk)
+    in particular has not been confirmed. If rotation looks wrong in-game,
+    try negating yaw or swapping yaw/roll.
+    """
+    import math
+    hp, hy, hr = math.radians(pitch) * 0.5, math.radians(yaw) * 0.5, math.radians(roll) * 0.5
+    cp, sp = math.cos(hp), math.sin(hp)
+    cy, sy = math.cos(hy), math.sin(hy)
+    cr, sr = math.cos(hr), math.sin(hr)
+    qx = sp * cy * cr - cp * sy * sr
+    qy = cp * sy * cr + sp * cy * sr
+    qz = cp * cy * sr - sp * sy * cr
+    qw = cp * cy * cr + sp * sy * sr
+    return (qx, qy, qz, qw)
+
+
+def _pose_value(pose: Any, attr: str) -> float:
+    """Resolve a _PokeField.attr against a pose (supports 'quat:[xyzw]')."""
+    if attr.startswith("quat:"):
+        qx, qy, qz, qw = _euler_deg_to_quat(pose.pitch, pose.yaw, pose.roll)
+        return {"x": qx, "y": qy, "z": qz, "w": qw}[attr[5:]]
+    return float(getattr(pose, attr))
 
 
 def _coerce_type(t: str) -> str:
@@ -93,9 +125,11 @@ def _build_plan(profile_id: str) -> list[_PokeField]:
 
     loc = cw.get("location", {})
     rot = cw.get("rotation", {})
+    quat = cw.get("rotation_quaternion", {})
     fov = cw.get("fov", {})
     loc_t = _coerce_type(loc.get("type", "float32"))
     rot_t = _coerce_type(rot.get("type", "float32"))
+    quat_t = _coerce_type(quat.get("type", "float32"))
     fov_t = _coerce_type(fov.get("type", "float32"))
 
     plan: list[_PokeField] = []
@@ -105,6 +139,10 @@ def _build_plan(profile_id: str) -> list[_PokeField]:
     for attr, key in (("pitch", "pitch"), ("yaw", "yaw"), ("roll", "roll")):
         if key in rot:
             plan.append(_PokeField(attr, _parse_off(rot[key]), rot_t, attr))
+    for qname in ("x", "y", "z", "w"):
+        if qname in quat:
+            plan.append(_PokeField(f"q{qname}", _parse_off(quat[qname]),
+                                   quat_t, f"quat:{qname}"))
     if "off" in fov:
         plan.append(_PokeField("fov", _parse_off(fov["off"]), fov_t, "fov"))
     if not plan:
@@ -114,22 +152,23 @@ def _build_plan(profile_id: str) -> list[_PokeField]:
 
 _AUTO_CAPTURE_TIMEOUT = 2.0
 _AUTO_CAPTURE_POLL = 0.05
-# UX delay so the user can alt-tab to the game window before we snapshot
-# or start writing. Diagnostic aid for focus-dependent camera paths.
-_PRE_CAPTURE_DELAY = 5.0
-_PRE_PLAY_DELAY = 5.0
 
 
-def _auto_capture(slot: int) -> int:
+def _auto_capture(slot: int, focus_delay: float = 0.0) -> int:
     """Switch sites to CAPTURE, poll for addr, restore PASS. Raise on timeout.
 
     One-shot helper so callers don't need to orchestrate capture_all +
     game-tick + unlock_camera manually. The game must be running and
     executing the hooked code path at least once inside the timeout.
+
+    ``focus_delay`` sleeps before the CAPTURE switch so the user can
+    alt-tab into games whose camera path only ticks when focused (e.g.
+    Batman AK's pause menu). Default 0 -- no delay.
     """
-    logger.info("slot %d not captured; waiting %.1fs for you to focus "
-                "the game window...", slot, _PRE_CAPTURE_DELAY)
-    time.sleep(_PRE_CAPTURE_DELAY)
+    if focus_delay > 0:
+        logger.info("slot %d not captured; waiting %.1fs for you to focus "
+                    "the game window...", slot, focus_delay)
+        time.sleep(focus_delay)
     logger.info("triggering one-shot capture at slot %d", slot)
     game_profile.capture_all()
     try:
@@ -280,12 +319,17 @@ class TrajectoryPlayer:
         preset_name: str = "",
         renderdoc_capture: bool = False,
         relative_origin: bool = False,
+        focus_delay: float = 5.0,
     ) -> dict:
         """Start streaming ``points`` to the camera at ``rate_hz``.
 
         If ``relative_origin`` is True, the current camera pose is read from
         the captured struct and its (x, y, z) is added to every trajectory
         point so the path starts from the player's current position.
+
+        ``focus_delay`` (seconds) pauses before auto-capture and before the
+        streaming loop starts so the user can alt-tab into focus-sensitive
+        games (Batman AK pause-menu quirk). Default 0.
 
         Returns immediately; writer runs on a background thread. Raises
         ``RuntimeError`` if a trajectory is already playing; call
@@ -302,7 +346,7 @@ class TrajectoryPlayer:
             plan = _build_plan(profile_id)
             addr = game_profile.get_captured_addr(slot)
             if not addr:
-                addr = _auto_capture(slot)
+                addr = _auto_capture(slot, focus_delay=focus_delay)
 
             if relative_origin:
                 pose = game_profile.read_camera_pose(profile_id, slot)
@@ -332,7 +376,7 @@ class TrajectoryPlayer:
             )
             t = threading.Thread(
                 target=self._run,
-                args=(plan, addr, points, rate_hz, loop),
+                args=(plan, addr, points, rate_hz, loop, focus_delay),
                 name="trajectory-player",
                 daemon=True,
             )
@@ -414,6 +458,7 @@ class TrajectoryPlayer:
         points: list[PosePoint],
         rate_hz: float,
         loop: bool,
+        focus_delay: float = 0.0,
     ) -> None:
         dt = 1.0 / rate_hz
         duration = total_duration(points)
@@ -431,14 +476,15 @@ class TrajectoryPlayer:
             logger.error("[PLAYER] could not open bridge session: %s", e)
             return
 
-        logger.info(
-            "[PLAYER] waiting %.1fs before streaming (focus the game window)...",
-            _PRE_PLAY_DELAY,
-        )
-        # Break the sleep into small chunks so stop() can abort the wait.
-        deadline = time.monotonic() + _PRE_PLAY_DELAY
-        while time.monotonic() < deadline and not self._stop_evt.is_set():
-            time.sleep(0.1)
+        if focus_delay > 0:
+            logger.info(
+                "[PLAYER] waiting %.1fs before streaming (focus the game window)...",
+                focus_delay,
+            )
+            # Break the sleep into small chunks so stop() can abort the wait.
+            deadline = time.monotonic() + focus_delay
+            while time.monotonic() < deadline and not self._stop_evt.is_set():
+                time.sleep(0.1)
         if self._stop_evt.is_set():
             session.close()
             return
@@ -484,7 +530,7 @@ class TrajectoryPlayer:
                 tick_ok = 0
                 tick_fail = 0
                 for f in plan:
-                    val = getattr(pose, f.attr)
+                    val = _pose_value(pose, f.attr)
                     try:
                         reply = session.poke(addr, f.offset, f.v_type, val)
                         if reply.strip() == "ok":

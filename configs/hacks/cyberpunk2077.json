@@ -22,13 +22,12 @@
   ],
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "Rotation is quaternion (4 floats), not Euler. Needs quat type support before write path can drive this game.",
+    "enabled": true,
+    "_comment": "Quaternion rotation derived from pose pitch/yaw/roll via _euler_deg_to_quat (standard XYZ intrinsic). If in-game rotation is mirrored or off-axis, try negating yaw or swapping yaw/roll in the conversion. fov=0x128 is freecam FOV; switch to 0x37C for gameplay cam.",
     "struct_base_reg": "rbx",
     "capture_from_intercept": "activecam_write1",
     "location": { "x": "0xE0", "y": "0xE4", "z": "0xE8", "type": "float32" },
     "rotation_quaternion": { "x": "0xF0", "y": "0xF4", "z": "0xF8", "w": "0xFC", "type": "float32" },
-    "fov_freecam": { "off": "0x128", "type": "float32" },
-    "fov_playcam": { "off": "0x37C", "type": "float32" }
+    "fov": { "off": "0x128", "type": "float32" }
   }
 }

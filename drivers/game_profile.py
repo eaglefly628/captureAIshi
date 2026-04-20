@@ -340,21 +340,23 @@ def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
     rot_t = _coerce_type(rot.get("type", "float32"))
     fov_t = _coerce_type(fov_cfg.get("type", "float32"))
 
-    def rd(off_str: str, vt: str) -> float:
-        off = _parse_hex_or_dec(off_str)
-        v = mem_peek(addr, off, vt)
+    def rd(where: dict, key: str, vt: str) -> float:
+        # Skip fields the profile doesn't expose (quat profiles have no euler).
+        if key not in where:
+            return 0.0
+        v = mem_peek(addr, _parse_hex_or_dec(where[key]), vt)
         return v if v is not None else 0.0
 
     return {
         "ok": True,
         "addr": f"0x{addr:X}",
-        "x":     rd(loc.get("x", "0"), loc_t),
-        "y":     rd(loc.get("y", "0"), loc_t),
-        "z":     rd(loc.get("z", "0"), loc_t),
-        "pitch": rd(rot.get("pitch", "0"), rot_t),
-        "yaw":   rd(rot.get("yaw",   "0"), rot_t),
-        "roll":  rd(rot.get("roll",  "0"), rot_t),
-        "fov":   rd(fov_cfg.get("off", "0"), fov_t),
+        "x":     rd(loc, "x", loc_t),
+        "y":     rd(loc, "y", loc_t),
+        "z":     rd(loc, "z", loc_t),
+        "pitch": rd(rot, "pitch", rot_t),
+        "yaw":   rd(rot, "yaw",   rot_t),
+        "roll":  rd(rot, "roll",  rot_t),
+        "fov":   rd(fov_cfg, "off", fov_t),
     }
 
 

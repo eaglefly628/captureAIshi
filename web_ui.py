@@ -351,6 +351,7 @@ def trajectory_play():
             preset_name=preset,
             renderdoc_capture=bool(body.get("renderdoc_capture", False)),
             relative_origin=bool(body.get("relative_origin", False)),
+            focus_delay=max(0.0, float(body.get("focus_delay", 5.0))),
         )
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "profile not found"}), 404
