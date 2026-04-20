@@ -1349,7 +1349,7 @@ rdcstr RenderDoc::GetOverlayText(RDCDriver driver, DeviceOwnedWindow devWnd, uin
   while(overlayText.length() < 8)
     overlayText.push_back(' ');
 
-  overlayText = "aimen tech capture " + overlayText;
+  overlayText = "AiMeng Tech capture " + overlayText;
 
   if(numWindows > 1)
   {
