@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "ff13_2",
+  "display_name": "Final Fantasy XIII-2",
+  "process_names": ["FFXIII-2.exe"],
+  "engine": "Crystal Tools",
+  "engine_version": "PC (2014 port)",
+  "credits": "TODO -- CE scan needed",
+  "notes": "DX11 game. Old Crystal Tools engine. CE scan needed to locate camera write -- look for float writes near the camera position while moving in freecam (if available) or during cutscene camera movement.",
+
+  "intercepts": [
+    {
+      "name": "activecam_write",
+      "description": "TODO: CE scan needed.",
+      "size": 0,
+      "aob_literal":  "TODO",
+      "aob_wildcard": "TODO",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "TODO: fill in after CE scan.",
+    "struct_base_reg": "TODO",
+    "capture_from_intercept": "activecam_write",
+    "location": { "x": "TODO", "y": "TODO", "z": "TODO", "type": "float32" },
+    "rotation_quaternion": { "x": "TODO", "y": "TODO", "z": "TODO", "w": "TODO", "type": "float32" },
+    "fov": { "off": "TODO", "type": "float32" }
+  }
+}
