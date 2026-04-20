@@ -616,19 +616,13 @@ private:
     const char *cname = nvhooks.nvapi_lookup[ID];
     rdcstr name = cname ? cname : StringFormat::Fmt("0x%x", ID);
 
-    if(RenderDoc::Inst().IsVendorExtensionEnabled(VendorExtensions::NvAPI))
-    {
-      RDCDEBUG("NvAPI allowed: Returning %p for nvapi_QueryInterface(%s)", real, name.c_str());
-      return real;
-    }
-    else
-    {
-      static int count = 0;
-      if(count < 10)
-        RDCWARN("NvAPI disabled: Returning NULL for nvapi_QueryInterface(%s)", name.c_str());
-      count++;
-      return NULL;
-    }
+    // Pass through all unrecognized NVAPI functions unconditionally.
+    // Blocking them (returning NULL) prevents NVAPI-dependent games like Cyberpunk 2.x
+    // from initializing RT features (RTXDI, NRC) even when vendor extensions are not
+    // explicitly enabled. Capture correctness for standard D3D12 resources is unaffected.
+    if(!RenderDoc::Inst().IsVendorExtensionEnabled(VendorExtensions::NvAPI))
+      RDCDEBUG("NvAPI pass-through: Returning %p for nvapi_QueryInterface(%s)", real, name.c_str());
+    return real;
   }
 
   PNVENCOPENENCODESESSION real_nvEncOpenEncodeSession = NULL;
