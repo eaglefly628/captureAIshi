@@ -294,6 +294,29 @@ def _poke_str(v_type: str, v: float | int) -> str:
     return str(int(v))
 
 
+def _euler_deg_to_matrix(pitch_deg: float, yaw_deg: float, roll_deg: float) -> list[list[float]]:
+    """ZYX euler (degrees) to row-major 3x3 rotation matrix: R = Rz(yaw)*Ry(pitch)*Rx(roll)."""
+    import math
+    p, y, r = math.radians(pitch_deg), math.radians(yaw_deg), math.radians(roll_deg)
+    cp, sp = math.cos(p), math.sin(p)
+    cy, sy = math.cos(y), math.sin(y)
+    cr, sr = math.cos(r), math.sin(r)
+    return [
+        [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
+        [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
+        [-sp,    cp*sr,             cp*cr            ],
+    ]
+
+
+def _matrix_to_euler_deg(m: list[list[float]]) -> tuple[float, float, float]:
+    """Row-major 3x3 rotation matrix to ZYX euler (pitch, yaw, roll) in degrees."""
+    import math
+    pitch = math.degrees(math.asin(max(-1.0, min(1.0, -m[2][0]))))
+    yaw   = math.degrees(math.atan2(m[1][0], m[0][0]))
+    roll  = math.degrees(math.atan2(m[2][1], m[2][2]))
+    return pitch, yaw, roll
+
+
 def mem_poke(addr: int, offset: int, v_type: str, value: float | int) -> str:
     """Send one typed write to the camera struct. Returns bridge response."""
     cmd = f"__cam_mem_poke {addr:X} 0x{offset:X} {v_type} {_poke_str(v_type, value)}"
@@ -335,17 +358,33 @@ def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
         return {"ok": False, "error": f"no capture at slot {slot}"}
     loc = cam.get("location", {})
     rot = cam.get("rotation", {})
+    rot_mat = cam.get("rotation_matrix", {})
     fov_cfg = cam.get("fov", {})
     loc_t = _coerce_type(loc.get("type", "float32"))
-    rot_t = _coerce_type(rot.get("type", "float32"))
     fov_t = _coerce_type(fov_cfg.get("type", "float32"))
 
     def rd(where: dict, key: str, vt: str) -> float:
-        # Skip fields the profile doesn't expose (quat profiles have no euler).
         if key not in where:
             return 0.0
         v = mem_peek(addr, _parse_hex_or_dec(where[key]), vt)
         return v if v is not None else 0.0
+
+    pitch, yaw, roll = 0.0, 0.0, 0.0
+    if rot_mat:
+        mat_t = _coerce_type(rot_mat.get("type", "float32"))
+        def _rd_row(row_key: str) -> list[float]:
+            base = _parse_hex_or_dec(rot_mat[row_key])
+            return [
+                mem_peek(addr, base + i * 4, mat_t) or 0.0
+                for i in range(3)
+            ]
+        m = [_rd_row("row0"), _rd_row("row1"), _rd_row("row2")]
+        pitch, yaw, roll = _matrix_to_euler_deg(m)
+    else:
+        rot_t = _coerce_type(rot.get("type", "float32"))
+        pitch = rd(rot, "pitch", rot_t)
+        yaw   = rd(rot, "yaw",   rot_t)
+        roll  = rd(rot, "roll",  rot_t)
 
     return {
         "ok": True,
@@ -353,9 +392,9 @@ def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
         "x":     rd(loc, "x", loc_t),
         "y":     rd(loc, "y", loc_t),
         "z":     rd(loc, "z", loc_t),
-        "pitch": rd(rot, "pitch", rot_t),
-        "yaw":   rd(rot, "yaw",   rot_t),
-        "roll":  rd(rot, "roll",  rot_t),
+        "pitch": pitch,
+        "yaw":   yaw,
+        "roll":  roll,
         "fov":   rd(fov_cfg, "off", fov_t),
     }
 
@@ -392,10 +431,10 @@ def write_camera(profile_id: str,
 
     loc = cam.get("location", {})
     rot = cam.get("rotation", {})
+    rot_mat = cam.get("rotation_matrix", {})
     fov_cfg = cam.get("fov", {})
 
     loc_type = loc.get("type", "float32")
-    rot_type = rot.get("type", "float32")
     fov_type = fov_cfg.get("type", "float32")
 
     writes: list[dict[str, Any]] = []
@@ -419,9 +458,31 @@ def write_camera(profile_id: str,
     push("x", "x", loc, loc_type, x)
     push("y", "y", loc, loc_type, y)
     push("z", "z", loc, loc_type, z)
-    push("pitch", "pitch", rot, rot_type, pitch)
-    push("yaw", "yaw", rot, rot_type, yaw)
-    push("roll", "roll", rot, rot_type, roll)
+
+    if rot_mat:
+        mat_t = _coerce_type(rot_mat.get("type", "float32"))
+        m = _euler_deg_to_matrix(pitch, yaw, roll)
+        for row_idx, row_key in enumerate(("row0", "row1", "row2")):
+            if row_key not in rot_mat:
+                continue
+            base = _parse_hex_or_dec(rot_mat[row_key])
+            for col in range(3):
+                off = base + col * 4
+                resp = mem_poke(addr, off, mat_t, m[row_idx][col])
+                writes.append({
+                    "field": f"mat[{row_idx}][{col}]",
+                    "offset": f"0x{off:X}",
+                    "type": mat_t,
+                    "value": m[row_idx][col],
+                    "ok": resp.strip() == "ok",
+                    "response": resp,
+                })
+    else:
+        rot_type = rot.get("type", "float32")
+        push("pitch", "pitch", rot, rot_type, pitch)
+        push("yaw",   "yaw",   rot, rot_type, yaw)
+        push("roll",  "roll",  rot, rot_type, roll)
+
     if "off" in fov_cfg:
         off = _parse_hex_or_dec(fov_cfg["off"])
         resp = mem_poke(addr, off, _coerce_type(fov_type), fov)
