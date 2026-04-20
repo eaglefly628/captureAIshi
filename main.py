@@ -88,12 +88,14 @@ def create_grabber(args):
         driver_port = getattr(args, 'driver_port', None)
         if getattr(args, 'driver', 'manual') == 'manual':
             driver_port = None
+        inject_mode = getattr(args, 'inject', False)
         return RenderDocGrabber(
             renderdoc_path=getattr(args, 'renderdoc_path', 'renderdoccmd'),
             capture_dir=str(args.output_dir / "captures"),
             target_exe=args.target_exe,
             target_args=getattr(args, 'target_args', []),
-            auto_launch=bool(args.target_exe),
+            auto_launch=bool(args.target_exe) and not inject_mode,
+            inject_mode=inject_mode,
             ui_hider=rdoc_ui_hider,
             wait_for_port=int(driver_port) if driver_port else None,
         )
@@ -704,6 +706,12 @@ def main():
     # Grabber
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
+    parser.add_argument(
+        "--inject", action="store_true",
+        help="Inject into already-running game instead of launching via renderdoccmd. "
+             "Use for games that crash on RenderDoc launch (e.g. Cyberpunk 2077 2.x D3D12 check). "
+             "Launch the game manually first, then run with --inject --target-exe Cyberpunk2077.exe.",
+    )
     parser.add_argument(
         "--no-batch-export", action="store_true",
         help="Disable batch export: export each frame immediately after capture. "

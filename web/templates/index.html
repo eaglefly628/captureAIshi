@@ -2633,6 +2633,14 @@ pollSessions();pollCaptures();
           <button class="btn" onclick="hackTestWrite()" title="Push a test pose (x+100, current yaw+45 deg) to verify the full write path">Test</button>
         </div>
 
+        <!-- Inject mode: for games that crash on renderdoccmd launch (e.g. Cyberpunk 2.x) -->
+        <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
+          <span style="color:#aaa;font-size:11px;min-width:56px" title="Inject bridge into already-running game process (use for Cyberpunk 2.x, REDengine -- avoids D3D12 init crash)">Inject:</span>
+          <input id="injectProcessName" style="width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px" placeholder="Cyberpunk2077.exe" title="Process name of already-running game">
+          <button class="btn btn-accent" onclick="bridgeInject()" title="Run renderdoccmd inject --pid into the running process. Launch the game first.">Inject</button>
+          <span id="injectStatus" style="color:#888;font-size:11px"></span>
+        </div>
+
         <!-- Arm break (dev-only; still useful but hidden) -->
         <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
           <span style="color:#aaa;font-size:11px;min-width:56px">Dev:</span>
@@ -2702,6 +2710,25 @@ function bridgeCmd(cmd){
 }
 function bridgeStatus(){
   bridgeCmd('__bridge_status');
+}
+function bridgeInject(){
+  var pname=(document.getElementById('injectProcessName').value||'').trim();
+  if(!pname){debugAppend('ERROR: enter process name first (e.g. Cyberpunk2077.exe)');return;}
+  var st=document.getElementById('injectStatus');
+  st.style.color='#f0b03e'; st.textContent='injecting...';
+  debugAppend('> inject '+pname);
+  fetch('/api/inject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process_name:pname})})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){
+        st.style.color='#3ecf8e'; st.textContent='ok PID='+d.pid;
+        debugAppend('inject ok: '+d.msg);
+      } else {
+        st.style.color='#f03e3e'; st.textContent='failed';
+        debugAppend('inject ERROR: '+(d.error||JSON.stringify(d)));
+      }
+    })
+    .catch(e=>{st.style.color='#f03e3e';st.textContent='error';debugAppend('inject ERROR: '+e);});
 }
 function interceptInstall(){
   var size=(document.getElementById('interceptSize').value||'').trim();

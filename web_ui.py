@@ -160,6 +160,59 @@ def hacks_list():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/inject", methods=["POST"])
+def inject_bridge():
+    """Inject renderdoc.dll (bridge) into a running game process via renderdoccmd inject."""
+    import subprocess
+    import sys
+    data = request.get_json(silent=True) or {}
+    process_name = data.get("process_name", "").strip()
+    renderdoc_path = data.get("renderdoc_path", "renderdoccmd").strip() or "renderdoccmd"
+    if not process_name:
+        return jsonify({"ok": False, "error": "process_name required"}), 400
+
+    # Find PID of running process
+    pid = None
+    try:
+        import psutil
+        for proc in psutil.process_iter(["pid", "name"]):
+            if proc.info["name"].lower() == process_name.lower():
+                pid = proc.info["pid"]
+                break
+    except ImportError:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True,
+            )
+            for line in result.stdout.splitlines():
+                if process_name.lower() in line.lower():
+                    parts = line.split(",")
+                    if len(parts) >= 2:
+                        try:
+                            pid = int(parts[1].strip('"'))
+                            break
+                        except ValueError:
+                            pass
+
+    if not pid:
+        return jsonify({"ok": False, "error": f"Process '{process_name}' not found. Start the game first."}), 404
+
+    try:
+        inject_cmd = [renderdoc_path, "inject", "--pid", str(pid)]
+        result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            return jsonify({"ok": False, "error": f"renderdoccmd inject failed: {err}"}), 500
+        return jsonify({"ok": True, "pid": pid, "msg": f"Bridge injected into {process_name} (PID={pid})"})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": f"renderdoccmd not found at: {renderdoc_path}"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "renderdoccmd inject timed out"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/hacks/apply/<profile_id>", methods=["POST"])
 def hacks_apply(profile_id: str):
     # Validate slug: only a-z0-9_ allowed to avoid path traversal

@@ -56,6 +56,7 @@ class RenderDocGrabber(FrameGrabber):
         target_args: Optional[list] = None,
         capture_key: str = "F12",
         auto_launch: bool = False,
+        inject_mode: bool = False,
         ui_hider=None,
         ui_tail_fraction: float = 0.2,
         ui_extra_keywords: Optional[list] = None,
@@ -71,6 +72,9 @@ class RenderDocGrabber(FrameGrabber):
             target_args: Extra arguments passed to the game executable.
             capture_key: Key to trigger capture.
             auto_launch: Whether to launch the game through RenderDoc.
+            inject_mode: If True, wait for game to start then inject (instead of launching
+                via renderdoccmd). Use for games where RenderDoc launch causes D3D12 init
+                crashes (e.g. Cyberpunk 2077 2.x ray-tracing check on device creation).
             ui_hider: Optional RenderDocUIHider for filtering UI draw calls.
             ui_tail_fraction: Fraction of late draw calls to consider as UI (0-1).
             ui_extra_keywords: Additional keywords for UI draw call detection.
@@ -83,6 +87,7 @@ class RenderDocGrabber(FrameGrabber):
         self.target_args = target_args or []
         self.capture_key = capture_key
         self.auto_launch = auto_launch
+        self.inject_mode = inject_mode
         self.ui_hider = ui_hider
         self.ui_tail_fraction = ui_tail_fraction
         self.ui_extra_keywords = ui_extra_keywords or []
@@ -107,7 +112,11 @@ class RenderDocGrabber(FrameGrabber):
                 logger.info("Native bridge loaded but in-app API not available "
                             "(game may not be launched through RenderDoc)")
 
-        if self.auto_launch and self.target_exe:
+        if self.inject_mode and self.target_exe:
+            import os
+            process_name = os.path.basename(self.target_exe)
+            self._inject_into_process(process_name)
+        elif self.auto_launch and self.target_exe:
             # If user put exe + args all in one string, split them apart
             if not Path(self.target_exe).is_file() and " " in self.target_exe:
                 import shlex
@@ -163,6 +172,76 @@ class RenderDocGrabber(FrameGrabber):
                 "RenderDoc grabber ready. Attach RenderDoc to your game manually "
                 f"or launch with: {self.renderdoc_path} capture <game.exe>"
             )
+
+    def _find_pid_by_name(self, process_name: str) -> Optional[int]:
+        """Return PID of first running process matching name, or None."""
+        import sys
+        try:
+            import psutil
+            for proc in psutil.process_iter(["pid", "name"]):
+                if proc.info["name"].lower() == process_name.lower():
+                    return proc.info["pid"]
+            return None
+        except ImportError:
+            pass
+        # Fallback: tasklist on Windows
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True,
+            )
+            for line in result.stdout.splitlines():
+                if process_name.lower() in line.lower():
+                    parts = line.split(",")
+                    if len(parts) >= 2:
+                        try:
+                            return int(parts[1].strip('"'))
+                        except ValueError:
+                            pass
+        return None
+
+    def _inject_into_process(self, process_name: str) -> None:
+        """Wait for game process to appear, then inject renderdoc.dll into it.
+
+        Used for games like Cyberpunk 2077 2.x where launching via renderdoccmd
+        triggers a D3D12 device integrity check during RT init and crashes the game.
+        The game must be launched manually by the user first.
+        """
+        logger.info(
+            f"Inject mode: waiting for '{process_name}' (timeout={self.startup_timeout}s). "
+            f"Launch the game manually now."
+        )
+        poll_interval = 2.0
+        elapsed = 0.0
+        pid = None
+        while elapsed < self.startup_timeout:
+            pid = self._find_pid_by_name(process_name)
+            if pid:
+                logger.info(f"Found '{process_name}' (PID={pid})")
+                break
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            if int(elapsed) % 10 == 0:
+                logger.info(f"Still waiting for {process_name}... ({elapsed:.0f}s)")
+
+        if not pid:
+            raise TimeoutError(
+                f"Game process '{process_name}' not found within {self.startup_timeout}s. "
+                f"Start the game manually then retry."
+            )
+
+        rdoc_cmd = self._resolve_renderdoccmd()
+        inject_cmd = [rdoc_cmd, "inject", "--pid", str(pid)]
+        logger.info(f"Injecting: {' '.join(inject_cmd)}")
+        result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"renderdoccmd inject failed (rc={result.returncode}): "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        logger.info(f"Bridge injected into '{process_name}' (PID={pid})")
+        # Now wait for bridge TCP port to come up
+        self._wait_for_game_ready()
 
     def _find_shipping_exe(self) -> Optional[str]:
         """Search for the real UE5 game exe near the launcher path.
@@ -286,8 +365,11 @@ class RenderDocGrabber(FrameGrabber):
         }
 
         while elapsed < self.startup_timeout:
-            # Check if renderdoccmd died
-            rc = self._process.poll()
+            # Check if renderdoccmd died (not applicable in inject mode)
+            if self._process is None:
+                rc = None
+            else:
+                rc = self._process.poll()
             if rc is not None:
                 # Give drain threads a moment to flush remaining output
                 time.sleep(0.2)
@@ -359,7 +441,7 @@ class RenderDocGrabber(FrameGrabber):
                 logger.info(f"Still waiting for game... ({elapsed:.0f}s elapsed)")
 
         # Timeout reached
-        if self._process.poll() is None:
+        if self._process is None or self._process.poll() is None:
             if self.wait_for_port and not port_ready:
                 logger.warning(
                     f"Timeout: game process alive but port {self.wait_for_port} "
