@@ -567,7 +567,7 @@ static bool find_fexec_vtable()
  * Checks: NumElements in [1000, 5000000], Objects** valid, chunk[0] valid.
  * Mirrors UE4SS's SetupGUObjectArrayAddress() sanity checks.
  */
-static bool validate_guobjectarray(void* candidate)
+static bool validate_guobjectarray(void* candidate, bool verbose = true)
 {
     if (!candidate || (uintptr_t)candidate < 0x10000) return false;
 
@@ -579,15 +579,14 @@ static bool validate_guobjectarray(void* candidate)
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 
     if (num_elems < 1000 || num_elems > 5000000) {
-        bridge_log("  GUObjectArray: NumElements=%d out of [1000,5M]",
-                   num_elems);
+        if (verbose) bridge_log("  GUObjectArray: NumElements=%d out of [1000,5M]", num_elems);
         return false;
     }
 
     /* Objects** = p + GUOBJARRAY_OBJECTS_OFF */
     uintptr_t chunks_ptr = seh_read_ptr(p + GUOBJARRAY_OBJECTS_OFF);
     if (chunks_ptr < 0x10000 || chunks_ptr >= 0x7F0000000000ULL) {
-        bridge_log("  GUObjectArray: Objects** invalid 0x%llX",
+        if (verbose) bridge_log("  GUObjectArray: Objects** invalid 0x%llX",
                    (unsigned long long)chunks_ptr);
         return false;
     }
@@ -595,7 +594,7 @@ static bool validate_guobjectarray(void* candidate)
     /* Objects*[0] = first chunk must be readable */
     uintptr_t chunk0 = seh_read_ptr((void*)chunks_ptr);
     if (chunk0 < 0x10000 || chunk0 >= 0x7F0000000000ULL) {
-        bridge_log("  GUObjectArray: Objects[0] invalid 0x%llX",
+        if (verbose) bridge_log("  GUObjectArray: Objects[0] invalid 0x%llX",
                    (unsigned long long)chunk0);
         return false;
     }
@@ -603,7 +602,7 @@ static bool validate_guobjectarray(void* candidate)
     /* First FUObjectItem in chunk0: Object* at +0 must look valid */
     uintptr_t first_obj = seh_read_ptr((void*)chunk0);
     if (first_obj < 0x10000) {
-        bridge_log("  GUObjectArray: first object 0x%llX invalid",
+        if (verbose) bridge_log("  GUObjectArray: first object 0x%llX invalid",
                    (unsigned long long)first_obj);
         return false;
     }
@@ -813,9 +812,14 @@ static bool find_gengine_via_guobjectarray()
  *     03 ?? ?? ?? ?? ?? FF C8 3B D0 0F 8D
  *     Decode: next=addr+6, GUA = next + *(int32*)(addr+2)
  */
+static int g_guobjectarray_search_count = 0;
+
 static bool find_guobjectarray()
 {
-    bridge_log("=== GUObjectArray Search ===");
+    const int attempt = ++g_guobjectarray_search_count;
+    /* Only print full verbose header on first attempt; thereafter be quiet. */
+    if (attempt == 1)
+        bridge_log("=== GUObjectArray Search ===");
 
     ModuleRegion rgn;
     if (!get_main_module(rgn)) return false;
@@ -825,15 +829,15 @@ static bool find_guobjectarray()
     void* exp_addr = (void*)GetProcAddress(
         exe, "?GUObjectArray@@3VFUObjectArray@@A");
     if (exp_addr) {
-        bridge_log("  Strategy 1: export found at 0x%p", exp_addr);
-        if (validate_guobjectarray(exp_addr)) {
+        if (attempt == 1) bridge_log("  Strategy 1: export found at 0x%p", exp_addr);
+        if (validate_guobjectarray(exp_addr, attempt == 1)) {
             g_guobjectarray = exp_addr;
             g_guobjectarray_found = true;
             bridge_log("  GUObjectArray via export: 0x%p", exp_addr);
             return true;
         }
     } else {
-        bridge_log("  Strategy 1: export not found");
+        if (attempt == 1) bridge_log("  Strategy 1: export not found");
     }
 
     /* --- Strategy 2-5: AOB patterns --- */
@@ -898,28 +902,30 @@ static bool find_guobjectarray()
             rgn.base, rgn.size, pe.bytes, pe.mask, pe.len);
 
         if (!hit) {
-            bridge_log("  Strategy %d: %s -- no match", pi + 2, pe.name);
+            if (attempt == 1) bridge_log("  Strategy %d: %s -- no match", pi + 2, pe.name);
             continue;
         }
 
-        bridge_log("  Strategy %d: %s matched at +0x%llX",
-                   pi + 2, pe.name,
-                   (unsigned long long)(hit - rgn.base));
+        if (attempt == 1)
+            bridge_log("  Strategy %d: %s matched at +0x%llX",
+                       pi + 2, pe.name,
+                       (unsigned long long)(hit - rgn.base));
 
         uintptr_t resolved = resolve_rip_relative(
             hit, pe.disp_off, pe.instr_len);
         void* candidate = (void*)(resolved - (uintptr_t)pe.adjustment);
 
-        bridge_log("    resolved=0x%llX, candidate=0x%p",
-                   (unsigned long long)resolved, candidate);
+        if (attempt == 1)
+            bridge_log("    resolved=0x%llX, candidate=0x%p",
+                       (unsigned long long)resolved, candidate);
 
         if ((uintptr_t)candidate < mod_start ||
             (uintptr_t)candidate >= mod_end) {
-            bridge_log("    candidate outside module, skip");
+            if (attempt == 1) bridge_log("    candidate outside module, skip");
             continue;
         }
 
-        if (!validate_guobjectarray(candidate)) continue;
+        if (!validate_guobjectarray(candidate, attempt == 1)) continue;
 
         g_guobjectarray = candidate;
         g_guobjectarray_found = true;
@@ -927,7 +933,7 @@ static bool find_guobjectarray()
         return true;
     }
 
-    bridge_log("  GUObjectArray: all strategies failed");
+    if (attempt == 1) bridge_log("  GUObjectArray: all strategies failed");
     return false;
 }
 
