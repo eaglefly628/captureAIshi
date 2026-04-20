@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "id": "metro_exodus",
+  "display_name": "Metro Exodus",
+  "process_names": ["MetroExodus.exe"],
+  "engine": "4A Engine",
+  "engine_version": "1.0.1.6+ (IGCS reference v1.0.2)",
+  "credits": "Otis_Inf (IGCS)",
+  "source": "docs/refCode/igcs/Cameras/MetroExodus/",
+  "notes": "Camera struct base in rsi at activecam_write2 intercept (movups [rsi],xmm3). XYZ at +0x00, 4x3 rotation matrix at +0x10 (stride=4 floats: right.xyz=[0,1,2] up.xyz=[4,5,6] fwd.xyz=[8,9,10]). FOV at separate global address (from fov_read AOB, not in main struct). Multiple redundant write sites -- all NOPped to freeze camera. RT-capable via NVIDIA RTXGI on Enhanced Edition.",
+
+  "intercepts": [
+    {
+      "name": "activecam_address",
+      "description": "Global camera struct pointer. RIP-relative address at bytes 3-6 of pattern resolves to struct base. Also backup matrix write at this site.",
+      "size": 7,
+      "aob_wildcard": "0F 29 05 ?? ?? ?? ?? 0F 28 45 B0 0F 29 0D ?? ?? ?? ?? 0F 28 4D A0",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    },
+    {
+      "name": "activecam_write1",
+      "description": "Matrix row 0 write to global (movaps [global],xmm12). 8 bytes.",
+      "size": 8,
+      "aob_wildcard": "44 0F 29 25 ?? ?? ?? ?? F3 0F 10 53 48 0F 28 E2",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    },
+    {
+      "name": "activecam_write2",
+      "description": "XYZ coords write (movups [rsi],xmm3). rsi = camera struct base.",
+      "size": 3,
+      "aob_wildcard": "0F 11 1E F3 0F 10 5C 24 6C F3 0F 5D 1D ?? ?? ?? ?? F3 0F 11",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    },
+    {
+      "name": "activecam_write3",
+      "description": "Ansel FOV write + matrix rows 1-3 (movss [rsi+0x4B4] + movups [rsi+10/20/30]). NOP 12 bytes (FOV + row1 + row2/3 at +0x10).",
+      "size": 12,
+      "aob_wildcard": "F3 0F 11 9E ?? ?? ?? ?? 0F 11 4E 10 0F 28 4D 90 0F 11 46 20 0F 11 4E 30",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    },
+    {
+      "name": "activecam_write4",
+      "description": "Matrix row 2 write to global (movaps [global],xmm6). Additional rows 1 and 3 at +0x15 and +0x3A from this AOB.",
+      "size": 7,
+      "aob_wildcard": "0F 29 35 ?? ?? ?? ?? F2 0F 10 45 C8 45 0F C6 C9 39",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "4x3 rotation matrix at +0x10, stride 4: right.xyz at [0,1,2], up.xyz at [4,5,6], fwd.xyz at [8,9,10]. XYZ at +0x00. FOV at separate global (not this struct). Bridge requires rotation_matrix support before enabling.",
+    "struct_base_reg": "rsi",
+    "capture_from_intercept": "activecam_write2",
+    "location": { "x": "0x0", "y": "0x4", "z": "0x8", "type": "float32" }
+  }
+}
