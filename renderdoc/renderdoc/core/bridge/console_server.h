@@ -657,6 +657,26 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         while (!name.empty() && name.back() == ' ') name.pop_back();
         const char* aob = bar + 1;
         while (*aob == ' ') aob++;
+        /* Parse AOB and try scan before calling install so we can give a
+         * specific error (pattern_not_found vs other install failure). */
+        {
+            uint8_t pat_bytes[128]; char pat_mask[129];
+            int pat_len = cam_parse_aob(aob, pat_bytes, pat_mask, 128);
+            if (pat_len <= 0) {
+                cs_reply(client, "error: malformed_aob\n");
+                return true;
+            }
+            const uint8_t* match = scan_main_module_nth(
+                pat_bytes, pat_mask, (size_t)pat_len, (int)occurrence);
+            if (!match) {
+                char buf[96];
+                snprintf(buf, sizeof(buf),
+                         "error: pattern_not_found tokens=%d occ=%ld\n",
+                         pat_len, occurrence);
+                cs_reply(client, buf);
+                return true;
+            }
+        }
         bool ok = cam_intercept_install_aob(aob, (size_t)size,
                                              name.empty() ? "aob" : name.c_str(),
                                              (int)occurrence);
