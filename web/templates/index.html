@@ -2643,6 +2643,7 @@ pollSessions();pollCaptures();
         <label style="color:#aaa;font-size:11px" title="Repeat the trajectory"><input type="checkbox" id="trajLoop" style="vertical-align:middle"> loop</label>
         <label style="color:#aaa;font-size:11px" title="Auto-refresh the 3D preview when preset / params change"><input type="checkbox" id="trajAutoPreview" checked style="vertical-align:middle"> auto-preview</label>
         <label style="color:#aaa;font-size:11px" title="Trigger a RenderDoc capture at each waypoint + export to output/ at the end (wire-up in Phase 2)"><input type="checkbox" id="trajRdcCapture" style="vertical-align:middle"> RDC capture</label>
+        <label style="color:#aaa;font-size:11px" title="Offset every waypoint by the camera's current position at play start (so the path follows the character's current location)"><input type="checkbox" id="trajRelativeOrigin" style="vertical-align:middle"> relative origin</label>
         <button class="btn btn-accent" onclick="trajPlay()" title="Start streaming pose at selected rate">Play</button>
         <button class="btn" onclick="trajPause()" title="Hold at current t">Pause</button>
         <button class="btn" onclick="trajResume()" title="Resume from pause">Resume</button>
@@ -2939,9 +2940,10 @@ function trajPlay(){
     rate_hz:parseFloat(document.getElementById('trajRate').value)||60,
     loop:document.getElementById('trajLoop').checked,
     renderdoc_capture:document.getElementById('trajRdcCapture').checked,
+    relative_origin:document.getElementById('trajRelativeOrigin').checked,
     slot:0,
   };
-  debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop+' rdc='+body.renderdoc_capture);
+  debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop+' rel='+body.relative_origin+' rdc='+body.renderdoc_capture);
   fetch('/api/trajectory/play',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
