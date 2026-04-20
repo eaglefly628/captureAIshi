@@ -1390,6 +1390,7 @@ function getFormData() {
     cone_angle:pf('cone_angle'), cone_samples:pi('cone_samples'), cone_rings:pi('cone_rings'),
     driver:val('driver'), driver_host:val('driver_host'), driver_port:pi('driver_port'), ce_mode:val('ce_mode'),
     grabber:val('grabber'), target_exe:val('target_exe'),
+    hack_profile_id:document.getElementById('hackProfileSelect').value||'',
     launch_resx:pi('launch_resx'), launch_resy:pi('launch_resy'), launch_windowed:cb('launch_windowed'), launch_log:cb('launch_log'),
     renderdoc_path:val('renderdoc_path'), no_hide_ui:cb('no_hide_ui'),
     output_dir:val('output_dir'), dry_run:cb('dry_run'), debug_scan:cb('debug_scan'), clean_start:cb('clean_start'),

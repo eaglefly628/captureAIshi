@@ -2,6 +2,7 @@
   "schema_version": 1,
   "id": "cyberpunk2077",
   "display_name": "Cyberpunk 2077",
+  "launch_arg_style": "redengine",
   "process_names": ["Cyberpunk2077.exe"],
   "engine": "REDengine 4",
   "engine_version": "1.0.11+ (IGCS reference)",

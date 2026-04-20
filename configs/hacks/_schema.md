@@ -17,6 +17,7 @@ One file per game in `configs/hacks/<id>.json`. Loaded by `drivers/game_profile.
 | `notes` | string | no | Caveats for operator. |
 | `intercepts` | object[] | yes | List of MOV-patch sites. See below. |
 | `camera_write_profile` | object | no | Layout of camera struct for trajectory writing. |
+| `launch_arg_style` | string | no | Launch arg format for windowed + resolution. `"unreal"` (default): `-Windowed -ResX=W -ResY=H`. `"redengine"`: `-windowed -width=W -height=H`. |
 
 ## `intercepts[]` item
 
