@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "re7",
+  "display_name": "Resident Evil 7",
+  "process_names": ["re7.exe"],
+  "engine": "RE Engine",
+  "engine_version": "1.0 (2017)",
+  "credits": "TODO -- CE scan needed",
+  "notes": "RE Engine, same family as RE2/RE3. Camera struct pointer expected in rdx at intercept. TODO: CE scan to find camera write AOB and struct offsets for this build.",
+
+  "intercepts": [
+    {
+      "name": "activecam_write",
+      "description": "TODO: CE scan needed. Based on RE2 pattern -- verify offsets for RE7 build.",
+      "size": 18,
+      "aob_literal":  "TODO",
+      "aob_wildcard": "TODO",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "occurrence": 1
+    }
+  ],
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "TODO: fill in after CE scan. RE2 reference: coords at 0x80, quat at 0x90, fov at 0xA4 off rdx.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "activecam_write",
+    "location": { "x": "0x80", "y": "0x84", "z": "0x88", "type": "float32" },
+    "rotation_quaternion": { "x": "0x90", "y": "0x94", "z": "0x98", "w": "0x9C", "type": "float32" },
+    "fov": { "off": "0xA4", "type": "float32" }
+  }
+}
