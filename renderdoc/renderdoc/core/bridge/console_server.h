@@ -933,6 +933,14 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         cs_reply(client, buf); return true;
     }
 
+    /* Trigger a RenderDoc frame capture at next frame presentation.
+     * The bridge runs inside renderdoc.dll so RenderDoc::Inst() is valid. */
+    if (cmd == "__cam_rdc_capture") {
+        RenderDoc::Inst().TriggerCapture(1);
+        cs_reply(client, "ok\n");
+        return true;
+    }
+
     /* Regular UE5 console command (pass-through) */
     if (cmd.rfind("__",0) != 0) {
         if (!g_engine_found) {

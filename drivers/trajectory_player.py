@@ -249,6 +249,10 @@ class _PokeSession:
         cmd = f"__cam_mem_poke {addr:X} 0x{offset:X} {v_type} {val_s}"
         return self._send_line(cmd)
 
+    def send(self, cmd: str) -> str:
+        """Send an arbitrary bridge command and return the reply."""
+        return self._send_line(cmd)
+
     def __enter__(self) -> "_PokeSession":
         self.open()
         return self
@@ -376,7 +380,8 @@ class TrajectoryPlayer:
             )
             t = threading.Thread(
                 target=self._run,
-                args=(plan, addr, points, rate_hz, loop, focus_delay),
+                args=(plan, addr, points, rate_hz, loop, focus_delay,
+                      renderdoc_capture),
                 name="trajectory-player",
                 daemon=True,
             )
@@ -459,6 +464,7 @@ class TrajectoryPlayer:
         rate_hz: float,
         loop: bool,
         focus_delay: float = 0.0,
+        renderdoc_capture: bool = False,
     ) -> None:
         dt = 1.0 / rate_hz
         duration = total_duration(points)
@@ -491,9 +497,35 @@ class TrajectoryPlayer:
 
         start = time.monotonic()
         logger.info(
-            "[PLAYER] start profile_id=%s samples=%d rate=%.1fHz duration=%.2fs loop=%s addr=0x%X",
-            self._status.profile_id, len(points), rate_hz, duration, loop, addr,
+            "[PLAYER] start profile_id=%s samples=%d rate=%.1fHz duration=%.2fs loop=%s rdc=%s addr=0x%X",
+            self._status.profile_id, len(points), rate_hz, duration, loop,
+            renderdoc_capture, addr,
         )
+
+        if renderdoc_capture:
+            # Step mode: write each sample point, wait one frame, trigger capture.
+            # rate_hz controls inter-capture delay (1/rate_hz per point).
+            step = max(1.0 / rate_hz, 0.033)  # at least ~2 frames at 60 fps
+            try:
+                for pose in points:
+                    if self._stop_evt.is_set():
+                        break
+                    for f in plan:
+                        session.poke(addr, f.offset, f.v_type, _pose_value(pose, f.attr))
+                    with self._lock:
+                        self._status.t = pose.t
+                        self._status.ticks += 1
+                    time.sleep(step)
+                    session.send("__cam_rdc_capture")
+            finally:
+                session.close()
+                with self._lock:
+                    if self._status.state != "error":
+                        self._status.state = "idle"
+                logger.info(
+                    "[PLAYER] rdc-step done captures=%d", self._status.ticks
+                )
+            return
 
         try:
             next_tick = start
