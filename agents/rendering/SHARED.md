@@ -158,6 +158,43 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 - C++ 导出所有 ColorTarget 为 ct_{index}.png
 - 覆盖率 + 蓝色占比启发式
 
+### [v0.2.0] 35099b5 — 小萱
+- Cyberpunk 2077 配置 note 更新：定位 DX12 下 RenderDoc overlay/triggercapture 无效的根本原因
+- `CRenderNode::Present::DoInternal` 绕过 DXGI SwapChain::Present hook，无 frame boundary 信号
+- 记录 workaround：启动加 `-vulkan` 使用标准 `vkQueuePresentKHR` 进入 RenderDoc 捕获路径
+- Crash 本身已修（NVAPI+DXR+SM passthrough），剩下是 Present hook 可见性问题
+- 2.12 AOB 重扫需等 -vulkan 模式验证通过后再执行
+
+### [v0.2.0] d62c704 — 小萱
+- 新增 Armored Core 6 config (`configs/hacks/armored_core_6.json`)
+  - UE5 engine, IGCS-GITC 路径，3 个 intercept (address capture + matrix write + FOV)
+  - 4x4 rotation matrix @ +0x10/+0x20/+0x30，XYZ @ +0x40，FOV @ +0x58
+- 新增 Metro Exodus config (`configs/hacks/metro_exodus.json`)
+  - 4A Engine with RTXGI (Enhanced Ed.)，5 个 intercept 覆盖所有冗余 camera write site
+  - 4x3 matrix @ +0x10 (stride=4)，XYZ @ +0x00
+  - camera_write_profile 最初 enabled=false，等 rotation_matrix 桥接支持
+
+### [v0.2.0] a9ec4f9 — 小萱
+- `drivers/game_profile.py` 增加 rotation_matrix 桥接
+  - `_euler_deg_to_matrix` / `_matrix_to_euler_deg` helpers (ZYX, row-major)
+  - `read_camera_pose` / `write_camera` 自动检测 profile 中的 `rotation_matrix` 块
+  - 按 row0/row1/row2 offset + stride 读写 3x3 矩阵
+- AC6 和 Metro Exodus 的 `camera_write_profile` 打开 enabled=true
+
+### [v0.2.0] 919c6ea — 小萱
+- 修 rotation matrix euler 约定：原 ZYX 不匹配两款游戏内存存储
+- 对比 refCode `Camera.cpp`：
+  - AC6 (IGCS-GITC)：`Qz(-roll)·Qx(-pitch)·Qy(yaw)` → `M = Mz(-r)·Mx(-p)·My(y)` (DX LH row-vector)
+    - 分解：`pitch = asin(m[2][1])`，`yaw = atan2(-m[2][0], m[2][2])`，`roll = atan2(m[0][1], m[1][1])`
+  - Metro (4A cryengine-specific)：`Qx(-roll)·Qz(-pitch)·Qy(yaw)` → `M = Mx(-r)·Mz(-p)·My(y)`
+    - 分解：`pitch = asin(m[0][1])`，`yaw = atan2(m[0][2], m[0][0])`，`roll = atan2(-m[2][1], m[1][1])`
+- 新增 `rotation_convention: "ac6"|"metro"` 字段，`game_profile.py` 按约定派发
+- build / decompose 互为代数逆（代码审查通过）
+- `configs/hacks/_schema.md` 同步补 rotation_matrix 文档段
+
+### [v0.2.0] 40ec164 — 小萱
+- STATUS.md 更新：标记 rotation_convention fix 完成，Cyberpunk DX12 下一步 `-vulkan` 验证
+
 ## Known Issues
 
 ### P1: 无 Float SceneColor 的游戏 RGB 含 UI
