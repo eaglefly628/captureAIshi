@@ -12,9 +12,9 @@
 
 目标：从"开发者工具"转型为"游戏选择 → 捕捉"的完整工作流。
 
-### Task 5: 右栏重构 — 设置面板分离 (P0)
-### Task 6: 游戏选择菜单 (P0)
-### Task 7: 内部代码隐藏 Unity 支持 (P1)
+### Task 5: 右栏重构 — 设置面板分离 (P0) ✓ (cascade lv2/lv3)
+### Task 6: 游戏选择菜单 (P0) ✓ 字母索引 + 分组 + 全量渲染; 虚拟滚动暂缓 (<200 games)
+### Task 7: 内部代码隐藏 Unity 支持 (P1) ✓ (showAllEngines Advanced toggle)
 
 详见 `agents/ui/ARCHIVE.md` 的完整 task 描述。
 
@@ -26,10 +26,21 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (Task 6: A-Z index + group headers)
+- Game Library 增 A-Z 字母索引条 (右侧 14px 竖条, 无该字母游戏时灰显不可点)
+- 按首字母分组显示, sticky 组头 (#  bucket 收非字母名)
+- 去掉 `allGames.slice(0, 50)` 硬上限, 164 个游戏全展示 (naive render, 虚拟滚动暂缓)
+- `renderGameList` 拆出 `_buildGameRow` helper
+- 字母点击 `scrollIntoView` 平滑跳转
+
+### [v0.3.0] — 小由 (菜单栏 + Game Command 拆分, 补录)
+- 顶部 28px menubar, Help > About captureAIshi / Copyright
+- Copyright 模态显示 "爱萌 / Author: lijunbai"
+- Game Command 单行拆分: EXE Path / Resolution Preset (5 档) / Width+Height / Windowed / -log
+- `_build_args` 后端组合 target_args, `/api/defaults` 同步默认值
+- 推送状态: 由 session summary 追溯 (原记录 78a0e55, 现以 mainbranch HEAD 为准)
+
 ### [v0.3.0] — 小由 (Task 5 + Task 7)
 - Settings Modal, 左栏精简, 隐藏 Unity/CE, 三级联动菜单
-
-### [v0.3.0] — 小由
-- Camera Path Editor + Path CRUD API + Game Library UI + Per-Game Profile
 
 旧版 CL 见 `agents/ui/ARCHIVE.md`。

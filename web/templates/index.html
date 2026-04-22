@@ -765,6 +765,32 @@ body {
 .cfg-actions .btn { flex: 1; font-size: 11px; height: 24px; justify-content: center; }
 .cfg-empty { padding: 8px; font-size: 11px; color: var(--text-tertiary); text-align: center; }
 
+/* ─── Game Library (letter index + group headers) ─── */
+.game-list-wrap { display: flex; gap: 2px; max-height: 220px; }
+.game-scroll { flex: 1; overflow-y: auto; min-width: 0; scroll-behavior: smooth; }
+.game-group-hdr {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-surface);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.letter-index {
+  display: flex; flex-direction: column; justify-content: space-between;
+  width: 14px; flex-shrink: 0;
+  font-size: 9px; font-family: var(--font-mono);
+  user-select: none;
+  padding: 2px 0;
+}
+.letter-index .letter {
+  text-align: center; line-height: 1.1;
+  color: var(--text-tertiary); opacity: 0.3;
+  cursor: default;
+}
+.letter-index .letter.active { opacity: 1; color: var(--accent); cursor: pointer; }
+.letter-index .letter.active:hover { color: var(--text-primary); }
+
 .hidden { display: none !important; }
 
 /* ── Path Editor ── */
@@ -1005,7 +1031,10 @@ body {
               <option value="ue5">UE5</option>
             </select>
           </div>
-          <div id="gameList" style="max-height:200px;overflow-y:auto"></div>
+          <div class="game-list-wrap">
+            <div id="gameList" class="game-scroll"></div>
+            <div id="letterIndex" class="letter-index"></div>
+          </div>
           <div id="gameInfo" style="display:none;padding:6px 0;border-top:1px solid var(--border-subtle);margin-top:6px">
             <div style="display:flex;align-items:center;gap:6px">
               <div style="flex:1;min-width:0">
@@ -2448,39 +2477,68 @@ async function searchGames() {
 
 function renderGameList() {
   const list = document.getElementById('gameList');
+  const idx = document.getElementById('letterIndex');
   if (!allGames.length) {
-    list.innerHTML = '<div style="font-size:11px;color:var(--text-tertiary);padding:8px;text-align:center">No games found</div>';
+    list.innerHTML = '<div class="cfg-empty">No games found</div>';
+    idx.innerHTML = '';
     return;
   }
-  const visible = allGames.slice(0, 50);
+  // Alpha sort + group by first letter ('#' bucket = non-alpha).
+  const letterOf = n => {
+    const c = (n || '').charAt(0).toUpperCase();
+    return /[A-Z]/.test(c) ? c : '#';
+  };
+  const sorted = [...allGames].sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', undefined, {sensitivity:'base'})
+  );
+  const groups = {};
+  sorted.forEach(g => { const L = letterOf(g.name); (groups[L] || (groups[L] = [])).push(g); });
+  const orderedLetters = Object.keys(groups).sort();
+
   list.innerHTML = '';
-  visible.forEach(g => {
-    const row = document.createElement('div');
-    row.className = 'cfg-row';
-    row.style.padding = '4px 6px';
-    if (selectedGame && selectedGame.slug === g.slug) row.style.background = 'var(--accent-dim)';
-    row.onclick = () => selectGame(g);
-
-    // Status dot color
-    const statusColor = g.test_status === 'ok' ? '#3ecf8e'
-                      : g.test_status === 'version_mismatch' ? '#f03e3e'
-                      : '#f0b03e'; // untested
-    const statusLabel = g.test_status === 'ok' ? 'Tested OK'
-                      : g.test_status === 'version_mismatch' ? 'Version mismatch — AOB needs update'
-                      : 'Untested';
-    const testedInfo = g.tested_build ? ` | ${g.tested_build}` : (g.aob_version ? ` | ${g.aob_version}` : '');
-    const tooltip = `${statusLabel}${testedInfo}${g.note ? '\n' + g.note : ''}`;
-
-    const engineBadge = g.engine === 'UE5' ? 'color:var(--accent)' : 'color:var(--text-tertiary)';
-    row.innerHTML = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${statusColor};margin-right:5px;flex-shrink:0;vertical-align:middle" title="${tooltip.replace(/"/g,'&quot;')}"></span><span class="cfg-name" style="font-size:11px">${g.name}</span><span class="cfg-meta" style="${engineBadge}">${g.engine||'?'}</span>`;
-    list.appendChild(row);
+  orderedLetters.forEach(L => {
+    const hdr = document.createElement('div');
+    hdr.className = 'game-group-hdr';
+    hdr.id = 'gg-' + L;
+    hdr.textContent = L;
+    list.appendChild(hdr);
+    groups[L].forEach(g => list.appendChild(_buildGameRow(g)));
   });
-  if (allGames.length > 50) {
-    const more = document.createElement('div');
-    more.style.cssText = 'font-size:10px;color:var(--text-tertiary);padding:4px;text-align:center';
-    more.textContent = `+ ${allGames.length - 50} more (use search to narrow)`;
-    list.appendChild(more);
-  }
+
+  // A-Z sidebar; '#' appended for non-alpha entries.
+  const letters = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '#'];
+  idx.innerHTML = '';
+  letters.forEach(L => {
+    const el = document.createElement('div');
+    el.className = 'letter' + (groups[L] ? ' active' : '');
+    el.textContent = L;
+    if (groups[L]) {
+      el.onclick = () => {
+        const hdr = document.getElementById('gg-' + L);
+        if (hdr) hdr.scrollIntoView({block:'start'});
+      };
+    }
+    idx.appendChild(el);
+  });
+}
+
+function _buildGameRow(g) {
+  const row = document.createElement('div');
+  row.className = 'cfg-row';
+  row.style.padding = '4px 6px';
+  if (selectedGame && selectedGame.slug === g.slug) row.style.background = 'var(--accent-dim)';
+  row.onclick = () => selectGame(g);
+  const statusColor = g.test_status === 'ok' ? '#3ecf8e'
+                    : g.test_status === 'version_mismatch' ? '#f03e3e'
+                    : '#f0b03e';
+  const statusLabel = g.test_status === 'ok' ? 'Tested OK'
+                    : g.test_status === 'version_mismatch' ? 'Version mismatch - AOB needs update'
+                    : 'Untested';
+  const testedInfo = g.tested_build ? ` | ${g.tested_build}` : (g.aob_version ? ` | ${g.aob_version}` : '');
+  const tooltip = `${statusLabel}${testedInfo}${g.note ? '\n' + g.note : ''}`;
+  const engineBadge = g.engine === 'UE5' ? 'color:var(--accent)' : 'color:var(--text-tertiary)';
+  row.innerHTML = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${statusColor};margin-right:5px;flex-shrink:0;vertical-align:middle" title="${tooltip.replace(/"/g,'&quot;')}"></span><span class="cfg-name" style="font-size:11px">${g.name}</span><span class="cfg-meta" style="${engineBadge}">${g.engine||'?'}</span>`;
+  return row;
 }
 
 function selectGame(g) {
