@@ -99,6 +99,33 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Configurable focus delay for Capture + Play
+
+Batman AK (and other focus-sensitive games) enters the pause menu when
+the browser click steals focus; the game stops ticking its hooked code,
+so `/api/hacks/capture` times out and trajectory Play writes fail. The
+trajectory_player already took a `focus_delay` param (default 5.0s) but
+the web UI was hardcoding 5s and the Capture button had no delay at all.
+
+- `web/templates/index.html` Bridge Debug panel: new `#focus_delay`
+  number input (default 5.0, step 0.5, min 0) with tooltip explaining
+  the alt-tab window. Value persists in `localStorage` under
+  `captureAIshi.focusDelay`, reloaded on DOMContentLoaded.
+- `_afterFocusDelay(fn)` helper logs "waiting Ns for game focus..." to
+  the debug console then `setTimeout`'s the fn; delay == 0 fires
+  immediately (no wait, no log).
+- `hackCapture()` wrapped in `_afterFocusDelay` so the Bridge Debug
+  "Capture" button now respects the configured delay (previously fired
+  instantly).
+- `trajPlay()` passes `focus_delay: focusDelay()` in the
+  `/api/trajectory/play` POST body instead of letting the backend pick
+  its 5.0 default.
+
+Backend consumption already in place: `web_ui.py:409` clamps the
+incoming `focus_delay` to `>= 0` and threads it into
+`TrajectoryPlayer.play()` → `_auto_capture(focus_delay=...)`, which
+only sleeps when `focus_delay > 0`.
+
 ### [v0.2.0] f6c58ad -- xiaoni -- Remove legacy volume/snake/cone capture pipeline
 
 User request: drop the volume + snake path + cone rotation capture mode

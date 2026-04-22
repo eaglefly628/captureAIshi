@@ -2552,6 +2552,17 @@ pollSessions();pollCaptures();
       <span id="scanCM" style="color:#555">CameraMgr: --</span>
       <button class="btn btn-accent" onclick="bridgeRescan()" style="margin-left:auto;font-size:11px;height:22px;padding:0 10px" title="Re-scan UWorld + LocalPlayer after map load">Re-scan UE</button>
     </div>
+    <!-- Focus Delay: seconds to wait after Capture/Play click so the user can alt-tab back to the game
+         (Batman AK pause-menu quirk: browser click steals focus; game won't tick the hooked code until focused). -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 8px;background:#0f0f23;border-radius:4px;font-size:11px">
+      <span style="color:#aaa" title="Seconds to wait between clicking Capture/Play and firing the actual action. Gives you time to alt-tab to the game window. 0 = fire immediately.">Focus Delay:</span>
+      <input id="focus_delay" type="number" value="5" min="0" step="0.5"
+             onchange="saveFocusDelay()"
+             style="width:60px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px"
+             title="Applies to the Bridge Debug 'Capture' button and the trajectory 'Play' button. Stored in localStorage.">
+      <span style="color:#666">s</span>
+      <span id="focusDelayHint" style="color:#666;margin-left:auto;font-size:10px">alt-tab window for Capture + Play</span>
+    </div>
     <!-- Camera POV (FMinimalViewInfo direct memory) -- kept visible, used in normal flow -->
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;border-top:1px solid #333;padding-top:6px;align-items:center">
       <span style="color:#aaa;font-size:11px;min-width:56px">Cam POV:</span>
@@ -2764,7 +2775,37 @@ function hackUninstall(){
   if(!confirm('Clear all intercept sites?'))return;
   _hackPost('uninstall', 'uninstall');
 }
+// Focus-delay knob lives in the Bridge Debug panel; both the Capture button
+// and the trajectory Play button read it via focusDelay(). Persisted in
+// localStorage so it survives page reload.
+const FOCUS_DELAY_KEY = 'captureAIshi.focusDelay';
+function focusDelay(){
+  const el = document.getElementById('focus_delay');
+  const raw = el ? parseFloat(el.value) : parseFloat(localStorage.getItem(FOCUS_DELAY_KEY)||'5');
+  return Math.max(0, isFinite(raw) ? raw : 5);
+}
+function saveFocusDelay(){
+  try { localStorage.setItem(FOCUS_DELAY_KEY, String(focusDelay())); } catch(_) {}
+}
+// Apply saved value on DOM ready.
+document.addEventListener('DOMContentLoaded', function(){
+  const el = document.getElementById('focus_delay');
+  if(!el) return;
+  try {
+    const saved = localStorage.getItem(FOCUS_DELAY_KEY);
+    if(saved != null && saved !== '') el.value = saved;
+  } catch(_) {}
+});
+
+function _afterFocusDelay(fn){
+  const d = focusDelay();
+  if(d <= 0){ fn(); return; }
+  debugAppend('waiting '+d.toFixed(1)+'s for game focus...');
+  setTimeout(fn, Math.round(d*1000));
+}
+
 function hackCapture(){
+  _afterFocusDelay(function(){
   debugAppend('> hacks/capture');
   fetch('/api/hacks/capture',{method:'POST'})
     .then(r=>r.json())
@@ -2789,6 +2830,7 @@ function hackCapture(){
       })();
     })
     .catch(e=>debugAppend('ERROR: '+e));
+  }); // _afterFocusDelay
 }
 function hackGetCapture(){
   fetch('/api/hacks/get_capture?slot=0')
@@ -2956,6 +2998,7 @@ function trajPlay(){
     loop:document.getElementById('trajLoop').checked,
     renderdoc_capture:document.getElementById('trajRdcCapture').checked,
     relative_origin:document.getElementById('trajRelativeOrigin').checked,
+    focus_delay:focusDelay(),
     slot:0,
   };
   debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop+' rel='+body.relative_origin+' rdc='+body.renderdoc_capture);
