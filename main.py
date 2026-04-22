@@ -720,16 +720,15 @@ def main():
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
     parser.add_argument(
-<<<<<<< HEAD
         "--inject", action="store_true",
         help="Inject into already-running game instead of launching via renderdoccmd. "
              "Use for games that crash on RenderDoc launch (e.g. Cyberpunk 2077 2.x D3D12 check). "
              "Launch the game manually first, then run with --inject --target-exe Cyberpunk2077.exe.",
-=======
+    )
+    parser.add_argument(
         "--game", metavar="ID",
         help="Game profile id from configs/hacks/ (e.g. batman_ak). "
              "Sets per-game texture indices and depth flags for exportframe.",
->>>>>>> cbda908 (feat(capture): per-game texture index config + UE3 depth support)
     )
     parser.add_argument(
         "--no-batch-export", action="store_true",
