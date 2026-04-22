@@ -17,7 +17,9 @@ import pytest
 from drivers import trajectory_presets as tp
 from drivers.trajectory_player import (
     _PokeSession, _build_plan, _coerce_type, _parse_off, _PokeField,
+    _pose_value,
 )
+from drivers.game_profile import _deg_to_ue3_packed, _ue3_packed_to_deg
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +203,72 @@ class TestPlanHelpers:
         assert _parse_off("0x574") == 0x574
         assert _parse_off(1396) == 1396
         assert _parse_off("1396") == 1396
+
+
+class TestUE3PackedInt:
+    """UE3 FRotator uses int32 with 0x10000 = 360 deg.
+
+    batman_ak.json rotation type = "ue3_packed_int"; the trajectory
+    player / game_profile.write_camera must convert deg -> packed before
+    the i32 wire poke.
+    """
+
+    def test_deg_to_packed_known_values(self):
+        assert _deg_to_ue3_packed(0.0) == 0
+        assert _deg_to_ue3_packed(90.0) == 16384
+        # 180 lands on the signed boundary; we normalize to negative.
+        assert _deg_to_ue3_packed(180.0) == -32768
+        assert _deg_to_ue3_packed(-90.0) == -16384
+        assert _deg_to_ue3_packed(-45.0) == -8192
+        # One full turn wraps to 0.
+        assert _deg_to_ue3_packed(360.0) == 0
+        assert _deg_to_ue3_packed(-360.0) == 0
+        # Canonical range is half-open [-32768, 32768).
+        for deg in (-180.0, 179.999, -45.5, 133.7):
+            p = _deg_to_ue3_packed(deg)
+            assert -32768 <= p < 32768, f"{deg} -> {p} out of range"
+
+    def test_packed_to_deg_roundtrip(self):
+        # Packed int has ~0.0055 deg resolution (360/65536); roundtrip
+        # within one unit is the tightest achievable.
+        step = 360.0 / 65536.0
+        for deg in (0.0, 1.0, 45.0, 90.0, 179.0, -1.0, -45.0, -90.0, -179.0):
+            p = _deg_to_ue3_packed(deg)
+            back = _ue3_packed_to_deg(p)
+            # Normalize input deg to (-180, 180] for comparison.
+            norm = ((deg + 180.0) % 360.0) - 180.0
+            assert abs(back - norm) <= step, \
+                f"{deg} -> {p} -> {back} (norm={norm}, step={step})"
+
+    def test_packed_to_deg_accepts_float_from_peek(self):
+        # mem_peek returns float; the reverse must accept float input.
+        assert _ue3_packed_to_deg(16384.0) == pytest.approx(90.0, abs=1e-3)
+        assert _ue3_packed_to_deg(-16384.0) == pytest.approx(-90.0, abs=1e-3)
+
+    def test_pose_value_converts_ue3_rotation(self):
+        # _pose_value must apply the ue3_packed_int conversion when
+        # _PokeField.raw_type flags it; other fields stay raw.
+        class _P:
+            pitch = 90.0
+            yaw = -45.0
+            roll = 0.0
+            x = 1.5
+            y = 2.5
+            z = 3.5
+            fov = 60.0
+
+        f_pitch = _PokeField("pitch", 0x580, "i32", "pitch", "ue3_packed_int")
+        f_yaw   = _PokeField("yaw",   0x584, "i32", "yaw",   "ue3_packed_int")
+        f_roll  = _PokeField("roll",  0x588, "i32", "roll",  "ue3_packed_int")
+        f_x     = _PokeField("x",     0x574, "f32", "x",     "float32")
+
+        # 90 deg -> 16384
+        assert _pose_value(_P(), f_pitch) == 16384.0
+        # -45 deg -> -8192
+        assert _pose_value(_P(), f_yaw) == -8192.0
+        assert _pose_value(_P(), f_roll) == 0.0
+        # Non-UE3 field: raw pass-through.
+        assert _pose_value(_P(), f_x) == 1.5
 
 
 # ---------------------------------------------------------------------------

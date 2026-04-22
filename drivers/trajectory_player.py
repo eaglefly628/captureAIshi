@@ -57,11 +57,16 @@ class _PokeField:
     If ``attr`` starts with ``"quat:"`` the value is derived from the pose's
     Euler rotation (pitch/yaw/roll in degrees): ``quat:x``, ``quat:y``,
     ``quat:z``, ``quat:w`` select the component.
+
+    ``raw_type`` preserves the original schema type (e.g. ``ue3_packed_int``)
+    so ``_pose_value`` can do per-engine unit conversions before the wire
+    coercion to ``v_type``.
     """
     name: str
     offset: int
     v_type: str  # "f32" / "f64" / "i32" / "u32"
     attr: str    # "x"/"y"/"z"/"pitch"/"yaw"/"roll"/"fov" or "quat:[xyzw]"
+    raw_type: str = ""  # original schema type from the profile
 
 
 def _euler_deg_to_quat(pitch: float, yaw: float, roll: float) -> tuple[float, float, float, float]:
@@ -83,12 +88,21 @@ def _euler_deg_to_quat(pitch: float, yaw: float, roll: float) -> tuple[float, fl
     return (qx, qy, qz, qw)
 
 
-def _pose_value(pose: Any, attr: str) -> float:
-    """Resolve a _PokeField.attr against a pose (supports 'quat:[xyzw]')."""
+def _pose_value(pose: Any, f: "_PokeField") -> float:
+    """Resolve a _PokeField against a pose.
+
+    Handles the ``quat:[xyzw]`` synthetic attribute and per-engine unit
+    conversions flagged by ``f.raw_type`` (currently: ``ue3_packed_int``
+    maps degrees -> UE3 FRotator 0x10000-per-turn int).
+    """
+    attr = f.attr
     if attr.startswith("quat:"):
         qx, qy, qz, qw = _euler_deg_to_quat(pose.pitch, pose.yaw, pose.roll)
         return {"x": qx, "y": qy, "z": qz, "w": qw}[attr[5:]]
-    return float(getattr(pose, attr))
+    val = float(getattr(pose, attr))
+    if f.raw_type == "ue3_packed_int":
+        return float(game_profile._deg_to_ue3_packed(val))
+    return val
 
 
 def _coerce_type(t: str) -> str:
@@ -127,24 +141,28 @@ def _build_plan(profile_id: str) -> list[_PokeField]:
     rot = cw.get("rotation", {})
     quat = cw.get("rotation_quaternion", {})
     fov = cw.get("fov", {})
-    loc_t = _coerce_type(loc.get("type", "float32"))
-    rot_t = _coerce_type(rot.get("type", "float32"))
-    quat_t = _coerce_type(quat.get("type", "float32"))
-    fov_t = _coerce_type(fov.get("type", "float32"))
+    loc_raw = loc.get("type", "float32")
+    rot_raw = rot.get("type", "float32")
+    quat_raw = quat.get("type", "float32")
+    fov_raw = fov.get("type", "float32")
+    loc_t = _coerce_type(loc_raw)
+    rot_t = _coerce_type(rot_raw)
+    quat_t = _coerce_type(quat_raw)
+    fov_t = _coerce_type(fov_raw)
 
     plan: list[_PokeField] = []
     for attr, key in (("x", "x"), ("y", "y"), ("z", "z")):
         if key in loc:
-            plan.append(_PokeField(attr, _parse_off(loc[key]), loc_t, attr))
+            plan.append(_PokeField(attr, _parse_off(loc[key]), loc_t, attr, loc_raw))
     for attr, key in (("pitch", "pitch"), ("yaw", "yaw"), ("roll", "roll")):
         if key in rot:
-            plan.append(_PokeField(attr, _parse_off(rot[key]), rot_t, attr))
+            plan.append(_PokeField(attr, _parse_off(rot[key]), rot_t, attr, rot_raw))
     for qname in ("x", "y", "z", "w"):
         if qname in quat:
             plan.append(_PokeField(f"q{qname}", _parse_off(quat[qname]),
-                                   quat_t, f"quat:{qname}"))
+                                   quat_t, f"quat:{qname}", quat_raw))
     if "off" in fov:
-        plan.append(_PokeField("fov", _parse_off(fov["off"]), fov_t, "fov"))
+        plan.append(_PokeField("fov", _parse_off(fov["off"]), fov_t, "fov", fov_raw))
     if not plan:
         raise ValueError(f"profile {profile_id!r} has empty camera_write_profile")
     return plan
@@ -511,7 +529,7 @@ class TrajectoryPlayer:
                     if self._stop_evt.is_set():
                         break
                     for f in plan:
-                        session.poke(addr, f.offset, f.v_type, _pose_value(pose, f.attr))
+                        session.poke(addr, f.offset, f.v_type, _pose_value(pose, f))
                     with self._lock:
                         self._status.t = pose.t
                         self._status.ticks += 1
@@ -562,7 +580,7 @@ class TrajectoryPlayer:
                 tick_ok = 0
                 tick_fail = 0
                 for f in plan:
-                    val = _pose_value(pose, f.attr)
+                    val = _pose_value(pose, f)
                     try:
                         reply = session.poke(addr, f.offset, f.v_type, val)
                         if reply.strip() == "ok":

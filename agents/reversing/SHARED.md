@@ -99,6 +99,32 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Batman ue3_packed_int deg conversion
+
+Fix long-standing TODO in `configs/hacks/batman_ak.json`: camera rotation
+writes for UE3 were casting deg floats to i32 verbatim, so any non-integer
+or out-of-range angle got truncated and rotation was effectively broken.
+
+- `drivers/game_profile.py`: add `_deg_to_ue3_packed` / `_ue3_packed_to_deg`
+  helpers (FRotator: 0x10000 = 360 deg, normalized to [-32768, 32768) so
+  values stay inside signed int32 and any ViewPitchMin/Max game clamp).
+- `drivers/game_profile.write_camera`: convert pitch/yaw/roll deg -> packed
+  int before the i32 poke when `rotation.type == "ue3_packed_int"`.
+- `drivers/game_profile.read_camera_pose`: reverse direction - packed -> deg
+  on read so the pose dict stays in degrees for UI / trajectory.
+- `drivers/trajectory_player.py`: `_PokeField` gains `raw_type` so per-tick
+  `_pose_value` can apply the same conversion before the i32 wire poke.
+- `tests/test_trajectory.py`: new `TestUE3PackedInt` class (4 cases) -
+  known-value table, deg<->packed roundtrip, float input from mem_peek,
+  `_pose_value` integration via `_PokeField`.
+
+Bridge side verified no change needed: `console_server.h` i32 parse uses
+`strtol` (accepts negatives) then `(uint32_t)(int32_t)v` to store the
+unsigned DWORD; e.g. -16384 -> 0xFFFFC000 which FRotator wraps correctly
+as -90 deg.
+
+batman_ak.json `_comment` updated to drop the "next commit" marker.
+
 ### [v0.2.0] c656837 -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
 
 Gemini external + round-2 review items, plus 2 UI bugs reported by the

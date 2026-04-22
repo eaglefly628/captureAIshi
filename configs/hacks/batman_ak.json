@@ -32,7 +32,7 @@
 
   "camera_write_profile": {
     "enabled": true,
-    "_comment": "rbx captured at intercept entry by asm stub. UE3 rotator is 16.16 fixed-point (0x10000 = 360 deg); current write path casts pitch/yaw/roll floats to i32 verbatim -- use value 0 for initial Test. Proper deg->packed_int conversion lives in the trajectory layer (next commit).",
+    "_comment": "rbx captured at intercept entry by asm stub. UE3 rotator is 16.16 fixed-point (0x10000 = 360 deg). Deg->packed int32 conversion is applied at the trajectory layer (game_profile._deg_to_ue3_packed; wire type stays i32).",
     "struct_base_reg": "rbx",
     "capture_from_intercept": "camera_write",
     "location": { "x": "0x574", "y": "0x578", "z": "0x57C", "type": "float32" },

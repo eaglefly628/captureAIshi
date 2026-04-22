@@ -296,6 +296,29 @@ def _poke_str(v_type: str, v: float | int) -> str:
     return str(int(v))
 
 
+def _deg_to_ue3_packed(deg: float) -> int:
+    """Degrees -> UE3 FRotator int32 (0x10000 = 360 deg).
+
+    UE3 stores pitch/yaw/roll as int32 with one full turn = 0x10000 units.
+    We normalize to [-32768, 32768) so the wire value stays inside signed
+    int32 and, more importantly, inside any clamp-style limits the game
+    may apply (e.g. ViewPitchMin/Max). Game-side modular wrap then handles
+    the small-overflow edge correctly.
+    """
+    packed = int(round(deg * 65536.0 / 360.0)) & 0xFFFF
+    if packed >= 0x8000:
+        packed -= 0x10000
+    return packed
+
+
+def _ue3_packed_to_deg(packed: float | int) -> float:
+    """UE3 FRotator int -> degrees (accepts float from mem_peek)."""
+    i = int(packed) & 0xFFFF
+    if i >= 0x8000:
+        i -= 0x10000
+    return i * (360.0 / 65536.0)
+
+
 def _euler_deg_to_matrix(
     pitch_deg: float, yaw_deg: float, roll_deg: float, convention: str = "ac6"
 ) -> list[list[float]]:
@@ -410,10 +433,15 @@ def read_camera_pose(profile_id: str, slot: int = 0) -> dict[str, Any]:
         m = [_rd_row("row0"), _rd_row("row1"), _rd_row("row2")]
         pitch, yaw, roll = _matrix_to_euler_deg(m, convention)
     else:
-        rot_t = _coerce_type(rot.get("type", "float32"))
+        rot_type_raw = rot.get("type", "float32")
+        rot_t = _coerce_type(rot_type_raw)
         pitch = rd(rot, "pitch", rot_t)
         yaw   = rd(rot, "yaw",   rot_t)
         roll  = rd(rot, "roll",  rot_t)
+        if rot_type_raw == "ue3_packed_int":
+            pitch = _ue3_packed_to_deg(pitch)
+            yaw   = _ue3_packed_to_deg(yaw)
+            roll  = _ue3_packed_to_deg(roll)
 
     return {
         "ok": True,
@@ -509,9 +537,15 @@ def write_camera(profile_id: str,
                 })
     else:
         rot_type = rot.get("type", "float32")
-        push("pitch", "pitch", rot, rot_type, pitch)
-        push("yaw",   "yaw",   rot, rot_type, yaw)
-        push("roll",  "roll",  rot, rot_type, roll)
+        if rot_type == "ue3_packed_int":
+            pitch_v = _deg_to_ue3_packed(pitch)
+            yaw_v   = _deg_to_ue3_packed(yaw)
+            roll_v  = _deg_to_ue3_packed(roll)
+        else:
+            pitch_v, yaw_v, roll_v = pitch, yaw, roll
+        push("pitch", "pitch", rot, rot_type, pitch_v)
+        push("yaw",   "yaw",   rot, rot_type, yaw_v)
+        push("roll",  "roll",  rot, rot_type, roll_v)
 
     if "off" in fov_cfg:
         off = _parse_hex_or_dec(fov_cfg["off"])
