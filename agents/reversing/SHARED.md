@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Configurable focus delay for Capture + Play
+### [v0.2.0] d03a98c -- xiaoni -- Configurable focus delay for Capture + Play
 
 Batman AK (and other focus-sensitive games) enters the pause menu when
 the browser click steals focus; the game stops ticking its hooked code,
