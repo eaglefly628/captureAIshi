@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- run_capture: launch-and-wait session mode
+### [v0.2.0] 8554e66 -- xiaoni -- run_capture: launch-and-wait session mode
 
 Follow-up to `f6c58ad`: raising inside `run_capture` killed the main
 Web UI Start button (user report: "Legacy volume/snake/cone capture
