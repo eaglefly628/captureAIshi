@@ -1,0 +1,20 @@
+{
+  "driver": "ue5",
+  "driver_host": "127.0.0.1",
+  "driver_port": 9998,
+  "grabber": "renderdoc",
+  "target_exe": "",
+  "output_dir": "./output",
+  "fov": 90.0,
+  "aspect": 1.7778,
+  "launch_resx": 1920,
+  "launch_resy": 1080,
+  "launch_windowed": true,
+  "launch_log": false,
+  "streaming": true,
+  "streaming_settle": 0.8,
+  "spacing": 3.0,
+  "smooth": true,
+  "smooth_points": 5,
+  "notes": "UE4 (HellbladeGame-Win64-Shipping.exe). Apply hellblade_ue4 profile before capture."
+}

@@ -2505,8 +2505,14 @@ function _applyGameConfig(r) {
     driver_host: v => document.getElementById('driver_host').value=v,
     driver_port: v => document.getElementById('driver_port').value=v,
     grabber: v => document.getElementById('grabber').value=v,
-    target_exe: v => document.getElementById('target_exe').value=v,
-    output_dir: v => document.getElementById('output_dir').value=v,
+    target_exe: v => { if (v) document.getElementById('target_exe').value=v; },
+    output_dir: v => { if (v) document.getElementById('output_dir').value=v; },
+    launch_resx: v => document.getElementById('launch_resx').value=v,
+    launch_resy: v => document.getElementById('launch_resy').value=v,
+    launch_windowed: v => document.getElementById('launch_windowed').checked=!!v,
+    launch_log: v => document.getElementById('launch_log').checked=!!v,
+    streaming: v => document.getElementById('streaming').checked=!!v,
+    streaming_settle: v => document.getElementById('streaming_settle').value=v,
   };
   for (const [k, fn] of Object.entries(mapping)) {
     if (r[k] != null) fn(r[k]);

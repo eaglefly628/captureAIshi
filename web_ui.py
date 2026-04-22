@@ -996,6 +996,12 @@ _DEFAULT_GAME_CONFIG = {
     "grabber": "renderdoc",
     "target_exe": "",
     "output_dir": "./output",
+    "launch_resx": 1920,
+    "launch_resy": 1080,
+    "launch_windowed": True,
+    "launch_log": False,
+    "streaming": True,
+    "streaming_settle": 0.5,
     "notes": "",
 }
 
