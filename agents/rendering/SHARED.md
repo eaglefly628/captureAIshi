@@ -118,6 +118,15 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## Changelog
 
+### [v0.2.0] c80a2cb — 小萱
+- feat: per-game texture index config + UE3 depth support
+  - C++: `--depth-index N` (pin depth texture) + `--no-reverse-depth` (UE3 standard-Z)
+  - `game_profile.py` Profile 加 `capture` dict
+  - `renderdoc_grabber.py` `_capture_export_args()` 从 capture_profile 拼 CLI flags
+  - `main.py` `--game ID` 加载 game profile，传 capture_profile 给 grabber
+  - `batman_ak.json` 加 `capture` section (depth_reversed_z=false, indices=-1 待填)
+  - `_schema.md` 文档更新
+
 ### [v0.2.0] 75ce117 — 小萱
 - P0 fix: Normal 检测改用 R10G10B10A2 格式过滤 + pipeline state 扫描 MRT slot 1
   - 放弃像素启发式（帧间不稳定、彩虹 debug buffer 干扰）
