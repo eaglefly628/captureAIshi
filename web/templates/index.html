@@ -409,32 +409,6 @@ body {
 .row { display: flex; gap: 6px; }
 .row .f { flex: 1; min-width: 0; }
 
-/* Presets (compact list) */
-.preset-list { display: flex; flex-direction: column; gap: 2px; }
-.preset-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background 0.1s;
-  border: 1px solid transparent;
-}
-.preset-item:hover { background: var(--bg-hover); }
-.preset-item.selected { background: var(--accent-dim); border-color: rgba(91,138,240,0.25); }
-.preset-icon { font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
-.pi-name { font-size: 12px; font-weight: 500; color: var(--text-primary); }
-.pi-tags { display: flex; gap: 3px; margin-left: auto; }
-.pi-tag {
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: rgba(255,255,255,0.06);
-  color: var(--text-tertiary);
-}
-.preset-item.selected .pi-tag { background: rgba(91,138,240,0.2); color: var(--accent); }
-
 /* ─── Center (Log) ─── */
 .center {
   flex: 1;
@@ -991,9 +965,6 @@ body {
     <span id="rescanDot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#555;margin-right:5px;vertical-align:middle;transition:background 0.3s"></span>重新扫描 UE
   </button>
   <div class="toolbar-sep"></div>
-  <select class="sel" id="presetSelect" onchange="selectPresetById(this.value)">
-    <option value="">Preset...</option>
-  </select>
   <select class="sel" id="driver" onchange="updateVisibility()">
     <option value="manual">Manual</option>
     <option value="ue5">UE5</option>
@@ -1045,12 +1016,6 @@ body {
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Presets -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Presets</button>
-        <div class="sec-body"><div class="preset-list" id="presetList"></div></div>
       </div>
 
     </div>
@@ -1243,7 +1208,7 @@ body {
 
 <!-- Status Bar -->
 <div class="statusbar">
-  <span id="configSummary">No preset</span>
+  <span id="configSummary">No game selected</span>
   <div class="statusbar-spacer"></div>
   <span>captureAIshi v1.0</span>
 </div>
@@ -1308,69 +1273,11 @@ function closeModal(el) {
 })();
 
 // ─── State ───
-let polling = null, presets = [], selectedPresetId = null;
+let polling = null;
 let knownCaptures = [], activeSession = '', viewSession = '';
 
 // ─── Sections ───
 function toggleSec(btn) { btn.classList.toggle('open'); btn.nextElementSibling.classList.toggle('open'); }
-
-// ─── Presets ───
-const presetIcons = { gamepad:'\u{1F3AE}', cube:'\u{1F4E6}', unity:'\u{1F3AE}', wrench:'\u{1F527}', flask:'\u{1F9EA}' };
-
-async function loadPresets() {
-  try {
-    const r = await fetch('/api/presets');
-    presets = await r.json();
-    const sel = document.getElementById('presetSelect');
-    sel.innerHTML = '<option value="">Preset...</option>';
-    presets.forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; sel.appendChild(o); });
-    renderPresetList();
-  } catch(e) { console.error(e); }
-}
-
-function renderPresetList() {
-  const list = document.getElementById('presetList');
-  list.innerHTML = '';
-  presets.forEach(p => {
-    const icon = presetIcons[p.icon] || '\u{1F4CB}';
-    const d = document.createElement('div');
-    d.className = 'preset-item';
-    d.dataset.id = p.id;
-    d.onclick = () => selectPresetById(p.id);
-    d.innerHTML = `<span class="preset-icon">${icon}</span><span class="pi-name">${p.name}</span><span class="pi-tags">${p.tags.map(t=>`<span class="pi-tag">${t}</span>`).join('')}</span>`;
-    list.appendChild(d);
-  });
-}
-
-function selectPresetById(id) {
-  if (!id) return;
-  selectedPresetId = id;
-  const preset = presets.find(p => p.id === id);
-  if (!preset) return;
-  document.getElementById('presetSelect').value = id;
-  document.querySelectorAll('.preset-item').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
-  applyParams(preset.params);
-  const dl = {manual:'Manual',ue5:'UE5',unity:'Unity',cheatengine:'CE'};
-  const gl = {none:'None',renderdoc:'RDoc',screenshot:'Scrn'};
-  document.getElementById('configSummary').textContent = `${preset.name} \u2022 ${dl[preset.params.driver]||preset.params.driver} \u2022 ${gl[preset.params.grabber]||preset.params.grabber}`;
-  addLog(`Preset: ${preset.name}`, 'info');
-}
-
-function applyParams(p) {
-  document.getElementById('driver').value=p.driver; document.getElementById('driver_host').value=p.driver_host; document.getElementById('driver_port').value=p.driver_port;
-  document.getElementById('ce_mode').value=p.ce_mode; document.getElementById('grabber').value=p.grabber;
-  document.getElementById('target_exe').value=p.target_exe||''; document.getElementById('renderdoc_path').value=p.renderdoc_path||''; document.getElementById('no_hide_ui').checked=p.no_hide_ui;
-  if(p.launch_resx!=null) document.getElementById('launch_resx').value=p.launch_resx;
-  if(p.launch_resy!=null) document.getElementById('launch_resy').value=p.launch_resy;
-  document.getElementById('launch_windowed').checked=p.launch_windowed!==false;
-  document.getElementById('launch_log').checked=!!p.launch_log;
-  syncResPreset();
-  document.getElementById('output_dir').value=p.output_dir; document.getElementById('dry_run').checked=p.dry_run; document.getElementById('debug_scan').checked=!!p.debug_scan;
-  document.getElementById('streaming').checked=p.streaming!==false; document.getElementById('streaming_settle').value=p.streaming_settle||0.5;
-  if(p.fov!=null) document.getElementById('fov').value=p.fov;
-  if(p.aspect!=null) document.getElementById('aspect').value=p.aspect;
-  updateVisibility();
-}
 
 // ─── Form ───
 function pf(id){return parseFloat(document.getElementById(id).value)||0;}
@@ -2537,7 +2444,6 @@ document.querySelectorAll('input, select').forEach(el => {
 
 // ─── Init ───
 updateVisibility();
-loadPresets();
 searchGames();
 setInterval(()=>{pollSessions();pollCaptures();},2000);
 pollSessions();pollCaptures();
