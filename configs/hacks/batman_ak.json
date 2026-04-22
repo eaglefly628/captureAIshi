@@ -21,6 +21,15 @@
     }
   ],
 
+  "capture": {
+    "_comment": "Set indices after opening an .rdc in RenderDoc (--dump-all shows all targets). UE3: no reversed-Z.",
+    "rgb_index": -1,
+    "normal_index": -1,
+    "depth_index": -1,
+    "depth_reversed_z": false,
+    "depth_range": null
+  },
+
   "camera_write_profile": {
     "enabled": true,
     "_comment": "rbx captured at intercept entry by asm stub. UE3 rotator is 16.16 fixed-point (0x10000 = 360 deg); current write path casts pitch/yaw/roll floats to i32 verbatim -- use value 0 for initial Test. Proper deg->packed_int conversion lives in the trajectory layer (next commit).",

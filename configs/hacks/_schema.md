@@ -33,6 +33,18 @@ One file per game in `configs/hacks/<id>.json`. Loaded by `drivers/game_profile.
 
 At least one of `aob_literal` or `aob_wildcard` must be present.
 
+## `capture` (optional)
+
+Per-game texture index overrides for `renderdoccmd exportframe`. Set indices by opening a `.rdc` file in the qrenderdoc GUI with `--dump-all` to see all ColorTargets, then pin the correct ones here. All fields default to auto-detect (-1 / true / null).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `rgb_index` | int | -1 | Texture index for RGB output. -1 = auto (first Float ColorTarget, fallback SwapBuffer). |
+| `normal_index` | int | -1 | Texture index for normal map. -1 = auto (R10G10B10A2 scan + pipeline state). |
+| `depth_index` | int | -1 | Texture index for depth. -1 = auto (first DepthTarget). |
+| `depth_reversed_z` | bool | true | true = UE5 reversed-Z (near→1, far→0). false = UE3/standard (near→0, far→1). |
+| `depth_range` | [float,float] or null | null | Fixed [black_point, white_point] for depth normalization. null = auto (1st-99th percentile from first frame). |
+
 ## `camera_write_profile` (optional, future use)
 
 Enables trajectory playback. Currently only UE4/UE5 auto-populate this via `find_cam_pov`. Non-UE games wait for the asm pointer-capture stub.

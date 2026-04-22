@@ -64,6 +64,7 @@ class RenderDocGrabber(FrameGrabber):
         startup_timeout: float = 60.0,
         wait_for_port: Optional[int] = None,
         export_normal: bool = True,
+        capture_profile: Optional[dict] = None,
     ):
         """
         Args:
@@ -99,6 +100,7 @@ class RenderDocGrabber(FrameGrabber):
         self._game_direct_process = None
         self._capture_count = 0
         self.export_normal = export_normal
+        self.capture_profile = capture_profile or {}
         self._use_native = _HAS_NATIVE_BRIDGE
         self._replay_session = None  # Persistent native ReplaySession
         self._trigger_process = None  # Persistent triggercapture process (interactive mode)
@@ -897,6 +899,23 @@ class RenderDocGrabber(FrameGrabber):
             time.sleep(0.2)
         return False
 
+    def _capture_export_args(self) -> list:
+        """Build per-game exportframe CLI flags from capture_profile."""
+        args = []
+        p = self.capture_profile
+        rgb_index = p.get("rgb_index", -1)
+        if rgb_index is not None and rgb_index >= 0:
+            args += ["--rgb-index", str(rgb_index)]
+        normal_index = p.get("normal_index", -1)
+        if normal_index is not None and normal_index >= 0:
+            args += ["--normal-index", str(normal_index)]
+        depth_index = p.get("depth_index", -1)
+        if depth_index is not None and depth_index >= 0:
+            args += ["--depth-index", str(depth_index)]
+        if not p.get("depth_reversed_z", True):
+            args.append("--no-reverse-depth")
+        return args
+
     # ── Two-phase batch capture ─────────────────────────────────────────────
 
     def trigger_only(self) -> Optional[Path]:
@@ -944,6 +963,7 @@ class RenderDocGrabber(FrameGrabber):
         ]
         if not self.export_normal:
             cmd.append("--no-normal")
+        cmd += self._capture_export_args()
         cmd += [str(p) for p in valid_paths]
 
         logger.info(f"[RDOC] Batch exporting {len(valid_paths)} captures...")
@@ -1154,6 +1174,7 @@ class RenderDocGrabber(FrameGrabber):
         ]
         if not self.export_normal:
             cmd.append("--no-normal")
+        cmd += self._capture_export_args()
         logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
 
         try:

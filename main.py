@@ -89,6 +89,17 @@ def create_grabber(args):
         if getattr(args, 'driver', 'manual') == 'manual':
             driver_port = None
         inject_mode = getattr(args, 'inject', False)
+        # Load per-game capture profile if --game is specified
+        capture_profile = {}
+        game_id = getattr(args, 'game', None)
+        if game_id:
+            try:
+                from drivers.game_profile import load_profile
+                prof = load_profile(game_id)
+                capture_profile = prof.capture
+                logging.info(f"[INIT] Loaded game profile '{game_id}': capture={capture_profile}")
+            except FileNotFoundError:
+                logging.warning(f"[INIT] Game profile '{game_id}' not found, using auto-detect")
         return RenderDocGrabber(
             renderdoc_path=getattr(args, 'renderdoc_path', 'renderdoccmd'),
             capture_dir=str(args.output_dir / "captures"),
@@ -99,6 +110,7 @@ def create_grabber(args):
             inject_delay=getattr(args, 'inject_delay', 5.0),
             ui_hider=rdoc_ui_hider,
             wait_for_port=int(driver_port) if driver_port else None,
+            capture_profile=capture_profile,
         )
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber
@@ -708,10 +720,16 @@ def main():
     parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
     parser.add_argument(
+<<<<<<< HEAD
         "--inject", action="store_true",
         help="Inject into already-running game instead of launching via renderdoccmd. "
              "Use for games that crash on RenderDoc launch (e.g. Cyberpunk 2077 2.x D3D12 check). "
              "Launch the game manually first, then run with --inject --target-exe Cyberpunk2077.exe.",
+=======
+        "--game", metavar="ID",
+        help="Game profile id from configs/hacks/ (e.g. batman_ak). "
+             "Sets per-game texture indices and depth flags for exportframe.",
+>>>>>>> cbda908 (feat(capture): per-game texture index config + UE3 depth support)
     )
     parser.add_argument(
         "--no-batch-export", action="store_true",

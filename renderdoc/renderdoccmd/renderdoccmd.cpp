@@ -1041,6 +1041,8 @@ private:
   bool exportNormal;
   int normalIndex;   // -1 = auto-detect, >= 0 = use specific texture index
   int rgbIndex;      // -1 = auto-detect, >= 0 = use specific texture index
+  int depthIndex;    // -1 = auto-detect (first DepthTarget), >= 0 = use specific texture index
+  bool reverseDepth; // true = UE5 reversed-Z (default), false = UE3/standard depth
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1054,6 +1056,8 @@ public:
     parser.add("no-normal", '\0', "Skip normal buffer export (on by default)");
     parser.add<int>("normal-index", '\0', "Use texture at this index as normal (from GBuffer scan output). -1 = auto-detect", false, -1);
     parser.add<int>("rgb-index", '\0', "Use texture at this index as RGB (from GBuffer scan output). -1 = auto-detect", false, -1);
+    parser.add<int>("depth-index", '\0', "Use texture at this index as depth. -1 = auto (first DepthTarget)", false, -1);
+    parser.add("no-reverse-depth", '\0', "Disable reversed-Z inversion (use for UE3/standard depth: 0=near, 1=far)");
   }
   virtual const char *Description()
   {
@@ -1081,6 +1085,8 @@ public:
     exportNormal = !parser.exist("no-normal");
     normalIndex = parser.get<int>("normal-index");
     rgbIndex = parser.get<int>("rgb-index");
+    depthIndex = parser.get<int>("depth-index");
+    reverseDepth = !parser.exist("no-reverse-depth");
     return true;
   }
 
@@ -1335,9 +1341,12 @@ public:
       uint32_t flags = (uint32_t)tex.creationFlags;
 
       // Export depth buffer as normalized grayscale PNG
-      if(!foundDepth && (flags & (uint32_t)TextureCategory::DepthTarget))
+      bool isDepthTarget = (flags & (uint32_t)TextureCategory::DepthTarget) != 0;
+      bool isDepthByIndex = (depthIndex >= 0 && (int)i == depthIndex);
+      if(!foundDepth && (isDepthTarget || isDepthByIndex))
       {
-        std::cout << "  [" << i << "] DepthTarget " << tex.width << "x" << tex.height
+        std::cout << "  [" << i << "] " << (isDepthByIndex ? "DepthTarget (pinned)" : "DepthTarget")
+                  << " " << tex.width << "x" << tex.height
                   << " fmt=" << (uint32_t)tex.format.type << std::endl;
 
         // Compute percentile range from raw data for black/white point mapping
@@ -1388,8 +1397,9 @@ public:
           }
         }
 
-        // Save depth as grayscale PNG with percentile-based mapping
-        // Swap black/white to invert reversed-Z: near(1.0)->dark, far(0.0)->bright
+        // Save depth as grayscale PNG.
+        // reverseDepth=true (UE5): swap bp/wp so near(1.0)->white, far(0.0)->black.
+        // reverseDepth=false (UE3/standard): near(0.0)->white, far(1.0)->black.
         std::string depthPath = fileOutdir + sep + "depth.png";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
@@ -1398,8 +1408,8 @@ public:
         texsave.alpha = AlphaMapping::Discard;
         texsave.destType = FileType::PNG;
         texsave.channelExtract = 0;    // Red channel only (depth)
-        texsave.comp.blackPoint = wpVal;  // Reversed-Z inversion: map far(0)->black
-        texsave.comp.whitePoint = bpVal;  // Reversed-Z inversion: map near(1)->white
+        texsave.comp.blackPoint = reverseDepth ? wpVal : bpVal;
+        texsave.comp.whitePoint = reverseDepth ? bpVal : wpVal;
 
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
         if(saveRes.OK())

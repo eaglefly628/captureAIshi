@@ -61,6 +61,7 @@ class Profile:
     notes: str = ""
     intercepts: list[Intercept] = field(default_factory=list)
     camera_write_profile: dict[str, Any] = field(default_factory=dict)
+    capture: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 1
 
     @classmethod
@@ -90,6 +91,7 @@ class Profile:
             notes=data.get("notes", ""),
             intercepts=ints,
             camera_write_profile=data.get("camera_write_profile", {}),
+            capture=data.get("capture", {}),
         )
 
 
