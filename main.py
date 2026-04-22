@@ -144,25 +144,24 @@ def create_ui_hider(args):
 
 
 def run_capture(args):
-    """Legacy capture entry point -- removed in favour of trajectory-driven
-    playback.
+    """Prepare a capture session: launch the game via the grabber, connect
+    the driver, and hold the session open until the user presses Stop.
 
-    The old volume + snake path + cone rotation pipeline was generating
-    hundreds of captures per run and has been retired. Use the Web UI
-    "Play" button (trajectory-based, drivers/trajectory_player.py) for
-    offline RDC capture per waypoint, or drive captures manually via the
-    bridge.
+    Legacy volume + snake path + cone rotation pose generation has been
+    removed; per-waypoint RDC capture and pose streaming are now driven
+    from the Web UI (Bridge Debug -> Capture button / Trajectory panel ->
+    Play button), which talk to the bridge console server directly. All
+    this entry point does is:
+
+    1. Create driver / UI hider / grabber (RenderDoc auto-launch).
+    2. Wait for UWorld + LocalPlayer readiness (so scan has resolved
+       before the user presses Capture / Play).
+    3. Block on stop_event until Stop is pressed, cleaning up on exit.
+
+    Raises if the grabber fails to launch the game. Returns cleanly when
+    stop_event fires or an outer KeyboardInterrupt arrives.
     """
-    raise RuntimeError(
-        "Legacy volume/snake/cone capture pipeline has been removed. "
-        "Use the Web UI Play button (trajectory-based capture) instead."
-    )
-    # The body below is unreachable and will be deleted in a follow-up sweep
-    # that also drops core/snake_path.py, core/cone_rotation.py, tests, and
-    # the tkinter GUI spinners. Kept here short-term so the import graph
-    # doesn't break until the dead modules are removed.
-    import time as _time  # noqa: F401
-    return
+    import time as _time
 
     t_start = _time.monotonic()
 
@@ -170,14 +169,151 @@ def run_capture(args):
         f"[CONFIG] driver={args.driver}, grabber={args.grabber}, "
         f"target_exe={getattr(args, 'target_exe', None)}, "
         f"target_args={getattr(args, 'target_args', [])}, "
-        f"dry_run={args.dry_run}, output_dir={args.output_dir}"
+        f"output_dir={args.output_dir}"
     )
 
-    # Define capture volume
-    volume = BoundingVolume(
-        min_corner=np.array(args.volume_min),
-        max_corner=np.array(args.volume_max),
-    )
+    # Output directory still useful for per-pose captures triggered
+    # from the Debug panel.
+    output_dir = Path(args.output_dir)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logging.error(f"[IO] Failed to create output directory {output_dir}: {e}")
+        raise
+
+    if args.dry_run:
+        logging.info("Dry run: skipping driver/grabber setup.")
+        return
+
+    try:
+        driver = create_driver(args)
+    except Exception as e:
+        logging.error(f"[INIT] Failed to create driver '{args.driver}': {e}")
+        raise
+
+    ui_hider = None
+    if not args.no_hide_ui:
+        try:
+            ui_hider = create_ui_hider(args)
+        except Exception as e:
+            logging.warning(f"[INIT] Failed to create UI hider (continuing without): {e}")
+
+    if ui_hider and args.grabber == "renderdoc":
+        from ui_hiders.renderdoc_hider import RenderDocUIHider
+        rdoc_hider = _find_hider_in_chain(ui_hider, RenderDocUIHider)
+        if rdoc_hider:
+            args._rdoc_ui_hider = rdoc_hider
+
+    try:
+        grabber = create_grabber(args)
+    except Exception as e:
+        logging.error(f"[INIT] Failed to create grabber '{args.grabber}': {e}")
+        raise
+
+    stop_event = getattr(args, '_stop_event', None)
+    grabber_ctx = grabber if grabber else None
+
+    if grabber_ctx:
+        try:
+            grabber_ctx.setup()
+            logging.info("[GRABBER] Grabber setup complete, game should be running")
+        except Exception as e:
+            logging.error(f"[GRABBER] Grabber setup failed: {e}")
+            raise
+
+    driver_connected = False
+    try:
+        try:
+            driver.connect()
+            driver_connected = True
+            logging.info(f"[DRIVER] Connected to {args.driver} at {args.driver_host}:{args.driver_port}")
+        except (ConnectionRefusedError, ConnectionError, OSError) as e:
+            if args.driver != "manual":
+                logging.warning(
+                    f"[DRIVER] Could not connect {args.driver} driver ({e}). "
+                    f"Falling back to manual mode -- capture will proceed without camera control."
+                )
+                from drivers.manual import ManualDriver
+                driver = ManualDriver(auto_confirm=True)
+                driver.connect()
+                driver_connected = True
+            else:
+                raise
+
+        if hasattr(driver, 'enable_debug_camera'):
+            try:
+                driver.enable_debug_camera()
+                logging.info("[DRIVER] Debug camera mode enabled")
+            except Exception as e:
+                logging.warning(f"[DRIVER] Failed to enable debug camera: {e}")
+
+        # UE object readiness gate: wait for UWorld + LocalPlayer so the
+        # Debug panel's Capture / Play buttons can find addresses.
+        if hasattr(driver, 'wait_for_objects_ready'):
+            poll_interval = 2.0
+            gate_timeout = 600.0
+            elapsed = 0.0
+            logging.info(
+                "[GATE] Waiting for UWorld + LocalPlayer "
+                "(click 'Re-scan UE' in Debug panel after map loads)"
+            )
+            while elapsed < gate_timeout:
+                if stop_event is not None and stop_event.is_set():
+                    logging.info("[GATE] Stop requested during readiness gate.")
+                    return
+                if driver.is_objects_ready():
+                    logging.info(f"[GATE] Engine objects ready after {elapsed:.0f}s.")
+                    break
+                _time.sleep(poll_interval)
+                elapsed += poll_interval
+            else:
+                logging.warning("[GATE] Timed out waiting for engine objects. Session stays open.")
+
+        if ui_hider:
+            try:
+                result = ui_hider.hide()
+                logging.info(f"[UI] Hide result: {result.method} -- {result.message}")
+            except Exception as e:
+                logging.warning(f"[UI] Failed to hide UI (continuing): {e}")
+
+        logging.info(
+            "[SESSION] Game is running and bridge is connected. Use the "
+            "Web UI (Bridge Debug -> Capture / Trajectory -> Play) to "
+            "drive captures. Press Stop to exit."
+        )
+        try:
+            while True:
+                if stop_event is not None and stop_event.is_set():
+                    logging.info("[SESSION] Stop requested.")
+                    break
+                _time.sleep(1.0)
+        except KeyboardInterrupt:
+            logging.info("[SESSION] Interrupted by user.")
+    finally:
+        if ui_hider:
+            try:
+                ui_hider.restore()
+            except Exception as e:
+                logging.warning(f"[UI] Failed to restore UI: {e}")
+        if grabber_ctx:
+            try:
+                grabber_ctx.teardown()
+            except Exception as e:
+                logging.warning(f"[GRABBER] Teardown failed: {e}")
+        if driver_connected:
+            try:
+                driver.disconnect()
+            except Exception as e:
+                logging.warning(f"[DRIVER] Disconnect failed: {e}")
+
+    elapsed_total = _time.monotonic() - t_start
+    logging.info(f"Session ended after {elapsed_total:.1f}s.")
+    return
+    # ------------------------------------------------------------------
+    # Dead code below kept temporarily to avoid churn while core/snake_path,
+    # core/cone_rotation, BoundingVolume, smooth_waypoints, and their tests
+    # are removed in the next sweep. Will be deleted in the same commit.
+    # ------------------------------------------------------------------
 
     logging.info(
         f"Capture volume: {volume.min_corner} → {volume.max_corner} "

@@ -99,6 +99,31 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- run_capture: launch-and-wait session mode
+
+Follow-up to `f6c58ad`: raising inside `run_capture` killed the main
+Web UI Start button (user report: "Legacy volume/snake/cone capture
+pipeline has been removed. Use the Web UI Play button..." traceback).
+The Start button still needs to launch the game via renderdoc and
+hold the bridge connection open so Capture / Play can be used.
+
+`main.run_capture` now:
+1. Creates driver / UI hider / grabber.
+2. `grabber.setup()` to launch the game via renderdoccmd (or inject).
+3. Connects the driver (manual-mode fallback on connection failure).
+4. Enables debug camera + runs the UWorld / LocalPlayer readiness gate.
+5. Hides UI once.
+6. Blocks on `stop_event` / KeyboardInterrupt.
+7. Finally block restores UI + tears down grabber + disconnects driver.
+
+No pose generation, no `poses.json`, no capture loop. All capture work
+is driven from the Debug panel (Capture button) and Trajectory panel
+(Play button) against the live bridge. The dead pose-gen + capture
+loop remains after a `return` statement inside run_capture and will be
+deleted in the next sweep along with `core/snake_path.py`,
+`core/cone_rotation.py`, `BoundingVolume`, `smooth_waypoints`, and
+their tests.
+
 ### [v0.2.0] d03a98c -- xiaoni -- Configurable focus delay for Capture + Play
 
 Batman AK (and other focus-sensitive games) enters the pause menu when
