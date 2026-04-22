@@ -465,9 +465,9 @@ class TestSavedTrajectories:
     @pytest.fixture
     def tmp_trajectory_dir(self, monkeypatch, tmp_path):
         from pathlib import Path as _P
-        import web_ui
+        from web.routes import trajectory as trajectory_bp
         d = tmp_path / "trajectories"
-        monkeypatch.setattr(web_ui, "_TRAJECTORY_DIR", _P(d))
+        monkeypatch.setattr(trajectory_bp, "_TRAJECTORY_DIR", _P(d))
         return _P(d)
 
     def test_list_empty(self, flask_client, tmp_trajectory_dir):
