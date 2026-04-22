@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Remove legacy volume/snake/cone capture pipeline
+### [v0.2.0] f6c58ad -- xiaoni -- Remove legacy volume/snake/cone capture pipeline
 
 User request: drop the volume + snake path + cone rotation capture mode
 (source of 956-capture runs). Trajectory-based capture
