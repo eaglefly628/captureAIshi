@@ -1,36 +1,29 @@
-"""RenderDoc-based frame grabber.
+"""RenderDoc-based frame grabber (orchestrator).
 
-Uses RenderDoc's Python replay API to capture RGB and depth buffers
-from any DirectX/Vulkan/OpenGL application. Works with both UE5 and Unity.
-
-Capture strategy (in priority order):
-  1. Native bridge (capture_bridge) — C++ linked against RenderDoc, fastest
-  2. RenderDoc Python module (renderdoc) — official Python bindings
-  3. Keypress simulation — fallback for attached-but-no-API scenarios
-
-Requirements:
-  - RenderDoc installed (renderdoc module or native bridge built)
-  - Game launched through renderdoccmd or with RenderDoc attached
-
-Usage flow:
-  1. Launch game via `renderdoccmd capture <game.exe>`
-  2. Trigger capture at each pose
-  3. Replay the .rdc file to extract RGB + depth textures
+Capture RGB, depth, and normal buffers from any RenderDoc-compatible
+application. Tries the native C++ ``capture_bridge`` first, then the
+RenderDoc Python module, then keypress simulation. The concrete work
+lives in ``grabbers.renderdoc.{paths,launch,trigger,exporter,image_loader}``.
 """
 
 import logging
+import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Set, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 from grabbers.base import FrameData, FrameGrabber
+from grabbers.renderdoc import launch as _launch
+from grabbers.renderdoc import trigger as _trigger
+from grabbers.renderdoc.exporter import export_batch, replay_native, replay_via_exportframe
+from grabbers.renderdoc.paths import find_renderdoc_dirs
 
 logger = logging.getLogger(__name__)
 
-# Try to import the native bridge (built from renderdoc_ext/)
 try:
     import capture_bridge as _bridge
     _HAS_NATIVE_BRIDGE = True
@@ -43,9 +36,9 @@ except ImportError:
 class RenderDocGrabber(FrameGrabber):
     """Capture frames using RenderDoc's replay API.
 
-    Prefers the native C++ bridge (capture_bridge) when available for
-    better performance and deeper integration. Falls back to the
-    RenderDoc Python module or keypress simulation.
+    Prefers the native C++ bridge (``capture_bridge``) for speed and
+    deeper integration; falls back to RenderDoc's Python module or
+    keypress simulation.
     """
 
     def __init__(
@@ -66,23 +59,10 @@ class RenderDocGrabber(FrameGrabber):
         export_normal: bool = True,
         capture_profile: Optional[dict] = None,
     ):
-        """
-        Args:
-            renderdoc_path: Path to renderdoccmd executable.
-            capture_dir: Directory to store .rdc capture files.
-            target_exe: Game executable path (for auto-launch).
-            target_args: Extra arguments passed to the game executable.
-            capture_key: Key to trigger capture.
-            auto_launch: Whether to launch the game through RenderDoc.
-            inject_mode: If True, wait for game to start then inject (instead of launching
-                via renderdoccmd). Use for games where RenderDoc launch causes D3D12 init
-                crashes (e.g. Cyberpunk 2077 2.x ray-tracing check on device creation).
-            ui_hider: Optional RenderDocUIHider for filtering UI draw calls.
-            ui_tail_fraction: Fraction of late draw calls to consider as UI (0-1).
-            ui_extra_keywords: Additional keywords for UI draw call detection.
-            startup_timeout: Max seconds to wait for game to start (default 60).
-            wait_for_port: If set, poll this TCP port to detect when the game is ready.
-        """
+        # inject_mode: wait for the game to start then inject instead of
+        # launching via renderdoccmd. Needed for games where the RenderDoc
+        # launch path triggers D3D12 device-integrity checks and crashes
+        # (e.g. Cyberpunk 2077 2.x ray-tracing init).
         self.renderdoc_path = renderdoc_path
         self.capture_dir = Path(capture_dir)
         self.target_exe = target_exe
@@ -96,405 +76,67 @@ class RenderDocGrabber(FrameGrabber):
         self.startup_timeout = startup_timeout
         self.wait_for_port = wait_for_port
         self.inject_delay = inject_delay
-        self._process = None
-        self._game_direct_process = None
+        self._process: Optional[subprocess.Popen] = None
+        self._game_direct_process: Optional[subprocess.Popen] = None
         self._capture_count = 0
         self.export_normal = export_normal
         self.capture_profile = capture_profile or {}
         self._use_native = _HAS_NATIVE_BRIDGE
-        self._replay_session = None  # Persistent native ReplaySession
-        self._trigger_process = None  # Persistent triggercapture process (interactive mode)
+        self._replay_session = None
+        self._trigger_process: Optional[subprocess.Popen] = None
+
+    # ── Setup / teardown ─────────────────────────────────────────────────────
 
     def setup(self) -> None:
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
-        # Try to initialize native bridge capture API
         if self._use_native:
             if _bridge.init_capture_api():
                 logger.info("Native RenderDoc bridge initialized (in-app API)")
                 _bridge.set_capture_path(str(self.capture_dir / "frame"))
             else:
-                logger.info("Native bridge loaded but in-app API not available "
-                            "(game may not be launched through RenderDoc)")
+                logger.info(
+                    "Native bridge loaded but in-app API not available "
+                    "(game may not be launched through RenderDoc)"
+                )
 
         if self.inject_mode and self.target_exe:
-            import os
             process_name = os.path.basename(self.target_exe)
             if self.auto_launch:
-                self._launch_game_direct()
-            self._inject_into_process(process_name, self.inject_delay)
+                self._game_direct_process = _launch.launch_game_direct(
+                    self.target_exe, self.target_args
+                )
+            _launch.inject_into_process(
+                process_name,
+                self.renderdoc_path,
+                self.startup_timeout,
+                self.inject_delay,
+                have_direct_launch=(self._game_direct_process is not None),
+            )
+            _launch.wait_for_game_ready(
+                self._process, self.startup_timeout, self.wait_for_port, self.target_exe
+            )
         elif self.auto_launch and self.target_exe:
-            # If user put exe + args all in one string, split them apart
+            # If exe + args came as one string, split them
             if not Path(self.target_exe).is_file() and " " in self.target_exe:
-                import shlex
                 parts = shlex.split(self.target_exe, posix=False)
                 self.target_exe = parts[0]
                 self.target_args = parts[1:] + self.target_args
-                logger.info(
-                    f"Split target_exe into exe={self.target_exe}, "
-                    f"args={self.target_args}"
-                )
+                logger.info(f"Split target_exe into exe={self.target_exe}, args={self.target_args}")
 
-            # Resolve renderdoccmd path with auto-discovery
-            rdoc_cmd = self._resolve_renderdoccmd()
-            logger.info(f"Launching {self.target_exe} via RenderDoc ({rdoc_cmd})...")
-            # renderdoccmd syntax: capture [--opts] <exe> [game args]
-            # All --opt flags must come BEFORE the executable path.
-            # See renderdoc/renderdoccmd/renderdoccmd.cpp lines 1628-1687.
-            cmd = [
-                rdoc_cmd, "capture",
-                "--opt-hook-children",
-                "--capture-file", str(self.capture_dir / "frame"),
-                "--wait-for-exit",
-                self.target_exe,
-            ] + self.target_args
-            logger.info(f"renderdoccmd command: {' '.join(cmd)}")
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            self._process, _, _ = _launch.start_renderdoccmd_capture(
+                self.renderdoc_path, self.target_exe, self.target_args, self.capture_dir
             )
-            # Drain stdout/stderr in background threads to prevent pipe deadlock
-            # (renderdoccmd with --wait-for-exit stays alive for the game's lifetime)
-            self._rdoc_stdout_lines: list = []
-            self._rdoc_stderr_lines: list = []
-            import threading
-            def _drain(stream, sink, label):
-                for raw_line in stream:
-                    line = raw_line.decode("utf-8", errors="replace").rstrip()
-                    if line:
-                        sink.append(line)
-                        logger.info(f"[renderdoccmd {label}] {line}")
-            threading.Thread(
-                target=_drain, args=(self._process.stdout, self._rdoc_stdout_lines, "out"),
-                daemon=True,
-            ).start()
-            threading.Thread(
-                target=_drain, args=(self._process.stderr, self._rdoc_stderr_lines, "err"),
-                daemon=True,
-            ).start()
-            self._wait_for_game_ready()
+            _launch.wait_for_game_ready(
+                self._process, self.startup_timeout, self.wait_for_port, self.target_exe
+            )
         else:
             logger.info(
                 "RenderDoc grabber ready. Attach RenderDoc to your game manually "
                 f"or launch with: {self.renderdoc_path} capture <game.exe>"
             )
 
-    def _launch_game_direct(self) -> None:
-        """Launch the game exe directly without renderdoccmd (for inject mode).
-
-        Used when the game crashes if launched through RenderDoc (e.g. Cyberpunk 2.x).
-        We just spawn the exe and let the OS handle it; _inject_into_process() will
-        then poll for the PID and inject renderdoc.dll once the process appears.
-        """
-        cmd = [self.target_exe] + self.target_args
-        logger.info(f"Inject mode: launching game directly: {' '.join(cmd)}")
-        self._game_direct_process = subprocess.Popen(cmd)
-        logger.info(
-            f"Game process spawned (PID={self._game_direct_process.pid}). "
-            f"Waiting for it to initialize before injecting..."
-        )
-
-    def _find_pid_by_name(self, process_name: str) -> Optional[int]:
-        """Return PID of first running process matching name, or None."""
-        import sys
-        try:
-            import psutil
-            for proc in psutil.process_iter(["pid", "name"]):
-                if proc.info["name"].lower() == process_name.lower():
-                    return proc.info["pid"]
-            return None
-        except ImportError:
-            pass
-        # Fallback: tasklist on Windows
-        if sys.platform == "win32":
-            result = subprocess.run(
-                ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True,
-            )
-            for line in result.stdout.splitlines():
-                if process_name.lower() in line.lower():
-                    parts = line.split(",")
-                    if len(parts) >= 2:
-                        try:
-                            return int(parts[1].strip('"'))
-                        except ValueError:
-                            pass
-        return None
-
-    def _inject_into_process(self, process_name: str, inject_delay: float = 5.0) -> None:
-        """Wait for game process to appear, then inject renderdoc.dll into it.
-
-        Used for games like Cyberpunk 2077 2.x where launching via renderdoccmd
-        triggers a D3D12 device integrity check during RT init and crashes the game.
-        The game must be launched manually by the user first.
-        """
-        logger.info(
-            f"Inject mode: waiting for '{process_name}' (timeout={self.startup_timeout}s). "
-            f"Launch the game manually now."
-        )
-        poll_interval = 2.0
-        elapsed = 0.0
-        pid = None
-        while elapsed < self.startup_timeout:
-            pid = self._find_pid_by_name(process_name)
-            if pid:
-                logger.info(f"Found '{process_name}' (PID={pid})")
-                break
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            if int(elapsed) % 10 == 0:
-                logger.info(f"Still waiting for {process_name}... ({elapsed:.0f}s)")
-
-        if not pid:
-            raise TimeoutError(
-                f"Game process '{process_name}' not found within {self.startup_timeout}s. "
-                f"Start the game manually then retry."
-            )
-
-        # For inject mode the process must have already initialized D3D12 before we
-        # inject, otherwise RenderDoc's hook fires during device creation and we get
-        # the same crash as the launch mode. Wait until the bridge port responds
-        # (meaning a previous bridge is alive) OR a fixed delay if no port check.
-        # The port check below in _wait_for_game_ready handles the "ready" signal;
-        # here we just need the D3D12 device to be past creation. In practice the
-        # game loading screen keeps D3D12 busy for several seconds -- polling the
-        # exe for a few seconds is sufficient.
-        if self._game_direct_process is not None and inject_delay > 0:
-            logger.info(f"Waiting {inject_delay:.0f}s for D3D12 device initialization before injecting...")
-            time.sleep(inject_delay)
-
-        rdoc_cmd = self._resolve_renderdoccmd()
-        inject_cmd = [rdoc_cmd, "inject", "--PID", str(pid)]
-        logger.info(f"Injecting: {' '.join(inject_cmd)}")
-        result = subprocess.run(inject_cmd, capture_output=True, text=True, timeout=30)
-        out = (result.stdout or result.stderr or "").strip()
-        # renderdoccmd inject returns the injected PID as exit code on success,
-        # so any large positive rc is success. Known error codes are 1-7 (small ints).
-        inject_ok = (result.returncode == pid) or (result.returncode > 100) or \
-                    (result.returncode == 0) or "Launched as ID" in out
-        if not inject_ok:
-            raise RuntimeError(
-                f"renderdoccmd inject failed (rc={result.returncode}): {out}"
-            )
-        logger.info(f"Bridge injected into '{process_name}' (PID={pid}, rc={result.returncode})")
-        # Now wait for bridge TCP port to come up
-        self._wait_for_game_ready()
-
-    def _find_shipping_exe(self) -> Optional[str]:
-        """Search for the real UE5 game exe near the launcher path.
-
-        UE5 packaged games typically have:
-          GameRoot/GameName.exe              (launcher - spawns child and exits)
-          GameRoot/GameName/Binaries/Win64/GameName-Win64-Shipping.exe  (real)
-        or sometimes:
-          GameRoot/Engine/Binaries/Win64/GameName-Win64-Shipping.exe
-        """
-        if not self.target_exe:
-            return None
-
-        exe_path = Path(self.target_exe)
-        game_dir = exe_path.parent
-        stem = exe_path.stem  # e.g. "MyProject"
-
-        # Search patterns for the real exe
-        search_patterns = [
-            game_dir / stem / "Binaries" / "Win64" / f"{stem}-Win64-Shipping.exe",
-            game_dir / stem / "Binaries" / "Win64" / f"{stem}.exe",
-            game_dir / "Engine" / "Binaries" / "Win64" / f"{stem}-Win64-Shipping.exe",
-        ]
-
-        # Also glob for any *-Shipping.exe under the game directory
-        for candidate in search_patterns:
-            if candidate.is_file() and candidate != exe_path:
-                return str(candidate)
-
-        # Broader search: find any *-Shipping.exe
-        for shipping in game_dir.rglob("*-Win64-Shipping.exe"):
-            return str(shipping)
-        for shipping in game_dir.rglob("*-Shipping.exe"):
-            return str(shipping)
-
-        return None
-
-    def _resolve_renderdoccmd(self) -> str:
-        """Find renderdoccmd executable.
-
-        Search order:
-          1. User-provided path (if it's a valid file or in PATH)
-          2. Sibling 'renderdoc' directory relative to project root
-             (e.g. ../renderdoc/x64/Development/renderdoccmd.exe)
-          3. Common install locations
-        """
-        import shutil
-        import sys
-
-        user_path = self.renderdoc_path
-        exe_name = "renderdoccmd.exe" if sys.platform == "win32" else "renderdoccmd"
-
-        # 1. User-provided path — exact file or in PATH
-        if Path(user_path).is_file():
-            logger.debug(f"renderdoccmd: using user path (file): {user_path}")
-            return user_path
-        resolved = shutil.which(user_path)
-        if resolved:
-            logger.debug(f"renderdoccmd: found in PATH: {resolved}")
-            return resolved
-
-        # 2. Search relative to project root (parent of this file's package)
-        #    Covers layouts like:  captureAIshi/  and  renderdoc/  as siblings
-        project_root = Path(__file__).resolve().parent.parent
-        search_roots = [project_root, project_root.parent]
-        # Typical build output directories
-        relative_candidates = [
-            Path("renderdoc") / "x64" / "Development" / exe_name,
-            Path("renderdoc") / "x64" / "Release" / exe_name,
-            Path("renderdoc") / "build" / "bin" / exe_name,
-            Path("renderdoc") / "bin" / exe_name,
-        ]
-        for root in search_roots:
-            for candidate in relative_candidates:
-                full = root / candidate
-                if full.is_file():
-                    found = str(full)
-                    logger.info(f"renderdoccmd: auto-discovered at {found}")
-                    return found
-
-        # 3. Common system install locations (Windows)
-        if sys.platform == "win32":
-            for prog_dir in [Path("C:/Program Files"), Path("C:/Program Files (x86)")]:
-                for rdoc_dir in prog_dir.glob("RenderDoc*"):
-                    candidate = rdoc_dir / exe_name
-                    if candidate.is_file():
-                        found = str(candidate)
-                        logger.info(f"renderdoccmd: found in system install: {found}")
-                        return found
-
-        searched = ", ".join(str(r) for r in search_roots)
-        raise FileNotFoundError(
-            f"renderdoccmd not found. Searched: PATH, {searched}/renderdoc/..., "
-            f"Program Files. Set full path in UI or add to PATH."
-        )
-
-    def _wait_for_game_ready(self) -> None:
-        """Poll until the game is ready or renderdoccmd exits.
-
-        Checks every second and logs progress every 5s. If wait_for_port
-        is set, also probes that TCP port — once it responds, the game's
-        control channel is confirmed up.
-        """
-        import socket as _socket
-
-        poll_interval = 1.0
-        elapsed = 0.0
-        port_ready = False
-
-        logger.info(
-            f"Waiting for game to start (timeout={self.startup_timeout}s"
-            + (f", port={self.wait_for_port}" if self.wait_for_port else "")
-            + ")..."
-        )
-
-        # RenderDoc ResultCode mapping for actionable error messages
-        _RESULT_CODES = {
-            0: "Succeeded", 1: "UnknownError", 2: "InternalError",
-            3: "FileNotFound", 4: "InjectionFailed", 5: "IncompatibleProcess",
-            6: "NetworkIOFailed", 7: "NetworkRemoteBusy",
-        }
-
-        while elapsed < self.startup_timeout:
-            # Check if renderdoccmd died (not applicable in inject mode)
-            if self._process is None:
-                rc = None
-            else:
-                rc = self._process.poll()
-            if rc is not None:
-                # Give drain threads a moment to flush remaining output
-                time.sleep(0.2)
-                code_name = _RESULT_CODES.get(rc, f"code {rc}")
-                logger.error(
-                    f"renderdoccmd exited after {elapsed:.0f}s: {code_name} ({rc})"
-                )
-                if rc == 0 and elapsed < 15:
-                    # Exit code 0 within 15 seconds strongly suggests a UE5
-                    # launcher that spawns a child process and exits.
-                    shipping_hint = self._find_shipping_exe()
-                    hint_msg = ""
-                    if shipping_hint:
-                        hint_msg = (
-                            f"\n\n  Auto-detected real game exe:\n"
-                            f"    {shipping_hint}\n"
-                            f"  Set this as target_exe instead of the launcher."
-                        )
-                    logger.error(
-                        "renderdoccmd exited immediately with code 0. This usually means "
-                        "the target is a UE5 launcher that spawns a child process.\n"
-                        "  The launcher exits, but the real game keeps running.\n"
-                        "  Solution: point target_exe at the actual game executable\n"
-                        "  (typically *-Win64-Shipping.exe or *-Cmd.exe in Binaries/Win64/)."
-                        + hint_msg
-                    )
-                elif rc == 4:
-                    logger.error(
-                        "InjectionFailed: RenderDoc could not inject into the process. "
-                        "Common causes:\n"
-                        "  - Architecture mismatch (32-bit renderdoccmd vs 64-bit game or vice versa)\n"
-                        "  - Anti-cheat or process protection blocking injection\n"
-                        "  - UE5 launcher exited before injection completed "
-                        "(try launching the actual game exe, not the launcher)"
-                    )
-                elif rc == 3:
-                    logger.error(
-                        f"FileNotFound: RenderDoc could not find the executable: "
-                        f"{self.target_exe}"
-                    )
-                elif rc == 5:
-                    logger.error(
-                        "IncompatibleProcess: The target process architecture doesn't "
-                        "match renderdoccmd. Check if both are x64 or both are x86."
-                    )
-                raise RuntimeError(
-                    f"renderdoccmd failed: {code_name} (exit code {rc}). "
-                    f"Cannot proceed without a running game."
-                )
-
-            # If a port is specified, probe it
-            if self.wait_for_port and not port_ready:
-                try:
-                    with _socket.create_connection(
-                        ("127.0.0.1", self.wait_for_port), timeout=0.3
-                    ):
-                        port_ready = True
-                        logger.info(
-                            f"Game port {self.wait_for_port} is open after {elapsed:.0f}s"
-                        )
-                        return  # Game is ready
-                except (ConnectionRefusedError, OSError):
-                    pass  # Not ready yet
-
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-
-            if int(elapsed) % 5 == 0:
-                logger.info(f"Still waiting for game... ({elapsed:.0f}s elapsed)")
-
-        # Timeout reached
-        if self._process is None or self._process.poll() is None:
-            if self.wait_for_port and not port_ready:
-                logger.warning(
-                    f"Timeout: game process alive but port {self.wait_for_port} "
-                    f"not open after {elapsed:.0f}s. Proceeding anyway."
-                )
-            else:
-                logger.info(f"Game appears to be running after {elapsed:.0f}s")
-        else:
-            raise RuntimeError(
-                "Game process is not running after timeout. "
-                "Check renderdoccmd output above for details."
-            )
-
     def teardown(self) -> None:
-        # Shut down persistent trigger process
         if self._trigger_process is not None:
             try:
                 self._trigger_process.stdin.write(b"quit\n")
@@ -516,39 +158,7 @@ class RenderDocGrabber(FrameGrabber):
 
         if self._process:
             logger.info("[TEARDOWN] Stopping renderdoccmd and game process...")
-            try:
-                # Kill the entire process tree (renderdoccmd + game children)
-                import sys
-                if sys.platform == "win32":
-                    # On Windows, terminate() only kills renderdoccmd, not child
-                    # processes. Use taskkill /T to kill the whole tree.
-                    import subprocess as _sp
-                    _sp.run(
-                        ["taskkill", "/F", "/T", "/PID", str(self._process.pid)],
-                        capture_output=True, timeout=10,
-                    )
-                else:
-                    import os
-                    import signal
-                    # Send SIGTERM to the process group
-                    os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
-            except Exception as e:
-                logger.warning(f"[TEARDOWN] Process tree kill failed, trying terminate: {e}")
-                try:
-                    self._process.terminate()
-                except Exception:
-                    pass
-
-            # Wait for process to actually exit
-            try:
-                self._process.wait(timeout=5)
-                logger.info("[TEARDOWN] renderdoccmd process exited")
-            except Exception:
-                logger.warning("[TEARDOWN] renderdoccmd did not exit in 5s, killing")
-                try:
-                    self._process.kill()
-                except Exception:
-                    pass
+            _launch.kill_renderdoccmd_tree(self._process)
             self._process = None
 
         logger.info(f"RenderDoc grabber: {self._capture_count} frames captured")
@@ -558,538 +168,111 @@ class RenderDocGrabber(FrameGrabber):
     def trigger_capture(self) -> Optional[Path]:
         """Trigger a frame capture in the attached game.
 
-        Uses the native bridge API if available, then falls back to
-        RenderDoc Python module, then to keypress simulation.
-
-        Returns the path to the .rdc file if successful.
+        Tries, in order: native bridge, persistent/oneshot renderdoccmd
+        triggercapture, RenderDoc Python API, keypress simulation.
+        Returns the .rdc path (may not yet exist if all methods failed --
+        caller should check).
         """
         self._capture_count += 1
         rdc_path = self.capture_dir / f"frame_{self._capture_count:06d}.rdc"
         logger.info(f"Triggering capture #{self._capture_count}...")
 
-        # Method 1: Native bridge API (fastest, most reliable)
         if self._use_native:
             path = _bridge.trigger_capture(str(self.capture_dir))
             if path:
-                rdc_path = Path(path) if Path(path).exists() else rdc_path
-                if rdc_path.exists():
-                    return rdc_path
+                candidate = Path(path)
+                if candidate.exists():
+                    return candidate
 
-        # Method 2: renderdoccmd triggercapture (most reliable for external capture)
         if self._trigger_via_renderdoccmd(rdc_path):
             return rdc_path
 
-        # Method 3: RenderDoc Python module API
-        if self._trigger_via_python_api(rdc_path):
+        if _trigger.trigger_via_python_api(rdc_path):
             return rdc_path
 
-        # Method 4: Simulate capture key press
-        if self._trigger_via_keypress():
-            if self._wait_for_capture(rdc_path, timeout=5.0):
+        if _trigger.trigger_via_keypress(self.capture_key, self._process):
+            if _trigger.wait_for_capture(rdc_path, self.capture_dir, timeout=5.0):
                 return rdc_path
 
-        # Log what's actually in the capture directory
         existing_rdcs = list(self.capture_dir.glob("*.rdc"))
         logger.warning(
             f"Capture #{self._capture_count} may not have triggered. "
             f"Existing .rdc files in {self.capture_dir}: {[f.name for f in existing_rdcs]}"
         )
-        return rdc_path  # Return expected path; caller checks existence
+        return rdc_path
+
+    def _trigger_via_renderdoccmd(self, rdc_path: Path) -> bool:
+        """Persistent interactive trigger with one-shot fallback."""
+        if self._ensure_trigger_process():
+            if _trigger.trigger_interactive(self._trigger_process, rdc_path, self.capture_dir):
+                return True
+            # Interactive can lose pipe after errors; fall through to oneshot.
+            if self._trigger_process is None or self._trigger_process.poll() is not None:
+                self._trigger_process = None
+        return _trigger.trigger_oneshot(self.renderdoc_path, rdc_path, self.capture_dir)
 
     def _ensure_trigger_process(self) -> bool:
-        """Start or verify the persistent triggercapture process (interactive mode)."""
+        """Start or re-verify the persistent triggercapture process."""
         if self._trigger_process is not None:
             if self._trigger_process.poll() is None:
-                return True  # Still alive
+                return True
             logger.warning("[CAPTURE] Persistent trigger process died, restarting")
             self._trigger_process = None
 
-        try:
-            rdoc_cmd = self._resolve_renderdoccmd()
-        except FileNotFoundError:
-            return False
-
-        cmd = [
-            rdoc_cmd, "triggercapture",
-            "--interactive",
-            "--frames", "1",
-            "--out", str(self.capture_dir),
-        ]
-        logger.info(f"[CAPTURE] Starting persistent trigger process: {' '.join(cmd)}")
-
-        self._trigger_process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,  # Don't pipe stderr: fills buffer and deadlocks on Windows
+        self._trigger_process = _trigger.start_trigger_process(
+            self.renderdoc_path, self.capture_dir
         )
+        return self._trigger_process is not None
 
-        # Wait for READY signal
-        import select
-        import time as _time
-        deadline = _time.monotonic() + 30
-        while _time.monotonic() < deadline:
-            if self._trigger_process.poll() is not None:
-                logger.error(f"[CAPTURE] Trigger process exited early (rc={self._trigger_process.returncode})")
-                self._trigger_process = None
-                return False
-            line = self._trigger_process.stdout.readline().decode("utf-8", errors="replace").strip()
-            if line:
-                logger.info(f"[CAPTURE trigger] {line}")
-            if "READY" in line:
-                logger.info("[CAPTURE] Persistent trigger process ready")
-                return True
-
-        logger.error("[CAPTURE] Trigger process did not become ready in 30s")
-        self._trigger_process.kill()
-        self._trigger_process = None
-        return False
-
-    def _trigger_via_renderdoccmd(self, rdc_path: Path) -> bool:
-        """Trigger capture via persistent renderdoccmd triggercapture process.
-
-        Uses interactive mode: keeps a single process alive with a persistent
-        TargetControl connection, sending 'trigger' commands via stdin.
-        Falls back to one-shot mode if interactive startup fails.
-        """
-        # Try interactive (persistent) mode first
-        if self._ensure_trigger_process():
-            return self._trigger_interactive(rdc_path)
-
-        # Fallback: one-shot mode
-        return self._trigger_oneshot(rdc_path)
-
-    def _trigger_interactive(self, rdc_path: Path) -> bool:
-        """Send a trigger command to the persistent process via stdin."""
-        proc = self._trigger_process
-        if proc is None or proc.poll() is not None:
-            return False
-
-        try:
-            cmd_line = f"trigger {rdc_path}\n"
-            proc.stdin.write(cmd_line.encode("utf-8"))
-            proc.stdin.flush()
-
-            # Read lines until we see the final "OK id=..." or "ERR ..."
-            # IMPORTANT: match "OK id=" specifically, NOT just "OK".
-            # The C++ process also prints "OK copied -> ..." and "OK rgb ..."
-            # which would cause premature return and desync the stdin/stdout.
-            import time as _time
-            deadline = _time.monotonic() + 15
-            while _time.monotonic() < deadline:
-                line = proc.stdout.readline().decode("utf-8", errors="replace").strip()
-                if not line:
-                    if proc.poll() is not None:
-                        logger.error("[CAPTURE] Trigger process died during capture")
-                        self._trigger_process = None
-                        return False
-                    continue
-                logger.debug(f"[CAPTURE trigger] {line}")
-                if line.startswith("OK id="):
-                    logger.info(f"[CAPTURE] {line}")
-                    if rdc_path.exists():
-                        return True
-                    latest = self._find_latest_rdc()
-                    if latest and latest != rdc_path:
-                        latest.rename(rdc_path)
-                        return True
-                    return rdc_path.exists()
-                if line.startswith("ERR"):
-                    logger.warning(f"[CAPTURE] {line}")
-                    return False
-
-            logger.warning("[CAPTURE] Interactive trigger timed out")
-            return False
-        except (BrokenPipeError, OSError) as e:
-            logger.warning(f"[CAPTURE] Interactive trigger pipe error: {e}")
-            self._trigger_process = None
-            return False
-
-    def _find_latest_rdc(self) -> Optional[Path]:
-        """Find the most recently modified .rdc file in capture_dir."""
-        rdcs = list(self.capture_dir.glob("*.rdc"))
-        if not rdcs:
-            return None
-        return max(rdcs, key=lambda p: p.stat().st_mtime)
-
-    def _trigger_oneshot(self, rdc_path: Path) -> bool:
-        """Fallback: trigger via one-shot renderdoccmd process."""
-        try:
-            rdoc_cmd = self._resolve_renderdoccmd()
-        except FileNotFoundError:
-            return False
-
-        existing_rdcs = set(self.capture_dir.glob("*.rdc"))
-
-        cmd = [
-            rdoc_cmd, "triggercapture",
-            "--frames", "1",
-            "--out", str(self.capture_dir),
-        ]
-        logger.debug(f"[CAPTURE] triggercapture oneshot: {' '.join(cmd)}")
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, timeout=15)
-            stdout = result.stdout.decode("utf-8", errors="replace").strip()
-            stderr = result.stderr.decode("utf-8", errors="replace").strip()
-
-            if stdout:
-                for line in stdout.splitlines():
-                    logger.info(f"[CAPTURE trigger] {line}")
-            if stderr:
-                for line in stderr.splitlines():
-                    logger.warning(f"[CAPTURE trigger err] {line}")
-
-            if result.returncode == 0:
-                captured = self.capture_dir / "capture_1.rdc"
-                if captured.exists():
-                    captured.rename(rdc_path)
-                    return True
-                new_rdcs = set(self.capture_dir.glob("*.rdc")) - existing_rdcs
-                if new_rdcs:
-                    newest = max(new_rdcs, key=lambda p: p.stat().st_mtime)
-                    newest.rename(rdc_path)
-                    return True
-        except subprocess.TimeoutExpired:
-            logger.debug("[CAPTURE] triggercapture oneshot timed out")
-        except Exception as e:
-            logger.debug(f"[CAPTURE] triggercapture oneshot failed: {e}")
-
-        return False
-
-    def _trigger_via_python_api(self, rdc_path: Path) -> bool:
-        """Try triggering capture through RenderDoc's Python API."""
-        try:
-            import renderdoc as rd
-            if hasattr(rd, "TriggerCapture"):
-                rd.TriggerCapture()
-                time.sleep(0.5)
-                return rdc_path.exists()
-            if hasattr(rd, "StartFrameCapture") and hasattr(rd, "EndFrameCapture"):
-                rd.StartFrameCapture(None, None)
-                time.sleep(0.1)
-                rd.EndFrameCapture(None, None)
-                time.sleep(0.5)
-                return rdc_path.exists()
-        except ImportError:
-            logger.debug("renderdoc Python module not available")
-        except Exception as e:
-            logger.debug(f"RenderDoc Python API capture failed: {e}")
-        return False
-
-    def _trigger_via_keypress(self) -> bool:
-        """Simulate the capture key press to trigger RenderDoc.
-
-        On Windows: find the game window, bring it to foreground, then
-        send the key using SendInput (more reliable than keybd_event).
-        """
-        import sys
-        try:
-            if sys.platform == "win32":
-                import ctypes
-                from ctypes import wintypes
-
-                vk_map = {
-                    "F12": 0x7B, "F11": 0x7A, "F10": 0x79, "F9": 0x78,
-                    "PRINT_SCREEN": 0x2C, "PRINTSCREEN": 0x2C,
-                }
-                vk = vk_map.get(self.capture_key.upper())
-                if vk is None:
-                    vk = ord(self.capture_key.upper())
-
-                # Try to focus the game window first
-                if self._process:
-                    self._focus_game_window()
-
-                # Use SendInput instead of keybd_event (works with more apps)
-                INPUT_KEYBOARD = 1
-                KEYEVENTF_KEYUP = 0x0002
-
-                class KEYBDINPUT(ctypes.Structure):
-                    _fields_ = [
-                        ("wVk", wintypes.WORD),
-                        ("wScan", wintypes.WORD),
-                        ("dwFlags", wintypes.DWORD),
-                        ("time", wintypes.DWORD),
-                        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-                    ]
-
-                class INPUT(ctypes.Structure):
-                    class _INPUT_UNION(ctypes.Union):
-                        _fields_ = [("ki", KEYBDINPUT)]
-                    _fields_ = [
-                        ("type", wintypes.DWORD),
-                        ("union", _INPUT_UNION),
-                    ]
-
-                def send_key(vk_code, up=False):
-                    inp = INPUT()
-                    inp.type = INPUT_KEYBOARD
-                    inp.union.ki.wVk = vk_code
-                    inp.union.ki.dwFlags = KEYEVENTF_KEYUP if up else 0
-                    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
-
-                send_key(vk)
-                time.sleep(0.05)
-                send_key(vk, up=True)
-                logger.debug(f"[CAPTURE] Sent {self.capture_key} (vk=0x{vk:02X}) via SendInput")
-                return True
-            else:
-                result = subprocess.run(
-                    ["xdotool", "key", self.capture_key],
-                    capture_output=True, timeout=3,
-                )
-                return result.returncode == 0
-        except Exception as e:
-            logger.warning(f"Keypress simulation failed: {e}")
-        return False
-
-    def _focus_game_window(self) -> None:
-        """Find and focus the game window by process ID."""
-        import ctypes
-        try:
-            pid = self._process.pid
-            found_hwnd = None
-
-            # EnumWindows callback to find window belonging to our process tree
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
-
-            def enum_callback(hwnd, _):
-                nonlocal found_hwnd
-                window_pid = ctypes.c_ulong()
-                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
-                # Check if window is visible and belongs to a child process
-                if ctypes.windll.user32.IsWindowVisible(hwnd):
-                    title_buf = ctypes.create_unicode_buffer(256)
-                    ctypes.windll.user32.GetWindowTextW(hwnd, title_buf, 256)
-                    title = title_buf.value
-                    if title and len(title) > 0:
-                        # Game windows typically have non-empty titles
-                        # Skip known non-game windows
-                        skip = ("renderdoc", "cmd.exe", "python", "conhost")
-                        if not any(s in title.lower() for s in skip):
-                            found_hwnd = hwnd
-                            logger.debug(f"[CAPTURE] Found game window: '{title}' (pid={window_pid.value})")
-                            return False  # Stop enumeration
-                return True  # Continue
-
-            ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
-
-            if found_hwnd:
-                ctypes.windll.user32.SetForegroundWindow(found_hwnd)
-                time.sleep(0.1)  # Brief pause for window to come to front
-                logger.debug("[CAPTURE] Game window focused")
-            else:
-                logger.debug("[CAPTURE] Could not find game window to focus")
-        except Exception as e:
-            logger.debug(f"[CAPTURE] Failed to focus game window: {e}")
-
-    def _wait_for_capture(self, rdc_path: Path, timeout: float = 5.0) -> bool:
-        """Wait for a capture file to appear on disk."""
-        start = time.time()
-        existing = set(self.capture_dir.glob("*.rdc"))
-        while time.time() - start < timeout:
-            if rdc_path.exists():
-                return True
-            new_files = set(self.capture_dir.glob("*.rdc")) - existing
-            if new_files:
-                newest = max(new_files, key=lambda p: p.stat().st_mtime)
-                newest.rename(rdc_path)
-                return True
-            time.sleep(0.2)
-        return False
-
-    def _capture_export_args(self) -> list:
-        """Build per-game exportframe CLI flags from capture_profile."""
-        args = []
-        p = self.capture_profile
-        rgb_index = p.get("rgb_index", -1)
-        if rgb_index is not None and rgb_index >= 0:
-            args += ["--rgb-index", str(rgb_index)]
-        normal_index = p.get("normal_index", -1)
-        if normal_index is not None and normal_index >= 0:
-            args += ["--normal-index", str(normal_index)]
-        depth_index = p.get("depth_index", -1)
-        if depth_index is not None and depth_index >= 0:
-            args += ["--depth-index", str(depth_index)]
-        if not p.get("depth_reversed_z", True):
-            args.append("--no-reverse-depth")
-        return args
-
-    # ── Two-phase batch capture ─────────────────────────────────────────────
+    # ── Two-phase batch capture ──────────────────────────────────────────────
 
     def trigger_only(self) -> Optional[Path]:
-        """Phase 1: Trigger a capture without replaying. Returns .rdc path.
-
-        Use this in the capture loop for speed, then call export_batch()
-        after all frames have been triggered.
-        """
+        """Phase 1: trigger a capture without replaying. Returns .rdc path."""
         return self.trigger_capture()
 
     def export_batch(self, rdc_paths: list, output_dir: Path) -> list:
-        """Phase 2: Batch-export a list of .rdc files to PNG.
+        """Phase 2: batch-export a list of .rdc files to PNG.
 
-        Calls renderdoccmd exportframe with all files at once (single process).
-        Returns list of (rgb_path, depth_path, normal_path) tuples per frame,
-        or (None, None, None) for failed exports.
-
-        Args:
-            rdc_paths: List of Path objects pointing to .rdc files.
-            output_dir: Base directory for exported images.
+        ``output_dir`` is accepted for API compatibility but not used --
+        results are returned in memory and the caller writes them out.
         """
-        if not rdc_paths:
-            return []
-
-        # Filter to existing files
-        valid_paths = [p for p in rdc_paths if p is not None and p.exists()]
-        if not valid_paths:
-            logger.warning("[RDOC] No valid .rdc files to export")
-            return [(None, None, None)] * len(rdc_paths)
-
-        try:
-            rdoc_cmd = self._resolve_renderdoccmd()
-        except FileNotFoundError as e:
-            logger.error(f"[RDOC] {e}")
-            return [(None, None, None)] * len(rdc_paths)
-
-        import tempfile
-        export_out = Path(tempfile.mkdtemp(prefix="captureai_export_"))
-        logger.info(f"[RDOC] Batch export temp dir: {export_out}")
-
-        cmd = [
-            rdoc_cmd, "exportframe",
-            "--out", str(export_out),
-            "--format", "png",
-        ]
-        if not self.export_normal:
-            cmd.append("--no-normal")
-        cmd += self._capture_export_args()
-        cmd += [str(p) for p in valid_paths]
-
-        logger.info(f"[RDOC] Batch exporting {len(valid_paths)} captures...")
-        logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
-
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            timeout_s = 60 * len(valid_paths)
-            import time as _btime
-            t_start = _btime.monotonic()
-            export_count = 0
-
-            # Stream stdout in real time for progress visibility
-            for raw_line in iter(proc.stdout.readline, b""):
-                line = raw_line.decode("utf-8", errors="replace").rstrip()
-                if not line:
-                    continue
-                # Count exported frames from exportframe output
-                if "Exporting" in line or "exported" in line.lower() or "processing" in line.lower():
-                    export_count += 1
-                    logger.info(
-                        f"[RDOC] Export {export_count}/{len(valid_paths)}: {line}"
-                    )
-                else:
-                    logger.info(f"[RDOC export] {line}")
-                if _btime.monotonic() - t_start > timeout_s:
-                    proc.kill()
-                    logger.error("[RDOC] Batch export timed out")
-                    return [(None, None, None)] * len(rdc_paths)
-
-            proc.wait()
-            if proc.returncode != 0:
-                logger.error(f"[RDOC] Batch export exited with code {proc.returncode}")
-        except Exception as e:
-            logger.error(f"[RDOC] Batch export failed: {e}")
-            return [(None, None, None)] * len(rdc_paths)
-
-        # Collect results: for multi-file, exportframe creates subdirs named by stem
-        results = []
-        for rdc_path in rdc_paths:
-            if rdc_path is None or not rdc_path.exists():
-                results.append((None, None, None))
-                continue
-
-            if len(valid_paths) > 1:
-                subdir = export_out / rdc_path.stem
-            else:
-                subdir = export_out
-
-            logger.debug(f"[RDOC batch] Loading from {subdir} (exists={subdir.exists()})")
-            if subdir.exists():
-                logger.debug(f"[RDOC batch] Files: {[f.name for f in subdir.iterdir()]}")
-
-            rgb = self._load_rgb_image(subdir)
-            depth = self._load_depth_image(subdir)
-            normal = self._load_normal_image(subdir)
-
-            logger.debug(
-                f"[RDOC batch] Loaded: rgb={'ok' if rgb is not None else 'None'}, "
-                f"depth={'ok' if depth is not None else 'None'}, "
-                f"normal={'ok' if normal is not None else 'None'}"
-            )
-            results.append((rgb, depth, normal))
-
-            # Clean up per-file export dir
-            if subdir.exists():
-                for f in subdir.iterdir():
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
-                try:
-                    subdir.rmdir()
-                except OSError:
-                    pass
-
-        # Clean up temp export root
-        import shutil
-        try:
-            shutil.rmtree(str(export_out), ignore_errors=True)
-        except OSError:
-            pass
-
-        logger.info(f"[RDOC] Batch export complete: {len(results)} frames")
-        return results
+        return export_batch(
+            rdc_paths, self.renderdoc_path, self.export_normal, self.capture_profile
+        )
 
     # ── Frame capture + replay ───────────────────────────────────────────────
 
     def capture_frame(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-        """Capture current frame via RenderDoc.
-
-        Triggers a capture and replays it to extract RGB + depth.
-        Prefers native bridge for replay, falls back to Python API.
-        """
+        """Capture current frame: trigger + replay, return (rgb, depth)."""
         fd = self.capture_frame_ex()
         return fd.rgb, fd.depth
 
     def capture_frame_ex(self) -> FrameData:
         """Capture all available buffers (RGB, depth, normal) via RenderDoc."""
-        import time as _time
-        t0 = _time.monotonic()
-
+        t0 = time.monotonic()
         rdc_path = self.trigger_capture()
-        trigger_elapsed = _time.monotonic() - t0
-        logger.debug(f"[RDOC] Capture trigger took {trigger_elapsed:.3f}s -> {rdc_path}")
+        logger.debug(f"[RDOC] Capture trigger took {time.monotonic() - t0:.3f}s -> {rdc_path}")
         if rdc_path is None:
             logger.warning("[RDOC] Capture trigger returned None")
             return FrameData()
 
-        # Try native bridge replay first
         if self._use_native:
             try:
-                rgb, depth = self._replay_native(rdc_path)
+                rgb, depth = replay_native(
+                    _bridge.ReplaySession, rdc_path,
+                    self.ui_tail_fraction, self.ui_extra_keywords,
+                )
                 if rgb is not None or depth is not None:
                     return FrameData(rgb=rgb, depth=depth)
             except Exception as e:
                 logger.warning(f"Native bridge replay failed: {e}")
 
-        # Fall back to renderdoccmd exportframe (also exports normal.png)
         logger.debug("[RDOC] Trying exportframe replay fallback")
         try:
-            rgb, depth, normal = self._replay_python_ex(rdc_path)
+            rgb, depth, normal = replay_via_exportframe(
+                rdc_path, self.capture_dir, self.renderdoc_path,
+                self.export_normal, self.capture_profile,
+            )
             logger.debug(
                 f"[RDOC] Export result: rgb={'ok' if rgb is not None else 'None'}, "
                 f"depth={'ok' if depth is not None else 'None'}, "
@@ -1100,320 +283,9 @@ class RenderDocGrabber(FrameGrabber):
             logger.warning(f"RenderDoc replay failed: {e}")
             return FrameData()
 
-    def _replay_native(self, rdc_path: Path):
-        """Replay using the native C++ bridge. Returns (rgb, depth)."""
-        session = _bridge.ReplaySession()
-        if not session.open(str(rdc_path)):
-            logger.warning(f"Native bridge: failed to open {rdc_path}")
-            return None, None
+    # ── Module discovery (optional, for renderdoc.pyd Python bindings) ──────
 
-        try:
-            # Classify and exclude UI draw calls
-            excluded: Set[int] = set()
-            if self.ui_hider is not None or self.ui_tail_fraction > 0:
-                excluded = session.classify_ui_events(
-                    self.ui_tail_fraction,
-                    self.ui_extra_keywords,
-                )
-                if excluded:
-                    logger.debug(f"Native bridge: excluding {len(excluded)} UI draw calls")
-
-            # Extract frame
-            fb = session.extract_frame(0, excluded)
-
-            rgb = fb.rgb if fb.has_rgb else None
-            depth = fb.depth if fb.has_depth else None
-
-            # Log depth format
-            if fb.has_depth:
-                fmt = session.detect_depth_format()
-                logger.debug(f"Depth format: {fmt}")
-
-            return rgb, depth
-        finally:
-            session.close()
-
-    def _replay_python(self, rdc_path: Path):
-        """Replay using renderdoccmd exportframe. Returns (rgb, depth)."""
-        rgb, depth, _ = self._replay_python_ex(rdc_path)
-        return rgb, depth
-
-    def _replay_python_ex(self, rdc_path: Path):
-        """Replay using renderdoccmd exportframe (custom C++ command).
-
-        The renderdoc.pyd Python module crashes with ACCESS_VIOLATION when
-        loaded outside of qrenderdoc, so we use our custom `exportframe`
-        command compiled into renderdoccmd instead. It saves:
-          - rgb.png    (backbuffer, uint8)
-          - depth.png  (depth target, normalized grayscale)
-          - normal.png (world-space normals, auto-detected GBufferA)
-
-        We then load these files back as numpy arrays.
-        Returns (rgb, depth, normal).
-        """
-        if not rdc_path.exists():
-            logger.warning(f"[RDOC] Capture file does not exist: {rdc_path}")
-            return None, None, None
-
-        # Resolve renderdoccmd (same logic as setup)
-        try:
-            rdoc_cmd = self._resolve_renderdoccmd()
-        except FileNotFoundError as e:
-            logger.error(f"[RDOC] {e}")
-            return None, None, None
-
-        # Output directory for exported frames
-        replay_out = self.capture_dir / f"_replay_{rdc_path.stem}"
-        replay_out.mkdir(parents=True, exist_ok=True)
-
-        cmd = [
-            rdoc_cmd, "exportframe",
-            str(rdc_path),
-            "--out", str(replay_out),
-            "--format", "png",
-        ]
-        if not self.export_normal:
-            cmd.append("--no-normal")
-        cmd += self._capture_export_args()
-        logger.debug(f"[RDOC] Export command: {' '.join(cmd)}")
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=60,
-            )
-
-            stdout = result.stdout.decode("utf-8", errors="replace").strip()
-            stderr = result.stderr.decode("utf-8", errors="replace").strip()
-
-            if stdout:
-                for line in stdout.splitlines():
-                    logger.info(f"[RDOC export] {line}")
-            if stderr:
-                for line in stderr.splitlines():
-                    logger.warning(f"[RDOC export stderr] {line}")
-
-            if result.returncode not in (0,):
-                if result.returncode == 3:
-                    logger.warning("[RDOC] exportframe found neither RGB nor depth in capture")
-                else:
-                    logger.error(f"[RDOC] exportframe exited with code {result.returncode}")
-                    return None, None, None
-
-        except subprocess.TimeoutExpired:
-            logger.error("[RDOC] exportframe timed out (60s)")
-            return None, None, None
-        except Exception as e:
-            logger.error(f"[RDOC] Failed to run exportframe: {e}")
-            return None, None, None
-
-        # Load exported images
-        rgb = self._load_rgb_image(replay_out)
-        depth = self._load_depth_image(replay_out)
-        normal = self._load_normal_image(replay_out)
-
-        # Clean up temp exported files
-        for f in replay_out.iterdir():
-            try:
-                f.unlink()
-            except OSError:
-                pass
-        try:
-            replay_out.rmdir()
-        except OSError:
-            pass
-
-        return rgb, depth, normal
-
-    def _load_rgb_image(self, directory: Path) -> Optional[np.ndarray]:
-        """Load exported RGB image (png/jpg/bmp) as uint8 numpy array (H, W, 3)."""
-        for ext in ("png", "jpg", "bmp", "tga"):
-            rgb_file = directory / f"rgb.{ext}"
-            if rgb_file.exists():
-                try:
-                    from PIL import Image
-                    img = Image.open(str(rgb_file)).convert("RGB")
-                    arr = np.array(img, dtype=np.uint8)
-                    logger.debug(f"[RDOC] Loaded RGB: {arr.shape[1]}x{arr.shape[0]} from {rgb_file.name}")
-                    return arr
-                except ImportError:
-                    logger.warning("[RDOC] Pillow not installed — trying imageio for RGB")
-                    try:
-                        import imageio.v3 as iio
-                        arr = iio.imread(str(rgb_file))
-                        if arr.ndim == 3 and arr.shape[2] == 4:
-                            arr = arr[:, :, :3]
-                        logger.debug(f"[RDOC] Loaded RGB: {arr.shape[1]}x{arr.shape[0]} from {rgb_file.name}")
-                        return arr
-                    except ImportError:
-                        logger.error("[RDOC] Neither Pillow nor imageio installed — cannot load RGB")
-                        return None
-                except Exception as e:
-                    logger.error(f"[RDOC] Failed to load RGB from {rgb_file}: {e}")
-                    return None
-        logger.debug("[RDOC] No RGB image found in export directory")
-        return None
-
-    def _load_depth_image(self, directory: Path) -> Optional[np.ndarray]:
-        """Load exported depth PNG as uint8 grayscale numpy array (H, W).
-
-        The C++ exportframe command already normalizes depth using
-        percentile-based black/white point mapping and reversed-Z inversion,
-        so the PNG is ready to use directly.
-        """
-        depth_file = directory / "depth.png"
-        if not depth_file.exists():
-            logger.debug("[RDOC] No depth.png found in export directory")
-            return None
-
-        try:
-            from PIL import Image
-            img = Image.open(str(depth_file)).convert("L")
-            arr = np.array(img, dtype=np.uint8)
-            logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.png")
-            return arr
-        except ImportError:
-            logger.warning("[RDOC] Pillow not installed — trying imageio for depth")
-            try:
-                import imageio.v3 as iio
-                arr = iio.imread(str(depth_file))
-                if arr.ndim == 3:
-                    arr = arr[:, :, 0]
-                logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.png (imageio)")
-                return arr.astype(np.uint8)
-            except ImportError:
-                logger.error("[RDOC] Neither Pillow nor imageio installed — cannot load depth")
-                return None
-        except Exception as e:
-            logger.error(f"[RDOC] Failed to load depth from {depth_file}: {e}")
-            return None
-
-    def _load_normal_image(self, directory: Path) -> Optional[np.ndarray]:
-        """Load normal map, auto-detecting from ct_*.png if normal.png absent.
-
-        Auto-detection: scan all ct_*.png files, pick the one with highest
-        pixel coverage (non-black pixels) and blue channel dominance.
-        Normal maps fill the viewport and have blue-dominant colors
-        (surfaces facing up -> normal.z > 0 -> B channel high).
-        """
-        normal_file = directory / "normal.png"
-
-        # If explicit normal.png exists (from --normal-index), use it
-        if normal_file.exists():
-            return self._load_image_as_rgb(normal_file)
-
-        # Auto-detect from ct_*.png files
-        ct_files = sorted(directory.glob("ct_*.png"))
-        if not ct_files:
-            logger.debug("[RDOC] No ct_*.png files for normal auto-detect")
-            return None
-
-        try:
-            from PIL import Image
-        except ImportError:
-            logger.warning("[RDOC] Pillow required for normal auto-detect")
-            return None
-
-        best_file = None
-        best_score = -1.0
-
-        for ct_file in ct_files:
-            try:
-                img = Image.open(str(ct_file)).convert("RGB")
-                arr = np.array(img, dtype=np.uint8)
-
-                # Subsample for speed: every 8th pixel
-                flat = arr.reshape(-1, 3)[::8]
-                total = len(flat)
-                if total == 0:
-                    continue
-
-                # Coverage: fraction of non-black pixels
-                nonzero = np.any(flat > 2, axis=1).sum()
-                coverage = nonzero / total
-
-                # Blue ratio among non-black pixels
-                nonzero_mask = np.any(flat > 2, axis=1)
-                if nonzero_mask.sum() > 0:
-                    means = flat[nonzero_mask].mean(axis=0).astype(float)
-                    channel_sum = means.sum()
-                    blue_ratio = means[2] / channel_sum if channel_sum > 0 else 0
-                else:
-                    blue_ratio = 0
-
-                score = coverage
-                if blue_ratio > 0.35:
-                    score += 1.0
-
-                logger.debug(
-                    f"[RDOC] normal probe {ct_file.name}: "
-                    f"cov={coverage:.0%} blue={blue_ratio:.0%} score={score:.2f}"
-                )
-
-                if score > best_score:
-                    best_score = score
-                    best_file = ct_file
-
-            except Exception as e:
-                logger.debug(f"[RDOC] Failed to analyze {ct_file.name}: {e}")
-
-        if best_file is None or best_score < 0.5:
-            logger.info("[RDOC] Normal auto-detect: no suitable candidate found")
-            return None
-
-        logger.info(f"[RDOC] Normal auto-detected: {best_file.name} (score={best_score:.2f})")
-        return self._load_image_as_rgb(best_file)
-
-    def _load_image_as_rgb(self, filepath: Path) -> Optional[np.ndarray]:
-        """Load any image file as uint8 RGB numpy array."""
-        try:
-            from PIL import Image
-            img = Image.open(str(filepath)).convert("RGB")
-            arr = np.array(img, dtype=np.uint8)
-            logger.debug(f"[RDOC] Loaded image: {arr.shape[1]}x{arr.shape[0]} from {filepath.name}")
-            return arr
-        except ImportError:
-            try:
-                import imageio.v3 as iio
-                arr = iio.imread(str(filepath))
-                if arr.ndim == 3 and arr.shape[2] == 4:
-                    arr = arr[:, :, :3]
-                return arr.astype(np.uint8)
-            except ImportError:
-                logger.error("[RDOC] Neither Pillow nor imageio installed")
-                return None
-        except Exception as e:
-            logger.error(f"[RDOC] Failed to load {filepath}: {e}")
-            return None
-
-    def _find_renderdoc_dirs(self):
-        """Find renderdoc.pyd and renderdoc.dll directories.
-
-        Returns (pyd_dir, dll_dir) or (None, None) if not found.
-        """
-        import sys as _sys
-
-        pyd_name = "renderdoc.pyd" if _sys.platform == "win32" else "renderdoc.so"
-        project_root = Path(__file__).resolve().parent.parent
-        search_roots = [project_root, project_root.parent]
-        candidates = [
-            Path("renderdoc") / "x64" / "Development" / "pymodules",
-            Path("renderdoc") / "x64" / "Release" / "pymodules",
-            Path("renderdoc") / "build" / "lib" / "pymodules",
-        ]
-        for root in search_roots:
-            for candidate in candidates:
-                pyd_dir = root / candidate
-                pyd_file = pyd_dir / pyd_name
-                if pyd_file.is_file():
-                    dll_dir = pyd_dir.parent  # e.g. x64/Development/
-                    logger.debug(f"[RDOC] Found {pyd_name} at {pyd_dir}, DLLs at {dll_dir}")
-                    return pyd_dir, dll_dir
-
-        logger.error(
-            f"[RDOC] renderdoc Python bindings ({pyd_name}) not found. "
-            f"Build 'pyrenderdoc_module' in Visual Studio. "
-            f"Searched: {', '.join(str(r) for r in search_roots)}"
-        )
-        return None, None
+    @staticmethod
+    def _find_renderdoc_dirs():
+        """Locate renderdoc.pyd and its sibling DLL directory."""
+        return find_renderdoc_dirs()
