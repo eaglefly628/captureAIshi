@@ -596,14 +596,6 @@ def bridge_rescan():
 def defaults():
     """Return default parameter values for the form."""
     return jsonify({
-        "volume_min": [-5, 0, -5],
-        "volume_max": [5, 3, 5],
-        "spacing": 2.0,
-        "smooth": False,
-        "smooth_points": 5,
-        "cone_angle": 0,
-        "cone_samples": 8,
-        "cone_rings": 2,
         "driver": "manual",
         "driver_host": "127.0.0.1",
         "driver_port": 9999,
@@ -1133,14 +1125,6 @@ def _build_args(data: dict) -> Namespace:
         raise ValueError("Request body must be a JSON object")
 
     args = Namespace()
-    args.volume_min = _validate_float_list(data.get("volume_min", [-5, 0, -5]), 3, "volume_min")
-    args.volume_max = _validate_float_list(data.get("volume_max", [5, 3, 5]), 3, "volume_max")
-    args.spacing = max(0.01, float(data.get("spacing", 2.0)))
-    args.smooth = bool(data.get("smooth", False))
-    args.smooth_points = max(2, int(data.get("smooth_points", 5)))
-    args.cone_angle = max(0.0, min(90.0, float(data.get("cone_angle", 0))))
-    args.cone_samples = max(1, int(data.get("cone_samples", 8)))
-    args.cone_rings = max(1, int(data.get("cone_rings", 2)))
 
     driver = str(data.get("driver", "manual"))
     if driver not in _VALID_DRIVERS:

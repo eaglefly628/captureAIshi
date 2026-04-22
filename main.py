@@ -144,8 +144,25 @@ def create_ui_hider(args):
 
 
 def run_capture(args):
-    """Main capture loop."""
-    import time as _time
+    """Legacy capture entry point -- removed in favour of trajectory-driven
+    playback.
+
+    The old volume + snake path + cone rotation pipeline was generating
+    hundreds of captures per run and has been retired. Use the Web UI
+    "Play" button (trajectory-based, drivers/trajectory_player.py) for
+    offline RDC capture per waypoint, or drive captures manually via the
+    bridge.
+    """
+    raise RuntimeError(
+        "Legacy volume/snake/cone capture pipeline has been removed. "
+        "Use the Web UI Play button (trajectory-based capture) instead."
+    )
+    # The body below is unreachable and will be deleted in a follow-up sweep
+    # that also drops core/snake_path.py, core/cone_rotation.py, tests, and
+    # the tkinter GUI spinners. Kept here short-term so the import graph
+    # doesn't break until the dead modules are removed.
+    import time as _time  # noqa: F401
+    return
 
     t_start = _time.monotonic()
 
@@ -154,11 +171,6 @@ def run_capture(args):
         f"target_exe={getattr(args, 'target_exe', None)}, "
         f"target_args={getattr(args, 'target_args', [])}, "
         f"dry_run={args.dry_run}, output_dir={args.output_dir}"
-    )
-    logging.debug(
-        f"[CONFIG] smooth={args.smooth}, smooth_points={args.smooth_points}, "
-        f"cone_angle={args.cone_angle}, cone_samples={args.cone_samples}, "
-        f"cone_rings={args.cone_rings}"
     )
 
     # Define capture volume
@@ -663,29 +675,6 @@ def main():
     parser = argparse.ArgumentParser(
         description="captureAIshi — Cross-engine game capture framework",
     )
-
-    # Volume definition
-    parser.add_argument(
-        "--volume-min", type=float, nargs=3, default=[-5, 0, -5],
-        help="Bounding volume min corner (x y z) in meters",
-    )
-    parser.add_argument(
-        "--volume-max", type=float, nargs=3, default=[5, 3, 5],
-        help="Bounding volume max corner (x y z) in meters",
-    )
-    parser.add_argument(
-        "--spacing", type=float, default=2.0,
-        help="Distance between waypoints in meters",
-    )
-
-    # Path smoothing
-    parser.add_argument("--smooth", action="store_true", help="Enable path smoothing")
-    parser.add_argument("--smooth-points", type=int, default=5, help="Points per smooth segment")
-
-    # Cone rotation
-    parser.add_argument("--cone-angle", type=float, default=0, help="Cone half-angle in degrees (0=disabled)")
-    parser.add_argument("--cone-samples", type=int, default=8, help="Samples per cone ring")
-    parser.add_argument("--cone-rings", type=int, default=2, help="Number of cone rings")
 
     # Camera intrinsics
     parser.add_argument("--fov", type=float, default=90.0, help="Vertical FOV in degrees")

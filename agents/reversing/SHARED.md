@@ -99,7 +99,34 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Batman ue3_packed_int deg conversion
+### [v0.2.0] (pending push) -- xiaoni -- Remove legacy volume/snake/cone capture pipeline
+
+User request: drop the volume + snake path + cone rotation capture mode
+(source of 956-capture runs). Trajectory-based capture
+(`drivers/trajectory_player.py`) is now the only supported path.
+
+- `main.py` `run_capture`: early-raises `RuntimeError` with migration
+  message. Old Steps 1-3 + capture_loop left unreachable short-term
+  (full deletion in follow-up sweep that also drops
+  `core/snake_path.py`, `core/cone_rotation.py`, `BoundingVolume`,
+  tests, and `gui.py` spinners).
+- `main.py` argparse: dropped `--volume-min/--volume-max/--spacing/
+  --smooth/--smooth-points/--cone-angle/--cone-samples/--cone-rings`.
+- `web_ui.py` `_build_args` + `/api/defaults`: dropped volume /
+  spacing / cone / smooth fields. Residual preset data blobs at lines
+  719+ kept (inert now, swept next session).
+- `web/templates/index.html`: removed `catArea`, `catPath`, `catCone`
+  detail panels; removed corresponding `catMap` entries (lv2 menu items
+  were already gone since `c656837`). Dropped `vol_min/max`, `spacing`,
+  `smooth*`, `cone_*` references from `getFormData`, `applyParams`,
+  `_applyGameConfig`, `updateVisibility` (`smoothPointsWrap`), and
+  the 3D visualizer (bounding box + grid drew from the removed
+  `vol_min_x` / `spacing` inputs).
+
+Batman `ue3_packed_int` trajectory conversion from `afc35b5` is still
+in place; this CL doesn't touch that path.
+
+### [v0.2.0] afc35b5 -- xiaoni -- Batman ue3_packed_int deg conversion
 
 Fix long-standing TODO in `configs/hacks/batman_ak.json`: camera rotation
 writes for UE3 were casting deg floats to i32 verbatim, so any non-integer
