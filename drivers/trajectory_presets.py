@@ -402,8 +402,8 @@ PRESET_SCHEMA: dict[str, list[dict]] = {
         {"key": "center", "kind": "vec3", "default": [0.0, 0.0, 0.0], "help": "Orbit center (game coords)"},
         {"key": "radius", "kind": "num", "default": 300.0, "help": "Orbit radius"},
         {"key": "height", "kind": "num", "default": 0.0, "help": "Height above center"},
-        {"key": "duration", "kind": "num", "default": 10.0, "help": "Seconds per lap"},
-        {"key": "samples", "kind": "int", "default": 256, "help": "Sample points"},
+        {"key": "speed", "kind": "num", "default": 200.0, "help": "Camera speed (units/second); duration = circumference / speed"},
+        {"key": "samples", "kind": "int", "default": 8, "help": "Capture sample count (positions evenly along path)"},
         {"key": "fov", "kind": "num", "default": 70.0, "help": "Vertical FOV (deg)"},
         {"key": "look_at_center", "kind": "bool", "default": True, "help": "Auto-face center"},
         {"key": "start_angle_deg", "kind": "num", "default": 0.0, "help": "Start angle (deg)"},
@@ -414,8 +414,8 @@ PRESET_SCHEMA: dict[str, list[dict]] = {
         {"key": "radius", "kind": "num", "default": 300.0, "help": "Radius"},
         {"key": "height", "kind": "num", "default": 400.0, "help": "Total vertical rise"},
         {"key": "turns", "kind": "num", "default": 2.0, "help": "Number of turns"},
-        {"key": "duration", "kind": "num", "default": 10.0, "help": "Seconds total"},
-        {"key": "samples", "kind": "int", "default": 256, "help": "Sample points"},
+        {"key": "speed", "kind": "num", "default": 400.0, "help": "Camera speed (units/second); duration = arc-length / speed"},
+        {"key": "samples", "kind": "int", "default": 8, "help": "Capture sample count"},
         {"key": "fov", "kind": "num", "default": 70.0, "help": "Vertical FOV (deg)"},
         {"key": "look_at_center", "kind": "bool", "default": True, "help": "Auto-face center"},
         {"key": "direction", "kind": "int", "default": 1, "help": "+1 CCW, -1 CW"},
@@ -423,16 +423,16 @@ PRESET_SCHEMA: dict[str, list[dict]] = {
     "line": [
         {"key": "start", "kind": "vec3", "default": [0.0, 0.0, 0.0], "help": "Start position"},
         {"key": "end", "kind": "vec3", "default": [500.0, 0.0, 0.0], "help": "End position"},
-        {"key": "duration", "kind": "num", "default": 5.0, "help": "Seconds"},
-        {"key": "samples", "kind": "int", "default": 64, "help": "Sample points"},
+        {"key": "speed", "kind": "num", "default": 100.0, "help": "Camera speed (units/second); duration = distance / speed"},
+        {"key": "samples", "kind": "int", "default": 8, "help": "Capture sample count"},
         {"key": "fov", "kind": "num", "default": 70.0, "help": "Vertical FOV (deg)"},
     ],
     "figure8": [
         {"key": "center", "kind": "vec3", "default": [0.0, 0.0, 0.0], "help": "Figure-8 center"},
         {"key": "radius", "kind": "num", "default": 300.0, "help": "Lobe radius"},
         {"key": "height", "kind": "num", "default": 0.0, "help": "Height above center"},
-        {"key": "duration", "kind": "num", "default": 12.0, "help": "Seconds"},
-        {"key": "samples", "kind": "int", "default": 256, "help": "Sample points"},
+        {"key": "speed", "kind": "num", "default": 300.0, "help": "Camera speed (units/second); duration = 4*pi*r / speed"},
+        {"key": "samples", "kind": "int", "default": 8, "help": "Capture sample count"},
         {"key": "fov", "kind": "num", "default": 70.0, "help": "Vertical FOV (deg)"},
         {"key": "look_at_center", "kind": "bool", "default": True, "help": "Auto-face center"},
         {"key": "axis", "kind": "choice", "default": "z", "choices": ["z", "y"], "help": "Plane axis"},
@@ -443,7 +443,7 @@ PRESET_SCHEMA: dict[str, list[dict]] = {
     "custom": [
         {"key": "waypoints", "kind": "waypoints", "default": [],
          "help": "List of [x,y,z] / [x,y,z,pitch,yaw,roll] / [x,y,z,p,y,r,fov] (game coords)"},
-        {"key": "duration", "kind": "num", "default": 5.0, "help": "Seconds (total)"},
+        {"key": "speed", "kind": "num", "default": 100.0, "help": "Camera speed (units/second); duration = polyline-length / speed"},
         {"key": "samples_per_segment", "kind": "int", "default": 0, "help": "0 = raw waypoints, >0 = linear subdivision"},
         {"key": "fov", "kind": "num", "default": 70.0, "help": "Fallback FOV"},
     ],
@@ -458,8 +458,48 @@ def _short_delta(a: float, b: float) -> float:
     return d
 
 
+def _path_length(preset: str, params: dict) -> float:
+    """Approximate trajectory path length in game units for a given preset.
+
+    Used by ``generate`` to turn a ``speed`` (units/second) input into a
+    ``duration`` so users don't have to compute seconds-per-lap manually.
+    Closed-form where possible; ``custom`` sums the polyline segments.
+    Returns 0.0 if the preset's parameters don't define a length yet.
+    """
+    if preset == "orbit":
+        r = float(params.get("radius", 300.0))
+        return 2.0 * math.pi * abs(r)
+    if preset == "helix":
+        r = float(params.get("radius", 300.0))
+        h = float(params.get("height", 400.0))
+        turns = abs(float(params.get("turns", 2.0)))
+        circ = turns * 2.0 * math.pi * abs(r)
+        return math.hypot(circ, h)
+    if preset == "line":
+        s = params.get("start") or [0.0, 0.0, 0.0]
+        e = params.get("end") or [500.0, 0.0, 0.0]
+        return math.sqrt(sum((float(e[i]) - float(s[i])) ** 2 for i in range(3)))
+    if preset == "figure8":
+        # Two circles of radius r that touch at the center: 2 * 2*pi*r.
+        r = float(params.get("radius", 300.0))
+        return 4.0 * math.pi * abs(r)
+    if preset == "custom":
+        wps = params.get("waypoints") or []
+        total = 0.0
+        for a, b in zip(wps, wps[1:]):
+            total += math.sqrt(sum((float(b[i]) - float(a[i])) ** 2 for i in range(3)))
+        return total
+    return 0.0
+
+
 def generate(preset: str, params: dict) -> list[PosePoint]:
     """Dispatch to the named preset with a dict of parameters.
+
+    If ``params`` contains ``speed`` (> 0, units/second) the effective
+    ``duration`` is replaced with ``_path_length(preset, params) / speed``
+    so the user can drive playback by speed instead of seconds. ``speed``
+    is consumed here (not forwarded to the preset fn). A ``duration`` key
+    still in ``params`` is honored when ``speed`` is missing or zero.
 
     Raises ``KeyError`` if ``preset`` is unknown, ``ValueError`` if
     ``params`` violates the preset's constraints (via the underlying
@@ -470,6 +510,17 @@ def generate(preset: str, params: dict) -> list[PosePoint]:
         raise KeyError(f"unknown preset: {preset!r} (known: {list(PRESETS)})")
     # Shallow copy so we don't mutate the caller's dict.
     kwargs = dict(params)
+    # Speed -> duration bridge. ``speed`` is a UI-level convenience that
+    # the underlying preset fns don't understand, so we pop it.
+    speed = kwargs.pop("speed", 0.0)
+    try:
+        speed_f = float(speed)
+    except (TypeError, ValueError):
+        speed_f = 0.0
+    if speed_f > 0.0:
+        length = _path_length(preset, kwargs)
+        if length > 0.0:
+            kwargs["duration"] = length / speed_f
     # Tuple coercion for vec3 inputs (JSON sends lists).
     for key in ("center", "start", "end", "look_at", "start_rot", "end_rot"):
         if key in kwargs and kwargs[key] is not None:

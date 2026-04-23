@@ -99,6 +99,33 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Speed-driven trajectories + Preview/Play/Stop row
+
+User feedback: entering "duration" is not intuitive; speed (units/s) is.
+Also Pause/Resume buttons aren't used, and there should be a Preview
+button that streams the path without burning RDC captures.
+
+`drivers/trajectory_presets.py`
+- New `_path_length(preset, params)` helper with closed-form lengths
+  for orbit (2pi*r), helix (sqrt(circumference^2 + height^2)), line
+  (Euclidean), figure8 (4pi*r), custom (polyline sum).
+- `generate()` consumes a `speed` key if present and > 0, computing
+  `duration = length / speed` before dispatching to the preset
+  function. `speed` is popped so the preset fn (which still takes
+  `duration`) is not confused. When `speed` is missing or 0 the caller's
+  `duration` is honored (back-compat for saved trajectories).
+- `PRESET_SCHEMA`: replaced `duration` with `speed` (orbit=200,
+  helix=400, line=100, figure8=300, custom=100 units/s). `samples`
+  default changed to 8 across all presets. Help text explains the
+  `duration = length / speed` relationship per preset.
+
+`web/templates/index.html`
+- Trajectory control row rebuilt: `Preview | Play | Stop | Decode |
+  Preview 3D | Clear 3D`. Pause and Resume buttons dropped
+  (their JS fns remain, dead but harmless). Preview (new) calls
+  `/api/trajectory/play` with `renderdoc_capture:false` via a shared
+  `_trajBuildBody(rdc) / _trajPost(body, label)` helper pair.
+
 ### [v0.2.0] c41089a -- xiaoni -- Manual Decode button + /api/trajectory/decode
 
 Follow-up to `40acc76`: user asked for an explicit decode trigger so

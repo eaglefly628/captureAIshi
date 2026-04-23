@@ -2573,11 +2573,10 @@ pollSessions();pollCaptures();
         <label style="color:#aaa;font-size:11px" title="Auto-refresh the 3D preview when preset / params change"><input type="checkbox" id="trajAutoPreview" checked style="vertical-align:middle"> auto-preview</label>
         <label style="color:#aaa;font-size:11px" title="Trigger a RenderDoc capture at each waypoint + export to output/ at the end (wire-up in Phase 2)"><input type="checkbox" id="trajRdcCapture" style="vertical-align:middle"> RDC capture</label>
         <label style="color:#aaa;font-size:11px" title="Offset every waypoint by the camera's current position at play start (so the path follows the character's current location)"><input type="checkbox" id="trajRelativeOrigin" style="vertical-align:middle"> relative origin</label>
-        <button class="btn btn-accent" onclick="trajPlay()" title="Start streaming pose at selected rate">Play</button>
-        <button class="btn" onclick="trajPause()" title="Hold at current t">Pause</button>
-        <button class="btn" onclick="trajResume()" title="Resume from pause">Resume</button>
-        <button class="btn" onclick="trajStop()" title="Stop writer thread">Stop</button>
-        <button class="btn" onclick="trajDecode()" title="Export every .rdc file in the active session's capture dir to PNG via renderdoccmd exportframe. Normally triggered automatically after Play with RDC capture; use this to re-decode or if auto-decode was skipped.">Decode</button>
+        <button class="btn" onclick="trajPreviewPlay()" title="Stream the trajectory WITHOUT triggering RDC captures -- use this to dial in path / speed before spending capture time.">Preview</button>
+        <button class="btn btn-accent" onclick="trajPlay()" title="Stream the trajectory and fire __cam_rdc_capture per waypoint. Auto-decode runs after the loop finishes.">Play</button>
+        <button class="btn" onclick="trajStop()" title="Stop the player thread">Stop</button>
+        <button class="btn" onclick="trajDecode()" title="Export every .rdc file in the active session's capture dir to PNG via renderdoccmd exportframe. Normally triggered automatically after Play; use this to re-decode or if auto-decode was skipped.">Decode</button>
         <button class="btn" onclick="trajPreview3d()" title="Sample preset + show waypoints on the 3D canvas (opens 3D tab)">Preview 3D</button>
         <button class="btn" onclick="trajClearPreview()" title="Remove the 3D preview overlay">Clear 3D</button>
       </div>
@@ -2934,25 +2933,28 @@ function trajCollectParams(){
   return out;
 }
 
-function trajPlay(){
+function _trajBuildBody(renderdocCapture){
   var preset=document.getElementById('trajPreset').value;
-  if(!preset){debugAppend('ERROR: pick a preset first');return;}
+  if(!preset){debugAppend('ERROR: pick a preset first');return null;}
   var profile_id=document.getElementById('hackProfileSelect').value;
-  if(!profile_id){debugAppend('ERROR: pick a game profile first (Profile dropdown above)');return;}
+  if(!profile_id){debugAppend('ERROR: pick a game profile first (Profile dropdown above)');return null;}
   var params=trajCollectParams()||{};
-  var body={
+  return {
     preset:preset,
     params:params,
     profile_id:profile_id,
     rate_hz:parseFloat(document.getElementById('trajRate').value)||60,
     loop:document.getElementById('trajLoop').checked,
-    renderdoc_capture:document.getElementById('trajRdcCapture').checked,
+    renderdoc_capture:!!renderdocCapture,
     relative_origin:document.getElementById('trajRelativeOrigin').checked,
     focus_delay:focusDelay(),
     capture_interval:captureInterval(),
     slot:0,
   };
-  debugAppend('> traj/play '+preset+' @'+body.rate_hz+'Hz loop='+body.loop+' rel='+body.relative_origin+' rdc='+body.renderdoc_capture);
+}
+
+function _trajPost(body, label){
+  debugAppend('> traj/'+label+' '+body.preset+' @'+body.rate_hz+'Hz loop='+body.loop+' rel='+body.relative_origin+' rdc='+body.renderdoc_capture);
   fetch('/api/trajectory/play',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -2961,10 +2963,24 @@ function trajPlay(){
     .then(r=>r.json())
     .then(d=>{
       if(!d.ok){debugAppend('ERROR: '+(d.error||'unknown'));return;}
-      debugAppend('play: addr='+d.addr+' samples='+d.samples+' dur='+d.duration.toFixed(2)+'s');
+      debugAppend(label+': addr='+d.addr+' samples='+d.samples+' dur='+d.duration.toFixed(2)+'s');
       trajStartStatusPoll();
     })
     .catch(e=>debugAppend('ERROR: '+e));
+}
+
+function trajPlay(){
+  var body=_trajBuildBody(true);
+  if(!body) return;
+  _trajPost(body, 'play');
+}
+
+function trajPreviewPlay(){
+  // Same streaming flow as Play, just with RDC capture forced off so the
+  // user can verify path / speed / framing without burning disk writes.
+  var body=_trajBuildBody(false);
+  if(!body) return;
+  _trajPost(body, 'preview');
 }
 
 function trajStop(){
