@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Fine path streaming + sparse captures + FOV/arrow 3D markers
+### [v0.2.0] 5e7e1aa -- xiaoni -- Fine path streaming + sparse captures + FOV/arrow 3D markers
 
 User asks:
 - 3D preview should draw the smoothest path.
