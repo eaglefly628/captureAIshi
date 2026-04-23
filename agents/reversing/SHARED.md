@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Manual Decode button + /api/trajectory/decode
+### [v0.2.0] c41089a -- xiaoni -- Manual Decode button + /api/trajectory/decode
 
 Follow-up to `40acc76`: user asked for an explicit decode trigger so
 re-decoding / post-hoc decode (session started without grabber, or
