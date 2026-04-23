@@ -99,6 +99,40 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Post-loop auto-decode + restore start pose
+
+User report: 8 captures fired cleanly on 3 s interval but nothing
+happened after the rdc-step loop -- "No captures yet" in the gallery,
+no PNGs, camera left stranded on the last waypoint.
+
+Two fixes in one commit, both for the trajectory Play path:
+
+(1) Post-loop auto-decode via the active RenderDoc grabber.
+- `web/state.py`: new `set_active_grabber(g)` / `get_active_grabber()`
+  thread-safe module slot. `main.run_capture` publishes the grabber
+  after `grabber.setup()` succeeds and clears it in the finally block.
+- `web/routes/trajectory.py` `/api/trajectory/play`: if the active
+  grabber exposes `export_batch`, build a decode callback that calls
+  `grabber.export_batch(rdc_paths, output_dir)` where `output_dir`
+  comes from the session's `_capture_state['output_dir']`. Pass the
+  grabber's `capture_dir` so the player knows where .rdc files land.
+- `drivers/trajectory_player.py`: rdc-step loop now watches
+  `capture_dir` via `set(Path.glob('*.rdc'))` diffing and collects new
+  .rdc paths per pose. On loop exit, if `decode_callback` is set and
+  at least one .rdc was collected, fire the callback on a background
+  thread (so the player thread itself can unwind cleanly). Player
+  state transitions `playing -> exporting -> idle` so the UI poll can
+  show the decode phase.
+
+(2) Restore the pre-play camera pose so the user ends up exactly where
+they were before pressing Play.
+- `TrajectoryPlayer.play()` now unconditionally snapshots the current
+  pose via `game_profile.read_camera_pose`. When `relative_origin` is
+  on the same read is reused for the offset; it's also threaded into
+  `_run` as `restore_pose` and consumed in the rdc-step finally block,
+  which calls `game_profile.write_camera(...)` with the stored pose.
+  Failure is logged but does not abort the exporting pass.
+
 ### [v0.2.0] 8ed197d -- xiaoni -- RDC-step capture_interval (16->16 captures land)
 
 User hit: figure8 trajectory Play with 16 samples @ 60 Hz + rdc_capture

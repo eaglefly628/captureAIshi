@@ -343,6 +343,8 @@ class TrajectoryPlayer:
         relative_origin: bool = False,
         focus_delay: float = 5.0,
         capture_interval: float = 1.5,
+        capture_dir: Any = None,
+        decode_callback: Any = None,
     ) -> dict:
         """Start streaming ``points`` to the camera at ``rate_hz``.
 
@@ -371,10 +373,14 @@ class TrajectoryPlayer:
             if not addr:
                 addr = _auto_capture(slot, focus_delay=focus_delay)
 
+            # Snapshot the pre-play pose so we can both:
+            #   (a) use it as the origin offset when relative_origin is on,
+            #   (b) restore the camera to it after the rdc-step loop so
+            #       the user ends up back where they were.
+            start_pose = game_profile.read_camera_pose(profile_id, slot)
             if relative_origin:
-                pose = game_profile.read_camera_pose(profile_id, slot)
-                if pose.get("ok"):
-                    ox, oy, oz = pose["x"], pose["y"], pose["z"]
+                if start_pose.get("ok"):
+                    ox, oy, oz = start_pose["x"], start_pose["y"], start_pose["z"]
                     points = [
                         PosePoint(t=p.t, x=p.x + ox, y=p.y + oy, z=p.z + oz,
                                   pitch=p.pitch, yaw=p.yaw, roll=p.roll, fov=p.fov)
@@ -384,7 +390,16 @@ class TrajectoryPlayer:
                                 ox, oy, oz)
                 else:
                     logger.warning("[PLAYER] relative_origin requested but pose read failed: %s",
-                                   pose.get("error"))
+                                   start_pose.get("error"))
+            restore_pose = start_pose if start_pose.get("ok") else None
+            if restore_pose is not None:
+                logger.info(
+                    "[PLAYER] snapshot start pose for restore: pos=(%.2f, %.2f, %.2f) "
+                    "rot=(%.2f, %.2f, %.2f) fov=%.1f",
+                    restore_pose["x"], restore_pose["y"], restore_pose["z"],
+                    restore_pose["pitch"], restore_pose["yaw"], restore_pose["roll"],
+                    restore_pose.get("fov", 0.0),
+                )
 
             self._stop_evt.clear()
             self._pause_evt.clear()
@@ -400,7 +415,9 @@ class TrajectoryPlayer:
             t = threading.Thread(
                 target=self._run,
                 args=(plan, addr, points, rate_hz, loop, focus_delay,
-                      renderdoc_capture, capture_interval),
+                      renderdoc_capture, capture_interval,
+                      capture_dir, decode_callback,
+                      profile_id, restore_pose, slot),
                 name="trajectory-player",
                 daemon=True,
             )
@@ -485,6 +502,11 @@ class TrajectoryPlayer:
         focus_delay: float = 0.0,
         renderdoc_capture: bool = False,
         capture_interval: float = 1.5,
+        capture_dir: Any = None,
+        decode_callback: Any = None,
+        profile_id: str = "",
+        restore_pose: Any = None,
+        slot: int = 0,
     ) -> None:
         dt = 1.0 / rate_hz
         duration = total_duration(points)
@@ -529,9 +551,19 @@ class TrajectoryPlayer:
             # RenderDoc has time to actually capture + persist the .rdc
             # file. At 60 Hz the game renders ~90 frames in 1.5 s which
             # is plenty for the capture thread to settle.
+            from pathlib import Path as _Path
             settle = max(1.0 / rate_hz, 0.05)
             interval = max(capture_interval, settle)
             total = len(points)
+            cap_dir = _Path(capture_dir) if capture_dir else None
+            existing_rdcs: set = set()
+            collected_rdcs: list = []
+            if cap_dir and cap_dir.is_dir():
+                existing_rdcs = set(cap_dir.glob("*.rdc"))
+                logger.info(
+                    "[PLAYER] watching %s for new .rdc files (%d pre-existing)",
+                    cap_dir, len(existing_rdcs),
+                )
             try:
                 for idx, pose in enumerate(points, 1):
                     if self._stop_evt.is_set():
@@ -561,14 +593,60 @@ class TrajectoryPlayer:
                             if self._stop_evt.is_set():
                                 break
                             time.sleep(min(0.1, deadline - time.monotonic()))
+                    # Pick up any newly-written .rdc file for this pose.
+                    if cap_dir and cap_dir.is_dir():
+                        new_files = set(cap_dir.glob("*.rdc")) - existing_rdcs
+                        if new_files:
+                            # Most recent first so we attribute to this pose.
+                            for p in sorted(new_files, key=lambda q: q.stat().st_mtime):
+                                collected_rdcs.append(p)
+                                existing_rdcs.add(p)
             finally:
                 session.close()
-                with self._lock:
-                    if self._status.state != "error":
-                        self._status.state = "idle"
                 logger.info(
-                    "[PLAYER] rdc-step done captures=%d", self._status.ticks
+                    "[PLAYER] rdc-step done captures=%d rdc_files=%d",
+                    self._status.ticks, len(collected_rdcs),
                 )
+                # Restore the pre-play camera pose so the user ends up
+                # exactly where they were before pressing Play. Uses its
+                # own short-lived socket via game_profile.write_camera;
+                # safe even though the streaming session is closed.
+                if restore_pose is not None and profile_id:
+                    try:
+                        r = game_profile.write_camera(
+                            profile_id,
+                            restore_pose["x"], restore_pose["y"], restore_pose["z"],
+                            restore_pose["pitch"], restore_pose["yaw"], restore_pose["roll"],
+                            restore_pose.get("fov", 0.0),
+                            slot=slot,
+                        )
+                        logger.info(
+                            "[PLAYER] restored start pose ok=%s", r.get("ok"),
+                        )
+                    except Exception as _e:
+                        logger.warning("[PLAYER] restore pose failed: %s", _e)
+                # Kick the decode pass on a background thread so the
+                # player state transitions cleanly for the UI and the
+                # Flask request that triggered play() does not block.
+                if decode_callback is not None and collected_rdcs:
+                    with self._lock:
+                        self._status.state = "exporting"
+                    def _decode():
+                        try:
+                            decode_callback(list(collected_rdcs))
+                        except Exception as _e:
+                            logger.error("[PLAYER] decode_callback failed: %s", _e)
+                        finally:
+                            with self._lock:
+                                if self._status.state == "exporting":
+                                    self._status.state = "idle"
+                    threading.Thread(
+                        target=_decode, name="trajectory-decode", daemon=True,
+                    ).start()
+                else:
+                    with self._lock:
+                        if self._status.state != "error":
+                            self._status.state = "idle"
             return
 
         try:

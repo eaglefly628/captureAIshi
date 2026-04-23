@@ -217,6 +217,13 @@ def run_capture(args):
         try:
             grabber_ctx.setup()
             logging.info("[GRABBER] Grabber setup complete, game should be running")
+            # Publish the grabber so the trajectory Play route can dispatch
+            # post-loop .rdc -> PNG decode through grabber.export_batch.
+            try:
+                from web import state as _web_state
+                _web_state.set_active_grabber(grabber_ctx)
+            except Exception as _e:
+                logging.debug(f"[GRABBER] Could not publish active grabber: {_e}")
         except Exception as e:
             logging.error(f"[GRABBER] Grabber setup failed: {e}")
             raise
@@ -300,6 +307,11 @@ def run_capture(args):
                 grabber_ctx.teardown()
             except Exception as e:
                 logging.warning(f"[GRABBER] Teardown failed: {e}")
+            try:
+                from web import state as _web_state
+                _web_state.set_active_grabber(None)
+            except Exception:
+                pass
         if driver_connected:
             try:
                 driver.disconnect()

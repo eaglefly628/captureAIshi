@@ -71,6 +71,38 @@ def trajectory_play():
     except (KeyError, ValueError, TypeError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
+    # If the active session is a RenderDoc grabber, route post-loop .rdc
+    # files through its export_batch for PNG decode. Without a live
+    # grabber (Start button not pressed, or non-renderdoc grabber), the
+    # player just streams poses / fires triggers and skips decode.
+    from web import state as _web_state
+    grabber = _web_state.get_active_grabber()
+    capture_dir = None
+    decode_callback = None
+    if grabber is not None and hasattr(grabber, "export_batch"):
+        capture_dir = getattr(grabber, "capture_dir", None)
+        if capture_dir is not None:
+            # Canonical output_dir = the one /api/start recorded for this
+            # session. Fall back to "./output" if not set yet.
+            with _web_state._lock:
+                out_str = _web_state._capture_state.get(
+                    "output_dir", "./output",
+                )
+            output_dir = Path(out_str)
+
+            def _decode(rdc_paths):
+                import logging as _log
+                _log.info("[DECODE] exporting %d .rdc -> %s",
+                          len(rdc_paths), output_dir)
+                try:
+                    results = grabber.export_batch(rdc_paths, output_dir)
+                    _log.info("[DECODE] export_batch returned %d results",
+                              len(results))
+                except Exception as _e:
+                    _log.error("[DECODE] export_batch failed: %s", _e)
+
+            decode_callback = _decode
+
     from drivers.trajectory_player import get_default_player
     try:
         result = get_default_player().play(
@@ -84,6 +116,8 @@ def trajectory_play():
             relative_origin=bool(body.get("relative_origin", False)),
             focus_delay=max(0.0, float(body.get("focus_delay", 5.0))),
             capture_interval=max(0.1, float(body.get("capture_interval", 1.5))),
+            capture_dir=capture_dir,
+            decode_callback=decode_callback,
         )
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "profile not found"}), 404

@@ -21,7 +21,31 @@ _capture_state = {
 _lock = threading.Lock()
 _stop_event = threading.Event()
 
+# Active RenderDoc grabber instance from the currently running session
+# (Start button -> main.run_capture). The trajectory Play route reads this
+# to route the per-waypoint .rdc files through ``grabber.export_batch`` for
+# PNG decode after the rdc-step loop ends. ``None`` when no session is
+# active or when the session uses a non-renderdoc grabber.
+_active_grabber = None
+
 _path_store = PathStore()
+
+
+def set_active_grabber(grabber) -> None:
+    """Record the grabber for the currently running capture session.
+
+    Called by ``main.run_capture`` after ``grabber.setup()`` succeeds and
+    again with ``None`` in its finally block.
+    """
+    global _active_grabber
+    with _lock:
+        _active_grabber = grabber
+
+
+def get_active_grabber():
+    """Return the active grabber, or ``None`` if no session is running."""
+    with _lock:
+        return _active_grabber
 
 
 class WebLogHandler(logging.Handler):
