@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 def capture_export_args(capture_profile: dict) -> list:
-    """Build per-game exportframe CLI flags from ``capture_profile``."""
+    """Build per-game exportframe CLI flags from ``capture_profile``.
+
+    Note: ``depth_reversed_z`` and ``depth_range`` are applied Python-side
+    in ``image_loader.load_depth_image`` -- C++ exports raw float EXR.
+    """
     args = []
     rgb_index = capture_profile.get("rgb_index", -1)
     if rgb_index is not None and rgb_index >= 0:
@@ -37,8 +41,6 @@ def capture_export_args(capture_profile: dict) -> list:
     depth_index = capture_profile.get("depth_index", -1)
     if depth_index is not None and depth_index >= 0:
         args += ["--depth-index", str(depth_index)]
-    if not capture_profile.get("depth_reversed_z", True):
-        args.append("--no-reverse-depth")
     return args
 
 
@@ -55,7 +57,7 @@ def replay_via_exportframe(
     loaded outside of qrenderdoc, so this uses the custom `exportframe`
     subcommand compiled into renderdoccmd. It saves:
       - rgb.png    (backbuffer, uint8)
-      - depth.png  (depth target, normalized grayscale)
+      - depth.exr  (depth target, raw 32-bit float -- Python normalizes)
       - normal.png (world-space normals, auto-detected GBufferA)
 
     Returns ``(rgb, depth, normal)`` as numpy arrays (any may be None).
@@ -111,7 +113,7 @@ def replay_via_exportframe(
         return None, None, None
 
     rgb = load_rgb_image(replay_out)
-    depth = load_depth_image(replay_out)
+    depth = load_depth_image(replay_out, capture_profile)
     normal = load_normal_image(replay_out)
 
     for f in replay_out.iterdir():
@@ -210,7 +212,7 @@ def export_batch(
             logger.debug(f"[RDOC batch] Files: {[f.name for f in subdir.iterdir()]}")
 
         rgb = load_rgb_image(subdir)
-        depth = load_depth_image(subdir)
+        depth = load_depth_image(subdir, capture_profile)
         normal = load_normal_image(subdir)
 
         logger.debug(

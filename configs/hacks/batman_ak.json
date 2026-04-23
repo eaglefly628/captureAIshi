@@ -22,12 +22,12 @@
   ],
 
   "capture": {
-    "_comment": "Set indices after opening an .rdc in RenderDoc (--dump-all shows all targets). UE3: no reversed-Z.",
+    "_comment": "RGB: Colour Pass #12 (1 Target + Depth) first CT -- set rgb_index via Tools -> Analyze Capture File. Normal: Colour Pass #6 slot 1, R10G10B10A2 UNORM (auto-detect by format + MRT slot 1 works). Depth: D32S8_TYPELESS, standard (not reversed-Z). Visible depth 0.978-1.0 due to 1/z perspective nonlinearity; depth.exr keeps raw float, Python normalizes with depth_range at load time.",
     "rgb_index": -1,
     "normal_index": -1,
     "depth_index": -1,
     "depth_reversed_z": false,
-    "depth_range": null
+    "depth_range": [0.978, 1.0]
   },
 
   "camera_write_profile": {

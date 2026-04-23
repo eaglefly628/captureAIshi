@@ -42,8 +42,8 @@ Per-game texture index overrides for `renderdoccmd exportframe`. Set indices by 
 | `rgb_index` | int | -1 | Texture index for RGB output. -1 = auto (first Float ColorTarget, fallback SwapBuffer). |
 | `normal_index` | int | -1 | Texture index for normal map. -1 = auto (R10G10B10A2 scan + pipeline state). |
 | `depth_index` | int | -1 | Texture index for depth. -1 = auto (first DepthTarget). |
-| `depth_reversed_z` | bool | true | true = UE5 reversed-Z (near→1, far→0). false = UE3/standard (near→0, far→1). |
-| `depth_range` | [float,float] or null | null | Fixed [black_point, white_point] for depth normalization. null = auto (1st-99th percentile from first frame). |
+| `depth_reversed_z` | bool | true | Applied Python-side in image_loader. true = UE5 reversed-Z (near->1, far->0) renders near=white. false = UE3/standard (near->0, far->1) renders near=white. |
+| `depth_range` | [float,float] or null | null | Applied Python-side. Fixed [black_point, white_point] for raw-float depth.exr normalization. null = auto (1st-99th percentile per frame). |
 
 ## `camera_write_profile` (optional, future use)
 

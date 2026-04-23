@@ -44,38 +44,116 @@ def load_rgb_image(directory: Path) -> Optional[np.ndarray]:
     return None
 
 
-def load_depth_image(directory: Path) -> Optional[np.ndarray]:
-    """Load exported depth PNG as uint8 grayscale (H, W).
+def load_depth_image(
+    directory: Path,
+    capture_profile: Optional[dict] = None,
+) -> Optional[np.ndarray]:
+    """Load raw depth EXR and normalize to uint8 grayscale (H, W).
 
-    The C++ exportframe already normalizes depth (percentile black/white
-    point mapping + reversed-Z inversion) so the PNG is ready to use.
+    C++ ``exportframe`` writes ``depth.exr`` as raw 32-bit float; this
+    function applies the per-game ``depth_range`` and ``depth_reversed_z``
+    from ``capture_profile`` to produce a display-ready uint8 image.
+
+    ``capture_profile`` fields honoured:
+      - ``depth_range``: ``[bp, wp]`` for normalization. ``None`` = auto
+        (1st/99th percentile of valid pixels).
+      - ``depth_reversed_z``: ``True`` (UE5) = near(1.0)->white, far(0.0)->black.
+        ``False`` (UE3/standard) = near(0.0)->white, far(1.0)->black.
+        Default ``True``.
+
+    Falls back to legacy ``depth.png`` if no EXR is found (used when
+    renderdoccmd is older than the raw-EXR cutover).
     """
-    depth_file = directory / "depth.png"
-    if not depth_file.exists():
-        logger.debug("[RDOC] No depth.png found in export directory")
-        return None
+    profile = capture_profile or {}
+    depth_range = profile.get("depth_range")
+    reversed_z = profile.get("depth_reversed_z", True)
+
+    exr_file = directory / "depth.exr"
+    if exr_file.exists():
+        raw = _read_exr_red(exr_file)
+        if raw is None:
+            return None
+        return _normalize_depth(raw, depth_range, reversed_z)
+
+    png_file = directory / "depth.png"
+    if png_file.exists():
+        logger.debug("[RDOC] Using legacy depth.png (renderdoccmd pre-EXR)")
+        try:
+            from PIL import Image
+            return np.array(Image.open(str(png_file)).convert("L"), dtype=np.uint8)
+        except Exception as e:
+            logger.error(f"[RDOC] Failed to load legacy depth.png: {e}")
+            return None
+
+    logger.debug("[RDOC] No depth.exr or depth.png found in export directory")
+    return None
+
+
+def _read_exr_red(path: Path) -> Optional[np.ndarray]:
+    """Read red channel of an EXR as float32 (H, W). Tries imageio then OpenEXR."""
+    try:
+        import imageio.v3 as iio
+        arr = iio.imread(str(path))
+        if arr.ndim == 3:
+            arr = arr[:, :, 0]
+        return arr.astype(np.float32)
+    except Exception as e:
+        logger.debug(f"[RDOC] imageio EXR read failed ({e}), trying OpenEXR")
 
     try:
-        from PIL import Image
-        img = Image.open(str(depth_file)).convert("L")
-        arr = np.array(img, dtype=np.uint8)
-        logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.png")
-        return arr
-    except ImportError:
-        logger.warning("[RDOC] Pillow not installed -- trying imageio for depth")
-        try:
-            import imageio.v3 as iio
-            arr = iio.imread(str(depth_file))
-            if arr.ndim == 3:
-                arr = arr[:, :, 0]
-            logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]} from depth.png (imageio)")
-            return arr.astype(np.uint8)
-        except ImportError:
-            logger.error("[RDOC] Neither Pillow nor imageio installed -- cannot load depth")
-            return None
+        import OpenEXR
+        import Imath
+        f = OpenEXR.InputFile(str(path))
+        header = f.header()
+        dw = header["dataWindow"]
+        w = dw.max.x - dw.min.x + 1
+        h = dw.max.y - dw.min.y + 1
+        pt = Imath.PixelType(Imath.PixelType.FLOAT)
+        channel = "R" if "R" in header["channels"] else next(iter(header["channels"]))
+        raw = f.channel(channel, pt)
+        arr = np.frombuffer(raw, dtype=np.float32).reshape(h, w)
+        return arr.copy()
     except Exception as e:
-        logger.error(f"[RDOC] Failed to load depth from {depth_file}: {e}")
+        logger.error(f"[RDOC] Cannot read EXR {path}: install imageio[freeimage] or OpenEXR ({e})")
         return None
+
+
+def _normalize_depth(
+    raw: np.ndarray,
+    depth_range: Optional[list],
+    reversed_z: bool,
+) -> np.ndarray:
+    """Normalize float depth [0,1] to uint8 grayscale.
+
+    For ``reversed_z=True``, near=1.0 should render white, far=0.0 black.
+    For ``reversed_z=False``, near=0.0 should render white, far=1.0 black.
+    """
+    if depth_range is not None and len(depth_range) == 2:
+        bp, wp = float(depth_range[0]), float(depth_range[1])
+    else:
+        valid = raw[(raw > 0.0) & (raw < 1.0) & np.isfinite(raw)]
+        if valid.size > 100:
+            bp = float(np.percentile(valid, 1))
+            wp = float(np.percentile(valid, 99))
+            if wp - bp < 1e-9:
+                bp, wp = 0.0, 1.0
+        else:
+            bp, wp = 0.0, 1.0
+        logger.debug(f"[RDOC] depth auto-range: [{bp:.4f}, {wp:.4f}]")
+
+    lo, hi = (bp, wp) if wp >= bp else (wp, bp)
+    clipped = np.clip(raw, lo, hi)
+    if hi - lo < 1e-9:
+        return np.zeros(clipped.shape, dtype=np.uint8)
+
+    if reversed_z:
+        # near=1.0 -> white, far=0.0 -> black. Map wp (near) -> 1, bp (far) -> 0.
+        norm = (clipped - bp) / (wp - bp) if wp > bp else (bp - clipped) / (bp - wp)
+    else:
+        # near=0.0 -> white, far=1.0 -> black. Map bp (near) -> 1, wp (far) -> 0.
+        norm = (wp - clipped) / (wp - bp) if wp > bp else (clipped - wp) / (bp - wp)
+
+    return (np.clip(norm, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
 def load_normal_image(directory: Path) -> Optional[np.ndarray]:

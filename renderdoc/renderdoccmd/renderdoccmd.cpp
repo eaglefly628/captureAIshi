@@ -1042,7 +1042,6 @@ private:
   int normalIndex;   // -1 = auto-detect, >= 0 = use specific texture index
   int rgbIndex;      // -1 = auto-detect, >= 0 = use specific texture index
   int depthIndex;    // -1 = auto-detect (first DepthTarget), >= 0 = use specific texture index
-  bool reverseDepth; // true = UE5 reversed-Z (default), false = UE3/standard depth
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1057,7 +1056,6 @@ public:
     parser.add<int>("normal-index", '\0', "Use texture at this index as normal (from GBuffer scan output). -1 = auto-detect", false, -1);
     parser.add<int>("rgb-index", '\0', "Use texture at this index as RGB (from GBuffer scan output). -1 = auto-detect", false, -1);
     parser.add<int>("depth-index", '\0', "Use texture at this index as depth. -1 = auto (first DepthTarget)", false, -1);
-    parser.add("no-reverse-depth", '\0', "Disable reversed-Z inversion (use for UE3/standard depth: 0=near, 1=far)");
   }
   virtual const char *Description()
   {
@@ -1086,7 +1084,6 @@ public:
     normalIndex = parser.get<int>("normal-index");
     rgbIndex = parser.get<int>("rgb-index");
     depthIndex = parser.get<int>("depth-index");
-    reverseDepth = !parser.exist("no-reverse-depth");
     return true;
   }
 
@@ -1129,10 +1126,6 @@ public:
 
     int totalOK = 0;
     int totalFailed = 0;
-    // Depth range from first frame, reused for all subsequent frames in the batch.
-    // Per-frame percentile mapping causes inconsistent depth across a capture sequence.
-    float batchDepthBp = -1.0f;
-    float batchDepthWp = -1.0f;
 
     for(size_t fi = 0; fi < filenames.size(); fi++)
     {
@@ -1340,7 +1333,9 @@ public:
       const TextureDescription &tex = textures[i];
       uint32_t flags = (uint32_t)tex.creationFlags;
 
-      // Export depth buffer as normalized grayscale PNG
+      // Export depth buffer as raw 32-bit float EXR. Python normalizes per
+      // game config (depth_range) at load time -- preserves full precision
+      // and keeps range tuning iterable without recompile.
       bool isDepthTarget = (flags & (uint32_t)TextureCategory::DepthTarget) != 0;
       bool isDepthByIndex = (depthIndex >= 0 && (int)i == depthIndex);
       if(!foundDepth && (isDepthTarget || isDepthByIndex))
@@ -1349,72 +1344,21 @@ public:
                   << " " << tex.width << "x" << tex.height
                   << " fmt=" << (uint32_t)tex.format.type << std::endl;
 
-        // Compute percentile range from raw data for black/white point mapping
-        float bpVal = 0.0f, wpVal = 1.0f;
-        if(batchDepthBp >= 0.0f)
-        {
-          // Reuse first-frame range for consistent depth across the batch
-          bpVal = batchDepthBp;
-          wpVal = batchDepthWp;
-          std::cout << "  depth range (batch ref): [" << bpVal << ", " << wpVal << "]" << std::endl;
-        }
-        else
-        {
-          bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
-          if(!rawData.empty())
-          {
-            size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
-            size_t floatCount = rawData.size() / sizeof(float);
-
-            if(floatCount >= pixelCount)
-            {
-              const float *src = (const float *)rawData.data();
-              std::vector<float> validDepths;
-              validDepths.reserve(pixelCount);
-              for(size_t p = 0; p < pixelCount; p++)
-              {
-                float d = src[p];
-                if(d >= 0.0f && d <= 1.0f)
-                  validDepths.push_back(d);
-              }
-              if(!validDepths.empty())
-              {
-                std::sort(validDepths.begin(), validDepths.end());
-                size_t n = validDepths.size();
-                bpVal = validDepths[(size_t)(n * 0.01)];    // 1st percentile
-                wpVal = validDepths[(size_t)(n * 0.99)];    // 99th percentile
-                if(wpVal - bpVal < 1e-10f)
-                {
-                  bpVal = 0.0f;
-                  wpVal = 1.0f;
-                }
-                std::cout << "  depth range (1-99%%, will reuse for batch): ["
-                          << bpVal << ", " << wpVal << "]" << std::endl;
-                batchDepthBp = bpVal;
-                batchDepthWp = wpVal;
-              }
-            }
-          }
-        }
-
-        // Save depth as grayscale PNG.
-        // reverseDepth=true (UE5): swap bp/wp so near(1.0)->white, far(0.0)->black.
-        // reverseDepth=false (UE3/standard): near(0.0)->white, far(1.0)->black.
-        std::string depthPath = fileOutdir + sep + "depth.png";
+        std::string depthPath = fileOutdir + sep + "depth.exr";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
         texsave.slice.sliceIndex = 0;
         texsave.alpha = AlphaMapping::Discard;
-        texsave.destType = FileType::PNG;
-        texsave.channelExtract = 0;    // Red channel only (depth)
-        texsave.comp.blackPoint = reverseDepth ? wpVal : bpVal;
-        texsave.comp.whitePoint = reverseDepth ? bpVal : wpVal;
+        texsave.destType = FileType::EXR;
+        texsave.channelExtract = 0;    // Red channel = depth
+        // No blackPoint/whitePoint: EXR preserves raw float values.
 
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
         if(saveRes.OK())
         {
-          std::cout << "OK depth " << tex.width << "x" << tex.height << " -> " << depthPath << std::endl;
+          std::cout << "OK depth (raw EXR) " << tex.width << "x" << tex.height
+                    << " -> " << depthPath << std::endl;
           foundDepth = true;
         }
         else
