@@ -105,7 +105,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Uniform FOV marker size in 3D preview
+### [v0.2.0] 54cf28f -- xiaoni -- Uniform FOV marker size in 3D preview
 
 Follow-up to `5e7e1aa`: user reported capture markers with large FOV
 values blew up the frustum on the 3D canvas ("视图框特别长"). The
