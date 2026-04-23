@@ -1,9 +1,13 @@
 """Game hack profile operations: list/apply/lock/capture/write/read + inject."""
 
+import json
 import subprocess
 import sys
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request
+
+_HACKS_DIR = Path(__file__).resolve().parent.parent.parent / "configs" / "hacks"
 
 bp = Blueprint("hacks", __name__)
 
@@ -184,3 +188,46 @@ def hacks_read_pose(profile_id: str):
         return jsonify(game_profile.read_camera_pose(profile_id, slot))
     except ConnectionRefusedError:
         return jsonify({"ok": False, "error": "Bridge connection failed"}), 500
+
+
+@bp.route("/api/hacks/profile/<profile_id>/capture", methods=["GET"])
+def hack_capture_get(profile_id: str):
+    """Return the capture section of a hack profile JSON."""
+    if not profile_id.replace("_", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile id"}), 400
+    path = _HACKS_DIR / f"{profile_id}.json"
+    if not path.exists():
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return jsonify({
+            "ok": True,
+            "capture": data.get("capture", {}),
+            "display_name": data.get("display_name", profile_id),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.route("/api/hacks/profile/<profile_id>/capture", methods=["POST"])
+def hack_capture_save(profile_id: str):
+    """Overwrite the capture section of a hack profile JSON."""
+    if not profile_id.replace("_", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile id"}), 400
+    path = _HACKS_DIR / f"{profile_id}.json"
+    if not path.exists():
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    body = request.get_json(silent=True) or {}
+    capture = body.get("capture")
+    if not isinstance(capture, dict):
+        return jsonify({"ok": False, "error": "'capture' must be an object"}), 400
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        existing_comment = data.get("capture", {}).get("_comment")
+        if existing_comment:
+            capture.setdefault("_comment", existing_comment)
+        data["capture"] = capture
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500

@@ -918,15 +918,42 @@ body {
   padding: 8px 10px;
   min-width: 240px;
 }
+/* ─── Analyze RDC grid ─── */
+.ardc-card {
+  background: var(--bg-surface);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.ardc-card:hover { border-color: var(--border-strong); }
+.ardc-card.assigned-rgb { border-color: var(--success); }
+.ardc-card.assigned-normal { border-color: var(--accent); }
+.ardc-card.assigned-depth { border-color: var(--orange); }
+.ardc-card img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:2px; display:block; }
+.ardc-card .ardc-label { font-size:10px; color:var(--text-tertiary); margin-top:4px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ardc-card .ardc-badge { font-size:10px; font-weight:600; margin-top:3px; text-align:center; }
+.ardc-assign-btns { display:flex; gap:3px; margin-top:5px; justify-content:center; }
+.ardc-assign-btns button { font-size:9px; padding:2px 5px; border-radius:var(--radius); border:1px solid var(--border-default); background:var(--bg-overlay); color:var(--text-secondary); cursor:pointer; }
+.ardc-assign-btns button:hover { background:var(--accent-dim); color:var(--accent); }
 </style>
 </head>
 <body>
 
 <!-- Menu Bar -->
 <div class="menubar">
+  <div class="menu-item" onclick="toggleMenu(this)">Tools
+    <div class="menu-dropdown">
+      <div class="menu-dropdown-item" onclick="openAnalyzeRdc()">&#x1F50D; Analyze Capture File</div>
+      <div class="menu-dropdown-sep"></div>
+      <div class="menu-dropdown-item" onclick="openCaptureConfig()">&#x2699;&#xFE0E; Capture Config</div>
+    </div>
+  </div>
   <div class="menu-item" onclick="toggleMenu(this)">Help
     <div class="menu-dropdown">
       <div class="menu-dropdown-item" onclick="showModal('helpModal')">&#x2139;&#xFE0E; About captureAIshi</div>
+      <div class="menu-dropdown-item" onclick="showModal('bufferGuideModal')">&#x1F4D6; Buffer Analysis Guide</div>
       <div class="menu-dropdown-sep"></div>
       <div class="menu-dropdown-item" onclick="showModal('copyrightModal')">&#x00A9; Copyright</div>
     </div>
@@ -951,6 +978,65 @@ body {
     <p>Author: lijunbai</p>
     <p style="font-size:11px;color:var(--text-tertiary)">All rights reserved.</p>
     <button class="modal-close" onclick="closeModal(copyrightModal)">OK</button>
+  </div>
+</div>
+
+<!-- Buffer Analysis Guide Modal -->
+<div class="modal-overlay" id="bufferGuideModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal-box" style="max-width:560px;text-align:left">
+    <h3 style="margin-bottom:14px">Buffer Analysis Guide</h3>
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.7;overflow-y:auto;max-height:460px">
+      <p style="margin-bottom:8px"><b style="color:var(--accent)">Goal:</b> Find the correct texture indices for RGB, Normal, and Depth in your game's .rdc capture.</p>
+      <p style="margin-bottom:4px"><b>1. Open .rdc in RenderDoc</b></p>
+      <p style="margin-bottom:8px;padding-left:10px">File &rarr; Open Capture &rarr; select your .rdc file. Or use <b>Tools &rarr; Analyze Capture File</b> (automated).</p>
+      <p style="margin-bottom:4px"><b>2. Open the Texture Viewer</b></p>
+      <p style="margin-bottom:8px;padding-left:10px">Click <i>Texture Viewer</i> tab. The resource list on the left shows all textures used in that frame.</p>
+      <p style="margin-bottom:4px"><b>3. Find the RGB (backbuffer)</b></p>
+      <p style="margin-bottom:8px;padding-left:10px">Look for a texture matching render resolution. Usually the last ColorTarget with <code>R8G8B8A8</code> or <code>B8G8R8A8</code> format. The texture index shown in the resource list is the number to use as <code>rgb_index</code>.</p>
+      <p style="margin-bottom:4px"><b>4. Find the Depth buffer</b></p>
+      <p style="margin-bottom:8px;padding-left:10px">Filter by <i>DepthTarget</i> in the resource panel. Format is typically <code>D24S8</code> or <code>D32F</code>. Note the index for <code>depth_index</code>. UE3/standard depth: <code>depth_reversed_z: false</code>. UE5: <code>true</code>.</p>
+      <p style="margin-bottom:4px"><b>5. Find the Normal buffer (GBuffer)</b></p>
+      <p style="margin-bottom:8px;padding-left:10px">UE5: look for <code>R10G10B10A2</code> format &mdash; that's GBufferA (WorldNormal). UE3: may be a separate <code>R8G8B8A8</code> render target. Browse render targets and look for one that visually shows surface normals (rainbow colors from different angles).</p>
+      <p style="margin-bottom:4px"><b>6. Record indices</b></p>
+      <p style="margin-bottom:8px;padding-left:10px">The index is the number in brackets in the resource list (0-based). Use <b>Tools &rarr; Capture Config</b> to see current settings, then ask the AI to update <code>configs/hacks/&lt;game_id&gt;.json</code> with the correct values.</p>
+      <p style="color:var(--text-tertiary);font-size:11px">Shortcut: use <b>Tools &rarr; Analyze Capture File</b> to run automated export and see all ct_*.png thumbnails side by side.</p>
+    </div>
+    <button class="modal-close" onclick="closeModal('bufferGuideModal')" style="margin-top:16px">Close</button>
+  </div>
+</div>
+
+<!-- Capture Config Modal -->
+<div class="modal-overlay" id="captureConfigModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal-box" style="max-width:500px;text-align:left">
+    <h3 style="margin-bottom:10px">Capture Config</h3>
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+      <select id="ccProfileSel" class="sel" style="flex:1" onchange="loadCaptureConfig()">
+        <option value="">-- select profile --</option>
+      </select>
+      <button class="btn" onclick="loadCaptureConfig()">Refresh</button>
+    </div>
+    <div id="ccContent" style="font-size:12px;color:var(--text-secondary);min-height:80px">
+      <span style="color:var(--text-tertiary)">Select a hack profile above.</span>
+    </div>
+    <button class="modal-close" onclick="closeModal('captureConfigModal')" style="margin-top:16px">Close</button>
+  </div>
+</div>
+
+<!-- Analyze RDC Modal -->
+<div class="modal-overlay" id="analyzeRdcModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal-box" style="max-width:720px;text-align:left;padding:24px 28px">
+    <h3 style="margin-bottom:12px">Analyze Capture File</h3>
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <input id="ardcPath" type="text" class="inp" style="flex:1;font-size:12px" placeholder="C:\path\to\capture.rdc">
+      <button class="btn btn-accent" onclick="runAnalyzeRdc()">Analyze</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+      <span style="font-size:11px;color:var(--text-tertiary);flex:0 0 auto">Save to profile:</span>
+      <select id="ardcProfileSel" class="sel" style="flex:1"></select>
+      <button class="btn" id="ardcSaveBtn" onclick="saveAnalyzeIndices()" style="display:none">Save Indices</button>
+    </div>
+    <div id="ardcStatus" style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px"></div>
+    <div id="ardcGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;max-height:400px;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -3447,6 +3533,166 @@ toggleDebugPanel=function(){
   var p=document.getElementById('debugPanel');
   if(p.style.display!=='none') updateScanStatus();
 };
+
+// ─── Tools: Capture Config ───
+function openCaptureConfig() {
+  document.querySelectorAll('.menu-item.open').forEach(m=>m.classList.remove('open'));
+  _populateCCProfiles().then(()=>showModal('captureConfigModal'));
+}
+async function _populateCCProfiles() {
+  var sel = document.getElementById('ccProfileSel');
+  if (sel.options.length > 1) return;
+  try {
+    var r = await fetch('/api/hacks/list');
+    var d = await r.json();
+    if (d.ok && d.profiles) {
+      d.profiles.forEach(function(p) {
+        var o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = p.display_name || p.id;
+        sel.appendChild(o);
+      });
+    }
+  } catch(e) {}
+}
+async function loadCaptureConfig() {
+  var sel = document.getElementById('ccProfileSel');
+  var content = document.getElementById('ccContent');
+  if (!sel.value) { content.innerHTML = '<span style="color:var(--text-tertiary)">Select a hack profile above.</span>'; return; }
+  content.innerHTML = '<span style="color:var(--text-tertiary)">Loading...</span>';
+  try {
+    var r = await fetch('/api/hacks/profile/'+sel.value+'/capture');
+    var d = await r.json();
+    if (!d.ok) { content.innerHTML = '<span style="color:var(--danger)">'+d.error+'</span>'; return; }
+    var cap = d.capture || {};
+    var rows = Object.entries(cap).filter(([k])=>k!=='_comment').map(function([k,v]) {
+      var color = v === -1 ? 'var(--text-tertiary)' : v === null ? 'var(--text-tertiary)' : 'var(--text-primary)';
+      var display = v === null ? 'null' : JSON.stringify(v);
+      return '<tr><td style="padding:3px 8px 3px 0;color:var(--text-secondary);white-space:nowrap">'+k+'</td><td style="padding:3px 0;color:'+color+';font-family:var(--font-mono)">'+display+'</td></tr>';
+    }).join('');
+    var comment = cap._comment ? '<p style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px;font-style:italic">'+cap._comment+'</p>' : '';
+    content.innerHTML = comment + '<table style="border-collapse:collapse;width:100%">'+rows+'</table>';
+    if (d.display_name) content.innerHTML = '<p style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:10px">'+d.display_name+'</p>' + content.innerHTML;
+  } catch(e) { content.innerHTML = '<span style="color:var(--danger)">'+e+'</span>'; }
+}
+
+// ─── Tools: Analyze RDC ───
+var _ardcAssign = {rgb_index:-1, normal_index:-1, depth_index:-1};
+function openAnalyzeRdc() {
+  document.querySelectorAll('.menu-item.open').forEach(m=>m.classList.remove('open'));
+  _ardcAssign = {rgb_index:-1, normal_index:-1, depth_index:-1};
+  document.getElementById('ardcGrid').innerHTML = '';
+  document.getElementById('ardcStatus').textContent = '';
+  document.getElementById('ardcSaveBtn').style.display = 'none';
+  _populateArdcProfiles();
+  showModal('analyzeRdcModal');
+}
+async function _populateArdcProfiles() {
+  var sel = document.getElementById('ardcProfileSel');
+  if (sel.options.length > 0) return;
+  try {
+    var r = await fetch('/api/hacks/list');
+    var d = await r.json();
+    if (d.ok && d.profiles) {
+      d.profiles.forEach(function(p) {
+        var o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = p.display_name || p.id;
+        sel.appendChild(o);
+      });
+    }
+  } catch(e) {}
+}
+async function runAnalyzeRdc() {
+  var path = document.getElementById('ardcPath').value.trim();
+  if (!path) { document.getElementById('ardcStatus').textContent = 'Enter an .rdc file path.'; return; }
+  var status = document.getElementById('ardcStatus');
+  var grid = document.getElementById('ardcGrid');
+  status.textContent = 'Analyzing...';
+  grid.innerHTML = '';
+  document.getElementById('ardcSaveBtn').style.display = 'none';
+  _ardcAssign = {rgb_index:-1, normal_index:-1, depth_index:-1};
+  try {
+    var r = await fetch('/api/tools/analyze_rdc', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({rdc_path: path})
+    });
+    var d = await r.json();
+    if (!d.ok) { status.textContent = 'Error: ' + d.error; return; }
+    if (!d.textures || d.textures.length === 0) {
+      status.textContent = 'No color targets found. Check the .rdc path and renderdoccmd.';
+      return;
+    }
+    status.textContent = d.textures.length + ' color target(s) found. Click to assign roles.';
+    _renderArdcGrid(d.textures);
+  } catch(e) { status.textContent = 'Request failed: ' + e; }
+}
+var _ardcTextures = [];
+function _renderArdcGrid(textures) {
+  _ardcTextures = textures;
+  var grid = document.getElementById('ardcGrid');
+  grid.innerHTML = '';
+  textures.forEach(function(t) {
+    var card = document.createElement('div');
+    card.className = 'ardc-card';
+    card.id = 'ardc-card-' + t.tex_index;
+    card.innerHTML = '<img src="'+t.img_url+'" loading="lazy" onerror="this.style.display=\'none\'">'
+      + '<div class="ardc-label">idx='+t.tex_index+' fmt='+t.fmt+' '+t.width+'x'+t.height+'</div>'
+      + '<div class="ardc-badge" id="ardc-badge-'+t.tex_index+'"></div>'
+      + '<div class="ardc-assign-btns">'
+      +   '<button onclick="ardcAssign(\'rgb_index\','+t.tex_index+')">RGB</button>'
+      +   '<button onclick="ardcAssign(\'normal_index\','+t.tex_index+')">Normal</button>'
+      +   '<button onclick="ardcAssign(\'depth_index\','+t.tex_index+')">Depth</button>'
+      + '</div>';
+    grid.appendChild(card);
+  });
+}
+function ardcAssign(role, texIdx) {
+  // Clear previous assignment for this role
+  if (_ardcAssign[role] >= 0) {
+    var old = document.getElementById('ardc-card-' + _ardcAssign[role]);
+    if (old) { old.classList.remove('assigned-rgb','assigned-normal','assigned-depth'); }
+    var ob = document.getElementById('ardc-badge-' + _ardcAssign[role]);
+    if (ob) ob.textContent = '';
+  }
+  _ardcAssign[role] = texIdx;
+  var cls = role === 'rgb_index' ? 'assigned-rgb' : role === 'normal_index' ? 'assigned-normal' : 'assigned-depth';
+  var label = role === 'rgb_index' ? 'RGB' : role === 'normal_index' ? 'Normal' : 'Depth';
+  var color = role === 'rgb_index' ? 'var(--success)' : role === 'normal_index' ? 'var(--accent)' : 'var(--orange)';
+  var card = document.getElementById('ardc-card-' + texIdx);
+  if (card) card.className = 'ardc-card ' + cls;
+  var badge = document.getElementById('ardc-badge-' + texIdx);
+  if (badge) { badge.textContent = label; badge.style.color = color; }
+  var anyAssigned = Object.values(_ardcAssign).some(function(v){return v>=0;});
+  document.getElementById('ardcSaveBtn').style.display = anyAssigned ? '' : 'none';
+}
+async function saveAnalyzeIndices() {
+  var sel = document.getElementById('ardcProfileSel');
+  if (!sel.value) { document.getElementById('ardcStatus').textContent = 'Select a profile first.'; return; }
+  var status = document.getElementById('ardcStatus');
+  // Load existing capture config and merge
+  try {
+    var r = await fetch('/api/hacks/profile/'+sel.value+'/capture');
+    var d = await r.json();
+    var existing = d.ok ? (d.capture || {}) : {};
+    var updated = Object.assign({}, existing);
+    if (_ardcAssign.rgb_index >= 0) updated.rgb_index = _ardcAssign.rgb_index;
+    if (_ardcAssign.normal_index >= 0) updated.normal_index = _ardcAssign.normal_index;
+    if (_ardcAssign.depth_index >= 0) updated.depth_index = _ardcAssign.depth_index;
+    var sr = await fetch('/api/hacks/profile/'+sel.value+'/capture', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({capture: updated})
+    });
+    var sd = await sr.json();
+    if (sd.ok) {
+      status.textContent = 'Saved to '+sel.value+'. Indices: rgb='+updated.rgb_index+' normal='+updated.normal_index+' depth='+updated.depth_index;
+      status.style.color = 'var(--success)';
+    } else {
+      status.textContent = 'Save failed: ' + sd.error;
+      status.style.color = 'var(--danger)';
+    }
+  } catch(e) { status.textContent = 'Error: '+e; }
+}
 </script>
 </body>
 </html>
