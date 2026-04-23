@@ -112,7 +112,7 @@ def replay_via_exportframe(
         logger.error(f"[RDOC] Failed to run exportframe: {e}")
         return None, None, None
 
-    rgb = load_rgb_image(replay_out)
+    rgb = load_rgb_image(replay_out, capture_profile)
     depth = load_depth_image(replay_out, capture_profile)
     normal = load_normal_image(replay_out)
 
@@ -211,7 +211,7 @@ def export_batch(
         if subdir.exists():
             logger.debug(f"[RDOC batch] Files: {[f.name for f in subdir.iterdir()]}")
 
-        rgb = load_rgb_image(subdir)
+        rgb = load_rgb_image(subdir, capture_profile)
         depth = load_depth_image(subdir, capture_profile)
         normal = load_normal_image(subdir)
 

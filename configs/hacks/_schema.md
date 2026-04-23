@@ -40,6 +40,7 @@ Per-game texture index overrides for `renderdoccmd exportframe`. Set indices by 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `rgb_index` | int | -1 | Texture index for RGB output. -1 = auto (first Float ColorTarget, fallback SwapBuffer). |
+| `rgb_linear` | bool | false | Set `true` when the RGB source is a linear-space Float texture (e.g. UE3/UE4 SceneColor). Python applies linear-to-sRGB gamma after loading. Not needed for SwapBuffer (already gamma-corrected). |
 | `normal_index` | int | -1 | Texture index for normal map. -1 = auto (R10G10B10A2 scan + pipeline state). |
 | `depth_index` | int | -1 | Texture index for depth. -1 = auto (first DepthTarget). |
 | `depth_reversed_z` | bool | true | Applied Python-side in image_loader. true = UE5 reversed-Z (near->1, far->0) renders near=white. false = UE3/standard (near->0, far->1) renders near=white. |

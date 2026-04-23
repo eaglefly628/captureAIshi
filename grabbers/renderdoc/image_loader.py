@@ -14,8 +14,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def load_rgb_image(directory: Path) -> Optional[np.ndarray]:
-    """Load exported RGB image (png/jpg/bmp/tga) as uint8 (H, W, 3)."""
+def load_rgb_image(
+    directory: Path,
+    capture_profile: Optional[dict] = None,
+) -> Optional[np.ndarray]:
+    """Load exported RGB image (png/jpg/bmp/tga) as uint8 (H, W, 3).
+
+    If ``capture_profile["rgb_linear"]`` is True, applies linear-to-sRGB gamma
+    correction after loading.  Use this when the C++ exported a Float SceneColor
+    texture which was saved linearly (RenderDoc does NOT apply gamma on PNG save).
+    """
     for ext in ("png", "jpg", "bmp", "tga"):
         rgb_file = directory / f"rgb.{ext}"
         if rgb_file.exists():
@@ -24,7 +32,6 @@ def load_rgb_image(directory: Path) -> Optional[np.ndarray]:
                 img = Image.open(str(rgb_file)).convert("RGB")
                 arr = np.array(img, dtype=np.uint8)
                 logger.debug(f"[RDOC] Loaded RGB: {arr.shape[1]}x{arr.shape[0]} from {rgb_file.name}")
-                return arr
             except ImportError:
                 logger.warning("[RDOC] Pillow not installed -- trying imageio for RGB")
                 try:
@@ -32,16 +39,37 @@ def load_rgb_image(directory: Path) -> Optional[np.ndarray]:
                     arr = iio.imread(str(rgb_file))
                     if arr.ndim == 3 and arr.shape[2] == 4:
                         arr = arr[:, :, :3]
+                    arr = arr.astype(np.uint8)
                     logger.debug(f"[RDOC] Loaded RGB: {arr.shape[1]}x{arr.shape[0]} from {rgb_file.name}")
-                    return arr
                 except ImportError:
                     logger.error("[RDOC] Neither Pillow nor imageio installed -- cannot load RGB")
                     return None
             except Exception as e:
                 logger.error(f"[RDOC] Failed to load RGB from {rgb_file}: {e}")
                 return None
+
+            profile = capture_profile or {}
+            if profile.get("rgb_linear", False):
+                arr = _linear_to_srgb(arr)
+                logger.debug(f"[RDOC] Applied linear->sRGB gamma to RGB")
+            return arr
+
     logger.debug("[RDOC] No RGB image found in export directory")
     return None
+
+
+def _linear_to_srgb(arr: np.ndarray) -> np.ndarray:
+    """Apply linear-to-sRGB gamma correction to a uint8 RGB array.
+
+    RenderDoc saves Float SceneColor textures with no gamma applied.
+    This maps the linear [0,255] values through the sRGB transfer function
+    so the image looks correct on a standard gamma-corrected display.
+    """
+    f = arr.astype(np.float32) / 255.0
+    # sRGB piecewise transfer function
+    linear_mask = f <= 0.0031308
+    f = np.where(linear_mask, f * 12.92, 1.055 * np.power(np.maximum(f, 1e-9), 1.0 / 2.4) - 0.055)
+    return (np.clip(f, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
 def load_depth_image(
@@ -90,7 +118,24 @@ def load_depth_image(
 
 
 def _read_exr_red(path: Path) -> Optional[np.ndarray]:
-    """Read red channel of an EXR as float32 (H, W). Tries imageio then OpenEXR."""
+    """Read red channel of an EXR as float32 (H, W).
+
+    Tries cv2 (most common), then imageio, then OpenEXR.
+    Install any one: ``pip install opencv-python`` / ``pip install "imageio[freeimage]"`` / ``pip install OpenEXR``.
+    """
+    try:
+        import cv2
+        arr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if arr is None:
+            raise RuntimeError("cv2.imread returned None")
+        if arr.ndim == 3:
+            arr = arr[:, :, 0]
+        return arr.astype(np.float32)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"[RDOC] cv2 EXR read failed ({e}), trying imageio")
+
     try:
         import imageio.v3 as iio
         arr = iio.imread(str(path))
@@ -114,7 +159,10 @@ def _read_exr_red(path: Path) -> Optional[np.ndarray]:
         arr = np.frombuffer(raw, dtype=np.float32).reshape(h, w)
         return arr.copy()
     except Exception as e:
-        logger.error(f"[RDOC] Cannot read EXR {path}: install imageio[freeimage] or OpenEXR ({e})")
+        logger.error(
+            f"[RDOC] Cannot read EXR {path}: "
+            f"install opencv-python, imageio[freeimage], or OpenEXR ({e})"
+        )
         return None
 
 
