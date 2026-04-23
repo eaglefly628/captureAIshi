@@ -76,44 +76,32 @@ def load_depth_image(
     directory: Path,
     capture_profile: Optional[dict] = None,
 ) -> Optional[np.ndarray]:
-    """Load raw depth EXR and normalize to uint8 grayscale (H, W).
+    """Load depth image as uint8 grayscale (H, W).
 
-    C++ ``exportframe`` writes ``depth.exr`` as raw 32-bit float; this
-    function applies the per-game ``depth_range`` and ``depth_reversed_z``
-    from ``capture_profile`` to produce a display-ready uint8 image.
-
-    ``capture_profile`` fields honoured:
-      - ``depth_range``: ``[bp, wp]`` for normalization. ``None`` = auto
-        (1st/99th percentile of valid pixels).
-      - ``depth_reversed_z``: ``True`` (UE5) = near(1.0)->white, far(0.0)->black.
-        ``False`` (UE3/standard) = near(0.0)->white, far(1.0)->black.
-        Default ``True``.
-
-    Falls back to legacy ``depth.png`` if no EXR is found (used when
-    renderdoccmd is older than the raw-EXR cutover).
+    C++ ``exportframe`` writes ``depth.png`` (normalized grayscale, percentile
+    range, far=white convention). If ``depth.exr`` is present instead (future
+    upgrade path), this function normalizes it using ``capture_profile``.
     """
-    profile = capture_profile or {}
-    depth_range = profile.get("depth_range")
-    reversed_z = profile.get("depth_reversed_z", True)
+    png_file = directory / "depth.png"
+    if png_file.exists():
+        try:
+            from PIL import Image
+            arr = np.array(Image.open(str(png_file)).convert("L"), dtype=np.uint8)
+            logger.debug(f"[RDOC] Loaded depth: {arr.shape[1]}x{arr.shape[0]}")
+            return arr
+        except Exception as e:
+            logger.error(f"[RDOC] Failed to load depth.png: {e}")
+            return None
 
     exr_file = directory / "depth.exr"
     if exr_file.exists():
+        profile = capture_profile or {}
         raw = _read_exr_red(exr_file)
         if raw is None:
             return None
-        return _normalize_depth(raw, depth_range, reversed_z)
+        return _normalize_depth(raw, profile.get("depth_range"), profile.get("depth_reversed_z", True))
 
-    png_file = directory / "depth.png"
-    if png_file.exists():
-        logger.debug("[RDOC] Using legacy depth.png (renderdoccmd pre-EXR)")
-        try:
-            from PIL import Image
-            return np.array(Image.open(str(png_file)).convert("L"), dtype=np.uint8)
-        except Exception as e:
-            logger.error(f"[RDOC] Failed to load legacy depth.png: {e}")
-            return None
-
-    logger.debug("[RDOC] No depth.exr or depth.png found in export directory")
+    logger.debug("[RDOC] No depth.png or depth.exr found in export directory")
     return None
 
 

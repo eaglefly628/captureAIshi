@@ -26,11 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def capture_export_args(capture_profile: dict) -> list:
-    """Build per-game exportframe CLI flags from ``capture_profile``.
-
-    Note: ``depth_reversed_z`` and ``depth_range`` are applied Python-side
-    in ``image_loader.load_depth_image`` -- C++ exports raw float EXR.
-    """
+    """Build per-game exportframe CLI flags from ``capture_profile``."""
     args = []
     rgb_index = capture_profile.get("rgb_index", -1)
     if rgb_index is not None and rgb_index >= 0:
@@ -41,6 +37,8 @@ def capture_export_args(capture_profile: dict) -> list:
     depth_index = capture_profile.get("depth_index", -1)
     if depth_index is not None and depth_index >= 0:
         args += ["--depth-index", str(depth_index)]
+    if not capture_profile.get("depth_reversed_z", True):
+        args.append("--no-reverse-depth")
     return args
 
 
