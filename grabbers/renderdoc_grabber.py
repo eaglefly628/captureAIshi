@@ -93,6 +93,26 @@ class RenderDocGrabber(FrameGrabber):
     def setup(self) -> None:
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
+        # Purge stale .rdc files from previous sessions so the capture_dir
+        # doesn't balloon over time. Each file can be hundreds of MB.
+        # Only the .rdc / .rdc.cap sidecar formats are removed -- nothing
+        # else in the dir is touched.
+        stale = []
+        for pattern in ("*.rdc", "*.rdc.cap", "*.rdc.mp"):
+            stale.extend(self.capture_dir.glob(pattern))
+        if stale:
+            total_mb = 0.0
+            for p in stale:
+                try:
+                    total_mb += p.stat().st_size / (1024 * 1024)
+                    p.unlink()
+                except OSError as e:
+                    logger.warning(f"[CLEAN] Failed to unlink {p}: {e}")
+            logger.info(
+                "[CLEAN] Removed %d stale capture file(s) from %s (%.1f MB)",
+                len(stale), self.capture_dir, total_mb,
+            )
+
         if self._use_native:
             if _bridge.init_capture_api():
                 logger.info("Native RenderDoc bridge initialized (in-app API)")

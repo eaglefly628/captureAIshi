@@ -105,6 +105,15 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Clean stale .rdc on grabber.setup()
+
+Per user ask: "每次启动后清除掉以前的rdc，不然会越来越大".
+
+- `grabbers/renderdoc_grabber.py` `setup()`: right after
+  `capture_dir.mkdir()`, glob `*.rdc` / `*.rdc.cap` / `*.rdc.mp` and
+  unlink each. Logs count + total MB removed. Only touches the three
+  RDC capture-file extensions; other files in the dir are left alone.
+
 ### [v0.2.0] f7645a1 -- xiaoni -- Fix RDC captures landing in game install dir (relative path bug)
 
 User found the missing .rdc files via Everything search:
