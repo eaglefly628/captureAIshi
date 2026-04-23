@@ -64,7 +64,10 @@ class RenderDocGrabber(FrameGrabber):
         # launch path triggers D3D12 device-integrity checks and crashes
         # (e.g. Cyberpunk 2077 2.x ray-tracing init).
         self.renderdoc_path = renderdoc_path
-        self.capture_dir = Path(capture_dir)
+        # Absolute so every downstream consumer (renderdoccmd capture
+        # --capture-file, trajectory_player glob watcher, Decode fallback
+        # search) sees the same path regardless of process CWD.
+        self.capture_dir = Path(capture_dir).resolve()
         self.target_exe = target_exe
         self.target_args = target_args or []
         self.capture_key = capture_key
@@ -93,7 +96,11 @@ class RenderDocGrabber(FrameGrabber):
         if self._use_native:
             if _bridge.init_capture_api():
                 logger.info("Native RenderDoc bridge initialized (in-app API)")
-                _bridge.set_capture_path(str(self.capture_dir / "frame"))
+                # Absolute path -- RDC resolves the template inside the
+                # game process, whose CWD is typically the game install
+                # dir (e.g. Steam's Batman Win64), so a relative path
+                # would land the .rdc files there instead of ours.
+                _bridge.set_capture_path(str(self.capture_dir.resolve() / "frame"))
             else:
                 logger.info(
                     "Native bridge loaded but in-app API not available "

@@ -228,13 +228,18 @@ def start_renderdoccmd_capture(
     UI sees renderdoccmd output in real time.
     """
     rdoc_cmd = resolve_renderdoccmd(renderdoc_path)
+    # Absolute path so RenderDoc inside the game process doesn't resolve
+    # ``output/ue5_rdoc/captures/frame`` against the game's own CWD (e.g.
+    # Steam's Batman install dir).
+    capture_template = str(Path(capture_dir).resolve() / "frame")
     logger.info(f"Launching {target_exe} via RenderDoc ({rdoc_cmd})...")
+    logger.info(f"RDC capture template: {capture_template}")
     # renderdoccmd syntax: capture [--opts] <exe> [game args]
     # All --opt flags must come BEFORE the executable path.
     cmd = [
         rdoc_cmd, "capture",
         "--opt-hook-children",
-        "--capture-file", str(capture_dir / "frame"),
+        "--capture-file", capture_template,
         "--wait-for-exit",
         target_exe,
     ] + target_args

@@ -105,6 +105,35 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Fix RDC captures landing in game install dir (relative path bug)
+
+User found the missing .rdc files via Everything search:
+`D:\SteamLibrary\steamapps\common\Batman Arkham Knight\Binaries\Win64\output\ue5_rdoc\captures\`
+
+Root cause: `renderdoccmd capture --capture-file <capture_dir>/frame`
+and `_bridge.set_capture_path(<capture_dir>/frame)` were both passing a
+**relative** path (the grabber's default `capture_dir="./captures"`
+or similar). RenderDoc resolves that template **inside the game
+process**, whose CWD is the game's install directory (e.g. Steam's
+Batman `Win64`), so every .rdc landed there instead of under our
+project's `output\ue5_rdoc\captures\`.
+
+This is also the "以前是好的" (used-to-work) regression: a past
+session had us cd'ing to the project root before starting the game,
+or the capture_dir was already absolute; neither holds after recent
+grabber refactors (73902db) / web_ui split.
+
+- `grabbers/renderdoc_grabber.py` `__init__`: resolve `capture_dir`
+  to absolute on construction so every downstream consumer
+  (renderdoccmd CLI arg, trajectory_player glob watcher, Decode
+  fallback search) sees the same path regardless of process CWD.
+- `grabbers/renderdoc_grabber.py` `setup()`: `_bridge.set_capture_path`
+  now passes `capture_dir.resolve() / "frame"` explicitly as belt-
+  and-suspenders.
+- `grabbers/renderdoc/launch.py` `start_renderdoccmd_capture`:
+  `--capture-file` arg built from `Path(capture_dir).resolve()` and
+  logged so future regressions show the abs path in the log.
+
 ### [v0.2.0] bbcb700 -- xiaoni -- RDC capture path diagnostics + wider decode search
 
 User report: `captures=7 rdc_files=0` — bridge fired
