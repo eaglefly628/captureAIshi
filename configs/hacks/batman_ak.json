@@ -27,8 +27,7 @@
     "normal_index": -1,
     "depth_index": -1,
     "depth_reversed_z": false,
-    "depth_range": [0.978, 1.0],
-    "rgb_linear": true
+    "depth_range": [0.978, 1.0]
   },
 
   "camera_write_profile": {
