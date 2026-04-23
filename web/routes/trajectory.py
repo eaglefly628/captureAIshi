@@ -21,7 +21,13 @@ def trajectory_presets():
 
 
 def _generate_points(body: dict):
-    """Parse {preset, params} and return (preset_name, points)."""
+    """Parse {preset, params} and return (preset_name, fine_path, capture_indices).
+
+    The returned ``fine_path`` is a dense sampling (``FINE_PATH_SAMPLES``) for
+    smooth 3D preview and smooth camera streaming; ``capture_indices`` are
+    the user's sample-count evenly-spaced indices into that path, i.e. the
+    waypoints where RDC captures are fired.
+    """
     from drivers import trajectory_presets as tp
     preset = body.get("preset")
     if not isinstance(preset, str):
@@ -29,7 +35,8 @@ def _generate_points(body: dict):
     params = body.get("params", {})
     if not isinstance(params, dict):
         raise ValueError("'params' must be an object")
-    return preset, tp.generate(preset, params)
+    fine_path, indices = tp.generate_smooth(preset, params)
+    return preset, fine_path, indices
 
 
 @bp.route("/api/trajectory/preview", methods=["POST"])
@@ -41,14 +48,19 @@ def trajectory_preview():
     """
     body = request.get_json(silent=True) or {}
     try:
-        _, pts = _generate_points(body)
+        _, pts, indices = _generate_points(body)
     except (KeyError, ValueError, TypeError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({
         "ok": True,
         "duration": pts[-1].t if pts else 0.0,
         "count": len(pts),
+        # Fine path for the 3D preview polyline + live camera streaming.
         "points": [p.as_tuple() for p in pts],
+        # Indices into ``points`` where RDC captures are fired (user's
+        # sample count, evenly spaced). UI draws FOV + arrow at each.
+        "capture_indices": indices,
+        "capture_count": len(indices),
     })
 
 
@@ -67,7 +79,7 @@ def trajectory_play():
     if not isinstance(profile_id, str) or not profile_id.replace("_", "").isalnum():
         return jsonify({"ok": False, "error": "bad profile_id"}), 400
     try:
-        preset, pts = _generate_points(body)
+        preset, pts, capture_indices = _generate_points(body)
     except (KeyError, ValueError, TypeError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -118,6 +130,7 @@ def trajectory_play():
             capture_interval=max(0.1, float(body.get("capture_interval", 1.5))),
             capture_dir=capture_dir,
             decode_callback=decode_callback,
+            capture_indices=capture_indices,
         )
     except FileNotFoundError:
         return jsonify({"ok": False, "error": "profile not found"}), 404

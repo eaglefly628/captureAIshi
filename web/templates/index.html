@@ -1789,30 +1789,92 @@ function draw3d() {
       ctx.fillText('end', sN.x + 6 * devicePixelRatio, sN.y - 3 * devicePixelRatio);
     }
 
-    // Sparse orientation tics so the viewer can read the camera's yaw.
-    // Draw ~20 arrows regardless of sample count.
-    const step = Math.max(1, Math.floor(pts.length / 20));
-    ctx.strokeStyle = 'rgba(34,211,238,0.55)';
-    ctx.lineWidth = 1 * devicePixelRatio;
-    for (let i = 0; i < pts.length; i += step) {
+    // Capture markers: at each index in capture_indices draw a dot, the
+    // forward arrow, and a crude FOV frustum (4 edges from eye to a far
+    // rectangle in the look direction). If the preview response didn't
+    // ship capture_indices (older server), fall back to ~8 evenly-spaced
+    // waypoints so the UI still gets markers.
+    let capIdx = trajPreview.capture_indices;
+    if (!Array.isArray(capIdx) || !capIdx.length) {
+      const N = Math.min(8, pts.length);
+      capIdx = [];
+      for (let k = 0; k < N; k++) {
+        capIdx.push(Math.round(k * (pts.length - 1) / Math.max(1, N - 1)));
+      }
+    }
+    const arrowLen = Math.max(cam3d.dist * 0.025, 3);
+    const fovLen = Math.max(cam3d.dist * 0.045, 4);
+    capIdx.forEach(i => {
+      if (i < 0 || i >= pts.length) return;
       const p = pts[i];
       const yawRad = p[5] * Math.PI / 180;
       const pitchRad = p[4] * Math.PI / 180;
+      const rollRad = (p[6] || 0) * Math.PI / 180;
+      const fovV = Math.max(1, Math.min(179, p[7] || 70));
+      const fovH = fovV; // approx 1:1 if aspect ~1; good enough for the hint
       // Forward vector in UE convention (yaw 0 -> +X, pitch+ -> look up).
-      // Length is a small fraction of the orbit radius so arrows don't
-      // clutter tight helices.
-      const arrowLen = Math.max(cam3d.dist * 0.02, 2);
       const fx = Math.cos(yawRad) * Math.cos(pitchRad);
       const fy = Math.sin(yawRad) * Math.cos(pitchRad);
       const fz = Math.sin(pitchRad);
-      const a = project3d(p[1], p[3], p[2], w, h);
-      const b = project3d(p[1] + fx * arrowLen,
-                          p[3] + fz * arrowLen,
-                          p[2] + fy * arrowLen, w, h);
-      if (a && b) {
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      // Right and up (approx, ignoring roll for frustum hint).
+      const rx = -Math.sin(yawRad);
+      const ry = Math.cos(yawRad);
+      const rz = 0;
+      const ux = fy * rz - fz * ry;
+      const uy = fz * rx - fx * rz;
+      const uz = fx * ry - fy * rx;
+      // Apex in game coords.
+      const ex = p[1], ey = p[3], ez = p[2];
+      const eProj = project3d(ex, ey, ez, w, h);
+      if (!eProj) return;
+      // Dot at the capture position.
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath(); ctx.arc(eProj.x, eProj.y, 4 * devicePixelRatio, 0, Math.PI * 2); ctx.fill();
+      // Forward arrow.
+      const tipX = ex + fx * arrowLen;
+      const tipY = ey + fy * arrowLen;
+      const tipZ = ez + fz * arrowLen;
+      const tipP = project3d(tipX, tipZ, tipY, w, h);
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5 * devicePixelRatio;
+      if (tipP) {
+        ctx.beginPath(); ctx.moveTo(eProj.x, eProj.y); ctx.lineTo(tipP.x, tipP.y); ctx.stroke();
       }
-    }
+      // FOV frustum: four edges from apex to the corners of a far rect.
+      const halfW = fovLen * Math.tan(fovH * 0.5 * Math.PI / 180);
+      const halfH = fovLen * Math.tan(fovV * 0.5 * Math.PI / 180);
+      // Center of far plane.
+      const fcx = ex + fx * fovLen;
+      const fcy = ey + fy * fovLen;
+      const fcz = ez + fz * fovLen;
+      const corners = [
+        [ halfW,  halfH],
+        [ halfW, -halfH],
+        [-halfW, -halfH],
+        [-halfW,  halfH],
+      ];
+      const worldCorners = corners.map(([sh, sv]) => [
+        fcx + rx * sh + ux * sv,
+        fcy + ry * sh + uy * sv,
+        fcz + rz * sh + uz * sv,
+      ]);
+      ctx.strokeStyle = 'rgba(251,191,36,0.55)';
+      ctx.lineWidth = 1 * devicePixelRatio;
+      worldCorners.forEach(c => {
+        const cp = project3d(c[0], c[2], c[1], w, h);
+        if (cp) { ctx.beginPath(); ctx.moveTo(eProj.x, eProj.y); ctx.lineTo(cp.x, cp.y); ctx.stroke(); }
+      });
+      // Far rectangle to close the frustum.
+      ctx.strokeStyle = 'rgba(251,191,36,0.35)';
+      ctx.beginPath();
+      for (let k = 0; k < worldCorners.length; k++) {
+        const c = worldCorners[k];
+        const cp = project3d(c[0], c[2], c[1], w, h);
+        if (!cp) continue;
+        if (k === 0) ctx.moveTo(cp.x, cp.y); else ctx.lineTo(cp.x, cp.y);
+      }
+      ctx.closePath(); ctx.stroke();
+    });
 
     // Playhead -- highlight current player position if Play is streaming
     // the same preset.
@@ -3046,9 +3108,13 @@ function trajPreview3d(opts){
         if(!opts.staySilent) debugAppend('ERROR: '+(d.error||'unknown'));
         return;
       }
-      trajPreview = { name: preset, points: d.points || [] };
+      trajPreview = {
+        name: preset,
+        points: d.points || [],
+        capture_indices: d.capture_indices || [],
+      };
       if(!opts.staySilent){
-        debugAppend('preview: '+d.count+' pts, '+d.duration.toFixed(2)+'s -- fitting camera');
+        debugAppend('preview: '+d.count+' pts ('+(d.capture_count||0)+' captures), '+d.duration.toFixed(2)+'s -- fitting camera');
       }
       // Manual click switches to 3D; auto-preview only redraws when
       // already on 3D (reopenTab flag signals this path).

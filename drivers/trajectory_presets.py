@@ -492,6 +492,38 @@ def _path_length(preset: str, params: dict) -> float:
     return 0.0
 
 
+FINE_PATH_SAMPLES = 256
+
+
+def generate_smooth(preset: str, params: dict) -> tuple:
+    """Return ``(fine_path, capture_indices)``.
+
+    ``fine_path`` is a high-density sampling of the preset (``FINE_PATH_SAMPLES``
+    waypoints, regardless of the user's ``samples`` choice) so both the 3D
+    preview and the live camera streaming get a geometrically smooth curve.
+
+    ``capture_indices`` are ``user_samples`` evenly-spaced indices into
+    ``fine_path``. They tell the rdc-step player where to fire captures and
+    give the UI the list of "capture waypoints" to mark with FOV frustum /
+    forward arrow in the 3D preview.
+    """
+    user_samples = int(params.get("samples", 8))
+    if user_samples < 2:
+        user_samples = 2
+    fine_params = dict(params)
+    fine_params["samples"] = FINE_PATH_SAMPLES
+    fine_path = generate(preset, fine_params)
+    n = len(fine_path)
+    if user_samples >= n:
+        indices = list(range(n))
+    else:
+        indices = [
+            round(i * (n - 1) / (user_samples - 1))
+            for i in range(user_samples)
+        ]
+    return fine_path, indices
+
+
 def generate(preset: str, params: dict) -> list[PosePoint]:
     """Dispatch to the named preset with a dict of parameters.
 

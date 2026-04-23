@@ -99,6 +99,55 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Fine path streaming + sparse captures + FOV/arrow 3D markers
+
+User asks:
+- 3D preview should draw the smoothest path.
+- Camera should actually move smoothly at the configured speed, every
+  frame.
+- Captures are computed from sample count over total time; preview
+  them on the 3D canvas with FOV frustum + forward arrow.
+
+Split "path density" from "capture count". All 5 presets now generate
+a fine path (`FINE_PATH_SAMPLES = 256`) for streaming + preview, while
+the user's ``samples`` param becomes the sparse capture count (evenly
+spaced indices into the fine path).
+
+`drivers/trajectory_presets.py`
+- New `generate_smooth(preset, params) -> (fine_path, capture_indices)`.
+  Computes the capture indices as `round(i * (N-1) / (samples-1))` so
+  they land exactly on evenly-spaced time ticks.
+
+`web/routes/trajectory.py`
+- `_generate_points` returns `(preset, fine_path, capture_indices)`.
+- `/api/trajectory/preview` response adds `capture_indices` +
+  `capture_count` alongside the existing `points` (which is now the
+  fine path).
+- `/api/trajectory/play` threads `capture_indices` into
+  `TrajectoryPlayer.play()`.
+
+`drivers/trajectory_player.py`
+- `play()` accepts `capture_indices`; defaults to "every waypoint is a
+  capture" when absent (back-compat with callers that passed sparse
+  lists directly).
+- rdc-step `_run()` now streams every fine waypoint in real time
+  (target = `stream_start + pose.t + stream_pause`) so the in-game
+  camera actually moves smoothly instead of jumping 8 octagonal
+  segments. Only indices in ``capture_indices`` trigger
+  ``__cam_rdc_capture`` + the ``capture_interval`` dwell; the time
+  spent on capture dwells is added to ``stream_pause`` so the
+  remaining waypoints stay phase-locked with their `t`.
+
+`web/templates/index.html`
+- Preview response is stashed as `{name, points, capture_indices}`.
+- 3D renderer replaces the old "every 20th waypoint gets an arrow"
+  sparse-tick overlay with: per-capture-index amber dot, forward arrow,
+  and a 4-edge FOV frustum (apex at camera pos -> 4 corners of a far
+  rect sized by `fovLen * tan(fov/2)`), plus a closed far rectangle.
+  Uses the waypoint's FOV, pitch, yaw (roll ignored for the frustum
+  hint). Fallback to 8 evenly-spaced indices when the server didn't
+  ship `capture_indices` yet.
+
 ### [v0.2.0] 9495fd1 -- xiaoni -- Speed-driven trajectories + Preview/Play/Stop row
 
 User feedback: entering "duration" is not intuitive; speed (units/s) is.

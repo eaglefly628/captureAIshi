@@ -345,6 +345,7 @@ class TrajectoryPlayer:
         capture_interval: float = 1.5,
         capture_dir: Any = None,
         decode_callback: Any = None,
+        capture_indices: Any = None,
     ) -> dict:
         """Start streaming ``points`` to the camera at ``rate_hz``.
 
@@ -412,12 +413,23 @@ class TrajectoryPlayer:
                 loop=loop,
                 renderdoc_capture=renderdoc_capture,
             )
+            # Default: every waypoint is a capture point (legacy behaviour
+            # from when callers passed a small list of sparse samples).
+            if capture_indices is None:
+                cap_idx = list(range(len(points)))
+            else:
+                # Defensive: unique, sorted, in-range.
+                cap_idx = sorted({int(i) for i in capture_indices
+                                  if 0 <= int(i) < len(points)})
+                if not cap_idx:
+                    cap_idx = [0, len(points) - 1]
             t = threading.Thread(
                 target=self._run,
                 args=(plan, addr, points, rate_hz, loop, focus_delay,
                       renderdoc_capture, capture_interval,
                       capture_dir, decode_callback,
-                      profile_id, restore_pose, slot),
+                      profile_id, restore_pose, slot,
+                      cap_idx),
                 name="trajectory-player",
                 daemon=True,
             )
@@ -507,6 +519,7 @@ class TrajectoryPlayer:
         profile_id: str = "",
         restore_pose: Any = None,
         slot: int = 0,
+        capture_indices: list | None = None,
     ) -> None:
         dt = 1.0 / rate_hz
         duration = total_duration(points)
@@ -545,16 +558,20 @@ class TrajectoryPlayer:
         )
 
         if renderdoc_capture:
-            # Step mode: write each sample point, let the game render a
-            # couple of frames, fire __cam_rdc_capture, then wait
-            # `capture_interval` before advancing to the next pose so
-            # RenderDoc has time to actually capture + persist the .rdc
-            # file. At 60 Hz the game renders ~90 frames in 1.5 s which
-            # is plenty for the capture thread to settle.
+            # Smooth-streaming rdc-step mode. ``points`` is the fine
+            # path (256 waypoints by default); ``capture_indices`` marks
+            # the handful where we actually want RenderDoc to snapshot.
+            # Between captures the camera streams continuously at
+            # ``rate_hz`` following each waypoint's ``t`` so motion looks
+            # smooth in-game; when we hit a capture index we pause on
+            # that pose, fire __cam_rdc_capture, and dwell for
+            # ``capture_interval`` so the .rdc file lands before we move
+            # the camera again.
             from pathlib import Path as _Path
             settle = max(1.0 / rate_hz, 0.05)
             interval = max(capture_interval, settle)
-            total = len(points)
+            cap_idx_set = set(capture_indices or [])
+            total_caps = len(cap_idx_set)
             cap_dir = _Path(capture_dir) if capture_dir else None
             existing_rdcs: set = set()
             collected_rdcs: list = []
@@ -564,40 +581,62 @@ class TrajectoryPlayer:
                     "[PLAYER] watching %s for new .rdc files (%d pre-existing)",
                     cap_dir, len(existing_rdcs),
                 )
+            # Time-driven streaming: translate each waypoint's scheduled
+            # `t` into wall-clock time so motion matches the configured
+            # speed even across longer dwells.
+            stream_start = time.monotonic()
+            # Pause-budget accumulates seconds spent dwelling on capture
+            # poses so subsequent waypoints stay in sync with their `t`.
+            stream_pause = 0.0
+            cap_fired = 0
             try:
-                for idx, pose in enumerate(points, 1):
+                for idx, pose in enumerate(points):
+                    if self._stop_evt.is_set():
+                        break
+                    # Wait until we reach this waypoint's scheduled time.
+                    target = stream_start + pose.t + stream_pause
+                    while True:
+                        if self._stop_evt.is_set():
+                            break
+                        now = time.monotonic()
+                        if now >= target:
+                            break
+                        time.sleep(min(0.05, target - now))
                     if self._stop_evt.is_set():
                         break
                     for f in plan:
                         session.poke(addr, f.offset, f.v_type, _pose_value(pose, f))
-                    # Let the pose reach the game's render thread before
-                    # we ask RenderDoc to capture the next Present.
-                    time.sleep(settle)
-                    session.send("__cam_rdc_capture")
                     with self._lock:
                         self._status.t = pose.t
                         self._status.ticks += 1
+                    if idx not in cap_idx_set:
+                        continue
+                    # Capture waypoint: let the pose reach the render
+                    # thread, fire capture, dwell for interval so the
+                    # .rdc lands.
+                    time.sleep(settle)
+                    session.send("__cam_rdc_capture")
+                    cap_fired += 1
                     logger.info(
-                        "[PLAYER] capture %d/%d triggered (interval=%.2fs)",
-                        idx, total, interval,
+                        "[PLAYER] capture %d/%d triggered at idx=%d "
+                        "(interval=%.2fs)",
+                        cap_fired, total_caps, idx, interval,
                     )
-                    # Wait the remainder of the interval so the capture
-                    # can actually land on disk before we overwrite the
-                    # camera for the next pose.
                     remaining = interval - settle
                     if remaining > 0:
-                        # Break the sleep into short chunks so Stop is
-                        # responsive during long intervals.
                         deadline = time.monotonic() + remaining
                         while time.monotonic() < deadline:
                             if self._stop_evt.is_set():
                                 break
                             time.sleep(min(0.1, deadline - time.monotonic()))
+                    # The settle+dwell pushed us out of phase with the
+                    # streaming schedule; extend pause_budget so the
+                    # remaining waypoints still hit their relative time.
+                    stream_pause += settle + max(0.0, remaining)
                     # Pick up any newly-written .rdc file for this pose.
                     if cap_dir and cap_dir.is_dir():
                         new_files = set(cap_dir.glob("*.rdc")) - existing_rdcs
                         if new_files:
-                            # Most recent first so we attribute to this pose.
                             for p in sorted(new_files, key=lambda q: q.stat().st_mtime):
                                 collected_rdcs.append(p)
                                 existing_rdcs.add(p)
