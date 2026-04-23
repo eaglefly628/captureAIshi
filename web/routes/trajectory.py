@@ -110,6 +110,19 @@ def trajectory_play():
                     results = grabber.export_batch(rdc_paths, output_dir)
                     _log.info("[DECODE] export_batch returned %d results",
                               len(results))
+                    frames_dir = output_dir / "frames"
+                    for i, ((rgb, depth, normal), rdc_path) in enumerate(
+                        zip(results, rdc_paths)
+                    ):
+                        if rdc_path is None:
+                            continue
+                        try:
+                            grabber.save_frame(
+                                rgb, depth, frames_dir, i,
+                                base_name=Path(rdc_path).stem, normal=normal,
+                            )
+                        except Exception as _se:
+                            _log.error("[DECODE] save_frame %d failed: %s", i, _se)
                 except Exception as _e:
                     _log.error("[DECODE] export_batch failed: %s", _e)
 
@@ -236,6 +249,19 @@ def trajectory_decode():
             _logging.info(
                 "[DECODE] export_batch returned %d results", len(results),
             )
+            frames_dir = output_dir / "frames"
+            for i, ((rgb, depth, normal), rdc_path) in enumerate(
+                zip(results, rdc_paths)
+            ):
+                if rdc_path is None:
+                    continue
+                try:
+                    grabber.save_frame(
+                        rgb, depth, frames_dir, i,
+                        base_name=Path(rdc_path).stem, normal=normal,
+                    )
+                except Exception as se:
+                    _logging.error("[DECODE] save_frame %d failed: %s", i, se)
         except Exception as e:
             _logging.error("[DECODE] export_batch failed: %s", e)
         finally:
