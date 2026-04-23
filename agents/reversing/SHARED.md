@@ -105,6 +105,29 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Fix capture marker orientation in 3D preview
+
+User screenshot: on an orbit with `look_at_center=True`, the FOV
+pyramid markers pointed in wildly inconsistent directions -- some
+outward, some up/down, none reliably toward the orbit center.
+
+Root cause in `draw3d()`: I was pre-swapping the camera position into
+canvas coords (`ey = p[3]=gameZ`, `ez = p[2]=gameY`) and then adding
+game-space forward components (`fx, fy, fz`) to those pre-swapped
+coordinates. Result: the `fy` (horizontal Y) offset was added to the
+vertical axis, `fz` (vertical) was added to the horizontal depth axis.
+
+Rewrite keeps every vector math step in pure game space (X, Y, Z=up)
+and only swaps (x, z, y) at the `project3d` boundary via a local
+`projGame` helper. Also replace the cross-product right/up vectors
+with the well-known "right = normalize(forward x world_up)" form so
+the pyramid's width axis really is horizontal to the camera.
+
+- `web/templates/index.html` `draw3d()`: add `projGame(gx, gy, gz)`
+  thin wrapper; rewrite the capture-marker loop using only game-space
+  math. Apex/tip/far-rect corners all computed in (gameX, gameY, gameZ)
+  and projected via `projGame`.
+
 ### [v0.2.0] a804214 -- xiaoni -- Unified 60Hz streaming for rdc-step + restore on any exit + decode fallback
 
 Three user-reported bugs in one commit:

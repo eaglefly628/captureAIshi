@@ -1810,44 +1810,51 @@ function draw3d() {
     // the per-point ``fov`` field is intentionally ignored for sizing.
     const FOV_HALF_W = fovLen * 0.28;
     const FOV_HALF_H = fovLen * 0.16;
+    // Project a game-space (X, Y, Z=up) triple through the canvas swap.
+    // The rest of draw3d passes (gameX, gameZ, gameY) to project3d so the
+    // game's Z axis becomes the canvas's vertical axis.
+    const projGame = (gx, gy, gz) => project3d(gx, gz, gy, w, h);
+
     capIdx.forEach(i => {
       if (i < 0 || i >= pts.length) return;
       const p = pts[i];
       const yawRad = p[5] * Math.PI / 180;
       const pitchRad = p[4] * Math.PI / 180;
-      const rollRad = (p[6] || 0) * Math.PI / 180;
-      // Forward vector in UE convention (yaw 0 -> +X, pitch+ -> look up).
+      // Forward in game space (UE convention: yaw 0 -> +X, pitch+ -> +Z).
       const fx = Math.cos(yawRad) * Math.cos(pitchRad);
       const fy = Math.sin(yawRad) * Math.cos(pitchRad);
       const fz = Math.sin(pitchRad);
-      // Right and up (approx, ignoring roll for frustum hint).
-      const rx = -Math.sin(yawRad);
-      const ry = Math.cos(yawRad);
-      const rz = 0;
-      const ux = fy * rz - fz * ry;
-      const uy = fz * rx - fx * rz;
-      const uz = fx * ry - fy * rx;
+      // Right = normalize(forward x world_up). World up = (0,0,1), so
+      // right = (fy*1 - fz*0, fz*0 - fx*1, fx*0 - fy*0) = (fy, -fx, 0).
+      // Normalize in case forward is near-vertical.
+      let rxv = fy, ryv = -fx, rzv = 0.0;
+      const rlen = Math.hypot(rxv, ryv) || 1.0;
+      rxv /= rlen; ryv /= rlen; rzv /= rlen;
+      // Up = right x forward (right-handed frame).
+      const uxv = ryv * fz - rzv * fy;
+      const uyv = rzv * fx - rxv * fz;
+      const uzv = rxv * fy - ryv * fx;
       // Apex in game coords.
-      const ex = p[1], ey = p[3], ez = p[2];
-      const eProj = project3d(ex, ey, ez, w, h);
+      const gx = p[1], gy = p[2], gz = p[3];
+      const eProj = projGame(gx, gy, gz);
       if (!eProj) return;
       // Dot at the capture position.
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath(); ctx.arc(eProj.x, eProj.y, 4 * devicePixelRatio, 0, Math.PI * 2); ctx.fill();
-      // Forward arrow.
-      const tipX = ex + fx * arrowLen;
-      const tipY = ey + fy * arrowLen;
-      const tipZ = ez + fz * arrowLen;
-      const tipP = project3d(tipX, tipZ, tipY, w, h);
+      // Forward arrow (all math in game space, swap at projection only).
+      const tipP = projGame(gx + fx * arrowLen, gy + fy * arrowLen, gz + fz * arrowLen);
       ctx.strokeStyle = '#fbbf24';
       ctx.lineWidth = 1.5 * devicePixelRatio;
       if (tipP) {
         ctx.beginPath(); ctx.moveTo(eProj.x, eProj.y); ctx.lineTo(tipP.x, tipP.y); ctx.stroke();
       }
-      // Uniform schematic pyramid (4 edges apex -> far rect corners).
-      const fcx = ex + fx * fovLen;
-      const fcy = ey + fy * fovLen;
-      const fcz = ez + fz * fovLen;
+      // Uniform schematic pyramid (apex -> 4 far-plane corners). Far
+      // plane is ``fovLen`` along the forward axis, sized by fixed
+      // FOV_HALF_W / FOV_HALF_H so every marker renders at the same
+      // scale regardless of the waypoint's actual FOV.
+      const fcx = gx + fx * fovLen;
+      const fcy = gy + fy * fovLen;
+      const fcz = gz + fz * fovLen;
       const corners = [
         [ FOV_HALF_W,  FOV_HALF_H],
         [ FOV_HALF_W, -FOV_HALF_H],
@@ -1855,14 +1862,14 @@ function draw3d() {
         [-FOV_HALF_W,  FOV_HALF_H],
       ];
       const worldCorners = corners.map(([sh, sv]) => [
-        fcx + rx * sh + ux * sv,
-        fcy + ry * sh + uy * sv,
-        fcz + rz * sh + uz * sv,
+        fcx + rxv * sh + uxv * sv,
+        fcy + ryv * sh + uyv * sv,
+        fcz + rzv * sh + uzv * sv,
       ]);
       ctx.strokeStyle = 'rgba(251,191,36,0.55)';
       ctx.lineWidth = 1 * devicePixelRatio;
       worldCorners.forEach(c => {
-        const cp = project3d(c[0], c[2], c[1], w, h);
+        const cp = projGame(c[0], c[1], c[2]);
         if (cp) { ctx.beginPath(); ctx.moveTo(eProj.x, eProj.y); ctx.lineTo(cp.x, cp.y); ctx.stroke(); }
       });
       // Far rectangle to close the frustum.
@@ -1870,7 +1877,7 @@ function draw3d() {
       ctx.beginPath();
       for (let k = 0; k < worldCorners.length; k++) {
         const c = worldCorners[k];
-        const cp = project3d(c[0], c[2], c[1], w, h);
+        const cp = projGame(c[0], c[1], c[2]);
         if (!cp) continue;
         if (k === 0) ctx.moveTo(cp.x, cp.y); else ctx.lineTo(cp.x, cp.y);
       }
