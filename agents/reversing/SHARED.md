@@ -105,6 +105,54 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Unified 60Hz streaming for rdc-step + restore on any exit + decode fallback
+
+Three user-reported bugs in one commit:
+
+1. **Play jittered, Preview smooth.** rdc-step was a waypoint-driven
+   `for pose in points` loop with `time.sleep(min(0.05, target - now))`
+   — capped at 20 Hz between pokes so motion looked staccato. Preview
+   (non-capture) already used a 60 Hz `interp_linear` time-based loop
+   and looked smooth.
+
+2. **Stop did not restore the pre-play pose, so a subsequent Play with
+   relative_origin started from the stranded position.** Restore was
+   only in the rdc-step branch's `finally`; Preview / streaming exited
+   without calling `game_profile.write_camera`.
+
+3. **3 captures logged but manual Decode saw `no .rdc files in
+   output\ue5_rdoc\captures`.** Bridge likely wrote to RenderDoc's
+   default template path (`%TEMP%\RenderDoc`) rather than the
+   grabber's configured capture_dir; decoder had no fallback.
+
+`drivers/trajectory_player.py`
+- Removed the rdc-step specific waypoint loop. Both Preview and Play
+  now go through the single 60 Hz `interp_linear` time-based loop.
+  When `renderdoc_capture=True`, the loop additionally carries
+  `cap_times` = sorted `{points[i].t for i in capture_indices}`; after
+  each tick's poke, if the streaming cursor just crossed the next
+  capture time we re-interp the pose at that exact time, poke it,
+  sleep `settle`, fire `__cam_rdc_capture`, dwell `interval - settle`,
+  then fold `time.monotonic() - pause_start` into ``pause_budget`` so
+  the streaming clock stays in phase with the preset's `t`. Ticks in
+  between captures are real 60 Hz pokes, so in-game motion is now as
+  smooth as Preview.
+- Moved `restore_pose -> game_profile.write_camera` out of the
+  rdc-step-only finally into the unified finally block. Both Preview
+  and Play exits (including Stop mid-flight) now restore the original
+  pose.
+- Startup log expanded: `rdc-step capture_dir=<path> exists=<bool>
+  captures_planned=<N> interval=<s>`; warns when capture_dir is set
+  but doesn't exist on disk.
+
+`web/routes/trajectory.py` `/api/trajectory/decode`
+- When no explicit `paths` body is given and the grabber's
+  `capture_dir` is empty, also glob `%TEMP%\RenderDoc\**\*.rdc` (and
+  `%TEMP%\**\*.rdc` as a last resort) so captures that land in
+  RenderDoc's default template directory still get picked up. Error
+  response now includes the `searched` list so the user can see where
+  we looked.
+
 ### [v0.2.0] 54cf28f -- xiaoni -- Uniform FOV marker size in 3D preview
 
 Follow-up to `5e7e1aa`: user reported capture markers with large FOV

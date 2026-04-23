@@ -557,137 +557,50 @@ class TrajectoryPlayer:
             renderdoc_capture, addr,
         )
 
+        # Shared rdc-step state. Both branches of the unified streaming
+        # loop below reference these; when renderdoc_capture is False the
+        # capture-time list is empty and nothing fires.
+        settle = max(dt, 0.05)
+        interval = max(capture_interval, settle)
+        cap_times: list = []
+        existing_rdcs: set = set()
+        collected_rdcs: list = []
+        cap_dir = None
+        cap_fired = 0
         if renderdoc_capture:
-            # Smooth-streaming rdc-step mode. ``points`` is the fine
-            # path (256 waypoints by default); ``capture_indices`` marks
-            # the handful where we actually want RenderDoc to snapshot.
-            # Between captures the camera streams continuously at
-            # ``rate_hz`` following each waypoint's ``t`` so motion looks
-            # smooth in-game; when we hit a capture index we pause on
-            # that pose, fire __cam_rdc_capture, and dwell for
-            # ``capture_interval`` so the .rdc file lands before we move
-            # the camera again.
+            idx_list = capture_indices or list(range(len(points)))
+            cap_times = sorted({
+                float(points[i].t) for i in idx_list
+                if 0 <= int(i) < len(points)
+            })
             from pathlib import Path as _Path
-            settle = max(1.0 / rate_hz, 0.05)
-            interval = max(capture_interval, settle)
-            cap_idx_set = set(capture_indices or [])
-            total_caps = len(cap_idx_set)
             cap_dir = _Path(capture_dir) if capture_dir else None
-            existing_rdcs: set = set()
-            collected_rdcs: list = []
-            if cap_dir and cap_dir.is_dir():
+            dir_exists = bool(cap_dir and cap_dir.is_dir())
+            logger.info(
+                "[PLAYER] rdc-step capture_dir=%s exists=%s captures_planned=%d interval=%.2fs",
+                cap_dir, dir_exists, len(cap_times), interval,
+            )
+            if cap_dir and dir_exists:
                 existing_rdcs = set(cap_dir.glob("*.rdc"))
                 logger.info(
                     "[PLAYER] watching %s for new .rdc files (%d pre-existing)",
                     cap_dir, len(existing_rdcs),
                 )
-            # Time-driven streaming: translate each waypoint's scheduled
-            # `t` into wall-clock time so motion matches the configured
-            # speed even across longer dwells.
-            stream_start = time.monotonic()
-            # Pause-budget accumulates seconds spent dwelling on capture
-            # poses so subsequent waypoints stay in sync with their `t`.
-            stream_pause = 0.0
-            cap_fired = 0
-            try:
-                for idx, pose in enumerate(points):
-                    if self._stop_evt.is_set():
-                        break
-                    # Wait until we reach this waypoint's scheduled time.
-                    target = stream_start + pose.t + stream_pause
-                    while True:
-                        if self._stop_evt.is_set():
-                            break
-                        now = time.monotonic()
-                        if now >= target:
-                            break
-                        time.sleep(min(0.05, target - now))
-                    if self._stop_evt.is_set():
-                        break
-                    for f in plan:
-                        session.poke(addr, f.offset, f.v_type, _pose_value(pose, f))
-                    with self._lock:
-                        self._status.t = pose.t
-                        self._status.ticks += 1
-                    if idx not in cap_idx_set:
-                        continue
-                    # Capture waypoint: let the pose reach the render
-                    # thread, fire capture, dwell for interval so the
-                    # .rdc lands.
-                    time.sleep(settle)
-                    session.send("__cam_rdc_capture")
-                    cap_fired += 1
-                    logger.info(
-                        "[PLAYER] capture %d/%d triggered at idx=%d "
-                        "(interval=%.2fs)",
-                        cap_fired, total_caps, idx, interval,
-                    )
-                    remaining = interval - settle
-                    if remaining > 0:
-                        deadline = time.monotonic() + remaining
-                        while time.monotonic() < deadline:
-                            if self._stop_evt.is_set():
-                                break
-                            time.sleep(min(0.1, deadline - time.monotonic()))
-                    # The settle+dwell pushed us out of phase with the
-                    # streaming schedule; extend pause_budget so the
-                    # remaining waypoints still hit their relative time.
-                    stream_pause += settle + max(0.0, remaining)
-                    # Pick up any newly-written .rdc file for this pose.
-                    if cap_dir and cap_dir.is_dir():
-                        new_files = set(cap_dir.glob("*.rdc")) - existing_rdcs
-                        if new_files:
-                            for p in sorted(new_files, key=lambda q: q.stat().st_mtime):
-                                collected_rdcs.append(p)
-                                existing_rdcs.add(p)
-            finally:
-                session.close()
-                logger.info(
-                    "[PLAYER] rdc-step done captures=%d rdc_files=%d",
-                    self._status.ticks, len(collected_rdcs),
+            elif cap_dir and not dir_exists:
+                logger.warning(
+                    "[PLAYER] capture_dir %s does not exist; "
+                    "new .rdc tracking disabled. Bridge may be writing "
+                    "to a different path (e.g. %%TEMP%%/RenderDoc).",
+                    cap_dir,
                 )
-                # Restore the pre-play camera pose so the user ends up
-                # exactly where they were before pressing Play. Uses its
-                # own short-lived socket via game_profile.write_camera;
-                # safe even though the streaming session is closed.
-                if restore_pose is not None and profile_id:
-                    try:
-                        r = game_profile.write_camera(
-                            profile_id,
-                            restore_pose["x"], restore_pose["y"], restore_pose["z"],
-                            restore_pose["pitch"], restore_pose["yaw"], restore_pose["roll"],
-                            restore_pose.get("fov", 0.0),
-                            slot=slot,
-                        )
-                        logger.info(
-                            "[PLAYER] restored start pose ok=%s", r.get("ok"),
-                        )
-                    except Exception as _e:
-                        logger.warning("[PLAYER] restore pose failed: %s", _e)
-                # Kick the decode pass on a background thread so the
-                # player state transitions cleanly for the UI and the
-                # Flask request that triggered play() does not block.
-                if decode_callback is not None and collected_rdcs:
-                    with self._lock:
-                        self._status.state = "exporting"
-                    def _decode():
-                        try:
-                            decode_callback(list(collected_rdcs))
-                        except Exception as _e:
-                            logger.error("[PLAYER] decode_callback failed: %s", _e)
-                        finally:
-                            with self._lock:
-                                if self._status.state == "exporting":
-                                    self._status.state = "idle"
-                    threading.Thread(
-                        target=_decode, name="trajectory-decode", daemon=True,
-                    ).start()
-                else:
-                    with self._lock:
-                        if self._status.state != "error":
-                            self._status.state = "idle"
-            return
 
+        # Unified 60Hz streaming loop. For both Preview (renderdoc=False)
+        # and Play (renderdoc=True) we advance a time cursor and sample
+        # the pose via interp_linear so motion is smooth. In Play mode we
+        # also check if the cursor just crossed the next capture time; if
+        # so we hold the exact capture pose, fire __cam_rdc_capture, dwell
+        # for capture_interval (folded into pause_budget so the streaming
+        # clock is preserved), then resume.
         try:
             next_tick = start
             while not self._stop_evt.is_set():
@@ -762,6 +675,48 @@ class TrajectoryPlayer:
                     logger.error("[PLAYER] aborting after repeated poke failures")
                     return
 
+                # rdc-step: if we just crossed the next capture time,
+                # hold the exact capture pose, fire __cam_rdc_capture,
+                # dwell for capture_interval, then resume streaming.
+                if cap_fired < len(cap_times) and elapsed >= cap_times[cap_fired]:
+                    cap_t = cap_times[cap_fired]
+                    cap_pose = interp_linear(points, cap_t)
+                    for f in plan:
+                        try:
+                            session.poke(addr, f.offset, f.v_type, _pose_value(cap_pose, f))
+                        except (OSError, ConnectionError) as e:
+                            logger.warning("[PLAYER] capture poke %s failed: %s", f.name, e)
+                            break
+                    pause_start = time.monotonic()
+                    time.sleep(settle)
+                    try:
+                        session.send("__cam_rdc_capture")
+                    except (OSError, ConnectionError) as e:
+                        logger.error("[PLAYER] __cam_rdc_capture send failed: %s", e)
+                    cap_fired += 1
+                    logger.info(
+                        "[PLAYER] capture %d/%d triggered at t=%.2fs (interval=%.2fs)",
+                        cap_fired, len(cap_times), cap_t, interval,
+                    )
+                    remaining = interval - settle
+                    if remaining > 0:
+                        deadline = time.monotonic() + remaining
+                        while time.monotonic() < deadline:
+                            if self._stop_evt.is_set():
+                                break
+                            time.sleep(min(0.1, deadline - time.monotonic()))
+                    # Collect any newly-written .rdc file.
+                    if cap_dir and cap_dir.is_dir():
+                        new_files = set(cap_dir.glob("*.rdc")) - existing_rdcs
+                        for p in sorted(new_files, key=lambda q: q.stat().st_mtime):
+                            collected_rdcs.append(p)
+                            existing_rdcs.add(p)
+                    # Fold dwell time into pause_budget so the streaming
+                    # clock stays in sync with the preset's t.
+                    pause_budget += time.monotonic() - pause_start
+                    next_tick = time.monotonic()
+                    continue
+
                 # Fixed-rate scheduling: next_tick advances by dt regardless
                 # of how long this tick took. If we fall behind, skip sleep.
                 next_tick += dt
@@ -774,12 +729,47 @@ class TrajectoryPlayer:
                     next_tick = time.monotonic()
         finally:
             session.close()
-            with self._lock:
-                if self._status.state != "error":
-                    self._status.state = "idle"
+            # Restore the pre-play camera pose (applies to both Preview
+            # and Play). Uses a fresh short-lived socket via
+            # game_profile.write_camera so it's safe after session.close.
+            if restore_pose is not None and profile_id:
+                try:
+                    r = game_profile.write_camera(
+                        profile_id,
+                        restore_pose["x"], restore_pose["y"], restore_pose["z"],
+                        restore_pose["pitch"], restore_pose["yaw"], restore_pose["roll"],
+                        restore_pose.get("fov", 0.0),
+                        slot=slot,
+                    )
+                    logger.info("[PLAYER] restored start pose ok=%s", r.get("ok"))
+                except Exception as _e:
+                    logger.warning("[PLAYER] restore pose failed: %s", _e)
+            # Kick decode pass on a background thread for rdc-step runs
+            # that actually produced .rdc files.
+            if decode_callback is not None and collected_rdcs:
+                with self._lock:
+                    self._status.state = "exporting"
+                def _decode():
+                    try:
+                        decode_callback(list(collected_rdcs))
+                    except Exception as _e:
+                        logger.error("[PLAYER] decode_callback failed: %s", _e)
+                    finally:
+                        with self._lock:
+                            if self._status.state == "exporting":
+                                self._status.state = "idle"
+                threading.Thread(
+                    target=_decode, name="trajectory-decode", daemon=True,
+                ).start()
+            else:
+                with self._lock:
+                    if self._status.state != "error":
+                        self._status.state = "idle"
             logger.info(
-                "[PLAYER] stop state=%s ticks=%d ok=%d fail=%d t=%.2fs",
+                "[PLAYER] stop state=%s ticks=%d captures=%d rdc_files=%d "
+                "ok=%d fail=%d t=%.2fs",
                 self._status.state, self._status.ticks,
+                cap_fired, len(collected_rdcs),
                 self._status.writes_ok, self._status.writes_fail,
                 self._status.t,
             )

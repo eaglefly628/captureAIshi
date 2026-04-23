@@ -213,17 +213,37 @@ def trajectory_decode():
 
     body = request.get_json(silent=True) or {}
     raw_paths = body.get("paths")
+    searched_dirs: list = []
     if isinstance(raw_paths, list) and raw_paths:
         rdc_paths = [Path(str(p)) for p in raw_paths]
     else:
+        # Primary: grabber's configured capture dir.
         rdc_paths = sorted(
             Path(capture_dir).glob("*.rdc"),
             key=lambda q: q.stat().st_mtime,
         )
+        searched_dirs.append(str(capture_dir))
+        # Fallback: if the bridge wrote to RenderDoc's default
+        # template path instead (``%TEMP%\RenderDoc\*.rdc``), pick up
+        # those too and sort together.
+        if not rdc_paths:
+            import os as _os
+            import tempfile as _tempfile
+            fallback_roots = []
+            temp_root = Path(_os.environ.get("TEMP") or _tempfile.gettempdir())
+            for base in (temp_root / "RenderDoc", temp_root):
+                if base.is_dir():
+                    fallback_roots.append(base)
+            for root in fallback_roots:
+                for p in root.rglob("*.rdc"):
+                    rdc_paths.append(p)
+                searched_dirs.append(str(root))
+            rdc_paths.sort(key=lambda q: q.stat().st_mtime)
     if not rdc_paths:
         return jsonify({
             "ok": False,
-            "error": f"no .rdc files in {capture_dir}",
+            "error": f"no .rdc files found; looked in: {', '.join(searched_dirs) or str(capture_dir)}",
+            "searched": searched_dirs,
         }), 404
 
     with _web_state._lock:
