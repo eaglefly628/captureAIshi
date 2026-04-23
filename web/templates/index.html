@@ -2452,6 +2452,8 @@ function toggleAllEngines() {
 
 // ─── Game Library ───
 let allGames = [], selectedGame = null;
+const LAST_GAME_KEY = 'captureAIshi.lastGameSlug';
+let _gameAutoSelectDone = false;
 
 async function searchGames() {
   const q = document.getElementById('gameSearch').value.trim();
@@ -2463,6 +2465,17 @@ async function searchGames() {
     const r = await (await fetch(url)).json();
     allGames = r.games || [];
     renderGameList();
+    // Restore last-run game on first load only (not when user filters).
+    if (!_gameAutoSelectDone && !selectedGame && !q && !engine) {
+      _gameAutoSelectDone = true;
+      try {
+        const lastSlug = localStorage.getItem(LAST_GAME_KEY);
+        if (lastSlug) {
+          const g = allGames.find(x => x.slug === lastSlug);
+          if (g) selectGame(g);
+        }
+      } catch(_) {}
+    }
   } catch(_) {}
 }
 
@@ -2535,6 +2548,7 @@ function _buildGameRow(g) {
 function selectGame(g) {
   _autoSaveGameConfig();  // save previous game before switching
   selectedGame = g;
+  try { localStorage.setItem(LAST_GAME_KEY, g.slug); } catch(_) {}
   renderGameList();
   const info = document.getElementById('gameInfo');
   info.style.display = 'block';
