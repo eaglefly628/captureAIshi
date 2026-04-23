@@ -1804,14 +1804,18 @@ function draw3d() {
     }
     const arrowLen = Math.max(cam3d.dist * 0.025, 3);
     const fovLen = Math.max(cam3d.dist * 0.045, 4);
+    // FOV markers are schematic: every capture point gets the same pyramid
+    // size so they read as "here is a camera" icons, not accurate frustums.
+    // Width/height are fixed fractions of fovLen with a ~16:9 aspect hint;
+    // the per-point ``fov`` field is intentionally ignored for sizing.
+    const FOV_HALF_W = fovLen * 0.28;
+    const FOV_HALF_H = fovLen * 0.16;
     capIdx.forEach(i => {
       if (i < 0 || i >= pts.length) return;
       const p = pts[i];
       const yawRad = p[5] * Math.PI / 180;
       const pitchRad = p[4] * Math.PI / 180;
       const rollRad = (p[6] || 0) * Math.PI / 180;
-      const fovV = Math.max(1, Math.min(179, p[7] || 70));
-      const fovH = fovV; // approx 1:1 if aspect ~1; good enough for the hint
       // Forward vector in UE convention (yaw 0 -> +X, pitch+ -> look up).
       const fx = Math.cos(yawRad) * Math.cos(pitchRad);
       const fy = Math.sin(yawRad) * Math.cos(pitchRad);
@@ -1840,18 +1844,15 @@ function draw3d() {
       if (tipP) {
         ctx.beginPath(); ctx.moveTo(eProj.x, eProj.y); ctx.lineTo(tipP.x, tipP.y); ctx.stroke();
       }
-      // FOV frustum: four edges from apex to the corners of a far rect.
-      const halfW = fovLen * Math.tan(fovH * 0.5 * Math.PI / 180);
-      const halfH = fovLen * Math.tan(fovV * 0.5 * Math.PI / 180);
-      // Center of far plane.
+      // Uniform schematic pyramid (4 edges apex -> far rect corners).
       const fcx = ex + fx * fovLen;
       const fcy = ey + fy * fovLen;
       const fcz = ez + fz * fovLen;
       const corners = [
-        [ halfW,  halfH],
-        [ halfW, -halfH],
-        [-halfW, -halfH],
-        [-halfW,  halfH],
+        [ FOV_HALF_W,  FOV_HALF_H],
+        [ FOV_HALF_W, -FOV_HALF_H],
+        [-FOV_HALF_W, -FOV_HALF_H],
+        [-FOV_HALF_W,  FOV_HALF_H],
       ];
       const worldCorners = corners.map(([sh, sv]) => [
         fcx + rx * sh + ux * sv,

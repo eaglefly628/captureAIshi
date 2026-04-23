@@ -105,6 +105,20 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Uniform FOV marker size in 3D preview
+
+Follow-up to `5e7e1aa`: user reported capture markers with large FOV
+values blew up the frustum on the 3D canvas ("视图框特别长"). The
+markers are a schematic "here is a camera" icon, not a physically
+accurate frustum, so render them all the same size.
+
+- `web/templates/index.html` `draw3d()`: drop the per-point
+  `fovLen * tan(fov/2)` computation, replace with fixed
+  `FOV_HALF_W = fovLen * 0.28`, `FOV_HALF_H = fovLen * 0.16` (approx
+  16:9 hint). The capture point's `fov` field is intentionally no
+  longer consulted for the marker; it's still written to trajectory
+  JSON for downstream consumers.
+
 ### [v0.2.0] 5e7e1aa -- xiaoni -- Fine path streaming + sparse captures + FOV/arrow 3D markers
 
 User asks:
