@@ -26,6 +26,13 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (注入菜单 重命名 + 自动打开 + profile 自动选择)
+- 顶栏按钮 "Debug" -> "注入菜单"; 面板标题同步
+- `startCapture` 成功后若面板未开则 `toggleDebugPanel()` 自动打开
+- `hackRefresh` 改返回 Promise; 新增 `_ensureHackProfilesLoaded` 单飞缓存 + `_applySelectedGameProfile` helper
+- `selectGame` 不再只在面板已开时填 profile, 现在预取列表后回写 `selectedGame.profile_id`
+- Start 流程: 选游戏 -> 点 Start -> 注入菜单 自动弹 + profile 已选中, 无需手动 "Debug + 下拉"
+
 ### [v0.3.0] — 小由 (Task 6: A-Z index + group headers)
 - Game Library 增 A-Z 字母索引条 (右侧 14px 竖条, 无该字母游戏时灰显不可点)
 - 按首字母分组显示, sticky 组头 (#  bucket 收非字母名)

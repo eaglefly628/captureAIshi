@@ -960,7 +960,7 @@ body {
   <div class="toolbar-sep"></div>
   <button class="btn btn-accent" id="btnStart" onclick="startCapture()">&#9654;&#xFE0E; Start</button>
   <button class="btn btn-danger" id="btnStop" onclick="stopCapture()" style="display:none">&#9632;&#xFE0E; Stop</button>
-  <button class="btn" id="btnDebug" onclick="toggleDebugPanel()" title="Bridge Debug">Debug</button>
+  <button class="btn" id="btnDebug" onclick="toggleDebugPanel()" title="注入菜单">注入菜单</button>
   <button class="btn" id="btnRescanUE" onclick="toolbarRescan()" title="Re-scan UWorld + LocalPlayer in UE5 (after map loads)">
     <span id="rescanDot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#555;margin-right:5px;vertical-align:middle;transition:background 0.3s"></span>重新扫描 UE
   </button>
@@ -1310,6 +1310,11 @@ async function startCapture() {
     btn.style.display='none';
     document.getElementById('btnStop').style.display='';
     startPolling();
+    // Open 注入菜单 alongside so the user can watch/operate injection while
+    // capture runs. Profile preselection is already wired in selectGame.
+    const dp = document.getElementById('debugPanel');
+    if (dp && dp.style.display === 'none') toggleDebugPanel();
+    _applySelectedGameProfile();
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
 async function stopCapture() {
@@ -2380,11 +2385,9 @@ function selectGame(g) {
   document.getElementById('gameInfoName').textContent = g.name;
   const meta = [g.engine, g.uuu ? `UUU ${g.uuu}` : null, g.notes].filter(Boolean).join(' | ');
   document.getElementById('gameInfoMeta').textContent = meta;
-  // Sync Bridge Debug profile dropdown
-  if (g.profile_id) {
-    const sel = document.getElementById('hackProfileSelect');
-    if ([...sel.options].find(o => o.value === g.profile_id)) sel.value = g.profile_id;
-  }
+  // Sync injection profile dropdown (loads the list on first demand so the
+  // value can be applied even before the 注入菜单 panel has been opened).
+  _applySelectedGameProfile();
   // Auto-load config and open settings
   openGameSettings();
 }
@@ -2452,7 +2455,7 @@ pollSessions();pollCaptures();
 <!-- Debug Panel (hidden by default) -->
 <div id="debugPanel" style="display:none;flex-direction:column;position:fixed;bottom:0;right:0;width:560px;max-height:70vh;background:#1a1a2e;border:1px solid #444;border-radius:8px 0 0 0;z-index:9999;font-size:13px;overflow:hidden;box-shadow:0 -2px 16px rgba(0,0,0,0.5)">
   <div style="padding:8px 12px;background:#16213e;display:flex;justify-content:space-between;align-items:center;cursor:pointer;flex-shrink:0" onclick="toggleDebugPanel()">
-    <b style="color:#e94560">Bridge Debug</b>
+    <b style="color:#e94560">注入菜单</b>
     <span style="color:#888;font-size:11px">click to close</span>
   </div>
   <div style="padding:10px 12px;overflow-y:auto;flex:1 1 auto;min-height:0">
@@ -2645,7 +2648,7 @@ function interceptInstall(){
 // --- Game hack profiles ---
 function hackRefresh(){
   debugAppend('> hacks/list');
-  fetch('/api/hacks/list')
+  return fetch('/api/hacks/list')
     .then(r=>r.json())
     .then(d=>{
       var sel=document.getElementById('hackProfileSelect');
@@ -2662,6 +2665,20 @@ function hackRefresh(){
       debugAppend('profiles loaded: '+(d.profiles||[]).length);
     })
     .catch(e=>debugAppend('ERROR: '+e));
+}
+// Single-flight cache so selectGame + panel-open + startCapture don't refetch.
+var _hackProfilesPromise=null;
+function _ensureHackProfilesLoaded(){
+  if(!_hackProfilesPromise) _hackProfilesPromise=hackRefresh();
+  return _hackProfilesPromise;
+}
+// Push selectedGame.profile_id into the dropdown once the list is loaded.
+function _applySelectedGameProfile(){
+  if(typeof selectedGame==='undefined' || !selectedGame || !selectedGame.profile_id) return;
+  _ensureHackProfilesLoaded().then(function(){
+    var sel=document.getElementById('hackProfileSelect');
+    if([...sel.options].some(function(o){return o.value===selectedGame.profile_id;})) sel.value=selectedGame.profile_id;
+  });
 }
 function _hackPost(path, verb){
   debugAppend('> hacks/'+verb);
@@ -3212,7 +3229,7 @@ function trajStopStatusPoll(){
     var p=document.getElementById('debugPanel');
     if(p.style.display!=='none' && !p.dataset.hacksLoaded){
       p.dataset.hacksLoaded='1';
-      hackRefresh();
+      _ensureHackProfilesLoaded().then(_applySelectedGameProfile);
       trajLoadPresets();
       trajLoadSavedList();
       trajPollStatusOnce();
