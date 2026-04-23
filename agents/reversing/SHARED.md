@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- RDC-step capture_interval (16->16 captures land)
+### [v0.2.0] 8ed197d -- xiaoni -- RDC-step capture_interval (16->16 captures land)
 
 User hit: figure8 trajectory Play with 16 samples @ 60 Hz + rdc_capture
 fired all 16 __cam_rdc_capture commands in ~0.5 s (log "rdc-step done
