@@ -214,6 +214,7 @@ def trajectory_decode():
     body = request.get_json(silent=True) or {}
     raw_paths = body.get("paths")
     searched_dirs: list = []
+    bridge_template = None
     if isinstance(raw_paths, list) and raw_paths:
         rdc_paths = [Path(str(p)) for p in raw_paths]
     else:
@@ -223,27 +224,62 @@ def trajectory_decode():
             key=lambda q: q.stat().st_mtime,
         )
         searched_dirs.append(str(capture_dir))
-        # Fallback: if the bridge wrote to RenderDoc's default
-        # template path instead (``%TEMP%\RenderDoc\*.rdc``), pick up
-        # those too and sort together.
+        # Fallback: ask the bridge where RenderDoc actually writes
+        # captures (template). Works once the bridge DLL carries the
+        # __cam_rdc_info command; silently no-ops on older DLLs.
+        if not rdc_paths:
+            try:
+                from drivers import game_profile as _gp
+                resp = _gp._send("__cam_rdc_info")
+                if resp and "template=" in resp:
+                    import re as _re
+                    m = _re.search(r"template=(.+?)\s+captures=", resp)
+                    if m:
+                        bridge_template = m.group(1).strip()
+                        if bridge_template and bridge_template != "(null)":
+                            tdir = Path(bridge_template).parent
+                            if tdir.is_dir():
+                                searched_dirs.append(str(tdir))
+                                for p in tdir.glob("*.rdc"):
+                                    rdc_paths.append(p)
+            except Exception:
+                pass
+        # Broad filesystem fallback: common RDC save locations.
         if not rdc_paths:
             import os as _os
             import tempfile as _tempfile
-            fallback_roots = []
-            temp_root = Path(_os.environ.get("TEMP") or _tempfile.gettempdir())
-            for base in (temp_root / "RenderDoc", temp_root):
-                if base.is_dir():
+            fallback_roots: list = []
+            env = _os.environ
+            temp_root = Path(env.get("TEMP") or _tempfile.gettempdir())
+            candidates = [
+                temp_root / "RenderDoc",
+                temp_root,
+                Path(env.get("USERPROFILE") or "") / "Documents" / "RenderDoc",
+                Path(env.get("APPDATA") or "") / "RenderDoc",
+                Path(env.get("LOCALAPPDATA") or "") / "RenderDoc",
+                Path.cwd(),
+            ]
+            for base in candidates:
+                if base and base.is_dir() and base not in fallback_roots:
                     fallback_roots.append(base)
             for root in fallback_roots:
-                for p in root.rglob("*.rdc"):
-                    rdc_paths.append(p)
+                try:
+                    for p in root.rglob("*.rdc"):
+                        rdc_paths.append(p)
+                except OSError:
+                    pass
                 searched_dirs.append(str(root))
             rdc_paths.sort(key=lambda q: q.stat().st_mtime)
     if not rdc_paths:
+        hint = ""
+        if bridge_template:
+            hint = (f" (bridge template: {bridge_template} -- verify this "
+                    f"dir exists and is writable by the game process)")
         return jsonify({
             "ok": False,
-            "error": f"no .rdc files found; looked in: {', '.join(searched_dirs) or str(capture_dir)}",
+            "error": f"no .rdc files found; looked in: {', '.join(searched_dirs) or str(capture_dir)}{hint}",
             "searched": searched_dirs,
+            "bridge_template": bridge_template,
         }), 404
 
     with _web_state._lock:

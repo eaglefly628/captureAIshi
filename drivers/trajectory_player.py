@@ -580,6 +580,17 @@ class TrajectoryPlayer:
                 "[PLAYER] rdc-step capture_dir=%s exists=%s captures_planned=%d interval=%.2fs",
                 cap_dir, dir_exists, len(cap_times), interval,
             )
+            # Best-effort: ask the bridge where RDC is actually writing
+            # captures (requires DLL with __cam_rdc_info). A mismatch
+            # between this and capture_dir is the usual reason the post-
+            # loop decode can't find the .rdc files.
+            try:
+                rdc_info = game_profile._send("__cam_rdc_info")
+                if rdc_info:
+                    logger.info("[PLAYER] bridge RDC info: %s",
+                                rdc_info.replace("\n", " ").strip())
+            except Exception as _e:
+                logger.debug("[PLAYER] __cam_rdc_info not available: %s", _e)
             if cap_dir and dir_exists:
                 existing_rdcs = set(cap_dir.glob("*.rdc"))
                 logger.info(

@@ -961,6 +961,36 @@ static bool cs_route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
+    /* Report RenderDoc capture-template + completed-capture count.
+     * Format: "template=<path> captures=<N>\n". Used by the trajectory
+     * decode path so Python can find where .rdc files actually landed
+     * (default template varies by install). */
+    if (cmd == "__cam_rdc_info") {
+        char buf[1024];
+        const char* tmpl = RenderDoc::Inst().GetCaptureFileTemplate();
+        size_t ncaps = RenderDoc::Inst().GetCaptures().size();
+        snprintf(buf, sizeof(buf),
+                 "template=%s captures=%zu\n",
+                 tmpl ? tmpl : "(null)", ncaps);
+        cs_reply(client, buf);
+        return true;
+    }
+
+    /* Override the RenderDoc capture-file template path.
+     * Format: "__cam_rdc_set_template <path>" (no quotes; may contain
+     * spaces). Affects captures triggered after this call. */
+    if (cmd.rfind("__cam_rdc_set_template ", 0) == 0) {
+        const char* p = cmd.c_str() + 23;
+        while (*p == ' ') p++;
+        if (*p == '\0') {
+            cs_reply(client, "error: missing path\n");
+            return true;
+        }
+        RenderDoc::Inst().SetCaptureFileTemplate(p);
+        cs_reply(client, "ok\n");
+        return true;
+    }
+
     /* Regular UE5 console command (pass-through) */
     if (cmd.rfind("__",0) != 0) {
         if (!g_engine_found) {

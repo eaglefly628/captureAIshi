@@ -105,6 +105,41 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- RDC capture path diagnostics + wider decode search
+
+User report: `captures=7 rdc_files=0` — bridge fired
+`__cam_rdc_capture` 7 times during rdc-step, no .rdc landed anywhere
+we checked (`output\ue5_rdoc\captures`, `%TEMP%\RenderDoc`, `%TEMP%`).
+Either RenderDoc's capture-file template points somewhere else
+entirely, or the Present hook never wired up in this session.
+
+Two fixes + one diagnostic:
+
+1. Bridge command `__cam_rdc_info` (requires DLL rebuild): returns
+   `"template=<path> captures=<N>\n"` so Python can see exactly where
+   `RenderDoc::Inst().GetCaptureFileTemplate()` resolved to and how
+   many captures completed. Paired with `__cam_rdc_set_template <path>`
+   to override the template at runtime.
+   (`renderdoc/renderdoc/core/bridge/console_server.h` line ~960.)
+
+2. `drivers/trajectory_player.py`: at rdc-step start, queries
+   `__cam_rdc_info` and logs the result. On older DLLs without the
+   command this is a silent no-op.
+
+3. `web/routes/trajectory.py` `/api/trajectory/decode`: falls back to
+   the bridge-reported template directory first, then glob the common
+   RDC save locations: `%USERPROFILE%\Documents\RenderDoc`,
+   `%APPDATA%\RenderDoc`, `%LOCALAPPDATA%\RenderDoc`, CWD, plus the
+   `%TEMP%\RenderDoc` / `%TEMP%` set we already had. 404 response
+   now includes the `bridge_template` field so the user sees the
+   authoritative path even if we can't find any .rdc there.
+
+If the next run still reports `rdc_files=0` AND the template points
+to a normal writable dir, the Present hook isn't wired (game started
+without renderdoccmd launch, or injected too late). The `captures=N`
+counter from `__cam_rdc_info` settles the question -- if it's 0
+after our 7 triggers, RDC isn't actually capturing.
+
 ### [v0.2.0] f82f461 -- xiaoni -- Fix capture marker orientation in 3D preview
 
 User screenshot: on an orbit with `look_at_center=True`, the FOV
