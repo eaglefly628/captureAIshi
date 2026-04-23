@@ -9,6 +9,12 @@ Current context lives here. Completed items and old CL entries move to
 
 ### Open items
 
+- [x] **P1: trajectory decode callbacks 不保存 PNG** (spotted by 小萱, fixed 9498850) —
+  `export_batch` 返回 numpy arrays，调用方需调 `save_frame` 写盘。
+  `trajectory_play._decode` 和 `/api/trajectory/decode._run_decode` 都直接丢弃了
+  返回值，导致 rdc-step 采集后 output_dir/frames/ 为空。已在 trajectory.py 两处
+  补 save_frame 循环，用 rdc_path.stem 为文件名 base。
+
 - [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
   UpdateCamera() 每帧写回玩家摄像机位置，无法从外部争抢。正确解: hook
   `ULocalPlayer::GetViewPoint` (virtual, vtable-hookable). GetViewPoint 在渲染
