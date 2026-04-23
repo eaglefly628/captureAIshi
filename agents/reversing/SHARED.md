@@ -105,7 +105,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- RDC capture path diagnostics + wider decode search
+### [v0.2.0] bbcb700 -- xiaoni -- RDC capture path diagnostics + wider decode search
 
 User report: `captures=7 rdc_files=0` — bridge fired
 `__cam_rdc_capture` 7 times during rdc-step, no .rdc landed anywhere
