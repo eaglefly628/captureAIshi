@@ -1044,6 +1044,7 @@ private:
   int depthIndex;    // -1 = auto-detect (first DepthTarget), >= 0 = use specific texture index
   bool reverseDepth; // true = UE5 reversed-Z (near->1, default), false = UE3 standard (near->0)
   float batchDepthBp, batchDepthWp; // first-frame percentile range reused for batch consistency
+  float depthRangeBp, depthRangeWp; // explicit per-game range (overrides percentile); -1 = unset
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1059,6 +1060,7 @@ public:
     parser.add<int>("rgb-index", '\0', "Use texture at this index as RGB (from GBuffer scan output). -1 = auto-detect", false, -1);
     parser.add<int>("depth-index", '\0', "Use texture at this index as depth. -1 = auto (first DepthTarget)", false, -1);
     parser.add("no-reverse-depth", '\0', "Disable reversed-Z inversion (UE3/standard depth: 0=near, 1=far)");
+    parser.add<std::string>("depth-range", '\0', "Fixed depth normalization range 'BP,WP' (e.g. '0.978,1.0'). Overrides percentile auto-detect -- use for games where cleared/sky pixels (0.0 or 1.0) poison the percentile.", false, "");
   }
   virtual const char *Description()
   {
@@ -1088,6 +1090,26 @@ public:
     rgbIndex = parser.get<int>("rgb-index");
     depthIndex = parser.get<int>("depth-index");
     reverseDepth = !parser.exist("no-reverse-depth");
+    depthRangeBp = -1.0f;
+    depthRangeWp = -1.0f;
+    std::string dr = parser.get<std::string>("depth-range");
+    if(!dr.empty())
+    {
+      size_t comma = dr.find(',');
+      if(comma != std::string::npos)
+      {
+        try
+        {
+          depthRangeBp = std::stof(dr.substr(0, comma));
+          depthRangeWp = std::stof(dr.substr(comma + 1));
+        }
+        catch(...)
+        {
+          std::cerr << "Invalid --depth-range '" << dr << "', expected 'BP,WP'" << std::endl;
+          return false;
+        }
+      }
+    }
     return true;
   }
 
@@ -1387,7 +1409,13 @@ public:
                   << " fmt=" << (uint32_t)tex.format.type << std::endl;
 
         float bpVal = 0.0f, wpVal = 1.0f;
-        if(batchDepthBp >= 0.0f)
+        if(depthRangeBp >= 0.0f && depthRangeWp >= 0.0f)
+        {
+          bpVal = depthRangeBp;
+          wpVal = depthRangeWp;
+          std::cout << "  depth range (explicit): [" << bpVal << ", " << wpVal << "]" << std::endl;
+        }
+        else if(batchDepthBp >= 0.0f)
         {
           bpVal = batchDepthBp;
           wpVal = batchDepthWp;

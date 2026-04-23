@@ -39,6 +39,9 @@ def capture_export_args(capture_profile: dict) -> list:
         args += ["--depth-index", str(depth_index)]
     if not capture_profile.get("depth_reversed_z", True):
         args.append("--no-reverse-depth")
+    depth_range = capture_profile.get("depth_range")
+    if depth_range and len(depth_range) == 2:
+        args += ["--depth-range", f"{float(depth_range[0])},{float(depth_range[1])}"]
     return args
 
 
