@@ -2577,6 +2577,7 @@ pollSessions();pollCaptures();
         <button class="btn" onclick="trajPause()" title="Hold at current t">Pause</button>
         <button class="btn" onclick="trajResume()" title="Resume from pause">Resume</button>
         <button class="btn" onclick="trajStop()" title="Stop writer thread">Stop</button>
+        <button class="btn" onclick="trajDecode()" title="Export every .rdc file in the active session's capture dir to PNG via renderdoccmd exportframe. Normally triggered automatically after Play with RDC capture; use this to re-decode or if auto-decode was skipped.">Decode</button>
         <button class="btn" onclick="trajPreview3d()" title="Sample preset + show waypoints on the 3D canvas (opens 3D tab)">Preview 3D</button>
         <button class="btn" onclick="trajClearPreview()" title="Remove the 3D preview overlay">Clear 3D</button>
       </div>
@@ -2972,6 +2973,21 @@ function trajStop(){
     trajStopStatusPoll();
     trajPollStatusOnce();
   });
+}
+function trajDecode(){
+  debugAppend('> traj/decode (manual)');
+  fetch('/api/trajectory/decode',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:'{}',
+  })
+    .then(r=>r.json())
+    .then(d=>{
+      if(!d.ok){debugAppend('decode ERROR: '+(d.error||'unknown'));return;}
+      debugAppend('decode: '+d.count+' .rdc -> '+d.output_dir);
+      trajStartStatusPoll();
+    })
+    .catch(e=>debugAppend('decode ERROR: '+e));
 }
 function trajPause(){
   fetch('/api/trajectory/pause',{method:'POST'}).then(r=>r.json()).then(d=>{

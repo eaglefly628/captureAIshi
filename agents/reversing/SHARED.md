@@ -99,6 +99,26 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Manual Decode button + /api/trajectory/decode
+
+Follow-up to `40acc76`: user asked for an explicit decode trigger so
+re-decoding / post-hoc decode (session started without grabber, or
+auto-decode missed) is a one-click action instead of replaying a
+trajectory.
+
+- `web/routes/trajectory.py` new `POST /api/trajectory/decode`:
+  requires an active RenderDoc grabber (`web.state.get_active_grabber`),
+  collects `.rdc` files from `grabber.capture_dir` sorted by mtime (or
+  accepts an explicit `{"paths": [...]}` body for targeted re-decode),
+  kicks `grabber.export_batch(paths, output_dir)` on a background
+  `manual-decode` thread, and flips player state to `exporting` while
+  in flight. `output_dir` comes from the session's
+  `_capture_state["output_dir"]`.
+- `web/templates/index.html`: new `Decode` button in the Trajectory
+  control row (next to Play/Pause/Resume/Stop) + `trajDecode()` JS
+  helper that posts empty body; server picks "all .rdc in capture_dir".
+  Tooltip explains this is also the fallback for re-decoding.
+
 ### [v0.2.0] 40acc76 -- xiaoni -- Post-loop auto-decode + restore start pose
 
 User report: 8 captures fired cleanly on 3 s interval but nothing

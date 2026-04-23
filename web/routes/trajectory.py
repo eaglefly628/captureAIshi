@@ -154,6 +154,94 @@ def trajectory_status():
     return jsonify({"ok": True, "status": get_default_player().status()})
 
 
+@bp.route("/api/trajectory/decode", methods=["POST"])
+def trajectory_decode():
+    """Manually kick ``grabber.export_batch`` for .rdc files on disk.
+
+    Normally the rdc-step Play path auto-decodes on loop completion. This
+    endpoint is for re-running the decode, or decoding after a session
+    where auto-decode was skipped.
+
+    Body (optional): {"paths": ["abs.rdc", ...]}. If ``paths`` is absent
+    or empty, every .rdc file in the active grabber's capture_dir is
+    exported (sorted by mtime so the output order matches capture order).
+
+    Requires an active RenderDoc grabber (the Start button must have
+    been used to launch the session). Returns immediately; decode runs
+    on a background thread and the player state -> ``exporting`` while
+    it's in flight.
+    """
+    from web import state as _web_state
+    grabber = _web_state.get_active_grabber()
+    if grabber is None or not hasattr(grabber, "export_batch"):
+        return jsonify({
+            "ok": False,
+            "error": "no active RenderDoc grabber (Start a session first)",
+        }), 409
+    capture_dir = getattr(grabber, "capture_dir", None)
+    if capture_dir is None:
+        return jsonify({
+            "ok": False,
+            "error": "active grabber has no capture_dir",
+        }), 500
+
+    body = request.get_json(silent=True) or {}
+    raw_paths = body.get("paths")
+    if isinstance(raw_paths, list) and raw_paths:
+        rdc_paths = [Path(str(p)) for p in raw_paths]
+    else:
+        rdc_paths = sorted(
+            Path(capture_dir).glob("*.rdc"),
+            key=lambda q: q.stat().st_mtime,
+        )
+    if not rdc_paths:
+        return jsonify({
+            "ok": False,
+            "error": f"no .rdc files in {capture_dir}",
+        }), 404
+
+    with _web_state._lock:
+        out_str = _web_state._capture_state.get("output_dir", "./output")
+    output_dir = Path(out_str)
+
+    from drivers.trajectory_player import get_default_player
+    player = get_default_player()
+
+    import threading as _threading
+    import logging as _logging
+
+    def _run_decode():
+        with player._lock:
+            prev_state = player._status.state
+            player._status.state = "exporting"
+        _logging.info(
+            "[DECODE] (manual) exporting %d .rdc -> %s",
+            len(rdc_paths), output_dir,
+        )
+        try:
+            results = grabber.export_batch(rdc_paths, output_dir)
+            _logging.info(
+                "[DECODE] export_batch returned %d results", len(results),
+            )
+        except Exception as e:
+            _logging.error("[DECODE] export_batch failed: %s", e)
+        finally:
+            with player._lock:
+                if player._status.state == "exporting":
+                    player._status.state = prev_state if prev_state != "exporting" else "idle"
+
+    _threading.Thread(
+        target=_run_decode, name="manual-decode", daemon=True,
+    ).start()
+
+    return jsonify({
+        "ok": True,
+        "count": len(rdc_paths),
+        "output_dir": str(output_dir),
+        "capture_dir": str(capture_dir),
+    })
+
+
 # ── Saved trajectories ───────────────────────────────────────────────────────
 #
 # Files at configs/trajectories/<name>.json carry a full
