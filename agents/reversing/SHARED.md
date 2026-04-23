@@ -105,7 +105,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Clean stale .rdc on grabber.setup()
+### [v0.2.0] 6c3b691 -- xiaoni -- Clean stale .rdc on grabber.setup()
 
 Per user ask: "每次启动后清除掉以前的rdc，不然会越来越大".
 
