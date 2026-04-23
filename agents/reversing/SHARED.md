@@ -105,7 +105,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Fix capture marker orientation in 3D preview
+### [v0.2.0] f82f461 -- xiaoni -- Fix capture marker orientation in 3D preview
 
 User screenshot: on an orbit with `look_at_center=True`, the FOV
 pyramid markers pointed in wildly inconsistent directions -- some
