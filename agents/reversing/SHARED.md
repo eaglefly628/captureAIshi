@@ -105,7 +105,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Fix RDC captures landing in game install dir (relative path bug)
+### [v0.2.0] f7645a1 -- xiaoni -- Fix RDC captures landing in game install dir (relative path bug)
 
 User found the missing .rdc files via Everything search:
 `D:\SteamLibrary\steamapps\common\Batman Arkham Knight\Binaries\Win64\output\ue5_rdoc\captures\`
