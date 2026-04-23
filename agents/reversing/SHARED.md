@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Speed-driven trajectories + Preview/Play/Stop row
+### [v0.2.0] 9495fd1 -- xiaoni -- Speed-driven trajectories + Preview/Play/Stop row
 
 User feedback: entering "duration" is not intuitive; speed (units/s) is.
 Also Pause/Resume buttons aren't used, and there should be a Preview
