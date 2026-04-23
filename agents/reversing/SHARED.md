@@ -99,7 +99,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Post-loop auto-decode + restore start pose
+### [v0.2.0] 40acc76 -- xiaoni -- Post-loop auto-decode + restore start pose
 
 User report: 8 captures fired cleanly on 3 s interval but nothing
 happened after the rdc-step loop -- "No captures yet" in the gallery,
