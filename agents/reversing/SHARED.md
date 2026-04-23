@@ -99,6 +99,36 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- RDC-step capture_interval (16->16 captures land)
+
+User hit: figure8 trajectory Play with 16 samples @ 60 Hz + rdc_capture
+fired all 16 __cam_rdc_capture commands in ~0.5 s (log "rdc-step done
+captures=16" at +0.543 s after start) and only 2 .rdc files actually
+landed because the hardcoded step was `max(1/rate_hz, 0.033)` = 33 ms
+per pose -- RenderDoc can't capture 30 Presents in 0.5 s from queued
+triggers.
+
+- `drivers/trajectory_player.py` `TrajectoryPlayer.play()`: new
+  `capture_interval: float = 1.5` param. rdc-step loop now:
+  1. Poke camera + short settle (`max(1/rate_hz, 0.05)`) so the new
+     pose reaches the render thread.
+  2. Fire `__cam_rdc_capture`.
+  3. Sleep the remaining `interval - settle`, in 100 ms chunks so
+     Stop is responsive during long intervals.
+  4. Log `[PLAYER] capture X/N triggered (interval=Ns)` per pose.
+  Interval lower-bounded to `settle`.
+- `web_ui.py` `/api/trajectory/play`: forwards
+  `capture_interval=max(0.1, body["capture_interval"] or 1.5)`.
+- `web/templates/index.html` Bridge Debug panel: new
+  `#capture_interval` input next to `#focus_delay` (default 1.5 s,
+  min 0.1, step 0.1). Persisted in localStorage under
+  `captureAIshi.captureInterval`. Wired into `trajPlay()`.
+
+Deterministic sync via bridge `__cam_rdc_capture_await` (polling
+`RenderDoc::Inst().GetCaptures().size()`) + post-loop auto-decode
+via `grabber.export_batch(rdc_paths, output_dir)` are deferred --
+they need bridge DLL rebuild and grabber-singleton wiring.
+
 ### [v0.2.0] 8554e66 -- xiaoni -- run_capture: launch-and-wait session mode
 
 Follow-up to `f6c58ad`: raising inside `run_capture` killed the main

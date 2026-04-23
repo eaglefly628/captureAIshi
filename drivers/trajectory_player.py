@@ -342,6 +342,7 @@ class TrajectoryPlayer:
         renderdoc_capture: bool = False,
         relative_origin: bool = False,
         focus_delay: float = 5.0,
+        capture_interval: float = 1.5,
     ) -> dict:
         """Start streaming ``points`` to the camera at ``rate_hz``.
 
@@ -399,7 +400,7 @@ class TrajectoryPlayer:
             t = threading.Thread(
                 target=self._run,
                 args=(plan, addr, points, rate_hz, loop, focus_delay,
-                      renderdoc_capture),
+                      renderdoc_capture, capture_interval),
                 name="trajectory-player",
                 daemon=True,
             )
@@ -483,6 +484,7 @@ class TrajectoryPlayer:
         loop: bool,
         focus_delay: float = 0.0,
         renderdoc_capture: bool = False,
+        capture_interval: float = 1.5,
     ) -> None:
         dt = 1.0 / rate_hz
         duration = total_duration(points)
@@ -521,20 +523,44 @@ class TrajectoryPlayer:
         )
 
         if renderdoc_capture:
-            # Step mode: write each sample point, wait one frame, trigger capture.
-            # rate_hz controls inter-capture delay (1/rate_hz per point).
-            step = max(1.0 / rate_hz, 0.033)  # at least ~2 frames at 60 fps
+            # Step mode: write each sample point, let the game render a
+            # couple of frames, fire __cam_rdc_capture, then wait
+            # `capture_interval` before advancing to the next pose so
+            # RenderDoc has time to actually capture + persist the .rdc
+            # file. At 60 Hz the game renders ~90 frames in 1.5 s which
+            # is plenty for the capture thread to settle.
+            settle = max(1.0 / rate_hz, 0.05)
+            interval = max(capture_interval, settle)
+            total = len(points)
             try:
-                for pose in points:
+                for idx, pose in enumerate(points, 1):
                     if self._stop_evt.is_set():
                         break
                     for f in plan:
                         session.poke(addr, f.offset, f.v_type, _pose_value(pose, f))
+                    # Let the pose reach the game's render thread before
+                    # we ask RenderDoc to capture the next Present.
+                    time.sleep(settle)
+                    session.send("__cam_rdc_capture")
                     with self._lock:
                         self._status.t = pose.t
                         self._status.ticks += 1
-                    time.sleep(step)
-                    session.send("__cam_rdc_capture")
+                    logger.info(
+                        "[PLAYER] capture %d/%d triggered (interval=%.2fs)",
+                        idx, total, interval,
+                    )
+                    # Wait the remainder of the interval so the capture
+                    # can actually land on disk before we overwrite the
+                    # camera for the next pose.
+                    remaining = interval - settle
+                    if remaining > 0:
+                        # Break the sleep into short chunks so Stop is
+                        # responsive during long intervals.
+                        deadline = time.monotonic() + remaining
+                        while time.monotonic() < deadline:
+                            if self._stop_evt.is_set():
+                                break
+                            time.sleep(min(0.1, deadline - time.monotonic()))
             finally:
                 session.close()
                 with self._lock:
