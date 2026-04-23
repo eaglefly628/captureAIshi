@@ -1348,6 +1348,21 @@ public:
                   << " (" << rgbSource << ")"
                   << " -> " << rgbPath << std::endl;
         foundRGB = true;
+
+        // Sidecar meta file: tells Python loader whether gamma correction
+        // is needed (Float SceneColor = linear HDR, needs linear->sRGB).
+        std::string metaPath = fileOutdir + sep + "rgb.meta";
+        FILE *metaFp = fopen(metaPath.c_str(), "w");
+        if(metaFp)
+        {
+          const char *srcKind = "unknown";
+          if(rgbSource.rfind("SceneColor", 0) == 0) srcKind = "float_linear";
+          else if(rgbSource.rfind("PreUIComposite", 0) == 0) srcKind = "unorm_srgb";
+          else if(rgbSource.rfind("SwapBuffer", 0) == 0) srcKind = "swap_srgb";
+          else if(rgbSource.rfind("manual", 0) == 0) srcKind = "manual";
+          fprintf(metaFp, "source=%s\n", srcKind);
+          fclose(metaFp);
+        }
       }
       else
       {
@@ -1372,13 +1387,13 @@ public:
           if(flags & (uint32_t)TextureCategory::SwapBuffer)
             catName = "SwapBuffer";
 
-          // CompType names for readability
+          // CompType names (matches enum order in replay_enums.h)
           const char *compNames[] = {
-            "Typeless", "UNorm", "SNorm", "UInt", "SInt",
-            "Float", "UNormSRGB", "Depth"
+            "Typeless", "Float", "UNorm", "SNorm", "UInt",
+            "SInt", "UScaled", "SScaled", "Depth", "UNormSRGB"
           };
           uint32_t ctIdx = (uint32_t)tex.format.compType;
-          const char *compName = (ctIdx < 8) ? compNames[ctIdx] : "?";
+          const char *compName = (ctIdx < 10) ? compNames[ctIdx] : "?";
 
           std::cout << "  [" << i << "] " << catName
                     << " compType=" << compName
@@ -1433,10 +1448,14 @@ public:
               const float *src = (const float *)rawData.data();
               std::vector<float> validDepths;
               validDepths.reserve(pixelCount);
+              // Exclude exact 0.0 / 1.0 and near-boundary values -- these are
+              // typically cleared/sky/far-plane pixels that bias the percentile
+              // range and crush real geometry to black after normalization.
+              const float eps = 1e-6f;
               for(size_t p = 0; p < pixelCount; p++)
               {
                 float d = src[p];
-                if(d >= 0.0f && d <= 1.0f)
+                if(d > eps && d < 1.0f - eps)
                   validDepths.push_back(d);
               }
               if(!validDepths.empty())

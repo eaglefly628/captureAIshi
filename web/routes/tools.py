@@ -6,6 +6,8 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_from_directory
 
+from grabbers.renderdoc.paths import resolve_renderdoccmd
+
 bp = Blueprint("tools", __name__)
 
 _ANALYZE_DIR = Path("output/_analyze")
@@ -29,14 +31,17 @@ def tools_analyze_rdc():
         return jsonify({"ok": False, "error": f"File not found: {rdc_path}"}), 404
 
     renderdoc_path = body.get("renderdoc_path", "renderdoccmd").strip() or "renderdoccmd"
+    try:
+        rdoc_cmd = resolve_renderdoccmd(renderdoc_path)
+    except FileNotFoundError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
     out_dir = _ANALYZE_DIR / rdc_path.stem
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = [renderdoc_path, "exportframe", "--dump-all", "-o", str(out_dir), str(rdc_path)]
+    cmd = [rdoc_cmd, "exportframe", "--dump-all", "-o", str(out_dir), str(rdc_path)]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except FileNotFoundError:
-        return jsonify({"ok": False, "error": f"renderdoccmd not found: {renderdoc_path}"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "Analysis timed out (>120s)"}), 500
 

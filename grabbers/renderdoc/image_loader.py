@@ -20,9 +20,9 @@ def load_rgb_image(
 ) -> Optional[np.ndarray]:
     """Load exported RGB image (png/jpg/bmp/tga) as uint8 (H, W, 3).
 
-    If ``capture_profile["rgb_linear"]`` is True, applies linear-to-sRGB gamma
-    correction after loading.  Use this when the C++ exported a Float SceneColor
-    texture which was saved linearly (RenderDoc does NOT apply gamma on PNG save).
+    Applies linear->sRGB gamma if ``rgb.meta`` reports ``source=float_linear``
+    (C++ picked a Float HDR SceneColor), OR if ``capture_profile["rgb_linear"]``
+    is True. sRGB sources (UNorm pre-UI composite, SwapBuffer) are loaded as-is.
     """
     for ext in ("png", "jpg", "bmp", "tga"):
         rgb_file = directory / f"rgb.{ext}"
@@ -48,8 +48,22 @@ def load_rgb_image(
                 logger.error(f"[RDOC] Failed to load RGB from {rgb_file}: {e}")
                 return None
 
+            # Auto-detect gamma via sidecar (written by C++ exportframe)
+            needs_gamma = False
+            meta_file = directory / "rgb.meta"
+            if meta_file.exists():
+                try:
+                    for line in meta_file.read_text().splitlines():
+                        if line.strip() == "source=float_linear":
+                            needs_gamma = True
+                            break
+                except Exception:
+                    pass
+            # Profile override (wins over auto-detect)
             profile = capture_profile or {}
-            if profile.get("rgb_linear", False):
+            if "rgb_linear" in profile:
+                needs_gamma = bool(profile["rgb_linear"])
+            if needs_gamma:
                 arr = _linear_to_srgb(arr)
                 logger.debug(f"[RDOC] Applied linear->sRGB gamma to RGB")
             return arr
