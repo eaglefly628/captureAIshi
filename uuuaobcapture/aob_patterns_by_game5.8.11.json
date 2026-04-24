@@ -1,0 +1,858 @@
+{
+  "engine": "UE5",
+  "summary": {
+    "total_games_detected": 13,
+    "total_games_with_specific_overrides": 9,
+    "total_keys": 49,
+    "total_variants": 215,
+    "per_game": {
+      "Avowed": {
+        "keys": 3,
+        "variants": 3
+      },
+      "Borderlands 4": {
+        "keys": 5,
+        "variants": 5
+      },
+      "Code Vein II": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Mafia: The Old Country": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Oblivion Remastered": {
+        "keys": 2,
+        "variants": 2
+      },
+      "S.T.A.L.K.E.R. 2": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Silent Hill f": {
+        "keys": 1,
+        "variants": 1
+      },
+      "The Outer Worlds 2": {
+        "keys": 2,
+        "variants": 2
+      },
+      "Unknown (UE codename M1)": {
+        "keys": 2,
+        "variants": 2
+      },
+      "Shared / UE framework (all games)": {
+        "keys": 31,
+        "variants": 197
+      },
+      "Banishers: Ghosts of New Eden": {
+        "keys": 0,
+        "variants": 0
+      },
+      "Hellblade II": {
+        "keys": 0,
+        "variants": 0
+      },
+      "Tekken 8 (codename Polaris)": {
+        "keys": 0,
+        "variants": 0
+      },
+      "Unknown (UE codename TQ2)": {
+        "keys": 0,
+        "variants": 0
+      }
+    }
+  },
+  "games": {
+    "Avowed": {
+      "engine": "UE5",
+      "key_count": 3,
+      "keys": [
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT1",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 1,
+          "patterns": [
+            "B9 09 00 00 00 4C 89 FF 48 89 D6 F3 48 A5 8B 42 48 89 83 38 15 00 00"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION",
+          "purpose_guess": "Atmospheric component write hook",
+          "variant_count": 1,
+          "patterns": [
+            "48 89 6C 24 20 44 8B 4C 24 30 | E8 ?? ?? ?? ?? E9 ?? ?? ?? ?? 48 8D 15"
+          ],
+          "registered_in": [
+            "FUN_1800eb060"
+          ]
+        },
+        {
+          "key": "AOB_UOBJECT_PROCESSEVENT",
+          "purpose_guess": "UObject::ProcessEvent hook",
+          "variant_count": 1,
+          "patterns": [
+            "80 3D ?? ?? ?? ?? 00 75 13 48 81 C4 80 00 00 00 5B 5F 5E 41 5E 41 5F E9 | ?? "
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        }
+      ]
+    },
+    "Borderlands 4": {
+      "engine": "UE5",
+      "key_count": 5,
+      "keys": [
+        {
+          "key": "AOB_BL4_COORDS_WRITE_LOCATION",
+          "purpose_guess": "[Borderlands 4] Camera coordinates write",
+          "variant_count": 1,
+          "patterns": [
+            "48 89 46 10 0F 28 44 24 20 0F 11 06 48 8B 4C 24 40 48 31 E1 48 3B 0D"
+          ],
+          "registered_in": [
+            "FUN_1800fe350"
+          ]
+        },
+        {
+          "key": "AOB_BL4_MAINTHREAD_CALL_INTERCEPT",
+          "purpose_guess": "[Borderlands 4] Main-thread call intercept",
+          "variant_count": 1,
+          "patterns": [
+            "0F 29 74 24 ?? 44 89 C3 48 89 CE 48 8B 49 08 E8 ?? ?? ?? ?? FE"
+          ],
+          "registered_in": [
+            "FUN_1800fe350"
+          ]
+        },
+        {
+          "key": "AOB_BL4_POSTPROCESSWRITE_LOCATION",
+          "purpose_guess": "[Borderlands 4] Post-process settings write",
+          "variant_count": 1,
+          "patterns": [
+            "48 8B 06 48 89 F1 0F 28 CE 49 89 F8 49 89 D9 FF 90 08 03 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800fe350"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT1",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 1,
+          "patterns": [
+            "48 8B 43 50 48 89 47 10 0F 10 43 40 0F 11 07 0F 10 43 58 0F 11 47 18 48 8B 43 68 48 89 47 28"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_OBJECTSSTORE",
+          "purpose_guess": "GUObjectArray (UObject store) pointer",
+          "variant_count": 1,
+          "patterns": [
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        }
+      ]
+    },
+    "Code Vein II": {
+      "engine": "UE5",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION",
+          "purpose_guess": "Atmospheric component write hook",
+          "variant_count": 1,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 48 8B CF E8 ?? ?? ?? ?? 80 BF 18 03 00 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800eb060"
+          ]
+        }
+      ]
+    },
+    "Mafia: The Old Country": {
+      "engine": "UE5",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_OBJECTSSTORE",
+          "purpose_guess": "GUObjectArray (UObject store) pointer",
+          "variant_count": 1,
+          "patterns": [
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        }
+      ]
+    },
+    "Oblivion Remastered": {
+      "engine": "UE5",
+      "key_count": 2,
+      "keys": [
+        {
+          "key": "AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION",
+          "purpose_guess": "Atmospheric component write hook",
+          "variant_count": 1,
+          "patterns": [
+            "FF 50 08 8B 45 E3 48 8D 4D DF F7 D0 21 45 EF E8 ?? ?? ?? ?? EB"
+          ],
+          "registered_in": [
+            "FUN_1800eb060"
+          ]
+        },
+        {
+          "key": "AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION2",
+          "purpose_guess": "Atmospheric component write hook",
+          "variant_count": 1,
+          "patterns": [
+            "F2 0F 11 4C 24 40 48 89 7C 24 20 | E8 ?? ?? ?? ?? 4C 8D 9C 24 B0 00 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800eb060"
+          ]
+        }
+      ]
+    },
+    "S.T.A.L.K.E.R. 2": {
+      "engine": "UE5",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_BLOCK_GAMEPAD_INPUT_LOCATION_KEY",
+          "purpose_guess": "Gamepad input blocking",
+          "variant_count": 1,
+          "patterns": [
+            "0F 44 C1 8B C8 83 C9 10 45 38 48 44"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        }
+      ]
+    },
+    "Silent Hill f": {
+      "engine": "UE5",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_SHF_FOV_WRITE_LOCATION",
+          "purpose_guess": "[Silent Hill f] FOV write",
+          "variant_count": 1,
+          "patterns": [
+            "FF 90 D0 07 00 00 0F 28 74 24 70 48 8B 9C 24 B0 00 00 00 44 0F 28 44 24 50"
+          ],
+          "registered_in": [
+            "FUN_1800fef50"
+          ]
+        }
+      ]
+    },
+    "The Outer Worlds 2": {
+      "engine": "UE5",
+      "key_count": 2,
+      "keys": [
+        {
+          "key": "AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION",
+          "purpose_guess": "Atmospheric component write hook",
+          "variant_count": 1,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 80 BB 50 0A 00 00 00 74 0D 48 8B CB 48 83 C4 20"
+          ],
+          "registered_in": [
+            "FUN_1800eb060"
+          ]
+        },
+        {
+          "key": "AOB_UOBJECT_PROCESSEVENT",
+          "purpose_guess": "UObject::ProcessEvent hook",
+          "variant_count": 1,
+          "patterns": [
+            "4C 8B C5 48 8B D3 48 8B CF E8 | ?? ?? ?? ?? EB"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        }
+      ]
+    },
+    "Unknown (UE codename M1)": {
+      "engine": "UE5",
+      "key_count": 2,
+      "keys": [
+        {
+          "key": "AOB_BLOCK_GAMEPAD_INPUT_LOCATION_KEY",
+          "purpose_guess": "Gamepad input blocking",
+          "variant_count": 1,
+          "patterns": [
+            "FF 15 ?? ?? ?? ?? 85 C0 0F 94 C1 88 0F 85 C0"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT1",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 1,
+          "patterns": [
+            "F2 0F 11 01 48 8B DA 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        }
+      ]
+    },
+    "Shared / UE framework (all games)": {
+      "engine": "UE5",
+      "key_count": 31,
+      "keys": [
+        {
+          "key": "AOB_ASPECTRATIO_CONSTRAINT_LOCATION",
+          "purpose_guess": "Aspect-ratio constraint",
+          "variant_count": 1,
+          "patterns": [
+            "D1 E9 | ?? ?? 89 4B 5C 48 8D 8D A0 00 00 00 8B 87 20 33 00 00 83 E0 01"
+          ],
+          "registered_in": [
+            "FUN_1800ff0b0"
+          ]
+        },
+        {
+          "key": "AOB_CALL_TO_STATICCONSTRUCTOBJECT_INTERNAL",
+          "purpose_guess": "StaticConstructObject_Internal call",
+          "variant_count": 9,
+          "patterns": [
+            "E8 | ?? ?? ?? ?? 48 83 7C 24 60 00 48 8B D8 74 ?? 48 8B 54 24",
+            "E8 | ?? ?? ?? ?? 48 8B D8 4C 39 65 ?? 74 15 48 8B 55 FF 48 8D",
+            "E8 | ?? ?? ?? ?? 48 8B F0 4C 39 75 E0 0F 85 ?? ?? ?? ?? 48",
+            "E8 | ?? ?? ?? ?? 48 89 C3 48 83 BC 24 E0 00 00 00 00 74 ?? 48 8B 84 24",
+            "48 89 45 B7 48 89 5D BF E8 | ?? ?? ?? ?? 48 83 7D F7 00",
+            "E8 | ?? ?? ?? ?? 48 8D 4D F7 48 8B D8 E8 ?? ?? ?? ?? 48",
+            "E8 | ?? ?? ?? ?? 48 89 C6 4D 39 6F 40 75 31 48 8B 8C 24 B0 00 00 00",
+            "E8 | ?? ?? ?? ?? 48 8B D8 4C 39 65 ?? 74 ?? 48 8B 55 ?? 48 8D 4D",
+            "E8 | ?? ?? ?? ?? 48 83 BC 24 C0 00 00 00 00 74 22 48 8D 8C 24 D0"
+          ],
+          "registered_in": [
+            "FUN_180114860"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_CAMERA_COMPONENT",
+          "purpose_guess": "Camera black-bar removal (CameraComponent)",
+          "variant_count": 9,
+          "patterns": [
+            "0F B6 83 ?? 02 00 00 33 47 ?? 83 E0 01 31 47 ?? 0F B6 8B ?? 02 00 00",
+            "0F B6 8B ?? 02 00 00 33 4F ?? 83 E1 01 33 4F ?? 89 4F ?? 0F B6 83 ?? 02 00 00",
+            "0F B6 8B ?? 02 00 00 33 4F ?? 83 E1 01 31 4F ?? 0F B6 83 ?? 02 00 00",
+            "8B 87 C8 02 00 00 89 46 44 0F B6 87 CC 02 00 00 33 46 48 83 E0 01",
+            "0F B6 8B ?? 02 00 00 33 4F ?? 83 E1 01 33 4F ?? 89 4F 48 0F B6 83",
+            "0F B6 8F ?? 02 00 00 33 4E ?? 83 E1 01 33 4E ?? 89 4E 68 0F B6 97 ?? 02 00",
+            "0F B6 8B ?? 02 00 00 33 4F ?? 83 E1 01 33 4F ?? 89 4F 68 0F B6 93 ?? 02 00",
+            "0F B6 83 ?? 02 00 00 33 47 ?? 83 E0 01 33 47 ?? 89 47 68 0F B6 93 ?? 02 00",
+            "0F B6 8F ?? 02 00 00 33 4E ?? 83 E1 01 33 4E ?? 89 4E 60 0F B6 87 ?? 02 00"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_PLAYER_CAMERA_MANAGER",
+          "purpose_guess": "Camera black-bar removal (PlayerCameraManager)",
+          "variant_count": 7,
+          "patterns": [
+            "8B 81 ?? ?? 00 00 D1 E8 41 33 40 ?? 83 E0 01 48 89 ?? 24 60",
+            "8B 89 ?? ?? 00 00 D1 E9 41 33 48 ?? 83 E1 01 48 89 ?? 24 60",
+            "8B 81 ?? ?? 00 00 D1 E8 41 33 40 ?? 83 E0 01 48 89 ?? 24 ?? 41",
+            "8B 81 ?? ?? 00 00 D1 E8 41 33 40 ?? 83 E0 01 4C 89 ?? 24 ?? 41",
+            "8B 87 ?? ?? 00 00 C1 E8 02 33 C1 83 E0 02 33 C1 89 46 ?? 8B 87",
+            "8B 8? ?? ?? 00 00 C1 E9 02 33 4E ?? 83 E1 01 31 4E ?? 8B 8? ?? ?? 00 00",
+            "8B 87 ?? ?? 00 00 C1 E8 02 41 33 47 ?? 83 E0 01 41 31 47 ?? 8B 87"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_REMOVAL1",
+          "purpose_guess": "Camera black-bar removal",
+          "variant_count": 1,
+          "patterns": [
+            "8B 42 ?? 89 41 ?? 8B 41 ?? 33 42 ?? 83 E0 01 31 41 ?? 8B ?? ?? 33 ?? ?? 83 ?? 02 31"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_REMOVAL2",
+          "purpose_guess": "Camera black-bar removal",
+          "variant_count": 1,
+          "patterns": [
+            "8B 42 ?? 89 41 ?? 8B 41 ?? 33 42 ?? 83 E0 01 31 41 ?? 8B ?? ?? 33 ?? ?? 83 ?? 02 31"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_REMOVAL3",
+          "purpose_guess": "Camera black-bar removal",
+          "variant_count": 1,
+          "patterns": [
+            "8B 42 ?? 89 41 ?? 8B 41 ?? 33 42 ?? 83 E0 01 31 41 ?? 8B ?? ?? 33 ?? ?? 83 ?? 02 31"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT1",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 2,
+          "patterns": [
+            "0F 10 02 ?? ?? ?? ?? ?? ?? | 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+            "C5 F8 11 01 C5 FB 10 4A 10 C5 FB 11 49 10 C5 F8 10 42 18 C5 F8 11 41 18 C5 FB 10 4A 28 C5 FB 11 49 28 8B 42 30 48 8B D9 89 41 30 48 8B FA"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT2",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 2,
+          "patterns": [
+            "0F 10 02 ?? ?? ?? ?? ?? ?? | 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+            "C5 F8 11 01 C5 FB 10 4A 10 C5 FB 11 49 10 C5 F8 10 42 18 C5 F8 11 41 18 C5 FB 10 4A 28 C5 FB 11 49 28 8B 42 30 48 8B D9 89 41 30 48 8B FA"
+          ],
+          "registered_in": [
+            "FUN_180101210"
+          ]
+        },
+        {
+          "key": "AOB_ENGINEVERSION",
+          "purpose_guess": "Engine version string",
+          "variant_count": 12,
+          "patterns": [
+            "41 C7 06 | 05 00 ?? ?? 48 8B 5C 24 ?? 49 8D 76 ?? 33 ED 41 89 46",
+            "C7 06 | 05 00 ?? ?? 48 8B 5C 24 20 4C 8D 76 10 33 ED",
+            "C7 ?? | 05 00 ?? ?? 66 C7 43 04 ?? 00 44 89 7B 08 48 3B",
+            "C7 ?? | 05 00 ?? ?? 66 44 89 7F ?? C7 47 08 ?? ?? ?? ?? 4C 3B F0",
+            "C7 ?? | 05 00 ?? ?? 0B C3 48 89 6E 10",
+            "C7 ?? | 05 00 ?? ?? 66 C7 46 04 04 00 89 46 08",
+            "C7 ?? | 05 00 ?? ?? 66 C7 46 04 03 00 4C 3B F0",
+            "C7 ?? | 05 00 ?? ?? 66 44 89 6F ?? C7 47 08 ?? ?? ?? ?? 48 3B F0",
+            "C7 ?? | 05 00 ?? ?? 48 8B 5C 24 ?? 4C 8D 76 ?? 33 ED",
+            "C7 ?? | 05 00 ?? ?? 66 44 89 7F ?? 89 6F",
+            "C7 ?? | 05 00 ?? ?? 66 C7 46 04 ?? 00 C7 46 08 ?? ?? ?? ?? 49",
+            "C7 ?? | 05 00 ?? 00 66 44 89 63 ?? 44 89 7B ?? 48 3B F8"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        },
+        {
+          "key": "AOB_FCONSOLEMANAGER_ADDRESS_LOCATION",
+          "purpose_guess": "FConsoleManager pointer",
+          "variant_count": 8,
+          "patterns": [
+            "48 8B 0D | ?? ?? ?? ?? 48 0F 45 1D ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D",
+            "48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 0C E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D",
+            "74 02 90 CC 48 8B 0D | ?? ?? ?? ?? 4C 8D 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? C7",
+            "48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01",
+            "48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D",
+            "48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 4C 24",
+            "48 89 3D | ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07",
+            "48 83 EC ?? 48 83 3D | ?? ?? ?? ?? 00 75 75 B9 F8 00 00 00 E8 ?? ?? ?? ?? 48 85 C0"
+          ],
+          "registered_in": [
+            "FUN_180114860"
+          ]
+        },
+        {
+          "key": "AOB_FILLCOMPONENTSPACETRANSFORMS_CALL",
+          "purpose_guess": "USkeletalMeshComponent::FillComponentSpaceTransforms hook",
+          "variant_count": 25,
+          "patterns": [
+            "4C 8D 86 ?? ?? 00 00 4D 8B CC 48 8B D7 49 8B CE E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 4D 5F 4D 8D 87 ?? ?? 00 00 48 8B D3 49 8B CD E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 4D 5F 4D 8D 84 24 ?? ?? 00 00 48 8B D3 49 8B CD E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4C 8D 87 ?? ?? 00 00 4D 8B CD 48 8B D3 49 8B CC E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 4D 5F 4D 8D ?? ?? ?? 00 00 48 8B D3 49 8B CD E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 45 3F 48 8B D3 4C 8B 4D 5F 49 81 C0 ?? ?? 00 00 49 8B CD E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4C 8D 86 ?? ?? 00 00 48 8B D3 49 8B CF E8 | ?? ?? ?? ?? 48 8B 4D ?? 48 85",
+            "4D 8D 86 ?? ?? 00 00 4D 8B CC 48 8B D7 49 8B CD E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4D 8D 86 ?? ?? 00 00 48 8B D3 49 8B CF E8 | ?? ?? ?? ?? 48 8B 4D ?? 48 85",
+            "49 81 C0 ?? ?? 00 00 49 8B CC E8 | ?? ?? ?? ?? 48 8B 4D B7 48 85 C9",
+            "4D 8D 86 ?? ?? 00 00 48 8B D3 49 8B CC E8 | ?? ?? ?? ?? 48 8B 4D CF",
+            "4C 8D 87 ?? ?? 00 00 48 8B D6 49 8B CD E8 | ?? ?? ?? ?? 48 8B 4D D7",
+            "4C 8D 87 ?? ?? 00 00 4D 8B CE 49 8B D7 48 8B CE E8 | ?? ?? ?? ?? 48 8B",
+            "4D 8D 87 ?? ?? 00 00 4D 8B CD 49 8B CE E8 | ?? ?? ?? ?? 48 8D 4D A0 E8",
+            "4D 8D 85 ?? ?? 00 00 48 8B D3 49 8B CF E8 | ?? ?? ?? ?? 48 8B 4D CF 48 85 C9",
+            "4D 8D 87 ?? ?? 00 00 48 8B D3 49 8B CD C5 F8 77 E8 | ?? ?? ?? ?? 48 8B 8C 24",
+            "4D 8D 87 ?? ?? 00 00 48 8B D7 4D 8D 8F F0 0D 00 00 49 8B CC E8 | ?? ?? ?? ?? 48 8B 4D F7",
+            "4D 8D 85 ?? ?? 00 00 48 8B D3 49 8B CC E8 | ?? ?? ?? ?? 48 8B 4D D7",
+            "4D 8D 85 ?? ?? 00 00 48 8B D3 49 8B CC E8 | ?? ?? ?? ?? 48 8B 8C 24",
+            "48 8B 55 ?? 4C 8D 87 ?? ?? 00 00 4D 8B CC 49 8B CF E8 | ?? ?? ?? ?? 48",
+            "4D 8D 4F ?? 4C 8D 86 ?? ?? 00 00 49 8D 57 ?? E8 | ?? ?? ?? ?? 49 8D 97 A8",
+            "48 8B 4F 10 4C 8D 4F 18 4C 8D 86 50 0B 00 00 48 8D 57 28 E8 | ?? ?? ?? ?? 48",
+            "4C 8B 4D ?? 49 81 C0 ?? ?? 00 00 49 8B CC E8 | ?? ?? ?? ?? 48 8B 4D",
+            "4D 8D 86 ?? ?? 00 00 4D 8B CD 48 8B D7 48 8B CE E8 | ?? ?? ?? ?? 48",
+            "4D 8D 87 ?? ?? 00 00 48 8B D3 49 8B CE E8 | ?? ?? ?? ?? 48 8B 4D"
+          ],
+          "registered_in": [
+            "FUN_1800b2de0"
+          ]
+        },
+        {
+          "key": "AOB_FILLCOMPONENTSPACETRANSFORMS_LOCATION_427",
+          "purpose_guess": "USkeletalMeshComponent::FillComponentSpaceTransforms hook",
+          "variant_count": 1,
+          "patterns": [
+            "0F 10 42 40 0F 11 41 40 0F 10 4A 50 0F 11 49 50 8B 86 C8 0A 00 00 4D 8B 8E A0 02 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800b2de0"
+          ]
+        },
+        {
+          "key": "AOB_FSLATEAPPLICATION_APP_ACTIVATION_CHANGED",
+          "purpose_guess": "FSlateApplication app-activation hook",
+          "variant_count": 2,
+          "patterns": [
+            "48 83 EC 28 | 48 81 C1 B8 FE FF FF E8 ?? ?? ?? ?? B0 01 48 83 C4 28 C3",
+            "48 83 EC 28 | 48 81 C1 A8 FE FF FF E8 ?? ?? ?? ?? B0 01 48 83 C4 28 C3"
+          ],
+          "registered_in": [
+            "FUN_180138800"
+          ]
+        },
+        {
+          "key": "AOB_GAMECLOCK_TICK_PREVENTION_LOCATION",
+          "purpose_guess": "Game-clock tick prevention (pause)",
+          "variant_count": 1,
+          "patterns": [
+            "0F 84 ?? ?? ?? ?? 48 3B D9 0F 84 ?? ?? ?? ?? 48 8D 73 08 0F 1F 40 00 48 8B 03"
+          ],
+          "registered_in": [
+            "FUN_1800ff0b0"
+          ]
+        },
+        {
+          "key": "AOB_GAMEPAD_INPUT_READ_ADDRESS",
+          "purpose_guess": "Gamepad input read",
+          "variant_count": 1,
+          "patterns": [
+            "FF 50 10 FF C5 EB C5 48 8B 5C 24 78 48 8B AC 24 80 00 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800fec80"
+          ]
+        },
+        {
+          "key": "AOB_GENGINE",
+          "purpose_guess": "GEngine global pointer",
+          "variant_count": 6,
+          "patterns": [
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? ?? 00 00 48 85 C9 74 ?? 48 8B 49 ?? 48 85 C9",
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 98 58 0A 00 00 48 85 DB 74 ?? 44 38 35",
+            "48 8B 3D | ?? ?? ?? ?? 48 8B 47 28 48 8B 58 08 E8 ?? ?? ?? ?? 4C 8B",
+            "48 83 EC 20 48 8B 0D | ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 65 4C ",
+            "48 83 EC 20 48 8B 35 | ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 65 48 8B",
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 98 ?? 0A 00 00 48 85 DB"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        },
+        {
+          "key": "AOB_GET_TIMEDILATION",
+          "purpose_guess": "Get TimeDilation",
+          "variant_count": 1,
+          "patterns": [
+            "F3 0F 10 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 C3"
+          ],
+          "registered_in": [
+            "FUN_180138800"
+          ]
+        },
+        {
+          "key": "AOB_NAMESSTORE",
+          "purpose_guess": "GNames (FName store) pointer",
+          "variant_count": 8,
+          "patterns": [
+            "48 8D 15 | ?? ?? ?? ?? EB 16 48 8D 0D ?? ?? ?? ?? E8",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E9 ?? ?? ?? ?? 33",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 4C 89 A4 24",
+            "48 83 C4 28 C3 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
+            "48 8D 05 ?? ?? ?? ?? EB 13 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 0F 28 44 24",
+            "48 8D 35 ?? ?? ?? ?? EB 2F 48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 48",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 89 F8"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        },
+        {
+          "key": "AOB_OBJECTSSTORE",
+          "purpose_guess": "GUObjectArray (UObject store) pointer",
+          "variant_count": 26,
+          "patterns": [
+            "89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 48",
+            "89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 15 ?? ?? ?? ?? 48 8D 8C 24 ?? ?? ?? ?? E8",
+            "89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8",
+            "89 15 | ?? ?? ?? ?? 85 FF 7F ?? 48 8D 8C 24 88 00 00 00 E8",
+            "89 15 | ?? ?? ?? ?? 85 FF 7F ?? 4C 8B 44 24 ?? 4C 8D 0D",
+            "FF CA 48 89 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 89 0D ?? ?? ?? ?? 89 15 | ??",
+            "48 8D 0D | ?? ?? ?? ?? 44 8B 44 24 70 8B 54 24 78 E8 ?? ?? ?? ?? E8",
+            "48 8D 0D | ?? ?? ?? ?? 44 8B 84 24 80 00 00 00 8B 94 24 88 00 00 00 E8 ?? ?? ?? ?? E8",
+            "48 89 05 ?? ?? ?? ?? FF C9 44 89 35 ?? ?? ?? ?? 89 0D | ?? ?? ?? ?? 45 85 FF",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 18 4C 8D 05 ?? ?? ?? ?? BA ?? ?? ?? ?? 48 8D 0D",
+            "0F 9E C0 44 89 35 ?? ?? ?? ?? FF C8 89 05 | ?? ?? ?? ?? 85 F6 7F 13 48 8D 15",
+            "89 ?? | ?? ?? ?? ?? 85 FF 7F ?? 4C 8D 05 ?? ?? ?? ?? BA ?? 00 00 00",
+            "48 8D 0D | ?? ?? ?? ?? 8B 54 24 70 44 8B C0 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 1C 4C 8B 45 40 4C 8D 0D ?? ?? ?? ?? BA 68 00 00 00",
+            "89 3D | ?? ?? ?? ?? 48 8B BC 24 ?? ?? 00 00 85 DB 7F ?? 4C 8D 05",
+            "8B 5D 48 FF C8 89 05 | ?? ?? ?? ?? 85 DB 0F 8E ?? ?? ?? ?? 8B",
+            "89 05 | ?? ?? ?? ?? 45 85 E4 7F 05 E8 ?? ?? ?? ?? 41",
+            "89 3D ?? ?? ?? ?? 0F 9E C0 FF C8 89 05 | ?? ?? ?? ?? 85 DB 7F 05 E8 ?? ?? ?? ?? 8B",
+            "8B CB 0F 9E C1 89 15 ?? ?? ?? ?? FF C9 89 0D | ?? ?? ?? ?? 85 FF 7F 18",
+            "39 3D ?? ?? ?? ?? 89 05 | ?? ?? ?? ?? 74 ?? 4C 8D 0D ?? ?? ?? ?? 41",
+            "48 8D 0D | ?? ?? ?? ?? 8B 54 24 70 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8",
+            "FF C9 89 0D | ?? ?? ?? ?? 44 39 75 50 0F 8E ?? ?? ?? ?? 8B 45 50",
+            "8B 5D 77 FF C8 89 05 | ?? ?? ?? ?? 85 DB 7F 05 E8 ?? ?? ?? ?? 8B C3",
+            "8B C3 0F 9E C0 FF C8 39 1D ?? ?? ?? ?? 89 05 | ?? ?? ?? ?? 74",
+            "48 8D 0D | ?? ?? ?? ?? 41 89 F8 41 89 F1 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8",
+            "85 C0 89 05 ?? ?? ?? ?? 0F 9E C1 FF C9 89 0D | ?? ?? ?? ?? 44"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        },
+        {
+          "key": "AOB_PLAYERCAMERACONTROLLER_FOV_WRITE_CALL_ADDRESS",
+          "purpose_guess": "PlayerCameraController FOV-write call",
+          "variant_count": 1,
+          "patterns": [
+            "FF 90 A8 07 00 00 0F 28 74 24 20 48 83 C4 30 5B"
+          ],
+          "registered_in": [
+            "FUN_1800ff0b0"
+          ]
+        },
+        {
+          "key": "AOB_REQUIREDBONESOFFSET_LOCATION",
+          "purpose_guess": "USkeletalMeshComponent RequiredBones offset",
+          "variant_count": 25,
+          "patterns": [
+            "4C 8D 86 | ?? ?? 00 00 4D 8B CC 48 8B D7 49 8B CE E8 ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 4D 5F 4D 8D 87 | ?? ?? 00 00 48 8B D3 49 8B CD E8 ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 4D 5F 4D 8D 84 24 | ?? ?? 00 00 48 8B D3 49 8B CD E8 ?? ?? ?? ?? 48 8B 4D",
+            "4C 8D 87 | ?? ?? 00 00 4D 8B CD 48 8B D3 49 8B CC E8 ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 4D 5F 4D 8D ?? | ?? ?? 00 00 48 8B D3 49 8B CD E8 ?? ?? ?? ?? 48 8B 4D",
+            "4C 8B 45 3F 48 8B D3 4C 8B 4D 5F 49 81 C0 | ?? ?? 00 00 49 8B CD E8 ?? ?? ?? ?? 48 8B 4D",
+            "4C 8D 86 | ?? ?? 00 00 48 8B D3 49 8B CF E8 ?? ?? ?? ?? 48 8B 4D ?? 48 85",
+            "4D 8D 86 | ?? ?? 00 00 4D 8B CC 48 8B D7 49 8B CD E8 ?? ?? ?? ?? 48 8B 4D",
+            "4D 8D 86 | ?? ?? 00 00 48 8B D3 49 8B CF E8 ?? ?? ?? ?? 48 8B 4D ?? 48 85",
+            "49 81 C0 | ?? ?? 00 00 49 8B CC E8 ?? ?? ?? ?? 48 8B 4D B7 48 85 C9",
+            "4D 8D 86 | ?? ?? 00 00 48 8B D3 49 8B CC E8 ?? ?? ?? ?? 48 8B 4D CF",
+            "4C 8D 87 | ?? ?? 00 00 48 8B D6 49 8B CD E8 ?? ?? ?? ?? 48 8B 4D D7",
+            "4C 8D 87 | ?? ?? 00 00 4D 8B CE 49 8B D7 48 8B CE E8 ?? ?? ?? ?? 48 8B",
+            "4D 8D 87 | ?? ?? 00 00 4D 8B CD 49 8B CE E8 ?? ?? ?? ?? 48 8D 4D A0 E8",
+            "4D 8D 85 | ?? ?? 00 00 48 8B D3 49 8B CF E8 ?? ?? ?? ?? 48 8B 4D CF 48 85 C9",
+            "4D 8D 87 | ?? ?? 00 00 48 8B D3 49 8B CD C5 F8 77 E8 ?? ?? ?? ?? 48 8B 8C 24",
+            "4D 8D 87 | ?? ?? 00 00 48 8B D7 4D 8D 8F F0 0D 00 00 49 8B CC E8 ?? ?? ?? ?? 48 8B 4D F7",
+            "4D 8D 85 | ?? ?? 00 00 48 8B D3 49 8B CC E8 ?? ?? ?? ?? 48 8B 4D D7",
+            "4D 8D 85 | ?? ?? 00 00 48 8B D3 49 8B CC E8 ?? ?? ?? ?? 48 8B 8C 24",
+            "48 8B 55 ?? 4C 8D 87 | ?? ?? 00 00 4D 8B CC 49 8B CF E8 ?? ?? ?? ?? 48",
+            "4D 8D 4F ?? 4C 8D 86 | ?? ?? 00 00 49 8D 57 ?? E8 ?? ?? ?? ?? 49 8D 97 A8",
+            "48 8B 4F 10 4C 8D 4F 18 4C 8D 86 | ?? ?? 00 00 48 8D 57 28 E8 ?? ?? ?? ?? 48",
+            "4C 8B 4D ?? 49 81 C0 | ?? ?? 00 00 49 8B CC E8 ?? ?? ?? ?? 48 8B 4D",
+            "4D 8D 86 | ?? ?? 00 00 4D 8B CD 48 8B D7 48 8B CE E8 ?? ?? ?? ?? 48",
+            "4D 8D 87 | ?? ?? 00 00 48 8B D3 49 8B CE E8 ?? ?? ?? ?? 48 8B 4D"
+          ],
+          "registered_in": [
+            "FUN_1800b2de0"
+          ]
+        },
+        {
+          "key": "AOB_SVIEWPORT_ONPAINT_CALL_COMPOUNDWIDGET_ONPAINT",
+          "purpose_guess": "SViewport::OnPaint call to SCompoundWidget::OnPaint",
+          "variant_count": 7,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 89 44 24 ?? 8B ?? B? FF FF FF FF 4D 85 E4",
+            "E8 ?? ?? ?? ?? 44 8B E8 41 BC ?? ?? ?? ?? 4D 85 F6 0F 84",
+            "E8 ?? ?? ?? ?? 89 44 24 ?? 44 8B E8 41 BC FF FF FF FF 4D 85 F6",
+            "E8 ?? ?? ?? ?? 33 F6 89 44 24 58 8B F8 4D 85 FF 74 11 49 8B 17",
+            "E8 ?? ?? ?? ?? 41 89 C4 4C 8B 7C 24 78 49 8B 07 4C 89 F9 FF 50",
+            "E8 ?? ?? ?? ?? 89 44 24 48 8B D8 4D 85 E4 0F 84",
+            "E8 ?? ?? ?? ?? 41 89 C7 45 31 E4 4C 8B 6C 24 58 49 8B 45"
+          ],
+          "registered_in": [
+            "FUN_1801155d0"
+          ]
+        },
+        {
+          "key": "AOB_SVIRTUALWINDOW_ONPAINT_CALL_SCOMPOUNDWIDGET_ONPAINT",
+          "purpose_guess": "SVirtualWindow::OnPaint call to SCompoundWidget::OnPaint",
+          "variant_count": 4,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 80 BE ?? ?? 00 00 00 8B F8 74 ?? 48 8B CB E8",
+            "E8 ?? ?? ?? ?? 80 BD ?? 06 00 00 00 48 8B 6C 24 78 4C 8B 7C",
+            "E8 ?? ?? ?? ?? 80 BD 89 06 00 00 00 74 07 C6 87 ?? 01 00 00 01",
+            "E8 ?? ?? ?? ?? 80 BF ?? 06 00 00 00 74 07 C6 83 ?? 01 00 00 01"
+          ],
+          "registered_in": [
+            "FUN_1801155d0"
+          ]
+        },
+        {
+          "key": "AOB_TIMEDILATION4VALUES_ADDRESS",
+          "purpose_guess": "TimeDilation 4-values pointer",
+          "variant_count": 1,
+          "patterns": [
+            "F3 0F 10 89 0C 04 00 00 F3 0F 59 81 10 04 00 00 F3 0F 59 89 08 04 00 00 F3 0F 59 C1"
+          ],
+          "registered_in": [
+            "FUN_1800fec80"
+          ]
+        },
+        {
+          "key": "AOB_UOBJECT_PROCESSEVENT",
+          "purpose_guess": "UObject::ProcessEvent hook",
+          "variant_count": 7,
+          "patterns": [
+            "80 3D ?? ?? ?? ?? 00 75 0E 4C 8B C5 48 8B D3 48 8B CF E8 | ?? ?? ?? ?? 48 8B 74 24 30",
+            "4C 8B C5 48 8B D3 48 8B CF E8 | ?? ?? ?? ?? 48 8B 74 24 ?? 48 8B 5C 24",
+            "80 3D ?? ?? ?? ?? 00 75 0E 4C 8B C5 48 8B D7 48 8B CB E8 | ?? ?? ?? ?? 4C 8D 5C 24",
+            "49 89 F8 48 81 C4 80 00 00 00 5B 5F 5E 41 5E 41 5F E9 | ?? ?? ?? ?? CC",
+            "49 89 F0 48 81 C4 80 00 00 00 5B 5D 5F 5E 41 5E E9 | ??",
+            "80 3D ?? ?? ?? ?? 00 75 ?? 4C 8B C5 48 8B D7 48 8B CB E8 | ?? ?? ?? ?? EB",
+            "75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 ?? 48 8B ?? 24"
+          ],
+          "registered_in": [
+            "FUN_180134b50"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_ISPAUSED",
+          "purpose_guess": "UWorld::IsPaused hook",
+          "variant_count": 6,
+          "patterns": [
+            "80 BB ?? 01 00 00 00 7C 08 | ?? C0 48 83 C4 20 5B C3 B0 01",
+            "40 38 BB ?? ?? ?? ?? 7C ?? | ?? C0 48 8B 5C 24 30 48 83 C4 20",
+            "80 BB ?? ?? ?? ?? 03 75 ?? 38 83 ?? ?? ?? ?? 7C 13 | ?? C0 48 83",
+            "75 ?? 80 BF ?? 01 00 00 03 0F 84 ?? ?? ?? ?? | 8A C3 48 8B 5C 24 30 48 83",
+            "74 ?? 80 BB ?? 01 00 00 00 7C ?? | ?? C0 48 83 C4 20 5B C3",
+            "74 ?? F6 83 ?? 01 00 00 01 75 ?? | ?? C0 48 83 C4 20"
+          ],
+          "registered_in": [
+            "FUN_180138800"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_SPAWNACTOR",
+          "purpose_guess": "UWorld::SpawnActor hook",
+          "variant_count": 4,
+          "patterns": [
+            "40 53 56 57 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F 28 0D",
+            "48 89 5C 24 18 48 89 74 24 20 57 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F 28 0D ?? ?? ?? ?? 48 8B FA",
+            "57 48 8D 6C 24 C1 48 81 EC B0 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 45 2F 0F 28 0D ?? ?? ?? ?? 48",
+            "41 57 41 56 41 54 56 57 53 48 81 EC 18 01 00 00 66 44 ?? ?? ?? ?? 00 01 00 00 66 44 ?? ?? ?? ?? F0 00 00 00 66 44 ?? ?? ?? ?? E0 00 00 00"
+          ],
+          "registered_in": [
+            "FUN_18012da30"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_SPAWNACTORUSINGTRANSFORM_CALL",
+          "purpose_guess": "UWorld::SpawnActor hook",
+          "variant_count": 2,
+          "patterns": [
+            "0F 29 4D 30 0F 29 75 40 E8 | ?? ?? ?? ?? 44 ?? ?? ?? ?? A0 01 00 00 44 ?? ?? ?? ?? B0 01 00 00",
+            "E8 | ?? ?? ?? ?? 48 85 C0 75 11 48 8D 15 ?? ?? ?? ?? 48 8D 4C 24 30"
+          ],
+          "registered_in": [
+            "FUN_18012da30"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_SPAWNACTOR_CALL",
+          "purpose_guess": "UWorld::SpawnActor hook",
+          "variant_count": 10,
+          "patterns": [
+            "48 8B C8 4C 8D 45 80 E8 | ?? ?? ?? ?? 48 85 C0 74 ?? B3 01",
+            "48 8B C8 4C 8D 44 24 ?? E8 | ?? ?? ?? ?? 48 85 C0 75",
+            "4C 8D 44 24 50 E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? ?? ?? 48 8D 15",
+            "4C 8D 44 24 ?? E8 | ?? ?? ?? ?? 44 ?? ?? ?? ?? ?? 01 00 00 44 ?? ?? ?? ?? ?? 01 00 00",
+            "49 89 F9 E8 | ?? ?? ?? ?? 48 85 C0 75 14 48 8D 15 ?? ?? ?? ?? 48 8D",
+            "48 8B D6 48 8B CB E8 | ?? ?? ?? ?? 44 ?? ?? ?? ?? C0 01 00 00",
+            "4C 8D 44 24 40 E8 | ?? ?? ?? ?? 48 85 C0 75 11 48 8D 15",
+            "4C 8D 44 24 40 E8 | ?? ?? ?? ?? 45 33 FF 48 85 C0 75",
+            "E8 | ?? ?? ?? ?? 48 85 C0 75 14 48 8D 15 ?? ?? ?? ?? 48 8D 8C 24 C0 00 00 00",
+            "48 8B D3 48 8B C8 E8 | ?? ?? ?? ?? 48 85 C0 75 12 48 8D 15"
+          ],
+          "registered_in": [
+            "FUN_18012da30"
+          ]
+        },
+        {
+          "key": "AOB_WIDGETOPACITYSET",
+          "purpose_guess": "UMG widget opacity set",
+          "variant_count": 6,
+          "patterns": [
+            "F3 0F 59 C3 F3 0F 11 44 24 ?? 40 84 F6 74 0C 48 8D 55 ?? FF 90",
+            "0F 10 83 ?? ?? 00 00 0F 11 4D 8C 0F 59 F0 0F 11 45 ?? 0F 11",
+            "F3 0F 59 C3 F3 0F 11 44 24 4C 40 84 FF 74 0C 48 8D 55 ?? FF 90",
+            "0F 10 83 ?? ?? 00 00 0F 11 4D 90 0F 59 F0 0F 11 74 24 ?? 40 84 FF",
+            "0F 10 83 ?? ?? 00 00 0F 11 4C 24 ?? 0F 59 F0 0F 11 74 24 ?? 40 84 FF",
+            "0F 10 83 ?? ?? 00 00 0F 11 4D 90 ?? 59 F0 0F 11 45 A8 0F 11 74"
+          ],
+          "registered_in": [
+            "FUN_1801155d0"
+          ]
+        }
+      ]
+    },
+    "Banishers: Ghosts of New Eden": {
+      "engine": "UE5",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    },
+    "Hellblade II": {
+      "engine": "UE5",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    },
+    "Tekken 8 (codename Polaris)": {
+      "engine": "UE5",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    },
+    "Unknown (UE codename TQ2)": {
+      "engine": "UE5",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    }
+  }
+}

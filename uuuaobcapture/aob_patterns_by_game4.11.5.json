@@ -1,0 +1,896 @@
+{
+  "engine": "UE4",
+  "summary": {
+    "total_games_detected": 13,
+    "total_games_with_specific_overrides": 10,
+    "total_keys": 56,
+    "total_variants": 182,
+    "per_game": {
+      "Final Fantasy VII Rebirth": {
+        "keys": 9,
+        "variants": 9
+      },
+      "Final Fantasy VII Remake": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Hogwarts Legacy": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Lost Soul Aside": {
+        "keys": 2,
+        "variants": 2
+      },
+      "South of Midnight": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Star Wars Jedi: Survivor": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Stellar Blade": {
+        "keys": 2,
+        "variants": 2
+      },
+      "The Invincible": {
+        "keys": 1,
+        "variants": 1
+      },
+      "The Quarry": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Tiny Tina's Wonderlands": {
+        "keys": 1,
+        "variants": 1
+      },
+      "Shared / UE framework (all games)": {
+        "keys": 36,
+        "variants": 162
+      },
+      "Unknown (UE codename U9)": {
+        "keys": 0,
+        "variants": 0
+      },
+      "Indiana Jones (Epic Game Store)": {
+        "keys": 0,
+        "variants": 0
+      },
+      "Scorn": {
+        "keys": 0,
+        "variants": 0
+      }
+    }
+  },
+  "games": {
+    "Final Fantasy VII Rebirth": {
+      "engine": "UE4",
+      "key_count": 9,
+      "keys": [
+        {
+          "key": "AOB_FF7REBIRTH_CAMERA_WRITE1_KEY",
+          "purpose_guess": "[FF7 Rebirth] Camera struct write",
+          "variant_count": 1,
+          "patterns": [
+            "89 07 C5 FA 11 57 04 C5 FA 11 4F 08 C5 F8 10 8B ?? ?? ?? ?? C5 F0 C2 83"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_CAMERA_WRITE2_KEY",
+          "purpose_guess": "[FF7 Rebirth] Camera struct write",
+          "variant_count": 1,
+          "patterns": [
+            "C5 FB 11 47 0C 8B 46 08 89 47 14 44 84 B3 0C 02 00 00 74 12"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_CAMERA_WRITE3_KEY",
+          "purpose_guess": "[FF7 Rebirth] Camera struct write",
+          "variant_count": 1,
+          "patterns": [
+            "C5 FB 11 47 0C 8B 46 08 | 89 47 14 44 84 B3 0C 02 00 00 74 12"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_CAMERA_WRITE4_KEY",
+          "purpose_guess": "[FF7 Rebirth] Camera struct write",
+          "variant_count": 1,
+          "patterns": [
+            "89 43 28 8B 87 48 02 00 00 89 43 30 8B 87 50 02 00 00 89 43 3C 8B"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_FSTOPOVERRIDE_READ_LOCATION",
+          "purpose_guess": "[FF7 Rebirth] DoF F-stop override read",
+          "variant_count": 1,
+          "patterns": [
+            "41 32 41 1A 41 22 C7 32 C1 88 43 1A 8A C8 41 32 49 1A 40 22 CF"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_FSTOP_READ_LOCATION",
+          "purpose_guess": "[FF7 Rebirth] DoF F-stop read",
+          "variant_count": 1,
+          "patterns": [
+            "41 8B 81 6C 03 00 00 89 83 6C 03 00 00 41 8B 81 70 03 00 00 89"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_HUD_SCALE_FACTOR_CALC",
+          "purpose_guess": "[FF7 Rebirth] HUD scale-factor calc",
+          "variant_count": 1,
+          "patterns": [
+            "C5 EA 5E C8 C5 FA 11 84 ?? ?? ?? ?? ?? C4 41 38 57 C0"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_FF7REBIRTH_LENSVIGNETTE_LOCATION",
+          "purpose_guess": "[FF7 Rebirth] Lens vignette parameter",
+          "variant_count": 1,
+          "patterns": [
+            "89 AB 64 04 00 00 48 89 AB 68 04 00 00 4C 89 BB 70 04 00 00 4C 89"
+          ],
+          "registered_in": [
+            "FUN_1800e0150"
+          ]
+        },
+        {
+          "key": "AOB_NAMESSTORE",
+          "purpose_guess": "GNames (FName store) pointer",
+          "variant_count": 1,
+          "patterns": [
+            "80 3D ?? ?? ?? ?? 00 0F 84 ?? ?? ?? ?? 48 8D 05 | ?? ?? ?? ?? 48 83 C4 28"
+          ],
+          "registered_in": [
+            "FUN_18010dac0"
+          ]
+        }
+      ]
+    },
+    "Final Fantasy VII Remake": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_FF7R_FILLCOMPONENTSPACETRANSFORMS_CALL",
+          "purpose_guess": "[FF7 Remake] USkeletalMeshComponent::FillComponentSpaceTransforms hook",
+          "variant_count": 1,
+          "patterns": [
+            "49 8B D6 48 8B CF FF 90 28 0A 00 00 80 7D F0 00 4C 8B A4 24 C0 00 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800a46c0"
+          ]
+        }
+      ]
+    },
+    "Hogwarts Legacy": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_SPECIAL_CASE_HOGWARTS_LEGACY_HUD_DRAW",
+          "purpose_guess": "[Hogwarts Legacy] HUD draw hook",
+          "variant_count": 1,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 8B D8 48 8B 87 50 03 00 00 48 85 C0"
+          ],
+          "registered_in": [
+            "FUN_1800f5e30"
+          ]
+        }
+      ]
+    },
+    "Lost Soul Aside": {
+      "engine": "UE4",
+      "key_count": 2,
+      "keys": [
+        {
+          "key": "AOB_LSA_ASPECT_CONSTRAINT_LOCATION",
+          "purpose_guess": "[Lost Soul Aside] Aspect-ratio constraint",
+          "variant_count": 1,
+          "patterns": [
+            "73 10 F3 0F 10 05 ?? ?? ?? ?? F3 0F 11 44 24 24 EB 0E F3 0F 10 05"
+          ],
+          "registered_in": [
+            "FUN_1800e13c0"
+          ]
+        },
+        {
+          "key": "AOB_LSA_FILLCOMPONENTSPACETRANSFORMS_CALL",
+          "purpose_guess": "[Lost Soul Aside] USkeletalMeshComponent::FillComponentSpaceTransforms hook",
+          "variant_count": 1,
+          "patterns": [
+            "0F 10 01 0F 11 00 48 8B 84 24 60 01 00 00 48 8B 8C 24 68 01 00 00 0F 10 41 10 0F 11 40 10"
+          ],
+          "registered_in": [
+            "FUN_1800a46c0"
+          ]
+        }
+      ]
+    },
+    "South of Midnight": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_SOM_INTERCEPT_FOV_READ_LOCATION",
+          "purpose_guess": "[South of Midnight] FOV read",
+          "variant_count": 1,
+          "patterns": [
+            "48 8B 07 48 8B CF F3 0F 10 4E 44 FF 90 D8 06 00 00 48 8B 07 48 8B CF FF"
+          ],
+          "registered_in": [
+            "FUN_1800e14f0"
+          ]
+        }
+      ]
+    },
+    "Star Wars Jedi: Survivor": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_SPECIAL_CASE_JEDI_SURVIVOR_HUD_DRAW",
+          "purpose_guess": "[Jedi: Survivor] HUD draw hook",
+          "variant_count": 1,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 49 8B 9F B8 02 00 00 4C 8D AC 24 B0"
+          ],
+          "registered_in": [
+            "FUN_1800f5e30"
+          ]
+        }
+      ]
+    },
+    "Stellar Blade": {
+      "engine": "UE4",
+      "key_count": 2,
+      "keys": [
+        {
+          "key": "AOB_GET_TIMEDILATION",
+          "purpose_guess": "Get TimeDilation",
+          "variant_count": 1,
+          "patterns": [
+            "80 B9 ?? ?? ?? ?? 00 0F 29 74 24 ?? 74 0A F3 0F 10 B1 ?? ?? ?? ?? EB 08 F3 0F 10 B1"
+          ],
+          "registered_in": [
+            "FUN_180111610"
+          ]
+        },
+        {
+          "key": "AOB_SB_TIMEDILATION_CLAMPJMP_LOCATION",
+          "purpose_guess": "[Stellar Blade] Time-dilation clamp jump",
+          "variant_count": 1,
+          "patterns": [
+            "72 03 0F 28 C6 0F 28 74 24 ?? 48 83 C4 38 C3"
+          ],
+          "registered_in": [
+            "FUN_1800e1a10"
+          ]
+        }
+      ]
+    },
+    "The Invincible": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_TI_CAMERA_BLACKBARS_CAMERA_COMPONENT1",
+          "purpose_guess": "[The Invincible] Camera black-bar removal (CameraComponent)",
+          "variant_count": 1,
+          "patterns": [
+            "0F B6 8B ?? ?? ?? ?? | 33 4F ?? 83 E1 01 33 4F ?? 89 4F ??"
+          ],
+          "registered_in": [
+            "FUN_1800e1b40"
+          ]
+        }
+      ]
+    },
+    "The Quarry": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_SPECIAL_CASE_THE_QUARRY_UWORLD_ISPAUSE",
+          "purpose_guess": "[The Quarry] UWorld::IsPaused hook",
+          "variant_count": 1,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 44 0F B6 F8 88 85 B0 01 00 00 48 8D 4D 90"
+          ],
+          "registered_in": [
+            "FUN_180111610"
+          ]
+        }
+      ]
+    },
+    "Tiny Tina's Wonderlands": {
+      "engine": "UE4",
+      "key_count": 1,
+      "keys": [
+        {
+          "key": "AOB_SPECIAL_CASE_TINA_WONDERLANDS_HUDSIZE_READ",
+          "purpose_guess": "[Tiny Tina's Wonderlands] HUD size read",
+          "variant_count": 1,
+          "patterns": [
+            "E8 ?? ?? ?? ?? 89 44 24 40 8B F8 BB FF FF FF FF 4D 85 E4"
+          ],
+          "registered_in": [
+            "FUN_1800f5e30"
+          ]
+        }
+      ]
+    },
+    "Shared / UE framework (all games)": {
+      "engine": "UE4",
+      "key_count": 36,
+      "keys": [
+        {
+          "key": "AOB_ALLOWCHEATSCALL",
+          "purpose_guess": "AllowCheats call (console enable)",
+          "variant_count": 5,
+          "patterns": [
+            "74 ?? 48 8B 01 48 8B ?? | FF 90 ?? ?? 00 00 84 C0 75 ?? 40",
+            "74 ?? 48 8B 01 48 8B ?? | FF 90 ?? ?? 00 00 84 C0 75 ?? 84",
+            "FF 90 ?? 08 00 00 84 C0 75 ?? 84 DB 0F 84 ?? ?? 00 00",
+            "FF 90 ?? 07 00 00 84 C0 75 05 40 84 F6",
+            "FF 90 ?? ?? 00 00 84 C0 75 ?? 84 DB 0F 84"
+          ],
+          "registered_in": [
+            "FUN_1800f4bb0"
+          ]
+        },
+        {
+          "key": "AOB_CALL_TO_STATICCONSTRUCTOBJECT_INTERNAL",
+          "purpose_guess": "StaticConstructObject_Internal call",
+          "variant_count": 7,
+          "patterns": [
+            "48 8B 84 24 ?? ?? 00 00 48 89 44 24 ?? C7 44 24 ?? 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24",
+            "48 8B C8 89 7C 24 ?? E8 | ?? ?? ?? ?? 48 8B 5C 24 ?? 48 83 C4 ?? 5F C3",
+            "48 89 ?? 24 30 89 ?? 24 38 E8 | ?? ?? ?? ?? 48 ?? ?? 24 70 48 ?? ?? 24 78",
+            "48 89 ?? 24 ?? 89 ?? 24 ?? E8 | ?? ?? ?? ?? 48 ?? ?? 24 70 48 ?? ?? 24 78",
+            "E8 | ?? ?? ?? ?? 48 8B 4C 24 30 48 89 ?? ?? ?? ?? ?? 48 85 C9 74 05 E8 ?? ?? ?? ?? 48 8D 4D 48 E8",
+            "E8 | ?? ?? ?? ?? 49 8B D6 48 8B C8 48 8B D8 E8 ?? ?? ?? ?? 4C 8D 9C 24 90 00 00 00",
+            "48 C7 44 24 50 00 00 00 00 E8 | ?? ?? ?? ?? 48 8B 5C 24 70 48 83 C4"
+          ],
+          "registered_in": [
+            "FUN_1800f4bb0"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_CAMERA_COMPONENT1",
+          "purpose_guess": "Camera black-bar removal (CameraComponent)",
+          "variant_count": 3,
+          "patterns": [
+            "33 47 ?? 83 E0 01 31 47 ?? 0F B6 8B ?? ?? ?? ?? 33 4F ?? 83 E1 02 31 4F",
+            "33 4F ?? 83 E1 01 33 4F ?? 89 4F 30 0F B6 83 ?? ?? 00 00 33 C1",
+            "33 4E ?? 83 E1 01 33 4E ?? 89 4E 30 0F B6 87 ?? ?? 00 00 33 C1"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_CAMERA_COMPONENT2",
+          "purpose_guess": "Camera black-bar removal (CameraComponent)",
+          "variant_count": 1,
+          "patterns": [
+            "33 47 ?? 83 E0 01 31 47 ?? 0F B6 8B ?? ?? ?? ?? 33 4F ?? 83 E1 02 31 4F"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_REMOVAL1",
+          "purpose_guess": "Camera black-bar removal",
+          "variant_count": 1,
+          "patterns": [
+            "8B 42 ?? 89 41 ?? 8B 41 ?? 33 42 ?? 83 E0 01 31 41 ?? 8B ?? ?? 33 ?? ?? 83 ?? 02 31"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_REMOVAL2",
+          "purpose_guess": "Camera black-bar removal",
+          "variant_count": 1,
+          "patterns": [
+            "8B 42 ?? 89 41 ?? 8B 41 ?? 33 42 ?? 83 E0 01 31 41 ?? 8B ?? ?? 33 ?? ?? 83 ?? 02 31"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_BLACKBARS_REMOVAL3",
+          "purpose_guess": "Camera black-bar removal",
+          "variant_count": 1,
+          "patterns": [
+            "8B 42 ?? 89 41 ?? 8B 41 ?? 33 42 ?? 83 E0 01 31 41 ?? 8B ?? ?? 33 ?? ?? 83 ?? 02 31"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_LOCKED_FOV_READ",
+          "purpose_guess": "Camera locked-FOV read",
+          "variant_count": 2,
+          "patterns": [
+            "F3 0F 10 B1 ?? ?? 00 00 ?? C0 0F 57 C0",
+            "F3 0F 10 B1 ?? ?? 00 00 0F 57 C9 0F 2F F1 77 ?? 48 8B 01"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_MENU_WRITE_INTERCEPT",
+          "purpose_guess": "Camera menu-write intercept",
+          "variant_count": 1,
+          "patterns": [
+            "F2 0F 11 83 ?? ?? 00 00 F2 0F 10 44 24 ?? F2 0F 11 83 ?? ?? 00 00 0F 10 44 24 ?? 89 83 ?? ?? 00 00 8B 44 24"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT1",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 3,
+          "patterns": [
+            "F2 0F 10 02 48 ?? ?? | F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24",
+            "C5 FB 11 01 8B 42 08 48 8B ?? 89 41 08 48 8B ?? C5 FB 10 42 0C C5 FB 11 41 0C 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24",
+            "F2 0F 10 02 48 8B D9 | F2 0F 11 01 4C 8B C2 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT2",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 3,
+          "patterns": [
+            "F2 0F 10 02 48 ?? ?? | F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24",
+            "C5 FB 11 01 8B 42 08 48 8B ?? 89 41 08 48 8B ?? C5 FB 10 42 0C C5 FB 11 41 0C 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24",
+            "F2 0F 10 02 48 8B D9 | F2 0F 11 01 4C 8B C2 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_STRUCT_INTERCEPT3",
+          "purpose_guess": "Camera struct copy intercept",
+          "variant_count": 2,
+          "patterns": [
+            "F2 0F 10 02 48 ?? ?? | F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24",
+            "C5 FB 11 01 8B 42 08 48 8B ?? 89 41 08 48 8B ?? C5 FB 10 42 0C C5 FB 11 41 0C 8B 42 14 89 41 14 8B 42 18 89 41 18 8B 42 1C 89 41 1C 8B 42 20 89 41 20 8B 42 24 89 41 24"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_CAMERA_WRITE_INTERCEPT",
+          "purpose_guess": "Camera write intercept",
+          "variant_count": 2,
+          "patterns": [
+            "83 A7 ?? ?? 00 00 FC | F2 0F 11 87 ?? ?? 00 00 F2 0F 10 44 24 ?? F2 0F 11 87 ?? ?? 00 00",
+            "83 A7 ?? ?? 00 00 F0 |  F2 0F 11 87 ?? ?? 00 00 F2 0F 10 44 24 ?? F2 0F 11 87 ?? ?? 00 00"
+          ],
+          "registered_in": [
+            "FUN_1800e2d80"
+          ]
+        },
+        {
+          "key": "AOB_ENABLE_SET_COMMAND",
+          "purpose_guess": "Enable Set console command",
+          "variant_count": 3,
+          "patterns": [
+            "FF 90 ?? ?? 00 00 84 C0 0F 85 ?? ?? ?? ?? | 41 B0 01 48 8D 15",
+            "FF 90 ?? ?? 00 00 84 C0 75 ?? | 41 B0 01 48 8D 15",
+            "C6 05 ?? ?? ?? ?? 01 | 4C"
+          ],
+          "registered_in": [
+            "FUN_1800f4bb0",
+            "FUN_1800f55d0"
+          ]
+        },
+        {
+          "key": "AOB_ENGINEVERSION",
+          "purpose_guess": "Engine version string",
+          "variant_count": 15,
+          "patterns": [
+            "C7 03 | 04 00 ?? 00 66 89 4B 04 48 3B F8 74 ?? 48",
+            "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? C7 05",
+            "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? 89",
+            "41 C7 ?? | 04 00 ?? 00 ?? ?? 00 00 00 66 41 89",
+            "41 C7 ?? | 04 00 18 00 66 41 89 ?? 04",
+            "41 C7 04 24 | 04 00 ?? 00 66 ?? 89 ?? 24",
+            "41 C7 04 24 | 04 00 ?? 00 B9 ?? 00 00 00",
+            "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 89 05 ?? ?? ?? ?? E8",
+            "C7 05 ?? ?? ?? ?? | 04 00 ?? 00 66 89 ?? ?? ?? ?? ?? 89 05",
+            "C7 46 20 | 04 00 ?? 00 66 44 89 76 24 44 89 76 28 48 39 C7",
+            "C7 03 | 04 00 ?? 00 66 44 89 63 04 C7 43 08 C1 5C 08 80 E8",
+            "C7 47 20 | 04 00 ?? 00 66 89 6F 24 C7 47 28 ?? ?? ?? ?? 49",
+            "C7 03 | 04 00 ?? 00 66 89 6B 04 89 7B 08 48 83 C3 10",
+            "41 C7 44 24 ?? | 04 00 ?? 00 66 41 89 4C 24 ?? 41",
+            "C7 47 20 | 04 00 ?? 00 66 44 89 6F 24 C7 47 28 ?? ?? ?? ?? 4C 3B"
+          ],
+          "registered_in": [
+            "FUN_18010dac0"
+          ]
+        },
+        {
+          "key": "AOB_FCONSOLEMANAGER_ADDRESS_LOCATION",
+          "purpose_guess": "FConsoleManager pointer",
+          "variant_count": 5,
+          "patterns": [
+            "48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 0D",
+            "48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 4C 8D 4C 24",
+            "48 83 EC ?? 48 8B 0D | ?? ?? ?? ?? 48 85 C9 75 ?? E8 ?? ?? ?? ?? 48 8B 0D",
+            "48 89 3D | ?? ?? ?? ?? 48 85 FF 75 ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 8B 07",
+            "48 83 EC ?? 48 83 3D | ?? ?? ?? ?? 00 75 75 B9 F8 00 00 00 E8 ?? ?? ?? ?? 48 85 C0"
+          ],
+          "registered_in": [
+            "FUN_1800f4bb0"
+          ]
+        },
+        {
+          "key": "AOB_FILLCOMPONENTSPACETRANSFORMS_LOCATION",
+          "purpose_guess": "USkeletalMeshComponent::FillComponentSpaceTransforms hook",
+          "variant_count": 10,
+          "patterns": [
+            "0F 11 01 | 0F 10 4A 10 0F 11 49 10 0F 10 42 20 0F 11 41 20 8B 87 ?? ?? 00 00",
+            "0F 29 07 | 0F 28 4E 10 0F 29 4F 10 0F 28 46 20 0F 29 47 20 44 39 B9 ?? ?? 00 00",
+            "0F 29 00 | 0F 28 4B 10 0F 29 48 10 0F 28 43 20 0F 29 40 20 41 39 B6 ?? ?? 00 00",
+            "0F 11 01 | 0F 10 4A 10 0F 11 49 10 0F 10 42 20 0F 11 41 20 8B 86 ?? ?? 00 00",
+            "0F 11 01 | 0F 10 4A 10 0F 11 49 10 0F 10 42 20 0F 11 41 20 41 8B 80 ?? ?? 00 00",
+            "0F 10 4E 10 0F 11 4F 10 0F 10 46 20 0F 11 47 20 44 39 B9 ?? ?? 00 00",
+            "0F 29 07 | 41 0F 28 4E 10 0F 29 4F 10 41 0F 28 46 20 0F 29 47 20 44 39 B9 ?? ?? 00 00",
+            "0F 11 02 | 0F 10 48 10 0F 11 4A 10 0F 10 40 20 0F 11 42 20 8B 87 ?? ?? 00 00",
+            "C5 F8 10 4A ?? C5 F8 11 49 ?? C5 F8 10 42 ?? C5 F8 11 41 ?? 41",
+            "0F 10 4A 10 0F 11 49 10 0F 10 42 20 0F 11 41 20 8B 83 F8 0C 00 00 4D"
+          ],
+          "registered_in": [
+            "FUN_1800a46c0"
+          ]
+        },
+        {
+          "key": "AOB_FSLATEAPPLICATION_APP_ACTIVATION_CHANGED",
+          "purpose_guess": "FSlateApplication app-activation hook",
+          "variant_count": 1,
+          "patterns": [
+            "48 83 EC 28 | 48 81 C1 ?? ?? FF FF E8 ?? ?? ?? ?? B0 01 48 83 C4 28 C3"
+          ],
+          "registered_in": [
+            "FUN_180111610"
+          ]
+        },
+        {
+          "key": "AOB_GENGINE",
+          "purpose_guess": "GEngine global pointer",
+          "variant_count": 4,
+          "patterns": [
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? ?? 00 00 48 85 C9 74 ?? 48 8B 49 ?? 48 85 C9",
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? 07 00 00 48 85 C9 74 ?? 48 8B 51 50",
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? ?? ?? ?? 48 85 C9 0F 84 ?? ?? ?? ?? 48 89 74 24 50 48 8B 71",
+            "48 8B 05 | ?? ?? ?? ?? 48 8B 88 ?? ?? 00 00 48 85 C9 74 ?? 48 8B 01 FF 90 ?? 01 00 00"
+          ],
+          "registered_in": [
+            "FUN_18010dac0"
+          ]
+        },
+        {
+          "key": "AOB_GET_TIMEDILATION",
+          "purpose_guess": "Get TimeDilation",
+          "variant_count": 7,
+          "patterns": [
+            "F3 0F 10 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 0F 28 D0",
+            "F3 0F 10 81 ?? 03 00 00 F3 0F 59 81 ?? 03 00 00 F3 0F 59 81 ?? 03 00 00 C3",
+            "F3 0F 10 81 ?? 04 00 00 F3 0F 59 81 ?? 04 00 00 F3 0F 59 81 ?? 04 00 00 C3",
+            "F3 0F 10 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 C3",
+            "F3 0F 10 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00 F3 0F 59 81 ?? ?? 00 00",
+            "F3 0F 10 89 ?? ?? 00 00 F3 0F 59 89 ?? ?? 00 00 F3 0F 59 89 ?? ?? 00 00 0F 28 C1",
+            "C5 FA 10 81 ?? ?? 00 00 C5 FA 59 89 ?? ?? 00 00 C5 F2 59 81 ?? ?? 00 00 C3"
+          ],
+          "registered_in": [
+            "FUN_180111610"
+          ]
+        },
+        {
+          "key": "AOB_GET_TIMEDILATION_411",
+          "purpose_guess": "Get TimeDilation",
+          "variant_count": 2,
+          "patterns": [
+            "F3 41 0F 10 86 ?? 04 00 00 F3 41 0F 59 86 ?? 04 00 00 F3 41 0F 59 86 ?? 04 00 00 F3 0F 59 F0",
+            "F3 41 0F 10 85 B0 04 00 00 F3 41 0F 59 85 AC 04 00 00 F3 41 0F 59 B5 B4 04 00 00 F3 0F"
+          ],
+          "registered_in": [
+            "FUN_180111610"
+          ]
+        },
+        {
+          "key": "AOB_NAMESSTORE",
+          "purpose_guess": "GNames (FName store) pointer",
+          "variant_count": 5,
+          "patterns": [
+            "48 8D 15 | ?? ?? ?? ?? EB 16 48 8D 0D ?? ?? ?? ?? E8",
+            "48 8D 05 | ?? ?? ?? ?? EB 27 48 8D 05 ?? ?? ?? ?? 48",
+            "E8 ?? ?? ?? ?? 48 8B C3 48 89 1D | ?? ?? ?? ?? 48 8B 5C 24",
+            "E8 ?? ?? ?? ?? 48 89 D8 48 89 1D | ?? ?? ?? ?? 48 8B 5C 24 20 48 83 C4 28 C3 31 DB 48 89 1D",
+            "E8 ?? ?? ?? ?? 48 89 D8 48 89 1D | ?? ?? ?? ?? 48 8B 5C 24 20 48 83 C4 28 C3 48 8B 5C"
+          ],
+          "registered_in": [
+            "FUN_18010dac0"
+          ]
+        },
+        {
+          "key": "AOB_OBJECTSSTORE",
+          "purpose_guess": "GUObjectArray (UObject store) pointer",
+          "variant_count": 23,
+          "patterns": [
+            "48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 C6 05 ?? ?? ?? ?? 00 80 3D",
+            "74 ?? 48 8D 0D | ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 74 24 70 48 89 7C 24 78 45 33 C9",
+            "89 0D | ?? ?? ?? ?? 85 FF 7F 2E 41 B9 01 00 00 00 48 8D 05 ?? ?? ?? ?? 4C 8D 05",
+            "84 D2 48 C7 41 10 00 00 00 00 B8 FF FF FF FF 4C 8D 05 | ?? ?? ?? ?? 89 41 08",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 45 ?? C9 4C 89 74 24",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 4C 89 64 ?? 28 4C 89 7C ?? 30 45 33 C9",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4D 80 E8 ?? ?? ?? ?? 48 8D 4D 80 E8 ?? ?? ?? ?? F3",
+            "89 ?? | ?? ?? ?? ?? 45 85 E4 7F ?? 4C 8D 05 ?? ?? ?? ?? BA ?? 00 00 00",
+            "89 1D | ?? ?? ?? ?? 48 8B 9C 24 80 00 00 00 48 89 05 ?? ?? ?? ?? 48",
+            "89 0D | ?? ?? ?? ?? 89 15 | ?? ?? ?? ?? 85 FF 7F ?? 4C 8D 05 ?? ?? ?? ?? BA ?? 00 00 00",
+            "89 0D | ?? ?? ?? ?? 85 FF 7F 2E 48 8D 05 ?? ?? ?? ?? 48 89 44 24 20 41 B9 01",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 36 4C 8D 05 ?? ?? ?? ?? 8B D7 48 8D 0D ?? ?? ?? ?? E8",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8",
+            "89 05 | ?? ?? ?? ?? 85 D2 7F 39 4C 8D 05 ?? ?? ?? ?? BA 67 00 00 00 48 8D 0D",
+            "89 05 | ?? ?? ?? ?? 45 85 E4 7F 46 48 8D 05 ?? ?? ?? ?? 44 8B CE 4C 8D 05",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 24 4C 8D 05 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 81 F2",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 39 4C 8D 05 ?? ?? ?? ?? BA 67 00 00 00",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 2F 4C 8D 05 ?? ?? ?? ?? 8B D7 48 8D 0D",
+            "89 05 | ?? ?? ?? ?? 85 DB 7F 36 4C 8D 05 ?? ?? ?? ?? 8B D6 48 8D 0D",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 74 ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8",
+            "48 8D 0D | ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 C6 05 ?? ?? ?? ?? 00 80 3D ?? ?? ?? ?? 00",
+            "48 8D 0D | ?? ?? ?? ?? 44 8B 84 24 ?? ?? ?? ?? 8B 94 24 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8"
+          ],
+          "registered_in": [
+            "FUN_18010dac0"
+          ]
+        },
+        {
+          "key": "AOB_PM_ANGLES_WRITE1_LOCATION_ADDRESS",
+          "purpose_guess": "[Photo-mode camera state] Camera angles write",
+          "variant_count": 1,
+          "patterns": [
+            "FF 90 ?? ?? ?? ?? 48 8B 5C 24 ?? F2 0F 10 00 | F2 0F 11 06 8B 40 ?? 89 46 ?? 48 8B"
+          ],
+          "registered_in": [
+            "FUN_1800e1650"
+          ]
+        },
+        {
+          "key": "AOB_PM_ANGLES_WRITE2_LOCATION_ADDRESS",
+          "purpose_guess": "[Photo-mode camera state] Camera angles write",
+          "variant_count": 1,
+          "patterns": [
+            "FF 90 ?? ?? ?? ?? 48 8B 5C 24 ?? F2 0F 10 00 F2 0F 11 06 8B 40 ?? | 89 46 ?? 48 8B"
+          ],
+          "registered_in": [
+            "FUN_1800e1650"
+          ]
+        },
+        {
+          "key": "AOB_PM_COORDS_WRITE1_LOCATION_ADDRESS",
+          "purpose_guess": "[Photo-mode camera state] Camera coordinates write",
+          "variant_count": 1,
+          "patterns": [
+            "F2 0F 11 03 8B 40 ?? 89 43 ?? 48 8B 07 FF 90 ?? ?? ?? ?? 48 8B"
+          ],
+          "registered_in": [
+            "FUN_1800e1650"
+          ]
+        },
+        {
+          "key": "AOB_PM_COORDS_WRITE2_LOCATION_ADDRESS",
+          "purpose_guess": "[Photo-mode camera state] Camera coordinates write",
+          "variant_count": 1,
+          "patterns": [
+            "F2 0F 11 03 8B 40 ?? | 89 43 ?? 48 8B 07 FF 90 ?? ?? ?? ?? 48 8B"
+          ],
+          "registered_in": [
+            "FUN_1800e1650"
+          ]
+        },
+        {
+          "key": "AOB_PM_READ_FOV_ADDRESS",
+          "purpose_guess": "[Photo-mode camera state] FOV read",
+          "variant_count": 1,
+          "patterns": [
+            "F3 0F 10 81 ?? ?? ?? ?? 0F 57 C9 0F 2F C1 77 0E 48 8B 01"
+          ],
+          "registered_in": [
+            "FUN_1800e1650"
+          ]
+        },
+        {
+          "key": "AOB_TIMER_STRUCT_LOCATION_ADDRESS",
+          "purpose_guess": "Timer subsystem struct",
+          "variant_count": 1,
+          "patterns": [
+            "48 8B 05 | ?? ?? ?? ?? 48 85 C0 74 0E 48 8B 80 D0 0A 00 00 48 89 02"
+          ],
+          "registered_in": [
+            "FUN_1800e0840"
+          ]
+        },
+        {
+          "key": "AOB_TIMER_TICKS_WRITE_ADDRESS",
+          "purpose_guess": "Timer ticks write",
+          "variant_count": 1,
+          "patterns": [
+            "4C 89 0B 4D 8D 04 11 49 C1 F8 17 49 8B C0 48 C1 E8 3F"
+          ],
+          "registered_in": [
+            "FUN_1800e0840"
+          ]
+        },
+        {
+          "key": "AOB_UOBJECT_PROCESSEVENT",
+          "purpose_guess": "UObject::ProcessEvent hook",
+          "variant_count": 11,
+          "patterns": [
+            "F0 0F B1 0D ?? ?? ?? ?? 75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83",
+            "F0 0F B1 11 75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83",
+            "74 ?? E8 ?? ?? ?? ?? 84 C0 75 0E 4C 8B C6 48 8B D5 48 8B CB E8 | ?? ?? ?? ?? 48",
+            "84 C0 75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83",
+            "4C 8B C5 48 8B D7 48 8B CB E8 | ?? ?? ?? ?? 48 8B 5C 24 30 48 8B 6C 24 38 48 8B 74 24 40 48 8B 7C 24 48 48 83 C4 20 41 5E C3",
+            "F0 0F B1 11 75 0F 4C 8B C5 48 8B D7 48 8B CB FF 15 | ?? ?? ?? ?? 48 8B 74 24 30",
+            "48 8B D6 48 8B CB E8 | ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 85 C0 75 27 87 BB",
+            "48 8B D7 48 8B CB E8 | ?? ?? ?? ?? 48 8B 5C 24 40 48 8B 6C 24 50 48 83 C4 20",
+            "48 8B D7 48 8B CB E8 | ?? ?? ?? ?? 48 8B 74 24 30 48 8B 5C 24 40 48 8B 6C",
+            "75 18 4C 8B 84 24 ?? ?? ?? ?? 48 8B 54 24 78 48 8B 4C 24 70 E8 | ?? ?? ?? ?? 90 48 83 C4 68 C3",
+            "75 0E ?? ?? ?? 48 ?? ?? 48 ?? ?? E8 | ?? ?? ?? ?? 48 8B ?? 24 ?? 48 8B ?? 24 38 48 8B ?? 24 40 48 83"
+          ],
+          "registered_in": [
+            "FUN_18010dac0"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_ISPAUSED",
+          "purpose_guess": "UWorld::IsPaused hook",
+          "variant_count": 11,
+          "patterns": [
+            "F7 83 ?? ?? 00 00 ?? ?? 00 00 75 ?? | 3? C0 48 83 C4 20 5B C3 B0 01 48 83 C4 20 5B C3",
+            "80 BB ?? ?? 00 00 00 7C ?? | 3? C0 48 83 C4 20 5B C3 B0 01 48 83 C4 20 5B C3",
+            "F7 83 ?? ?? 00 00 ?? ?? 00 00 75 ?? | 3? C0 48 8B 5C 24 30 48 83 C4 20 5F C3 48 8B 5C",
+            "F7 83 30 08 00 00 00 10 00 00 75 ?? | 3? C0",
+            "F7 83 ?? ?? 00 00 00 10 00 00 75 ?? | 3? C0 48 83 C4 20 ?? C3 B0 01 48 83 C4 20 ?? C3",
+            "F7 83 ?? ?? 00 00 00 10 00 00 74 08 B0 01 48 83 C4 20 5B C3 | 3? C0",
+            "F6 83 ?? 01 00 00 01 75 08 | 3? C0 48 83 C4 20 5B C3 B0 01",
+            "F6 83 ?? 01 00 00 10 75 ?? | 3? C0 48 8B 5C 24 30 48 83 C4",
+            "40 38 BB ?? 01 00 00 7C ?? | 3? C0 48 8B 5C 24 30 48 83 C4 20 5F C3 48 8B 5C 24 30 B0 01",
+            "F6 83 25 01 00 00 40 74 08 B0 01 48 83 C4 20 5B C3 | 3? C0 48 83 C4 20 5B C3",
+            "80 BB ?? 01 00 00 00 7D 08 B0 01 48 83 C4 20 5B C3 | 3? C0 48 83 C4 20 5B C3"
+          ],
+          "registered_in": [
+            "FUN_180111610"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_SPAWNACTOR",
+          "purpose_guess": "UWorld::SpawnActor hook",
+          "variant_count": 6,
+          "patterns": [
+            "40 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 ?? ?? 48 89 44 24 60 0F 28 1D ?? ?? ?? ?? 0F 57 D2",
+            "40 53 56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 ?? ?? 48 89 44 24 ?? 0F 28 1D",
+            "53 56 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 ?? ?? 48 89 44 24 ?? 0F 28 1D",
+            "40 53 56 57 48 83 EC 70 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 44 24 60 48 8B B4 24 B0 00 00 00",
+            "40 53 56 57 B8 80 00 00 00 E8 ?? ?? ?? ?? 48 2B E0 C5 F8 29 74 24 70 C5",
+            "4C 89 4C 24 20 4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 48 81 EC E8 01 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4"
+          ],
+          "registered_in": [
+            "FUN_180107050"
+          ]
+        },
+        {
+          "key": "AOB_UWORLD_SPAWNACTOR_CALL",
+          "purpose_guess": "UWorld::SpawnActor hook",
+          "variant_count": 5,
+          "patterns": [
+            "48 89 44 24 ?? E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? 00 00 48 8D 05",
+            "4C 8D 4D B7 4C 8D 44 24 ?? 48 8B D7 E8 | ?? ?? ?? ?? 48 85 C0 0F 85",
+            "4C 8D 44 24 ?? ?? 8B ?? E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? 00 00 48 8D 05",
+            "4C 8D 45 C7 E8 | ?? ?? ?? ?? 48 85 C0 0F 85 ?? ?? ?? ?? 48 8D 05",
+            "48 8B 94 24 ?? 00 00 00 48 8B C8 E8 | ?? ?? ?? ?? 48 89 84 24 ?? 03 00 00"
+          ],
+          "registered_in": [
+            "FUN_180107050"
+          ]
+        },
+        {
+          "key": "AOB_WIDGETOPACITYSET",
+          "purpose_guess": "UMG widget opacity set",
+          "variant_count": 9,
+          "patterns": [
+            "F3 0F 59 8F ?? ?? 00 00 F3 0F 11 44 24 ?? F3 0F 11 4C 24 ?? E8 ?? ?? ?? ?? 0F B6",
+            "F3 0F 59 40 ?? F3 0F 11 74 24 ?? F3 0F 11 4C 24 ?? F3 0F 11 44 24 ?? E8 ?? ?? ?? ?? 0F 28",
+            "F3 0F 59 87 ?? ?? 00 00 F3 0F 11 44 24 ?? F3 0F 11 4C 24 ?? E8 ?? ?? ?? ?? 0F B6",
+            "F3 0F 10 4C 24 ?? | F3 0F 59 8F ?? ?? 00 00 F3 0F 11 4C 24 ?? 41 0F",
+            "F3 0F 10 4C 24 ?? | F3 0F 59 8F ?? ?? 00 00 F3 0F 11 4C 24 ?? 48 8D 55",
+            "F3 0F 59 8F ?? 03 00 00 F3 0F 11 4C 24 4C 83 7D ?? 00 74 ?? 48 85 C9 74",
+            "F3 0F 59 8F ?? ?? 00 00 F3 0F 11 4C 24 4C 48 8D 54 24 70",
+            "F3 0F 59 8F ?? ?? 00 00 F3 0F 11 44 24 48 F3 0F 11 4C 24 4C E8 ?? ?? ?? ?? 48",
+            "C5 F0 59 8F ?? ?? ?? ?? 41 0F B6 CF 4C 8B BC 24 B0 02 00 00 C5 F8 11 4C ?? 40"
+          ],
+          "registered_in": [
+            "FUN_1800f5e30"
+          ]
+        },
+        {
+          "key": "AOB_WIDGETPAINT_OPACITYREAD",
+          "purpose_guess": "UMG widget paint opacity read",
+          "variant_count": 6,
+          "patterns": [
+            "F3 0F 59 83 ?? ?? ?? ?? F3 0F 58 E6 0F C6 F6 FF 0F C6 C9 93",
+            "F3 0F 59 83 ?? ?? ?? ?? 0F 11 7D ?? 0F C6 C9 93 F3 0F 10 C8",
+            "F3 0F 59 87 ?? ?? ?? ?? 0F 10 4D 80 0F C6 C9 93 F3 0F 10 C8",
+            "F3 0F 59 87 ?? ?? ?? ?? 0F C6 C9 93 0F 11 5D E8 F3 41 ?? ?? ?? ?? 10",
+            "F3 0F 59 87 ?? ?? 00 00 0F C6 C9 93 0F 11 7D 58 F3 0F 10 C8 0F C6",
+            "F3 0F 59 87 ?? ?? 00 00 0F C6 C9 93 0F 11 55 38 0F 10 13 F3 0F 10 C8 0F 10 43 20"
+          ],
+          "registered_in": [
+            "FUN_1800f5e30"
+          ]
+        }
+      ]
+    },
+    "Unknown (UE codename U9)": {
+      "engine": "UE4",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    },
+    "Indiana Jones (Epic Game Store)": {
+      "engine": "UE4",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    },
+    "Scorn": {
+      "engine": "UE4",
+      "key_count": 0,
+      "keys": [],
+      "note": "detected as game id in the binary but no game-specific pattern overrides were extracted — game likely relies on the shared multi-variant pool"
+    }
+  }
+}

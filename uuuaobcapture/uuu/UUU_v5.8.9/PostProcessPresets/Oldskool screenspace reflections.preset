@@ -1,0 +1,7 @@
+[General]
+Name=Oldskool screenspace reflections
+[Setting values]
+95=0|2
+98=2|100.00
+99=2|1.00
+100=2|100.00
