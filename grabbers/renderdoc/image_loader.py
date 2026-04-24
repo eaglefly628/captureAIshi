@@ -59,15 +59,7 @@ def load_rgb_image(
                             break
                 except Exception:
                     pass
-            # Fallback heuristic: very dark image → likely linear Float SceneColor saved without gamma.
-            # sRGB images (game-rendered or post-processed) almost always have mean > 50.
-            # Only activates when no sidecar found; profile override below can cancel this.
-            if not needs_gamma and not meta_file.exists():
-                mean_val = float(arr.mean())
-                if mean_val < 50.0:
-                    needs_gamma = True
-                    logger.debug(f"[RDOC] RGB heuristic gamma: mean={mean_val:.1f} < 50 (likely linear HDR)")
-            # Profile override (wins over both sidecar and heuristic)
+            # Profile override (wins over auto-detect)
             profile = capture_profile or {}
             if "rgb_linear" in profile:
                 needs_gamma = bool(profile["rgb_linear"])

@@ -145,27 +145,6 @@ def export_batch(
     if not rdc_paths:
         return []
 
-    # Per-frame mode: export each RDC individually so each frame gets its own
-    # depth percentile range (no batch ref). Use when scene depth varies widely
-    # across captures (e.g. mixed indoor/outdoor), set depth_per_frame=true in profile.
-    if (capture_profile or {}).get("depth_per_frame"):
-        logger.info("[RDOC] Per-frame depth mode: exporting each RDC separately")
-        per_frame_dir = Path(tempfile.mkdtemp(prefix="captureai_perframe_"))
-        results = []
-        for rdc_path in rdc_paths:
-            if rdc_path is None or not rdc_path.exists():
-                results.append((None, None, None))
-                continue
-            rgb, depth, normal = replay_via_exportframe(
-                rdc_path, per_frame_dir, renderdoc_path, export_normal, capture_profile,
-            )
-            results.append((rgb, depth, normal))
-        try:
-            shutil.rmtree(str(per_frame_dir), ignore_errors=True)
-        except OSError:
-            pass
-        return results
-
     valid_paths = [p for p in rdc_paths if p is not None and p.exists()]
     if not valid_paths:
         logger.warning("[RDOC] No valid .rdc files to export")
