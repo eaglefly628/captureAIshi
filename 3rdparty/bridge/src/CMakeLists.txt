@@ -16,9 +16,18 @@ target_link_libraries(captureAIshi_bridge PRIVATE ws2_32 psapi)
 
 # MSVC settings: warnings as errors, ASCII compliance
 if(MSVC)
-    target_compile_options(captureAIshi_bridge PRIVATE /W4 /WX /utf-8)
-    # Structured exception handling needed for __try/__except
-    target_compile_options(captureAIshi_bridge PRIVATE /EHa)
+    # Strip default /EHsc before adding /EHa; otherwise __try/__except in
+    # functions with C++ objects fails with C2712 (MSVC keeps /EHsc).
+    string(REGEX REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REGEX REPLACE "/EHs-c-" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    target_compile_options(captureAIshi_bridge PRIVATE
+        /W4 /WX /utf-8 /EHa
+        /wd4100  # unreferenced formal parameter (Win32 callbacks, DllMain)
+    )
+    target_compile_definitions(captureAIshi_bridge PRIVATE
+        _CRT_SECURE_NO_WARNINGS      # getenv/sscanf/fopen deprecation
+        _WINSOCK_DEPRECATED_NO_WARNINGS  # inet_addr deprecation
+    )
 endif()
 
 # Output directly to 3rdparty/bridge/ (no manual copy needed)
