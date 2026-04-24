@@ -28,20 +28,16 @@ logger = logging.getLogger(__name__)
 def capture_export_args(capture_profile: dict) -> list:
     """Build per-game exportframe CLI flags from ``capture_profile``."""
     args = []
-    rgb_index = capture_profile.get("rgb_index", -1)
-    if rgb_index is not None and rgb_index >= 0:
-        args += ["--rgb-index", str(rgb_index)]
-    normal_index = capture_profile.get("normal_index", -1)
-    if normal_index is not None and normal_index >= 0:
-        args += ["--normal-index", str(normal_index)]
     depth_index = capture_profile.get("depth_index", -1)
     if depth_index is not None and depth_index >= 0:
         args += ["--depth-index", str(depth_index)]
-    if not capture_profile.get("depth_reversed_z", True):
-        args.append("--no-reverse-depth")
-    depth_range = capture_profile.get("depth_range")
-    if depth_range and len(depth_range) == 2:
-        args += ["--depth-range", f"{float(depth_range[0])},{float(depth_range[1])}"]
+    rgb_strategy = capture_profile.get("rgb_strategy", "")
+    if rgb_strategy and rgb_strategy != "auto":
+        args += ["--rgb-strategy", rgb_strategy]
+    normal_strategy = capture_profile.get("normal_strategy", "")
+    if normal_strategy and normal_strategy != "auto":
+        args += ["--normal-strategy", normal_strategy]
+    # depth_reversed_z and depth_range are Python-only (used by _normalize_depth in image_loader)
     return args
 
 
