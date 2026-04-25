@@ -105,6 +105,21 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] 1d53bf2 -- xiaoni -- Pin opencv-python for EXR depth loading
+
+`99308e9` (xiaoxuan) switched the C++ exportframe depth output from
+normalized PNG to raw float EXR; the Python loader needs cv2 /
+imageio[freeimage] / OpenEXR but `requirements.txt` shipped none of
+them, so user-facing setups dropped depth on every capture (rgb +
+normal landed fine, just `[RDOC] Cannot read EXR ... depth.exr`).
+
+- `requirements.txt`: pinned `opencv-python>=4.5.0` (lightest Windows
+  install of the three; `image_loader.py` falls through to imageio /
+  OpenEXR if cv2 is unavailable).
+
+Posted a P1 peer-review note in `agents/rendering/SHARED.md` so
+xiaoxuan also bumps deps next time the export file format changes.
+
 ### [v0.2.0] 6c3b691 -- xiaoni -- Clean stale .rdc on grabber.setup()
 
 Per user ask: "每次启动后清除掉以前的rdc，不然会越来越大".
