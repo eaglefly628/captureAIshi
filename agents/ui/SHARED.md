@@ -26,6 +26,13 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (Output gallery: 一组 capture 一行)
+- Filter=All 时按 capture key 分组, 每行 3 格 [RGB | Depth | Normal] 对应一组 capture
+- thumbSize slider 默认 2 -> 3; preview-body grid 默认 `1fr 1fr 1fr`
+- 缺失帧用 placeholder 卡占位保持栏对齐
+- captureCount 在分组模式下显示组数 (= capture 次数), 单类型模式下仍是文件数
+- Filter=RGB/Depth/Normal 走原 flat 列表 (不分组)
+
 ### [v0.3.0] — 小由 (注入菜单 重命名 + 自动打开 + profile 自动选择)
 - 顶栏按钮 "Debug" -> "注入菜单"; 面板标题同步
 - `startCapture` 成功后若面板未开则 `toggleDebugPanel()` 自动打开
