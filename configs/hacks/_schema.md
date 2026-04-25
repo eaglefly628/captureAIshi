@@ -35,16 +35,18 @@ At least one of `aob_literal` or `aob_wildcard` must be present.
 
 ## `capture` (optional)
 
-Per-game texture index overrides for `renderdoccmd exportframe`. Set indices by opening a `.rdc` file in the qrenderdoc GUI with `--dump-all` to see all ColorTargets, then pin the correct ones here. All fields default to auto-detect (-1 / true / null).
+Per-game GBuffer detection hints for `renderdoccmd exportframe`. Indices are NOT used: texture creation order varies per-frame even within the same session, making numeric indices meaningless. Instead, use strategy strings that map to format-based detection in C++. All fields default to auto-detect.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `rgb_index` | int | -1 | Texture index for RGB output. -1 = auto (first Float ColorTarget, fallback SwapBuffer). |
-| `rgb_linear` | bool | false | Set `true` when the RGB source is a linear-space Float texture (e.g. UE3/UE4 SceneColor). Python applies linear-to-sRGB gamma after loading. Not needed for SwapBuffer (already gamma-corrected). |
-| `normal_index` | int | -1 | Texture index for normal map. -1 = auto (R10G10B10A2 scan + pipeline state). |
-| `depth_index` | int | -1 | Texture index for depth. -1 = auto (first DepthTarget). |
-| `depth_reversed_z` | bool | true | Applied Python-side in image_loader. true = UE5 reversed-Z (near->1, far->0) renders near=white. false = UE3/standard (near->0, far->1) renders near=white. |
-| `depth_range` | [float,float] or null | null | Applied Python-side. Fixed [black_point, white_point] for raw-float depth.exr normalization. null = auto (1st-99th percentile per frame). |
+| `rgb_strategy` | string | `""` (auto) | RGB detection strategy: `"float_scene_color"` (Float HDR SceneColor, C++ writes `rgb.meta source=float_linear` for Python gamma), `"unorm_pre_ui"` (UNorm pre-UI composite, already gamma-correct), `"swap_buffer"` (SwapBuffer fallback), or `""` / `"auto"` (try all in order). |
+| `rgb_note` | string | — | Human-readable description of the observed RenderDoc pass/slot (informational only). |
+| `normal_strategy` | string | `""` (auto) | Normal detection strategy: `"r10g10b10a2_unique"` (exactly one R10G10B10A2 UNORM target found), `"r10g10b10a2_slot1"` (scan pipeline state for MRT slot 1 among R10G10B10A2 candidates), or `""` / `"auto"` (try both). |
+| `normal_note` | string | — | Human-readable description of the observed RenderDoc pass/slot (informational only). |
+| `depth_note` | string | — | Human-readable description of the depth buffer (informational only). |
+| `depth_reversed_z` | bool | `true` | Python-side only. `true` = UE5 reversed-Z (near=1.0 → white, far=0.0 → black). `false` = standard-Z (near=0.0 → white, far=1.0 → black). |
+
+**Removed fields** (no longer valid): `rgb_index`, `normal_index`, `depth_index`, `rgb_linear`, `depth_range`. Texture indices are unstable across captures and were removed. Depth is now exported as raw float EXR by C++; Python applies per-frame 1st-99th percentile normalization automatically.
 
 ## `camera_write_profile` (optional, future use)
 

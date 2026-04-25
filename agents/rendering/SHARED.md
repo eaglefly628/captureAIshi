@@ -118,6 +118,19 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## Changelog
 
+### [v0.2.0] 99308e9 — 小萱
+- feat: strategy-based GBuffer detection replaces unstable texture indices
+  - C++: remove --rgb-index/--normal-index/--no-reverse-depth/--depth-range
+  - C++: add --rgb-strategy (float_scene_color|unorm_pre_ui|swap_buffer|auto)
+  - C++: add --normal-strategy (r10g10b10a2_unique|r10g10b10a2_slot1|auto)
+  - C++: depth export switched to raw float EXR (FileType::EXR, no normalization)
+    → Python _normalize_depth() does per-frame 1-99th percentile (no batch contamination)
+  - Python: capture_export_args() updated to emit new strategy flags
+  - batman_ak.json: capture section rewritten with rgb_strategy/normal_strategy/_note fields
+  - _schema.md: documented new strategy fields, marked old index fields as removed
+  - Root cause: indices are creation-order based, change every frame even same session
+    (observed SceneColor at indices 68,37,39,59,303,336,150 across 7 consecutive captures)
+
 ### [v0.2.0] c80a2cb — 小萱
 - feat: per-game texture index config + UE3 depth support
   - C++: `--depth-index N` (pin depth texture) + `--no-reverse-depth` (UE3 standard-Z)

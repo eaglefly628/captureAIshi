@@ -1,27 +1,8 @@
-# captureAIshi -- Development Guidelines
+# Architecture Reference
 
-## Context Awareness
+On-demand reference — read when working on pipeline structure, startup ordering, or `.claude/` layout.
 
-After each response, append `Context: ~XX%` and update your row in `agents/STATUS.md` (percentage + timestamp). Warn proactively at ~85%; keep working until compression or explicit stop.
-
-## Auto-Start Rule
-
-On new session, IMMEDIATELY:
-1. `git checkout claudeMainBranch && git pull origin claudeMainBranch`
-2. Read your own `agents/<role>/SHARED.md` for uncompleted TODO items
-3. Start the highest priority (P0 > P1 > P2) incomplete task autonomously
-
-## Notifications
-
-After finishing a TODO / pushing code / producing a document, call `notify("title", "msg")` or `notify_file("title", "path")` from `utils.feishu_notify`.
-
-## Version
-
-**Current: v0.2.0** — see `.claude/rules/versioning.md` for rules, `CHANGELOG.md` for history.
-
-## Architecture
-
-Pipeline for capturing RGB + Depth + Normal from published games:
+## Pipeline
 
 1. **Core** (`core/`) — Pure Python path generation (waypoints, snake path, cone rotation, tangent smoothing). Engine-agnostic.
 2. **Drivers** (`drivers/`) — Camera control adapters. Each driver connects to a game via its specific protocol (UE5 console TCP, Unity BepInEx socket, Cheat Engine memory, manual).
@@ -29,7 +10,7 @@ Pipeline for capturing RGB + Depth + Normal from published games:
 4. **Web UI** (`web_ui.py` + `web/templates/`) — Flask + pywebview desktop GUI. Capture controls, log viewer, image gallery, 3D waypoint visualizer.
 5. **Utils** (`utils/`) — Shared utilities (coordinate system conversions, etc.).
 
-### Startup order
+## Startup order
 
 ```
 grabber.setup()          # 1. Launch game via renderdoccmd
@@ -42,7 +23,7 @@ grabber.teardown()       # 6. Cleanup
 
 The grabber MUST launch and confirm the game is running BEFORE the driver attempts to connect. Enforced in `main.py` Step 6/7.
 
-### Error handling
+## Error handling
 
 - Validate at system boundaries (user config, external tool output, network responses).
 - Trust internal code paths — don't add defensive checks for states that can't happen.
@@ -59,12 +40,11 @@ The grabber MUST launch and confirm the game is running BEFORE the driver attemp
 |   +-- cpp-rules.md           C++ ASCII/MSVC rules
 |   +-- no-sleep.md            No time-based async readiness
 |   +-- edit-discipline.md     Edit tool safety rules
-|   +-- versioning.md          Version bump + CL rules + changelog
-|   +-- peer-review.md         Competitive review + agent names
+|   +-- versioning.md          Version bump + CL rules
+|   +-- peer-review.md         Competitive review
 |   +-- coding-discipline.md   Think/Simplicity/Surgical/Goal-driven rules
+|   +-- architecture.md        This file (on-demand)
 +-- commands/                  Slash commands
-|   +-- review.md              /project:review
-|   +-- status.md              /project:status
 +-- agents/                    Agent role definitions
     +-- ui.md                  xiaoyu (web_ui.py, web/templates/)
     +-- rendering.md           xiaoxuan (renderdoccmd, grabbers/)
@@ -73,12 +53,12 @@ The grabber MUST launch and confirm the game is running BEFORE the driver attemp
 
 Inter-agent communication stays in `agents/*/SHARED.md`. Context dashboard at `agents/STATUS.md`.
 
-## Branch Policy
+## Canonical Agent Names
 
-**All work MUST be committed and pushed directly to `claudeMainBranch`.** Do NOT create feature branches or push to auto-generated `claude/xxx` branches. If the platform assigns a different branch, switch first:
+| Role | Name | Domain |
+|------|------|--------|
+| UI | xiaoyu (小由) | `web_ui.py`, `web/templates/` |
+| Rendering | xiaoxuan (小萱) | `renderdoccmd`, `grabbers/` |
+| Reversing | xiaoni (小逆) | `drivers/`, `3rdparty/bridge/` |
 
-```bash
-git checkout claudeMainBranch && git pull origin claudeMainBranch
-```
-
-GitHub default branch must be `claudeMainBranch` (Settings → General → Default branch).
+Use these exact names in CL entries, TODO attributions, and peer review comments.

@@ -22,12 +22,12 @@
   ],
 
   "capture": {
-    "rgb_strategy": "unorm_pre_ui",
-    "rgb_note": "R8G8B8A8 UNorm, Colour Pass #12 slot 0 (pre-UI composite, 1 Target + Depth)",
-    "normal_strategy": "r10g10b10a2_slot1",
-    "normal_note": "R10G10B10A2 UNORM, Colour Pass #6 MRT slot 1 (GBufferA WorldNormal)",
-    "depth_note": "D32S8_TYPELESS, Colour Pass #6 (unique DepthTarget, standard-Z not reversed)",
-    "depth_reversed_z": false
+    "_comment": "RGB: Colour Pass #12 (1 Target + Depth) first CT -- set rgb_index via Tools -> Analyze Capture File. Normal: Colour Pass #6 slot 1, R10G10B10A2 UNORM (auto-detect by format + MRT slot 1 works). Depth: D32S8_TYPELESS, standard (not reversed-Z). Visible depth 0.978-1.0 due to 1/z perspective nonlinearity; depth.exr keeps raw float, Python normalizes with depth_range at load time.",
+    "rgb_index": -1,
+    "normal_index": -1,
+    "depth_index": -1,
+    "depth_reversed_z": false,
+    "depth_range": [0.978, 1.0]
   },
 
   "camera_write_profile": {

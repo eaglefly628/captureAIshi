@@ -1039,12 +1039,9 @@ private:
   std::string format;
   bool dumpAll;
   bool exportNormal;
-  int normalIndex;   // -1 = auto-detect, >= 0 = use specific texture index
-  int rgbIndex;      // -1 = auto-detect, >= 0 = use specific texture index
-  int depthIndex;    // -1 = auto-detect (first DepthTarget), >= 0 = use specific texture index
-  bool reverseDepth; // true = UE5 reversed-Z (near->1, default), false = UE3 standard (near->0)
-  float batchDepthBp, batchDepthWp; // first-frame percentile range reused for batch consistency
-  float depthRangeBp, depthRangeWp; // explicit per-game range (overrides percentile); -1 = unset
+  int depthIndex;             // -1 = auto-detect (first DepthTarget), >= 0 = pin texture index
+  std::string rgbStrategy;    // "float_scene_color"|"unorm_pre_ui"|"swap_buffer"|"" = auto cascade
+  std::string normalStrategy; // "r10g10b10a2_unique"|"r10g10b10a2_slot1"|"" = auto cascade
 
 public:
   ExportFrameCommand() : Command() {}
@@ -1056,11 +1053,9 @@ public:
                             "png", cmdline::oneof<std::string>("png", "jpg", "exr", "hdr", "bmp", "tga"));
     parser.add("dump-all", '\0', "Export all ColorTargets matching viewport resolution (for manual identification)");
     parser.add("no-normal", '\0', "Skip normal buffer export (on by default)");
-    parser.add<int>("normal-index", '\0', "Use texture at this index as normal (from GBuffer scan output). -1 = auto-detect", false, -1);
-    parser.add<int>("rgb-index", '\0', "Use texture at this index as RGB (from GBuffer scan output). -1 = auto-detect", false, -1);
-    parser.add<int>("depth-index", '\0', "Use texture at this index as depth. -1 = auto (first DepthTarget)", false, -1);
-    parser.add("no-reverse-depth", '\0', "Disable reversed-Z inversion (UE3/standard depth: 0=near, 1=far)");
-    parser.add<std::string>("depth-range", '\0', "Fixed depth normalization range 'BP,WP' (e.g. '0.978,1.0'). Overrides percentile auto-detect -- use for games where cleared/sky pixels (0.0 or 1.0) poison the percentile.", false, "");
+    parser.add<int>("depth-index", '\0', "Pin depth texture by index. -1 = auto (first DepthTarget)", false, -1);
+    parser.add<std::string>("rgb-strategy", '\0', "RGB detection: float_scene_color|unorm_pre_ui|swap_buffer|auto", false, "");
+    parser.add<std::string>("normal-strategy", '\0', "Normal detection: r10g10b10a2_unique|r10g10b10a2_slot1|auto", false, "");
   }
   virtual const char *Description()
   {
@@ -1086,38 +1081,14 @@ public:
     format = parser.get<std::string>("format");
     dumpAll = parser.exist("dump-all");
     exportNormal = !parser.exist("no-normal");
-    normalIndex = parser.get<int>("normal-index");
-    rgbIndex = parser.get<int>("rgb-index");
     depthIndex = parser.get<int>("depth-index");
-    reverseDepth = !parser.exist("no-reverse-depth");
-    depthRangeBp = -1.0f;
-    depthRangeWp = -1.0f;
-    std::string dr = parser.get<std::string>("depth-range");
-    if(!dr.empty())
-    {
-      size_t comma = dr.find(',');
-      if(comma != std::string::npos)
-      {
-        try
-        {
-          depthRangeBp = std::stof(dr.substr(0, comma));
-          depthRangeWp = std::stof(dr.substr(comma + 1));
-        }
-        catch(...)
-        {
-          std::cerr << "Invalid --depth-range '" << dr << "', expected 'BP,WP'" << std::endl;
-          return false;
-        }
-      }
-    }
+    rgbStrategy = parser.get<std::string>("rgb-strategy");
+    normalStrategy = parser.get<std::string>("normal-strategy");
     return true;
   }
 
   virtual int Execute(const CaptureOptions &)
   {
-    batchDepthBp = -1.0f;
-    batchDepthWp = -1.0f;
-
     FileType type = FileType::PNG;
     if(format == "jpg")
       type = FileType::JPG;
@@ -1244,48 +1215,39 @@ public:
       }
     }
 
-    // Find RGB source texture
+    // Find RGB source texture -- strategy-based detection
     ResourceId rgbTextureId;
     std::string rgbSource = "none";
-    if(rgbIndex >= 0)
+    // Strategy controls which detection paths to run; "" or "auto" = full cascade
+    bool tryFloat = rgbStrategy.empty() || rgbStrategy == "auto" || rgbStrategy == "float_scene_color";
+    bool tryUNorm = rgbStrategy.empty() || rgbStrategy == "auto" || rgbStrategy == "unorm_pre_ui";
+    bool trySwap  = rgbStrategy.empty() || rgbStrategy == "auto" || rgbStrategy == "swap_buffer";
+    if(swapWidth > 0)
     {
-      // Manual override: use specified texture index
-      if((size_t)rgbIndex < textures.size())
+      // Priority 1: Float ColorTarget (UE5 HDR SceneColor)
+      if(tryFloat && rgbSource == "none")
       {
-        rgbTextureId = textures[rgbIndex].resourceId;
-        rgbSource = "manual [" + std::to_string(rgbIndex) + "]";
-        std::cout << "  RGB source: manual index [" << rgbIndex << "]" << std::endl;
-      }
-      else
-        std::cerr << "  --rgb-index " << rgbIndex << " out of range (max " << textures.size() - 1 << ")" << std::endl;
-    }
-    else if(swapWidth > 0)
-    {
-      // Auto-detect priority:
-      // 1. Float ColorTarget at viewport size (UE5 HDR SceneColor)
-      // 2. UNorm ColorTarget at viewport size, NOT SwapBuffer (UE3/DX11 games:
-      //    final composite copied to SwapBuffer -- highest index = latest in pipeline)
-      // 3. SwapBuffer (contains UI overlay, last resort)
-      for(size_t i = 0; i < textures.size(); i++)
-      {
-        const TextureDescription &tex = textures[i];
-        uint32_t flags = (uint32_t)tex.creationFlags;
-        if((flags & (uint32_t)TextureCategory::ColorTarget) &&
-           !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
-           tex.width == swapWidth && tex.height == swapHeight &&
-           tex.format.compType == CompType::Float &&
-           tex.format.compCount >= 3)
+        for(size_t i = 0; i < textures.size(); i++)
         {
-          rgbTextureId = tex.resourceId;
-          rgbSource = "SceneColor [" + std::to_string(i) + "]";
-          std::cout << "  [" << i << "] SceneColor (Float "
-                    << (uint32_t)tex.format.compCount << "ch) "
-                    << tex.width << "x" << tex.height << std::endl;
-          break;
+          const TextureDescription &tex = textures[i];
+          uint32_t flags = (uint32_t)tex.creationFlags;
+          if((flags & (uint32_t)TextureCategory::ColorTarget) &&
+             !(flags & (uint32_t)TextureCategory::SwapBuffer) &&
+             tex.width == swapWidth && tex.height == swapHeight &&
+             tex.format.compType == CompType::Float &&
+             tex.format.compCount >= 3)
+          {
+            rgbTextureId = tex.resourceId;
+            rgbSource = "SceneColor [" + std::to_string(i) + "]";
+            std::cout << "  [" << i << "] SceneColor (Float "
+                      << (uint32_t)tex.format.compCount << "ch) "
+                      << tex.width << "x" << tex.height << std::endl;
+            break;
+          }
         }
       }
-      // Fallback 2: UNorm ColorTarget (pre-UI composite, DX11/UE3 style)
-      if(rgbSource == "none")
+      // Priority 2: UNorm ColorTarget, highest index (UE3/DX11 pre-UI composite)
+      if(tryUNorm && rgbSource == "none")
       {
         size_t bestIdx = 0;
         ResourceId bestId;
@@ -1303,7 +1265,6 @@ public:
             bestIdx = i;
             bestId = tex.resourceId;
             found = true;
-            // keep scanning -- take highest index (latest in pipeline)
           }
         }
         if(found)
@@ -1314,8 +1275,8 @@ public:
                     << swapWidth << "x" << swapHeight << std::endl;
         }
       }
-      // Fallback 3: SwapBuffer (has UI overlay)
-      if(rgbSource == "none")
+      // Priority 3: SwapBuffer (has UI overlay, last resort)
+      if(trySwap && rgbSource == "none")
       {
         for(size_t i = 0; i < textures.size(); i++)
         {
@@ -1411,10 +1372,8 @@ public:
       const TextureDescription &tex = textures[i];
       uint32_t flags = (uint32_t)tex.creationFlags;
 
-      // Export depth buffer as normalized grayscale PNG.
-      // Percentile range computed from first frame; reused for batch consistency.
-      // reverseDepth=true (UE5 reversed-Z): near(1.0)->white.
-      // reverseDepth=false (UE3/standard): near(0.0)->white.
+      // Export depth buffer as raw float EXR. No normalization in C++ --
+      // Python's _normalize_depth applies per-frame 1-99% percentile after loading.
       bool isDepthTarget = (flags & (uint32_t)TextureCategory::DepthTarget) != 0;
       bool isDepthByIndex = (depthIndex >= 0 && (int)i == depthIndex);
       if(!foundDepth && (isDepthTarget || isDepthByIndex))
@@ -1423,69 +1382,14 @@ public:
                   << " " << tex.width << "x" << tex.height
                   << " fmt=" << (uint32_t)tex.format.type << std::endl;
 
-        float bpVal = 0.0f, wpVal = 1.0f;
-        if(depthRangeBp >= 0.0f && depthRangeWp >= 0.0f)
-        {
-          bpVal = depthRangeBp;
-          wpVal = depthRangeWp;
-          std::cout << "  depth range (explicit): [" << bpVal << ", " << wpVal << "]" << std::endl;
-        }
-        else if(batchDepthBp >= 0.0f)
-        {
-          bpVal = batchDepthBp;
-          wpVal = batchDepthWp;
-          std::cout << "  depth range (batch ref): [" << bpVal << ", " << wpVal << "]" << std::endl;
-        }
-        else
-        {
-          bytebuf rawData = controller->GetTextureData(tex.resourceId, Subresource(0, 0, 0));
-          if(!rawData.empty())
-          {
-            size_t pixelCount = (size_t)tex.width * (size_t)tex.height;
-            size_t floatCount = rawData.size() / sizeof(float);
-            if(floatCount >= pixelCount)
-            {
-              const float *src = (const float *)rawData.data();
-              std::vector<float> validDepths;
-              validDepths.reserve(pixelCount);
-              // Exclude exact 0.0 / 1.0 and near-boundary values -- these are
-              // typically cleared/sky/far-plane pixels that bias the percentile
-              // range and crush real geometry to black after normalization.
-              const float eps = 1e-6f;
-              for(size_t p = 0; p < pixelCount; p++)
-              {
-                float d = src[p];
-                if(d > eps && d < 1.0f - eps)
-                  validDepths.push_back(d);
-              }
-              if(!validDepths.empty())
-              {
-                std::sort(validDepths.begin(), validDepths.end());
-                size_t n = validDepths.size();
-                bpVal = validDepths[(size_t)(n * 0.01)];
-                wpVal = validDepths[(size_t)(n * 0.99)];
-                if(wpVal - bpVal < 1e-10f) { bpVal = 0.0f; wpVal = 1.0f; }
-                std::cout << "  depth range (1-99%%): [" << bpVal << ", " << wpVal << "]" << std::endl;
-                batchDepthBp = bpVal;
-                batchDepthWp = wpVal;
-              }
-            }
-          }
-        }
-
-        std::string depthPath = fileOutdir + sep + "depth.png";
+        std::string depthPath = fileOutdir + sep + "depth.exr";
         TextureSave texsave;
         texsave.resourceId = tex.resourceId;
         texsave.mip = 0;
         texsave.slice.sliceIndex = 0;
         texsave.alpha = AlphaMapping::Discard;
-        texsave.destType = FileType::PNG;
+        texsave.destType = FileType::EXR;
         texsave.channelExtract = 0;
-        // Far=white convention (matches old behavior):
-        // reverseDepth=true  (UE5 near->1): swap so far(0)->white, near(1)->black
-        // reverseDepth=false (UE3 near->0): no swap so near(bpVal)->black, far(wpVal)->white
-        texsave.comp.blackPoint = reverseDepth ? wpVal : bpVal;
-        texsave.comp.whitePoint = reverseDepth ? bpVal : wpVal;
 
         ResultDetails saveRes = controller->SaveTexture(texsave, conv(depthPath));
         if(saveRes.OK())
@@ -1535,26 +1439,9 @@ public:
     // during the GBuffer base pass. Slot 1 is where UE5 writes WorldNormal.
     if(exportNormal && !foundNormal && swapWidth > 0)
     {
-      if(normalIndex >= 0 && (size_t)normalIndex < textures.size())
-      {
-        // Manual override via --normal-index
-        const TextureDescription &tex = textures[normalIndex];
-        std::string normalPath = fileOutdir + sep + "normal.png";
-        TextureSave texsave;
-        texsave.resourceId = tex.resourceId;
-        texsave.mip = 0;
-        texsave.slice.sliceIndex = 0;
-        texsave.alpha = AlphaMapping::Discard;
-        texsave.destType = FileType::PNG;
-        ResultDetails saveRes = controller->SaveTexture(texsave, conv(normalPath));
-        if(saveRes.OK())
-        {
-          std::cout << "OK normal [" << normalIndex << "] (manual) "
-                    << tex.width << "x" << tex.height << " -> " << normalPath << std::endl;
-          foundNormal = true;
-        }
-      }
-      else
+      // Strategy-based: "" or "auto" = cascade (unique first, then slot1 scan)
+      bool tryUnique = normalStrategy.empty() || normalStrategy == "auto" || normalStrategy == "r10g10b10a2_unique";
+      bool trySlot1  = normalStrategy.empty() || normalStrategy == "auto" || normalStrategy == "r10g10b10a2_slot1";
       {
         // Auto-detect: find R10G10B10A2 ColorTargets at viewport size
         std::vector<std::pair<size_t, ResourceId>> normalCandidates;
@@ -1574,15 +1461,15 @@ public:
 
         ResourceId normalResId;
 
-        if(normalCandidates.size() == 1)
+        if(tryUnique && normalCandidates.size() == 1)
         {
           // Unique match: no ambiguity, use directly
           normalResId = normalCandidates[0].second;
           std::cout << "Normal: unique R10G10B10A2 match at [" << normalCandidates[0].first << "]" << std::endl;
         }
-        else if(normalCandidates.size() > 1)
+        else if(trySlot1 && normalCandidates.size() >= 1)
         {
-          // Multiple candidates: scan pipeline state for the one bound at MRT slot 1
+          // Multiple candidates (or forced slot1 strategy): scan pipeline state for MRT slot 1
           // (UE5 deferred GBuffer layout: slot 0=SceneColor, slot 1=GBufferA/WorldNormal)
           std::cout << "Normal: " << normalCandidates.size()
                     << " R10G10B10A2 candidates, scanning pipeline state for RT slot 1..."
