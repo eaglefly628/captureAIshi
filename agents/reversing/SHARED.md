@@ -105,33 +105,21 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- run.bat auto pip install + EXR probe diagnostics
+### [v0.2.0] 28b09e1 -- xiaoni -- EXR probe diagnostics (run.bat install reverted in e4e8f1a)
 
-User report after `ca62f70`: still hits "Cannot read EXR ... No
-module named 'OpenEXR'". Probable cause: app wasn't restarted after
-the auto-install commit landed, OR the pip install inside the
-embedded-Python `_ensure_exr_loader` failed silently with output
-swallowed by `--quiet`.
+`28b09e1` originally added `pip install -r requirements.txt` to
+`run.bat` / `run_cli.bat` plus richer pip-output capture in
+`_ensure_exr_loader`. The run.bat additions were reverted in
+`e4e8f1a` after user pushback ("别这样做，我是做过pip install 了" --
+the install path was a red herring; cv2 was already installed but
+EXR support was disabled by an opencv build flag). The `_ensure_exr_
+loader` diagnostics (drop `--quiet`, capture stdout/stderr, log
+tail on success / exit + last 500 chars on failure,
+`importlib.invalidate_caches()` between install and re-import,
+probe-success log promoted DEBUG -> INFO) were kept and rebased
+forward.
 
-Two complementary fixes so the user genuinely cannot get a stale-deps
-state:
-
-- `run.bat` / `run_cli.bat`: now run
-  `python -m pip install -q -r requirements.txt
-   --disable-pip-version-check --no-warn-script-location` on every
-  launch. Pip is a no-op for already-satisfied deps so cost is ~1-2s
-  on subsequent runs but new entries (opencv-python, future deps)
-  always land without the user re-bootstrapping.
-- `web_ui._ensure_exr_loader`: drop `--quiet`, capture pip's
-  stdout/stderr, log the tail of stdout on success ("Successfully
-  installed cv2-..."), and on failure log exit code + last 500 chars
-  of stdout/stderr so the user can see exactly why pip refused.
-  `importlib.invalidate_caches()` between install and re-import in
-  case Python's finder cached a "module not found" before install.
-  Probe-success log promoted from DEBUG to INFO so the user can
-  confirm at a glance which loader is active.
-
-### [v0.2.0] (pending push) -- xiaoni -- Per-game `depth_curve` for outdoor wide-range PNG preview
+### [v0.2.0] be9c6c6 -- xiaoni -- Per-game `depth_curve` for outdoor wide-range PNG preview
 
 User report: Gotham depth PNG washed out at distance -- city mid-band
 indistinguishable from sky highlights, only Batman silhouette visible.
