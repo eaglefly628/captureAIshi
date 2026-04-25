@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "stellar_blade",
+  "display_name": "Stellar Blade",
+  "process_names": ["SB-Win64-Shipping.exe"],
+  "engine": "UE4",
+  "engine_version": "UE 4.x via UUU 4.11.5",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE4Unlocker4.11.5.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Two overrides: TimeDilation getter (AOB_GET_TIMEDILATION variant chosen by SB) and a clamp-jump location.",
+
+  "intercepts": [
+    {
+      "name": "get_timedilation",
+      "description": "Get TimeDilation (AOB_GET_TIMEDILATION, registered in FUN_180111610) -- selected by Stellar Blade",
+      "size": 28,
+      "aob_wildcard": "80 B9 ?? ?? ?? ?? 00 0F 29 74 24 ?? 74 0A F3 0F 10 B1 ?? ?? ?? ?? EB 08 F3 0F 10 B1",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "timedilation_clamp_jmp",
+      "description": "[Stellar Blade] Time-dilation clamp jump (AOB_SB_TIMEDILATION_CLAMPJMP_LOCATION, registered in FUN_1800e1a10)",
+      "size": 15,
+      "aob_wildcard": "72 03 0F 28 C6 0F 28 74 24 ?? 48 83 C4 38 C3",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}

@@ -158,6 +158,27 @@ wait_and_inject("BatmanAK.exe", dll_path, timeout=60.0, poll_interval=1.0)
 | `WaitForSingleObject` = `WAIT_TIMEOUT` | — | `DllMain` 死锁了（见 2.4） |
 | `ExitCode == 0` | — | 架构不对 / 依赖 DLL 不在 `PATH` / `DllMain` 里 `return FALSE` |
 
+`ExitCode == 0` 是最常见的"看上去成功了但 DLL 没起来"。诊断顺序：
+
+1. 看 `c:\windows\system32\` vs `syswow64\` 决定架构。x64 游戏注入 x86 DLL，`LoadLibrary` 立刻返 0
+2. 用 `dumpbin /dependents captureAIshi_bridge.dll` 列依赖 DLL，确认它们在游戏的搜索路径里
+3. 在游戏目录下放一个能跑的 DLL 副本：游戏的 `LoadLibrary` 默认从 exe 同目录开始找
+4. 看 bridge 写的 `captureAIshi_bridge.log`（见 `bridge.cpp:654`）。如果没生成，说明 `DLL_PROCESS_ATTACH` 都没进；如果有 log 但只到 "DLL:"，说明 `find_gengine` 段崩了
+
+### 2.7 为什么不用 APC / SetWindowsHookEx / Reflective Loading
+
+CRT (`CreateRemoteThread`) 是最容易被检测的注入手法，但 captureAIshi 仍然选它，因为目标场景（offline 抓数据集）不需要绕 AC。其他备选方案的原理和取舍：
+
+| 方法 | 原理 | 优点 | 不选的原因 |
+|---|---|---|---|
+| **APC 注入** | `OpenThread + QueueUserAPC(target_thread, LoadLibraryW, dll_path_ptr)`。等目标线程进 alertable wait（如 `SleepEx`）就会被 dispatch | 不创建新线程，只挂队列；`PsSetCreateThreadNotifyRoutine` 类 AC 拦不到 | 大多数游戏渲染线程从不进 alertable wait；要找到 alertable 的工作线程才能触发，时机不可控 |
+| **`SetWindowsHookEx`** | 全局 hook；目标进程**主动加载**含 hook proc 的 DLL（不是我们注入的） | 完全不调用 `CreateRemoteThread` | 只对**有消息循环**的进程有效；很多 UE5 全屏游戏没有 message pump，DLL 永远不被 load |
+| **Manual Map / Reflective DLL** | 自己写 PE loader：`VirtualAllocEx` + `WriteProcessMemory` 把 DLL section 直接复制进去，手动做 base relocation 和 IAT 解析，再 `CreateRemoteThread` 跳到我们写的 `DllMain` 跳板 | 不进 `LdrLoadDll`，AC 看不到 `LDR_DATA_TABLE_ENTRY` 里的新条目；指纹接近 0 | 实现复杂度 ~10 倍；TLS callbacks / SEH 注册 / `_init_array` 都得自己跑；本项目没必要 |
+| **`NtCreateThreadEx`** | 直接走 ntdll，绕开 kernel32 的 `CreateRemoteThread` thunk | Win7 时代曾绕过部分 AC | 现代 AC 用 `PsSetCreateThreadNotifyRoutine` 拦内核层，等价被拦 |
+| **驱动注入** | 内核 driver 在目标进程地址空间里 mmap DLL section + `KeInsertQueueApc(KernelMode)` | 能绕 user-mode AC | 需要驱动签名 / 测试模式；超出 captureAIshi 范围 |
+
+实际策略：**抓取数据集场景下不用 AC 游戏**。需要碰 EAC/BE 时直接走 `ExternalMemoryDriver`（方式 C），完全不注入。
+
 ---
 
 ## 3. GEngine 自动定位（方式 A / B 共享）
@@ -408,7 +429,44 @@ skip SSE/size 前缀 (F2/F3/66)
 
 **不是** CAS / 不是 thread-safe 写：x64 多字节指令不是原子的，游戏线程可能正在执行我们要改的那条指令 → 必须 suspend 所有其他线程再改。suspend/resume 之间任何日志调用都不能做，否则 CSRSS 互斥量死锁整个进程。
 
-### 4.6 TCP 命令集
+### 4.6 AOB 长度（`pat_len`）vs install 长度（`size`）—— 容易混淆
+
+`__cam_intercept_install_aob <size> <occurrence> <name> | <AOB hex>` 里有**两个**长度，含义完全不同：
+
+```
+size = 60                           ← cam_intercept_install_addr 的 size, 操作的字节数
+AOB  = "89 83 74 05 00 00 8B 47..." ← cam_parse_aob 读完得 pat_len 个 token
+                                       (本例 14 个 token = 14 字节)
+```
+
+| 名字 | 用途 | 取值依据 |
+|---|---|---|
+| **`pat_len`** | `pattern_scan` 用来**定位** patch 起点的字节数 | 越长越唯一；够大到全模块只命中一处即可（一般 14-30 字节） |
+| **`size`** | `cam_patch_write` **覆盖** 的字节数（NOP / FF25 + NOPs 都是这个长度） | 必须 ≥ 你想消掉的整个写相机指令块的总长度 |
+
+实战中 `size` 通常 **>= `pat_len`**：
+
+- AOB 只覆盖 patch 块前缀的几条指令（用作"指纹"）
+- `size` 才是要拿掉的整个 mov 序列长度
+
+Batman 的例子（见 §5.5）：
+
+```
+intercepts[0]:
+  AOB     = 14-byte 前缀，命中 7 mov 序列的开头第 1 条
+  size    = 60，覆盖全部 7 条 mov（每条 ~6-9 字节，总 ~50 字节，留 ~10 字节余量）
+```
+
+**约束** (`cam_intercept_install_addr_locked`, `camera_intercept.h:328`):
+
+- `size > 0`
+- `size <= CAM_INTERCEPT_MAX_SIZE = 64`（写死的 buffer 大小，见 `camera_intercept.h:38`）
+- `size >= 14` 才能切 `CAPTURE` 模式（`FF 25 + qword` 占 14）；`PASS/NOP` 模式没下限
+- `addr + size` 不能跨 `MEMORY_BASIC_INFORMATION` page region（`camera_intercept.h:374`），否则跨页字节就在另一个保护属性里，`VirtualProtect` 改一边、另一边没改，写入会 fault
+
+**要消除多条独立 mov 而它们不连续怎么办**：装多个 site，每个 site 用自己的 AOB / size。`g_cam_sites` 上限 16（`CAM_INTERCEPT_MAX_SITES`），够 Batman 用了。
+
+### 4.7 TCP 命令集
 
 ```
 __cam_intercept_install_addr <hex_addr> <size> [name]
@@ -802,4 +860,103 @@ cam_intercept_install_aob(aob_hex, size, name, occurrence=1)
 
 ---
 
-文档版本：v0.2.0 对齐（更新 2026-04-24：加深注入 / xref / stub / AOB 细节和关键函数原理小抄）。若 bridge / intercept 头加新命令或换 pattern 算法，记得同步更新本文件和 `configs/hacks/_schema.md`。
+## 11. 实战调试 cookbook —— 用 `nc` 走完一次 hook 安装
+
+bridge 启动后的 TCP 9998 是裸文本协议（每行一条命令，回车结束），用 `nc` / `ncat` / `telnet` 都能接进去。下面是一次从注入到 capture 全流程的命令序列，给同事独立排错时用。
+
+### 11.1 准备
+
+```bash
+# 1. DLL 已注入 (方式 A 或 B 都行)
+python -m 3rdparty.bridge.injector --pid 12345 \
+    --dll 3rdparty/bridge/captureAIshi_bridge.dll
+
+# 2. 接进 bridge (Linux/Git Bash)
+nc 127.0.0.1 9998
+# Windows: ncat 127.0.0.1 9998   或   PowerShell  Test-NetConnection -ComputerName 127.0.0.1 -Port 9998
+```
+
+### 11.2 一次完整会话（带预期输出）
+
+```
+__bridge_ping
+pong
+
+__bridge_status
+engine_found=1 engine_ptr=0x7FF6A8B2C0E0 exec_fn=0x7FF6A8123456 ...
+
+# 如果 engine_found=0，强制重扫
+__bridge_rescan
+ok
+
+# 如果还是 0，手工喂个偏移（从 IDA / Ghidra 里读出来的 GEngine 全局变量地址 - module base）
+__bridge_set_offset 7B0A5F8
+ok
+```
+
+发个无副作用 console 命令测 Exec 链路：
+
+```
+SetViewLocation 100 200 300       # 直通 GEngine->Exec
+ok
+
+stat fps
+ok                                  # 屏幕上应该出现 fps overlay；用来确认真的 dispatch 到了 UE
+```
+
+装 camera intercept（Batman 例子）：
+
+```
+__cam_intercept_install_aob 60 1 camera_write | 89 83 74 05 00 00 8B 47 04 89 83 78 05 00 00 ...
+ok
+
+__cam_intercept_list
+[0] camera_write addr=0x7FF6B2A4C580 size=60 mode=pass base_reg=3 slot=0 captured=0x0
+
+# 切 CAPTURE，让游戏跑几帧把基址写出来
+__cam_intercept_capture
+mode=capture sites=1 ok=1 fail=0
+
+# 等几秒，然后读
+__cam_intercept_get_capture 0
+0x7FF6C3E45A20    # 这就是 Batman 相机结构体基址（rbx 在那条 mov 时的值）
+
+# 现在可以切 NOP 让游戏停止覆盖相机，外部用 WPM 写 [基址 + 0x574] 就能控相机
+__cam_intercept_nop
+mode=nop sites=1 ok=1 fail=0
+
+# 用 bridge 自带的 mem_poke 写 X 坐标（type=0 = f32, value_bits = 把 float bit-cast 成 u32）
+# float(123.45) 的 IEEE754 = 0x42F6E666
+__cam_mem_write 0x7FF6C3E45A20 0x574 0 0x42F6E666
+ok
+
+# 想还原游戏控制
+__cam_intercept_pass
+mode=pass sites=1 ok=1 fail=0
+
+# 卸载所有 hook，释放 stub 页
+__cam_intercept_uninstall
+ok
+```
+
+### 11.3 常见症状对照
+
+| 命令回的 | 含义 | 怎么救 |
+|---|---|---|
+| `pong` 都回不来 | bridge 还没起 / 端口被防火墙拦 | 看 `captureAIshi_bridge.log` 里有没有 "TCP server listening on 9998" |
+| `__bridge_status` 里 `engine_found=0` | string-xref 扫不到 | 走 `__bridge_set_offset` 手喂；UE3 老游戏正常情况 |
+| `__cam_intercept_install_aob` 回 `error: install failed (see log)` | scan 没命中 / 跨页 / 已有同地址 site | 对照 log 里 "pattern not found" / "crosses page boundary" |
+| `__cam_intercept_get_capture` 一直回 0 | stub 还没被命中 | 确认游戏在动（不是 pause 状态），等 1-2 秒；或者 mode 还是 PASS |
+| `__cam_mem_write ... error: poke faulted` | 基址不对 / 偏移越界 | 重新 capture 一次基址；或者偏移表错了 |
+
+### 11.4 一个 hook 装得对不对，怎么独立验证
+
+不靠 captureAIshi 也能验：
+
+1. **Cheat Engine 挂上游戏**，地址输 `__cam_intercept_get_capture` 回的基址，看那 16 字节里是不是浮点形态的 `(x, y, z, ...)` —— 跟你眼睛看到的相机位置数量级对得上就是对的
+2. **关 bridge，重启游戏，观察相机是否回到正常**：bridge 一退出，`shutdown` 跑 `cam_intercept_uninstall_all` 还原所有 site；如果游戏启动后还是相机被冻住，说明 hook 漏卸了，下次启动前 reboot 进程
+3. **同一 AOB 命中多个位置时**，把 `occurrence` 从 1 调到 2/3，看 `__cam_intercept_list` 里 `addr` 是否变化；变化说明真的多命中
+
+---
+
+文档版本：v0.2.0 对齐（更新 2026-04-25：加 §2.7 注入方式取舍、§4.6 `pat_len` vs `size` 区分、§11 实战 nc 调试 cookbook）。若 bridge / intercept 头加新命令或换 pattern 算法，记得同步更新本文件和 `configs/hacks/_schema.md`。

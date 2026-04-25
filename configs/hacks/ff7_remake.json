@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "ff7_remake",
+  "display_name": "Final Fantasy VII Remake",
+  "process_names": ["ff7remake_.exe"],
+  "engine": "UE4",
+  "engine_version": "UE 4.x via UUU 4.11.5",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE4Unlocker4.11.5.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Single specific override; relies on shared UE pool for the rest. process_names is a best-guess.",
+
+  "intercepts": [
+    {
+      "name": "fillcomponentspacetransforms_call",
+      "description": "[FF7 Remake] USkeletalMeshComponent::FillComponentSpaceTransforms hook (AOB_FF7R_FILLCOMPONENTSPACETRANSFORMS_CALL, registered in FUN_1800a46c0)",
+      "size": 24,
+      "aob_literal": "49 8B D6 48 8B CF FF 90 28 0A 00 00 80 7D F0 00 4C 8B A4 24 C0 00 00 00",
+      "prefer": "literal",
+      "default_mode": "pass"
+    }
+  ]
+}

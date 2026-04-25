@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "borderlands4",
+  "display_name": "Borderlands 4",
+  "process_names": ["Borderlands4.exe"],
+  "engine": "UE5",
+  "engine_version": "UE 5.x via UUU 5.8.11",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Five overrides: camera coords write, main-thread call intercept, post-process write, camera struct copy, GUObjectArray pointer.",
+
+  "intercepts": [
+    {
+      "name": "coords_write",
+      "description": "[Borderlands 4] Camera coordinates write (AOB_BL4_COORDS_WRITE_LOCATION, registered in FUN_1800fe350)",
+      "size": 23,
+      "aob_literal": "48 89 46 10 0F 28 44 24 20 0F 11 06 48 8B 4C 24 40 48 31 E1 48 3B 0D",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "mainthread_call_intercept",
+      "description": "[Borderlands 4] Main-thread call intercept (AOB_BL4_MAINTHREAD_CALL_INTERCEPT, registered in FUN_1800fe350)",
+      "size": 21,
+      "aob_wildcard": "0F 29 74 24 ?? 44 89 C3 48 89 CE 48 8B 49 08 E8 ?? ?? ?? ?? FE",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "postprocess_write",
+      "description": "[Borderlands 4] Post-process settings write (AOB_BL4_POSTPROCESSWRITE_LOCATION, registered in FUN_1800fe350)",
+      "size": 21,
+      "aob_literal": "48 8B 06 48 89 F1 0F 28 CE 49 89 F8 49 89 D9 FF 90 08 03 00 00",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "camera_struct_intercept_1",
+      "description": "Camera struct copy intercept (AOB_CAMERA_STRUCT_INTERCEPT1, registered in FUN_180101210) -- Borderlands 4 variant",
+      "size": 31,
+      "aob_literal": "48 8B 43 50 48 89 47 10 0F 10 43 40 0F 11 07 0F 10 43 58 0F 11 47 18 48 8B 43 68 48 89 47 28",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "objects_store",
+      "description": "GUObjectArray (UObject store) pointer (AOB_OBJECTSSTORE, registered in FUN_180134b50)",
+      "size": 29,
+      "aob_wildcard": "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}

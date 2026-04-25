@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "code_vein_ii",
+  "display_name": "Code Vein II",
+  "process_names": ["CodeVein2-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "UE 5.x via UUU 5.8.11",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Single override: atmospheric component write hook.",
+
+  "intercepts": [
+    {
+      "name": "writeatmospherics_call",
+      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION, registered in FUN_1800eb060) -- Code Vein II variant",
+      "size": 20,
+      "aob_wildcard": "E8 ?? ?? ?? ?? 48 8B CF E8 ?? ?? ?? ?? 80 BF 18 03 00 00 00",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "outer_worlds_2",
+  "display_name": "The Outer Worlds 2",
+  "process_names": ["TheOuterWorlds2-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "UE 5.x via UUU 5.8.11",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Two overrides: atmospheric component write + UObject::ProcessEvent hook.",
+
+  "intercepts": [
+    {
+      "name": "writeatmospherics_call",
+      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION, registered in FUN_1800eb060) -- Outer Worlds 2 variant",
+      "size": 21,
+      "aob_wildcard": "E8 ?? ?? ?? ?? 80 BB 50 0A 00 00 00 74 0D 48 8B CB 48 83 C4 20",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "uobject_processevent",
+      "description": "UObject::ProcessEvent hook (AOB_UOBJECT_PROCESSEVENT, registered in FUN_180134b50) -- Outer Worlds 2 variant",
+      "size": 15,
+      "aob_wildcard": "4C 8B C5 48 8B D3 48 8B CF E8 ?? ?? ?? ?? EB",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}

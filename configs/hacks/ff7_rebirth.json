@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "ff7_rebirth",
+  "display_name": "Final Fantasy VII Rebirth",
+  "process_names": ["ff7rebirth_.exe"],
+  "engine": "UE4",
+  "engine_version": "UE 4.x via UUU 4.11.5",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE4Unlocker4.11.5.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Game-specific UUU overrides. process_names is a best-guess and should be confirmed against the live process. Intercepts default to 'pass' (inert) -- toggle via UI to engage.",
+
+  "intercepts": [
+    {
+      "name": "camera_write_1",
+      "description": "[FF7 Rebirth] Camera struct write (AOB_FF7REBIRTH_CAMERA_WRITE1_KEY, registered in FUN_1800e0150)",
+      "size": 24,
+      "aob_wildcard": "89 07 C5 FA 11 57 04 C5 FA 11 4F 08 C5 F8 10 8B ?? ?? ?? ?? C5 F0 C2 83",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "camera_write_2",
+      "description": "[FF7 Rebirth] Camera struct write (AOB_FF7REBIRTH_CAMERA_WRITE2_KEY)",
+      "size": 20,
+      "aob_literal": "C5 FB 11 47 0C 8B 46 08 89 47 14 44 84 B3 0C 02 00 00 74 12",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "camera_write_3",
+      "description": "[FF7 Rebirth] Camera struct write (AOB_FF7REBIRTH_CAMERA_WRITE3_KEY)",
+      "size": 20,
+      "aob_literal": "C5 FB 11 47 0C 8B 46 08 89 47 14 44 84 B3 0C 02 00 00 74 12",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "camera_write_4",
+      "description": "[FF7 Rebirth] Camera struct write (AOB_FF7REBIRTH_CAMERA_WRITE4_KEY)",
+      "size": 22,
+      "aob_literal": "89 43 28 8B 87 48 02 00 00 89 43 30 8B 87 50 02 00 00 89 43 3C 8B",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "fstop_override_read",
+      "description": "[FF7 Rebirth] DoF F-stop override read (AOB_FF7REBIRTH_FSTOPOVERRIDE_READ_LOCATION)",
+      "size": 21,
+      "aob_literal": "41 32 41 1A 41 22 C7 32 C1 88 43 1A 8A C8 41 32 49 1A 40 22 CF",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "fstop_read",
+      "description": "[FF7 Rebirth] DoF F-stop read (AOB_FF7REBIRTH_FSTOP_READ_LOCATION)",
+      "size": 21,
+      "aob_literal": "41 8B 81 6C 03 00 00 89 83 6C 03 00 00 41 8B 81 70 03 00 00 89",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "hud_scale_factor_calc",
+      "description": "[FF7 Rebirth] HUD scale-factor calc (AOB_FF7REBIRTH_HUD_SCALE_FACTOR_CALC)",
+      "size": 18,
+      "aob_wildcard": "C5 EA 5E C8 C5 FA 11 84 ?? ?? ?? ?? ?? C4 41 38 57 C0",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "lens_vignette",
+      "description": "[FF7 Rebirth] Lens vignette parameter (AOB_FF7REBIRTH_LENSVIGNETTE_LOCATION)",
+      "size": 22,
+      "aob_literal": "89 AB 64 04 00 00 48 89 AB 68 04 00 00 4C 89 BB 70 04 00 00 4C 89",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "names_store",
+      "description": "GNames (FName store) pointer (AOB_NAMESSTORE)",
+      "size": 24,
+      "aob_wildcard": "80 3D ?? ?? ?? ?? 00 0F 84 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 48 83 C4 28",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}

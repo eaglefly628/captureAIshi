@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "oblivion_remastered",
+  "display_name": "Oblivion Remastered",
+  "process_names": ["OblivionRemastered-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "UE 5.x via UUU 5.8.11",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Two overrides: two atmospheric component write hooks.",
+
+  "intercepts": [
+    {
+      "name": "writeatmospherics_call_1",
+      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION, registered in FUN_1800eb060) -- Oblivion Remastered variant 1",
+      "size": 21,
+      "aob_wildcard": "FF 50 08 8B 45 E3 48 8D 4D DF F7 D0 21 45 EF E8 ?? ?? ?? ?? EB",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "writeatmospherics_call_2",
+      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION2, registered in FUN_1800eb060) -- Oblivion Remastered variant 2",
+      "size": 24,
+      "aob_wildcard": "F2 0F 11 4C 24 40 48 89 7C 24 20 E8 ?? ?? ?? ?? 4C 8D 9C 24 B0 00 00 00",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}

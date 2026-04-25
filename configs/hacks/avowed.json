@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "avowed",
+  "display_name": "Avowed",
+  "process_names": ["Avowed-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "UE 5.x via UUU 5.8.11",
+  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
+  "source": "uuuaobcapture/aob_patterns_by_game.json",
+  "notes": "Three overrides: camera struct copy, atmospheric component write, UObject::ProcessEvent hook.",
+
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_1",
+      "description": "Camera struct copy intercept (AOB_CAMERA_STRUCT_INTERCEPT1, registered in FUN_180101210) -- Avowed variant",
+      "size": 23,
+      "aob_literal": "B9 09 00 00 00 4C 89 FF 48 89 D6 F3 48 A5 8B 42 48 89 83 38 15 00 00",
+      "prefer": "literal",
+      "default_mode": "pass"
+    },
+    {
+      "name": "writeatmospherics_call",
+      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION, registered in FUN_1800eb060)",
+      "size": 23,
+      "aob_wildcard": "48 89 6C 24 20 44 8B 4C 24 30 E8 ?? ?? ?? ?? E9 ?? ?? ?? ?? 48 8D 15",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    },
+    {
+      "name": "uobject_processevent",
+      "description": "UObject::ProcessEvent hook (AOB_UOBJECT_PROCESSEVENT, registered in FUN_180134b50) -- Avowed variant",
+      "size": 25,
+      "aob_wildcard": "80 3D ?? ?? ?? ?? 00 75 13 48 81 C4 80 00 00 00 5B 5F 5E 41 5E 41 5F E9 ??",
+      "prefer": "wildcard",
+      "default_mode": "pass"
+    }
+  ]
+}
