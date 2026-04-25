@@ -16,7 +16,7 @@ import threading
 
 import webview
 
-from web_ui import app
+from web_ui import _ensure_exr_loader, app
 
 
 def _find_free_port() -> int:
@@ -40,6 +40,8 @@ def main():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+
+    _ensure_exr_loader()
 
     port = _find_free_port()
     url = f"http://127.0.0.1:{port}"

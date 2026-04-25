@@ -105,6 +105,29 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- Auto-install opencv-python at startup if EXR loader missing
+
+Follow-up to `1d53bf2`. Pinning `opencv-python` in `requirements.txt`
+helps fresh bootstraps but users who already bootstrapped won't re-run
+`pip install -r requirements.txt` automatically -- they keep hitting
+"Cannot read EXR" mid-capture and lose depth.
+
+- `web_ui.py`: new `_ensure_exr_loader()` startup probe. Tries
+  `import cv2`, then `import imageio.v3`, then `import OpenEXR`. If
+  all three are missing, logs a warning and shells out to
+  `python -m pip install --quiet opencv-python>=4.5.0` with a 180s
+  timeout. Re-imports cv2 to verify; logs success or a clear error
+  telling the user the manual command (`<python> -m pip install -r
+  requirements.txt`) on any failure.
+- `web_ui.py main()`: calls `_ensure_exr_loader()` right after
+  logging setup, before the Flask app starts.
+- `desktop_app.py main()`: imports and calls the same helper before
+  spinning up the Flask thread, so the pywebview path is also covered.
+
+Survives pip-not-available, network timeout, and restricted-install
+environments by logging an error rather than crashing -- non-depth
+features keep working in degraded mode.
+
 ### [v0.2.0] 1d53bf2 -- xiaoni -- Pin opencv-python for EXR depth loading
 
 `99308e9` (xiaoxuan) switched the C++ exportframe depth output from
