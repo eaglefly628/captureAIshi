@@ -119,7 +119,7 @@ tail on success / exit + last 500 chars on failure,
 probe-success log promoted DEBUG -> INFO) were kept and rebased
 forward.
 
-### [v0.2.0] (pending push) -- xiaoni -- Tier 1 game configs from raptoravis UUU catalog + profile delete
+### [v0.2.0] f6728fb -- xiaoni -- Tier 1 game configs from raptoravis UUU catalog + profile delete
 
 Two related additions in one batch:
 
