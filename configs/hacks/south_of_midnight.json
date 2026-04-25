@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "south_of_midnight",
+  "display_name": "South of Midnight",
+  "process_names": ["SouthOfMidnight-Win64-Shipping.exe"],
+  "engine": "UE4",
+  "engine_version": "4.27 (Compulsion / Microsoft build)",
+  "credits": "(IGCS per-game pool, raptoravis UUU 4.11.5 catalog: 1 key)",
+  "source": "https://store.steampowered.com/app/2199000/South_of_Midnight/",
+  "notes": "STUB profile -- South of Midnight has 1 dedicated AOB key in the UUU 4.11.5 catalog. Compulsion Games / Microsoft first-party, no anti-cheat. Stylized Deep South folktale aesthetic; varied indoor swamp / forest scenes. To populate intercepts[]: lift the per-game pattern + UE4 shared pool AOBs from the catalog. camera_write_profile.enabled=false until Commit D resolves the write site.",
+
+  "intercepts": [],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "gamma",
+    "depth_reversed_z": true,
+    "_capture_note": "UE4 reversed-Z. Mixed indoor / dense outdoor swamp -> gamma is the safe middle ground; flip to log if night-vista shots wash out."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE4 (pre-LWC): location/rotation are float32, fov is float. Offsets to be filled once Commit D auto-discovery runs.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "float32" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "float32" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

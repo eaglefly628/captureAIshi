@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "hellblade_2",
+  "display_name": "Senua's Saga: Hellblade II",
+  "process_names": ["Hellblade2-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.4-5.5 (LWC, MetaHuman pipeline)",
+  "credits": "(IGCS shared UE5 pool, raptoravis UUU 5.8.11 catalog)",
+  "source": "https://store.steampowered.com/app/2461850/Senuas_Saga_Hellblade_II/",
+  "notes": "STUB profile -- Hellblade II is in raptoravis's 'shared UE5 pool only' bucket (no per-game overrides). Camera intercept AOBs will come from the UUU 5.8.11 shared pool (see uuuaobcapture/aob_patterns_by_game.json -> UE5 -> Shared). Microsoft first-party, no anti-cheat. To populate: (1) launch via renderdoccmd capture, bridge attaches, (2) __cam_mem_find for FMinimalViewInfo + PlayerCameraManager pointers, (3) Commit D auto-discovery scans .text for the MOV write site. Until then apply_profile only uninstalls. depth_curve=log because Iceland-like wide outdoor vistas dominate the game.",
+
+  "intercepts": [],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Wide outdoor vistas -> log curve for PNG preview; raw depth.exr unaffected for AI training."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "oblivion_remastered",
+  "display_name": "The Elder Scrolls IV: Oblivion Remastered",
+  "process_names": ["OblivionRemastered-Win.exe", "OblivionRemastered-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.3 (UE5 wrapper around Gamebryo for legacy gameplay)",
+  "credits": "(IGCS per-game pool, raptoravis UUU 5.8.11 catalog: 2 keys)",
+  "source": "https://store.steampowered.com/app/2623190/The_Elder_Scrolls_IV_Oblivion_Remastered/",
+  "notes": "STUB profile -- Oblivion Remastered has 2 dedicated AOB keys in the UUU 5.8.11 catalog. Bethesda title, mod-friendly history, no anti-cheat. UE5 wrapper drives lighting/atmospherics; legacy Gamebryo handles gameplay/AI. Open-world Cyrodiil -> log depth curve. To populate intercepts[]: lift the 2 per-game patterns + UE5 shared pool AOBs from the catalog. camera_write_profile.enabled=false until Commit D pins the MOV write site.",
+
+  "intercepts": [],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Open-world fantasy with extreme draw distance (Imperial City + Tamriel skybox) -> log curve essential."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

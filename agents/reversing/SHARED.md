@@ -119,6 +119,44 @@ tail on success / exit + last 500 chars on failure,
 probe-success log promoted DEBUG -> INFO) were kept and rebased
 forward.
 
+### [v0.2.0] (pending push) -- xiaoni -- Tier 1 game configs from raptoravis UUU catalog + profile delete
+
+Two related additions in one batch:
+
+1. **Tier 1 game profiles imported from `uuuaobcapture/`**:
+   - `docs/uuuaobcapture_game_survey.md` -- full 26-game catalog
+     (UE4 13 + UE5 13) plus a 4-tier injection-ease ranking. Tier 1
+     (no AC + SP + Steam-current) covers Hellblade II, Avowed,
+     Oblivion Remastered, The Quarry, The Invincible, South of
+     Midnight.
+   - `configs/hacks/{hellblade_2, avowed, oblivion_remastered,
+     the_quarry, the_invincible, south_of_midnight}.json` -- all
+     stub profiles in the same shape as `unreal_physics.json` /
+     `black_myth_wukong.json`: process_names + engine + capture
+     section (rgb_strategy, normal_strategy, depth_curve,
+     depth_reversed_z) + camera_write_profile.enabled=false until
+     Commit D auto-discovery resolves the MOV write site. depth_curve
+     defaults to "log" for outdoor wide-range games (HB2 / Avowed /
+     Oblivion / Invincible), "linear" for narrative SP (The Quarry),
+     and "gamma" for the mixed indoor / dense outdoor case (South of
+     Midnight).
+   - `configs/game_library.json`: bumped to 0.6.0 + 6 new entries
+     ahead of the existing list, each tagged `tier: 1` and
+     `test_status: "stub"`. Cross-references docs survey.
+
+2. **Right-click delete on the Bridge Debug profile dropdown**:
+   - `web/routes/hacks.py`: new `DELETE /api/hacks/profile/<id>`.
+     Validates slug (alnum + underscore + hyphen), resolves to
+     `_HACKS_DIR / <id>.json`, refuses paths that escape the dir,
+     404s on missing.
+   - `web/templates/index.html`: `oncontextmenu` on
+     `#hackProfileSelect` -> `hackProfileContextMenu()` shows a
+     floating menu with the profile name as a header and a single
+     "Delete profile..." item; click triggers a confirm() then DELETE
+     fetch + `hackRefresh()` to repopulate the dropdown. Outside-click
+     listeners auto-close the menu. Defensive: ignored when no profile
+     is currently selected.
+
 ### [v0.2.0] be9c6c6 -- xiaoni -- Per-game `depth_curve` for outdoor wide-range PNG preview
 
 User report: Gotham depth PNG washed out at distance -- city mid-band

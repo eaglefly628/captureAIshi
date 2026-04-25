@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "the_quarry",
+  "display_name": "The Quarry",
+  "process_names": ["TheQuarry-Win64-Shipping.exe", "Quarry-Win64-Shipping.exe"],
+  "engine": "UE4",
+  "engine_version": "4.27 (Supermassive build)",
+  "credits": "(IGCS per-game pool, raptoravis UUU 4.11.5 catalog: 1 key)",
+  "source": "https://store.steampowered.com/app/1577380/The_Quarry/",
+  "notes": "STUB profile -- The Quarry has 1 dedicated AOB key in the UUU 4.11.5 catalog. Supermassive narrative thriller, no anti-cheat. Steam build has been stable since 2022 -> AOB drift risk is low, this is the recommended UE4 smoke-test target. Mostly indoor/camp scenes -> linear depth curve (gamma optional). To populate intercepts[]: lift the 1 per-game pattern + UE4 shared pool AOBs from the catalog. camera_write_profile.enabled=false until Commit D resolves the write site.",
+
+  "intercepts": [],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "linear",
+    "depth_reversed_z": true,
+    "_capture_note": "UE4 reversed-Z (4.27+). Indoor/forest narrative scenes -> linear is fine; switch to log only if a particular night-vista needs it."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE4 (pre-LWC): location/rotation are float32, fov is float. Offsets to be filled once Commit D auto-discovery runs.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "float32" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "float32" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

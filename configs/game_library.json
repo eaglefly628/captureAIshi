@@ -1,10 +1,88 @@
 {
   "_meta": {
-    "version": "0.5.0",
-    "updated": "2026-04-20",
-    "note": "Active list. test_status: 'ok'=tested+working, 'version_mismatch'=tested but AOB needs update for installed build, 'untested'=not yet verified. aob_source tracks where bytes came from."
+    "version": "0.6.0",
+    "updated": "2026-04-26",
+    "note": "Active list. test_status: 'ok'=tested+working, 'version_mismatch'=tested but AOB needs update for installed build, 'untested'=not yet verified, 'stub'=profile present, intercepts pending. aob_source tracks where bytes came from. Tier 1 entries from raptoravis UUU 5.8.11 / 4.11.5 catalog (see docs/uuuaobcapture_game_survey.md)."
   },
   "games": [
+    {
+      "name": "Senua's Saga: Hellblade II",
+      "engine": "UE5",
+      "engine_version": "5.4-5.5 (LWC, MetaHuman)",
+      "profile_id": "hellblade_2",
+      "process_name": "Hellblade2-Win64-Shipping.exe",
+      "source": "Steam / Game Pass (https://store.steampowered.com/app/2461850)",
+      "ac": "none",
+      "test_status": "stub",
+      "aob_source": "raptoravis UUU 5.8.11 catalog (shared UE5 pool)",
+      "tier": 1,
+      "note": "Tier 1 inject target. Microsoft first-party, no AC. Existing hellblade_ue4 (HB1) is the closest reference."
+    },
+    {
+      "name": "Avowed",
+      "engine": "UE5",
+      "engine_version": "5.3-5.4 (Obsidian build)",
+      "profile_id": "avowed",
+      "process_name": "Avowed-Win.exe",
+      "source": "Steam / Game Pass (https://store.steampowered.com/app/2457220)",
+      "ac": "none",
+      "test_status": "stub",
+      "aob_source": "raptoravis UUU 5.8.11 catalog (3 per-game keys)",
+      "tier": 1,
+      "note": "Tier 1 inject target. Obsidian/MS, no AC. Open-world Eora -> log depth curve."
+    },
+    {
+      "name": "The Elder Scrolls IV: Oblivion Remastered",
+      "engine": "UE5",
+      "engine_version": "5.3 (UE5 wrapper around Gamebryo)",
+      "profile_id": "oblivion_remastered",
+      "process_name": "OblivionRemastered-Win.exe",
+      "source": "Steam / Game Pass (https://store.steampowered.com/app/2623190)",
+      "ac": "none",
+      "test_status": "stub",
+      "aob_source": "raptoravis UUU 5.8.11 catalog (2 per-game keys)",
+      "tier": 1,
+      "note": "Tier 1 inject target. Bethesda mod-friendly. Wide-vista Cyrodiil -> log depth curve."
+    },
+    {
+      "name": "The Quarry",
+      "engine": "UE4",
+      "engine_version": "4.27 (Supermassive)",
+      "profile_id": "the_quarry",
+      "process_name": "TheQuarry-Win64-Shipping.exe",
+      "source": "Steam (https://store.steampowered.com/app/1577380)",
+      "ac": "none",
+      "test_status": "stub",
+      "aob_source": "raptoravis UUU 4.11.5 catalog (1 per-game key)",
+      "tier": 1,
+      "note": "Tier 1 inject target / recommended UE4 smoke-test. Steam build stable since 2022 (low AOB drift risk)."
+    },
+    {
+      "name": "The Invincible",
+      "engine": "UE4",
+      "engine_version": "4.27 (Starward)",
+      "profile_id": "the_invincible",
+      "process_name": "TheInvincible-Win64-Shipping.exe",
+      "source": "Steam (https://store.steampowered.com/app/1283250)",
+      "ac": "none",
+      "test_status": "stub",
+      "aob_source": "raptoravis UUU 4.11.5 catalog (1 per-game key)",
+      "tier": 1,
+      "note": "Tier 1 inject target. Atompunk alien planet -> log depth curve."
+    },
+    {
+      "name": "South of Midnight",
+      "engine": "UE4",
+      "engine_version": "4.27 (Compulsion / MS)",
+      "profile_id": "south_of_midnight",
+      "process_name": "SouthOfMidnight-Win64-Shipping.exe",
+      "source": "Steam / Game Pass (https://store.steampowered.com/app/2199000)",
+      "ac": "none",
+      "test_status": "stub",
+      "aob_source": "raptoravis UUU 4.11.5 catalog (1 per-game key)",
+      "tier": 1,
+      "note": "Tier 1 inject target. MS first-party, no AC. Mixed indoor/swamp -> gamma depth curve."
+    },
     {
       "name": "StackOBot",
       "engine": "UE5",

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "avowed",
+  "display_name": "Avowed",
+  "process_names": ["Avowed-Win.exe", "Avowed-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.3-5.4 (Obsidian build)",
+  "credits": "(IGCS per-game pool, raptoravis UUU 5.8.11 catalog: 3 keys)",
+  "source": "https://store.steampowered.com/app/2457220/Avowed/",
+  "notes": "STUB profile -- Avowed has 3 dedicated AOB keys in the UUU 5.8.11 catalog (see uuuaobcapture/aob_patterns_by_game.json -> UE5 -> Avowed: AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION + 2 others). Obsidian / Microsoft, no anti-cheat. Open-world Eora setting -> log depth curve. To populate intercepts[]: copy the 3 per-game patterns + relevant shared pool AOBs from the catalog into the IGCS-style asm-stub format used in batman_ak.json. camera_write_profile.enabled=false until Commit D auto-discovery resolves the MOV write site.",
+
+  "intercepts": [],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Open-world fantasy vistas -> log curve."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
+    "struct_base_reg": "TBD",
+    "capture_from_intercept": "TBD",
+    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

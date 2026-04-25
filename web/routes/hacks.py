@@ -78,6 +78,29 @@ def _find_pid(process_name: str) -> int | None:
     return None
 
 
+@bp.route("/api/hacks/profile/<profile_id>", methods=["DELETE"])
+def hacks_profile_delete(profile_id: str):
+    """Delete configs/hacks/<profile_id>.json from disk.
+
+    Validates the slug to block path traversal and rejects deletes that
+    would resolve outside _HACKS_DIR. Returns 404 if the file is missing.
+    """
+    if not profile_id or not profile_id.replace("_", "").replace("-", "").isalnum():
+        return jsonify({"ok": False, "error": "bad profile id"}), 400
+    target = (_HACKS_DIR / f"{profile_id}.json").resolve()
+    try:
+        target.relative_to(_HACKS_DIR.resolve())
+    except ValueError:
+        return jsonify({"ok": False, "error": "profile path escapes hacks dir"}), 400
+    if not target.exists():
+        return jsonify({"ok": False, "error": "profile not found"}), 404
+    try:
+        target.unlink()
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"unlink failed: {e}"}), 500
+    return jsonify({"ok": True, "deleted": str(target.name)})
+
+
 @bp.route("/api/hacks/apply/<profile_id>", methods=["POST"])
 def hacks_apply(profile_id: str):
     if not profile_id.replace("_", "").isalnum():

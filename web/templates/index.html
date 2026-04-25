@@ -2714,7 +2714,10 @@ pollSessions();pollCaptures();
         <!-- Game Profile: one-click auto-install per game (configs/hacks/*.json) -->
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;align-items:center">
           <span style="color:#aaa;font-size:11px;min-width:56px" title="Per-game hack profile (AOB + offsets)">Profile:</span>
-          <select id="hackProfileSelect" style="flex:1;min-width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px">
+          <select id="hackProfileSelect"
+                  oncontextmenu="return hackProfileContextMenu(event)"
+                  title="Per-game hack profile (AOB + offsets). Right-click for delete."
+                  style="flex:1;min-width:160px;background:#0f0f23;color:#eee;border:1px solid #444;padding:3px 6px;border-radius:4px;font-family:monospace;font-size:11px">
             <option value="">-- select game --</option>
           </select>
           <button class="btn btn-accent" onclick="hackApply()" title="Uninstall then install all intercepts from profile">Apply</button>
@@ -2839,6 +2842,78 @@ function interceptInstall(){
 }
 
 // --- Game hack profiles ---
+
+// Floating context menu used by right-click on the profile dropdown.
+// Lives detached in the DOM until shown so it inherits page styles.
+function _trackProfileMenuClose(){
+  document.removeEventListener('click', _onProfileMenuOutside, true);
+  document.removeEventListener('contextmenu', _onProfileMenuOutside, true);
+  var m = document.getElementById('hackProfileMenu');
+  if (m) m.remove();
+}
+function _onProfileMenuOutside(e){
+  var m = document.getElementById('hackProfileMenu');
+  if (m && !m.contains(e.target)) _trackProfileMenuClose();
+}
+
+function hackProfileContextMenu(e){
+  e.preventDefault();
+  // Resolve "selected" profile: prefer the option under the cursor when
+  // available (multiple options), fall back to the dropdown's current
+  // value. Native <select>s don't expose hover hit-testing reliably, so
+  // we use the value the user explicitly picked.
+  var sel = document.getElementById('hackProfileSelect');
+  var pid = sel ? sel.value : '';
+  var opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+  var label = opt && opt.textContent ? opt.textContent : pid;
+  _trackProfileMenuClose();
+  if (!pid) {
+    debugAppend('right-click: no profile selected');
+    return false;
+  }
+  var menu = document.createElement('div');
+  menu.id = 'hackProfileMenu';
+  menu.style.cssText =
+    'position:fixed;z-index:99999;background:#1a1a2e;border:1px solid #444;'+
+    'border-radius:4px;padding:4px 0;box-shadow:0 4px 12px rgba(0,0,0,0.6);'+
+    'font-family:inherit;font-size:12px;min-width:180px';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top  = e.clientY + 'px';
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'padding:4px 12px;color:#888;font-size:10px;border-bottom:1px solid #2c2c40;margin-bottom:4px';
+  hdr.textContent = label;
+  menu.appendChild(hdr);
+  var del = document.createElement('div');
+  del.textContent = 'Delete profile...';
+  del.style.cssText = 'padding:6px 12px;cursor:pointer;color:#f43f5e';
+  del.onmouseenter = function(){ del.style.background = '#2c1620'; };
+  del.onmouseleave = function(){ del.style.background = ''; };
+  del.onclick = function(){
+    _trackProfileMenuClose();
+    if (!confirm('Delete profile "' + label + '"?\n\nThis removes configs/hacks/' + pid + '.json from disk. Cannot be undone.')) return;
+    debugAppend('> hacks/profile/' + pid + ' DELETE');
+    fetch('/api/hacks/profile/' + encodeURIComponent(pid), { method: 'DELETE' })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) { debugAppend('delete ERROR: ' + (d.error || 'unknown')); return; }
+        debugAppend('deleted: ' + d.deleted);
+        // Drop the cached promise so hackRefresh re-pulls the list.
+        _hackProfilesPromise = null;
+        hackRefresh();
+      })
+      .catch(err => debugAppend('delete ERROR: ' + err));
+  };
+  menu.appendChild(del);
+  document.body.appendChild(menu);
+  // Defer outside-click handlers so the right-click that opened us
+  // doesn't immediately close the menu.
+  setTimeout(function(){
+    document.addEventListener('click', _onProfileMenuOutside, true);
+    document.addEventListener('contextmenu', _onProfileMenuOutside, true);
+  }, 0);
+  return false;
+}
+
 function hackRefresh(){
   debugAppend('> hacks/list');
   return fetch('/api/hacks/list')
