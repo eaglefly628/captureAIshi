@@ -105,6 +105,32 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] (pending push) -- xiaoni -- run.bat auto pip install + EXR probe diagnostics
+
+User report after `ca62f70`: still hits "Cannot read EXR ... No
+module named 'OpenEXR'". Probable cause: app wasn't restarted after
+the auto-install commit landed, OR the pip install inside the
+embedded-Python `_ensure_exr_loader` failed silently with output
+swallowed by `--quiet`.
+
+Two complementary fixes so the user genuinely cannot get a stale-deps
+state:
+
+- `run.bat` / `run_cli.bat`: now run
+  `python -m pip install -q -r requirements.txt
+   --disable-pip-version-check --no-warn-script-location` on every
+  launch. Pip is a no-op for already-satisfied deps so cost is ~1-2s
+  on subsequent runs but new entries (opencv-python, future deps)
+  always land without the user re-bootstrapping.
+- `web_ui._ensure_exr_loader`: drop `--quiet`, capture pip's
+  stdout/stderr, log the tail of stdout on success ("Successfully
+  installed cv2-..."), and on failure log exit code + last 500 chars
+  of stdout/stderr so the user can see exactly why pip refused.
+  `importlib.invalidate_caches()` between install and re-import in
+  case Python's finder cached a "module not found" before install.
+  Probe-success log promoted from DEBUG to INFO so the user can
+  confirm at a glance which loader is active.
+
 ### [v0.2.0] ca62f70 -- xiaoni -- Auto-install opencv-python at startup if EXR loader missing
 
 Follow-up to `1d53bf2`. Pinning `opencv-python` in `requirements.txt`

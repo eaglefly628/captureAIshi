@@ -29,34 +29,56 @@ def _ensure_exr_loader() -> None:
     for name in _EXR_LOADERS:
         try:
             importlib.import_module(name)
-            log.debug(f"EXR loader '{name}' available")
+            log.info(f"[EXR] loader '{name}' is available")
             return
         except ImportError:
             continue
     log.warning(
-        "No EXR loader found (cv2 / imageio[freeimage] / OpenEXR all "
-        "missing). Depth maps from RDC capture will fail to load. "
-        "Auto-installing opencv-python..."
+        "[EXR] No depth loader found "
+        "(cv2 / imageio[freeimage] / OpenEXR all missing). RDC depth "
+        "captures will not be readable. Auto-installing opencv-python..."
     )
     try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet",
-             "--disable-pip-version-check", "opencv-python>=4.5.0"],
-            timeout=180,
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install",
+             "--disable-pip-version-check", "--no-warn-script-location",
+             "opencv-python>=4.5.0"],
+            capture_output=True, text=True, timeout=240,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-            FileNotFoundError) as e:
+        if result.returncode != 0:
+            log.error(
+                "[EXR] pip install opencv-python failed (exit=%d). "
+                "stdout=%s | stderr=%s | run manually: %s -m pip install "
+                "-r requirements.txt",
+                result.returncode,
+                (result.stdout or "").strip()[-500:],
+                (result.stderr or "").strip()[-500:],
+                sys.executable,
+            )
+            return
+        # Show only the last few stdout lines (Successfully installed ...)
+        tail = "\n".join((result.stdout or "").strip().splitlines()[-5:])
+        if tail:
+            log.info(f"[EXR] pip output:\n{tail}")
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         log.error(
-            f"Auto-install of opencv-python failed: {e}. Run manually: "
-            f"`{sys.executable} -m pip install -r requirements.txt`"
+            "[EXR] Auto-install of opencv-python failed: %s. Run "
+            "manually: %s -m pip install -r requirements.txt",
+            e, sys.executable,
         )
         return
-    # Re-import to verify and warm up the module cache.
+    # Re-import. importlib may have cached the failed import; invalidate
+    # caches so the just-installed module is found.
+    importlib.invalidate_caches()
     try:
         importlib.import_module("cv2")
-        log.info("opencv-python installed; EXR depth loading now available")
+        log.info("[EXR] opencv-python installed; depth loading available")
     except ImportError as e:
-        log.error(f"opencv-python installed but cv2 still not importable: {e}")
+        log.error(
+            "[EXR] opencv-python installed but cv2 still not importable "
+            "(sys.path=%s, executable=%s): %s",
+            sys.path, sys.executable, e,
+        )
 
 app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
 

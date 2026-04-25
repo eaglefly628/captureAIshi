@@ -10,4 +10,7 @@ if not exist "%PYTHON_EXE%" (
     if errorlevel 1 exit /b 1
 )
 
+:: Refresh deps so new entries in requirements.txt land without re-bootstrap.
+"%PYTHON_EXE%" -m pip install -q -r "%~dp0requirements.txt" --disable-pip-version-check --no-warn-script-location
+
 "%PYTHON_EXE%" "%~dp0main.py" %*
