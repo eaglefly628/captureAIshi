@@ -131,7 +131,7 @@ state:
   Probe-success log promoted from DEBUG to INFO so the user can
   confirm at a glance which loader is active.
 
-### [v0.2.0] (pending push) -- xiaoni -- cv2 EXR opt-in env var (real fix)
+### [v0.2.0] e4e8f1a -- xiaoni -- cv2 EXR opt-in env var (real fix)
 
 User confirmed they ran `pip install -r requirements.txt` and
 opencv-python 4.8 is installed in their system Python 3.10
