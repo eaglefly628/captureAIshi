@@ -105,7 +105,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.2.0] (pending push) -- xiaoni -- Auto-install opencv-python at startup if EXR loader missing
+### [v0.2.0] ca62f70 -- xiaoni -- Auto-install opencv-python at startup if EXR loader missing
 
 Follow-up to `1d53bf2`. Pinning `opencv-python` in `requirements.txt`
 helps fresh bootstraps but users who already bootstrapped won't re-run
