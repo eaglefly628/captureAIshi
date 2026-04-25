@@ -131,6 +131,33 @@ state:
   Probe-success log promoted from DEBUG to INFO so the user can
   confirm at a glance which loader is active.
 
+### [v0.2.0] (pending push) -- xiaoni -- cv2 EXR opt-in env var (real fix)
+
+User confirmed they ran `pip install -r requirements.txt` and
+opencv-python 4.8 is installed in their system Python 3.10
+site-packages, but the EXR error persisted. Real root cause: since
+OpenCV 4.5 the official `opencv-python` wheel **disables EXR support
+by default** (security policy after CVE-2020-15778-style EXR parser
+vulnerabilities). `cv2.imread(path, cv2.IMREAD_UNCHANGED)` returns
+``None`` on a `.exr` unless the process started with
+`OPENCV_IO_ENABLE_OPENEXR=1` in the environment **before the first
+`import cv2`**. Our error message ended with "(No module named
+'OpenEXR')" because that was the LAST fallback in
+`image_loader._read_exr_red` -- cv2 had silently failed first.
+
+- `web_ui.py`, `desktop_app.py`, `main.py`: set
+  `os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")` at the
+  very top of the file before any other import that could pull cv2.
+  All three entry points covered.
+- `grabbers/renderdoc/image_loader._read_exr_red`: defensive
+  setdefault inside the function for direct/library callers, plus
+  a more explicit RuntimeError message when cv2.imread returns None
+  so the env-var trap is visible in logs.
+- `run.bat` / `run_cli.bat`: reverted the auto-`pip install`
+  experiment per user pushback (no point installing into embedded
+  Python when the user already installed into their system Python;
+  the cv2 problem was the env var, not a missing package).
+
 ### [v0.2.0] ca62f70 -- xiaoni -- Auto-install opencv-python at startup if EXR loader missing
 
 Follow-up to `1d53bf2`. Pinning `opencv-python` in `requirements.txt`

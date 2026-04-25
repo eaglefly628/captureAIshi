@@ -124,12 +124,27 @@ def _read_exr_red(path: Path) -> Optional[np.ndarray]:
 
     Tries cv2 (most common), then imageio, then OpenEXR.
     Install any one: ``pip install opencv-python`` / ``pip install "imageio[freeimage]"`` / ``pip install OpenEXR``.
+
+    Note: cv2 disables EXR by default (CVE-driven policy in OpenCV 4.5+).
+    Set ``OPENCV_IO_ENABLE_OPENEXR=1`` BEFORE the first ``import cv2``.
+    The opt-in is wired into the app entry points (web_ui.py /
+    desktop_app.py); we set it again here for direct callers /
+    main.py CLI to be safe, but if ``cv2.imread`` still returns None
+    on a .exr the env var was probably set after cv2 was already
+    imported elsewhere -- in that case use imageio[freeimage] or
+    OpenEXR instead.
     """
+    import os as _os
+    _os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
     try:
         import cv2
         arr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if arr is None:
-            raise RuntimeError("cv2.imread returned None")
+            raise RuntimeError(
+                "cv2.imread returned None (opencv-python EXR support "
+                "is disabled unless OPENCV_IO_ENABLE_OPENEXR=1 is set "
+                "before the first 'import cv2')"
+            )
         if arr.ndim == 3:
             arr = arr[:, :, 0]
         return arr.astype(np.float32)

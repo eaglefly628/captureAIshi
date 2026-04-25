@@ -10,9 +10,15 @@ Can be packaged into a single .exe via PyInstaller:
 """
 
 import logging
+import os
 import socket
 import sys
 import threading
+
+# opencv-python disables EXR by default (security policy since OpenCV
+# 4.5). Set the opt-in env var before any module imports cv2 -- cv2
+# only consults this at import time.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 import webview
 

@@ -8,9 +8,16 @@ and runs the Flask app.
 
 import importlib
 import logging
+import os
 import subprocess
 import sys
 import webbrowser
+
+# opencv-python disables EXR by default (security policy since OpenCV
+# 4.5; cv2.imread on a .exr silently returns None without it). Set
+# this BEFORE the first ``import cv2`` anywhere in the process, since
+# cv2 only checks the env var at import time.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 from flask import Flask, render_template
 
