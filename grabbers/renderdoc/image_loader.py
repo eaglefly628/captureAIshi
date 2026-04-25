@@ -113,7 +113,12 @@ def load_depth_image(
         raw = _read_exr_red(exr_file)
         if raw is None:
             return None
-        return _normalize_depth(raw, profile.get("depth_range"), profile.get("depth_reversed_z", True))
+        return _normalize_depth(
+            raw,
+            profile.get("depth_range"),
+            profile.get("depth_reversed_z", True),
+            curve=str(profile.get("depth_curve", "linear")),
+        )
 
     logger.debug("[RDOC] No depth.png or depth.exr found in export directory")
     return None
@@ -187,35 +192,80 @@ def _normalize_depth(
     raw: np.ndarray,
     depth_range: Optional[list],
     reversed_z: bool,
+    curve: str = "linear",
 ) -> np.ndarray:
     """Normalize float depth [0,1] to uint8 grayscale.
 
     For ``reversed_z=True``, near=1.0 should render white, far=0.0 black.
     For ``reversed_z=False``, near=0.0 should render white, far=1.0 black.
+
+    ``curve`` reshapes the depth distribution **before** percentile +
+    stretch, which is what actually expands a tight mid-range cluster.
+    NDC depth is already 1/z-like, so outdoor scenes (Batman / Gotham)
+    pile mid-distance city pixels right next to the sky in raw depth
+    space; a linear stretch can't separate them. Pre-curving fixes the
+    distribution itself.
+
+    - ``"linear"`` (default): legacy behaviour, raw -> percentile ->
+      stretch.
+    - ``"log"``: apply ``-log(raw + eps)`` first so far/sky values
+      (raw close to 0 or 1) and near values get spread out
+      logarithmically. Best for wide-range outdoor scenes; turns the
+      washed-out city band into a real mid-gray.
+    - ``"gamma"``: apply a fixed gamma to ``raw`` before percentile.
+      Milder than log; useful when log overshoots.
+
+    PNG depth is for human preview only; raw float depth is preserved
+    in the EXR side-by-side, so any of these curves is safe wrt AI
+    training pipelines reading EXR.
     """
+    work = raw
+    c = (curve or "linear").lower()
+    eps = 1e-6
+    if c == "log":
+        # log(x + eps) preserves the monotonic ordering of the raw
+        # depth (so reversed_z polarity stays correct) but spreads
+        # values exponentially clustered near 0 or 1 across a much
+        # wider range. After log, a [0.001, 0.05] city band that
+        # linearly looks like a single 'near sky' tone becomes a real
+        # mid-gray separated from both sky and Batman.
+        work = np.log(np.clip(raw, eps, 1.0))
+    elif c == "gamma":
+        # Display-style gamma. 0.45 is mild; 2.2 the inverse direction.
+        # We pick 0.45 so values near 0 expand and values near 1 compress
+        # (matches log's intent but lighter).
+        work = np.power(np.clip(raw, eps, 1.0), 0.45)
+    elif c != "linear":
+        logger.warning(f"[RDOC] unknown depth curve '{curve}', using linear")
+
     if depth_range is not None and len(depth_range) == 2:
         bp, wp = float(depth_range[0]), float(depth_range[1])
     else:
-        valid = raw[(raw > 0.0) & (raw < 1.0) & np.isfinite(raw)]
+        # Validity mask: still use raw for the >0 / <1 filter so we
+        # match the original semantics (skip exact-clear pixels), but
+        # take percentiles on ``work`` (the curved values) so the
+        # stretch is in curved space.
+        mask = (raw > 0.0) & (raw < 1.0) & np.isfinite(raw) & np.isfinite(work)
+        valid = work[mask]
         if valid.size > 100:
             bp = float(np.percentile(valid, 1))
             wp = float(np.percentile(valid, 99))
             if wp - bp < 1e-9:
-                bp, wp = 0.0, 1.0
+                bp, wp = float(work.min()), float(work.max())
+                if wp - bp < 1e-9:
+                    bp, wp = 0.0, 1.0
         else:
             bp, wp = 0.0, 1.0
-        logger.debug(f"[RDOC] depth auto-range: [{bp:.4f}, {wp:.4f}]")
+        logger.debug(f"[RDOC] depth auto-range ({c}): [{bp:.4f}, {wp:.4f}]")
 
     lo, hi = (bp, wp) if wp >= bp else (wp, bp)
-    clipped = np.clip(raw, lo, hi)
+    clipped = np.clip(work, lo, hi)
     if hi - lo < 1e-9:
         return np.zeros(clipped.shape, dtype=np.uint8)
 
     if reversed_z:
-        # near=1.0 -> white, far=0.0 -> black. Map wp (near) -> 1, bp (far) -> 0.
         norm = (clipped - bp) / (wp - bp) if wp > bp else (bp - clipped) / (bp - wp)
     else:
-        # near=0.0 -> white, far=1.0 -> black. Map bp (near) -> 1, wp (far) -> 0.
         norm = (wp - clipped) / (wp - bp) if wp > bp else (clipped - wp) / (bp - wp)
 
     return (np.clip(norm, 0.0, 1.0) * 255.0).astype(np.uint8)

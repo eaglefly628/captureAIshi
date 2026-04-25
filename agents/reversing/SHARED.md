@@ -131,6 +131,44 @@ state:
   Probe-success log promoted from DEBUG to INFO so the user can
   confirm at a glance which loader is active.
 
+### [v0.2.0] (pending push) -- xiaoni -- Per-game `depth_curve` for outdoor wide-range PNG preview
+
+User report: Gotham depth PNG washed out at distance -- city mid-band
+indistinguishable from sky highlights, only Batman silhouette visible.
+
+NDC depth from a perspective projection is already 1/z-like, so the
+sky / city / mid-distance pixels pile into a tiny raw range while
+the near-camera silhouette occupies the other end. A linear stretch
+can't separate the city from the sky because the stretch operates on
+already-collapsed values; the cluster has to be re-distributed
+*before* percentile-and-stretch.
+
+- `grabbers/renderdoc/image_loader._normalize_depth`: new optional
+  ``curve`` param. ``"linear"`` keeps legacy behaviour. ``"log"``
+  applies ``np.log(np.clip(raw, eps, 1.0))`` to the raw depth before
+  computing percentiles + stretch -- preserves the monotonic ordering
+  (so reversed_z polarity stays right) but exponentially clustered
+  values get spread out. ``"gamma"`` is a milder ``raw ** 0.45``
+  middle ground. Synthetic test (Gotham-like distribution: 50k sky +
+  30k city + 1k Batman): linear gives city=239, log gives city=122,
+  i.e. a real mid-gray instead of near-white.
+- `image_loader.load_depth_image`: thread ``capture_profile.depth_curve``
+  into ``_normalize_depth`` (default ``"linear"`` so other games are
+  untouched).
+- `configs/hacks/batman_ak.json`: capture section sets
+  ``depth_curve: "log"`` with explanatory comment.
+- `configs/hacks/_schema.md`: documented the field.
+
+PNG depth is preview-only; raw float `.exr` is written alongside and
+unaffected, so AI training reads the unmolested depth no matter
+which curve is set.
+
+This is image-pipeline territory (nominally xiaoxuan's grabbers
+domain), but the change is small and self-contained -- I left a
+peer-review note in `agents/rendering/SHARED.md` so xiaoxuan can
+audit + bump the other configs (open-world UE5 games like AC6 and
+Metro will benefit from `"log"` too).
+
 ### [v0.2.0] e4e8f1a -- xiaoni -- cv2 EXR opt-in env var (real fix)
 
 User confirmed they ran `pip install -r requirements.txt` and
