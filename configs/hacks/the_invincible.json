@@ -2,21 +2,41 @@
   "schema_version": 1,
   "id": "the_invincible",
   "display_name": "The Invincible",
-  "process_names": ["TheInvincible-Win64-Shipping.exe"],
+  "process_names": ["TheInvincible-Win64-Shipping.exe", "Invincible-Win64-Shipping.exe"],
   "engine": "UE4",
-  "engine_version": "UE 4.x via UUU 4.11.5",
-  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE4Unlocker4.11.5.dll",
-  "source": "uuuaobcapture/aob_patterns_by_game.json",
-  "notes": "Single override: camera black-bar removal (CameraComponent variant).",
+  "engine_version": "4.27 (Starward build)",
+  "credits": "(IGCS shared UE4 pool, raptoravis UUU 4.11.5 catalog; per-game blackbars only)",
+  "source": "https://store.steampowered.com/app/1283250/The_Invincible/",
+  "notes": "The Invincible's per-game key in the catalog is a black-bar removal hook (AOB_TI_CAMERA_BLACKBARS_CAMERA_COMPONENT1), not the camera write site. Camera intercept comes from the UE4 shared pool. Atompunk alien outdoor environments -> log depth curve.",
 
   "intercepts": [
     {
-      "name": "camera_blackbars_camera_component",
-      "description": "[The Invincible] Camera black-bar removal (CameraComponent) (AOB_TI_CAMERA_BLACKBARS_CAMERA_COMPONENT1, registered in FUN_1800e1b40)",
-      "size": 19,
-      "aob_wildcard": "0F B6 8B ?? ?? ?? ?? 33 4F ?? 83 E1 01 33 4F ?? 89 4F ??",
+      "name": "camera_struct_intercept_ue4_sse",
+      "description": "Shared UE4 AOB_CAMERA_STRUCT_INTERCEPT1 (SSE v0).",
+      "size": 32,
+      "aob_literal":  "F2 0F 10 02 48 8B D9 F2 0F 11 01 48 8B D1 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "aob_wildcard": "F2 0F 10 02 48 ?? ?? F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
       "prefer": "wildcard",
-      "default_mode": "pass"
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game4.11.5.json (Shared AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
     }
-  ]
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE4 reversed-Z. Wide alien-planet vistas with deep horizon -> log curve."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "UE4 FMinimalViewInfo at rdx. Location 3xfloat at 0x00, Rotation 3xfloat at 0x0C, FOV at 0x18.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_ue4_sse",
+    "location": { "x": "0x00", "y": "0x04", "z": "0x08", "type": "float32" },
+    "rotation": { "pitch": "0x0C", "yaw": "0x10", "roll": "0x14", "type": "float32" },
+    "fov": { "off": "0x18", "type": "float32" }
+  }
 }

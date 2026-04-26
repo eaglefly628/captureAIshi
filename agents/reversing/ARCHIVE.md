@@ -170,3 +170,60 @@ Both trees remain independent (CMake consolidation TBD).
 d37d007+5a050ec, 6879265, (prev pending), a0fe8c3, 373cf2b, 711d8eb,
 aea22c7, 951ee30, stride-fix, PCE-fix, d32d2aa)
 See git log for full details. All shipped to claudeMainBranch.
+
+---
+## Archived 2026-04-25 (超过 3 条 CL 限制)
+
+### [v0.2.0] f82f461 -- xiaoni -- Fix capture marker orientation in 3D preview
+- `web/templates/index.html` `draw3d()`: kept all vector math in game space; added `projGame(gx,gy,gz)` wrapper; rewrite capture-marker loop. Fixed fy/fz axis swap bug.
+
+### [v0.2.0] a804214 -- xiaoni -- Unified 60Hz streaming for rdc-step + restore on any exit + decode fallback
+- `trajectory_player.py`: unified rdc-step + preview into single 60Hz `interp_linear` loop; moved restore_pose to unified finally block.
+- `web/routes/trajectory.py`: decode fallback globs `%TEMP%\RenderDoc\**\*.rdc`.
+
+### [v0.2.0] 54cf28f -- xiaoni -- Uniform FOV marker size in 3D preview
+- `draw3d()`: replaced per-point `fovLen*tan(fov/2)` with fixed `FOV_HALF_W/H` constants.
+
+### [v0.2.0] 5e7e1aa -- xiaoni -- Fine path streaming + sparse captures + FOV/arrow 3D markers
+- `trajectory_presets.py`: new `generate_smooth()` returning (fine_path, capture_indices) with FINE_PATH_SAMPLES=256.
+- `web/routes/trajectory.py`: preview/play return capture_indices; 3D renderer shows amber dot + FOV frustum per capture.
+
+### [v0.2.0] 9495fd1 -- xiaoni -- Speed-driven trajectories + Preview/Play/Stop row
+- `trajectory_presets.py`: new `_path_length()` + speed->duration conversion; PRESET_SCHEMA uses speed.
+- UI: rebuilt control row Preview|Play|Stop|Decode|Preview3D|ClearD; dropped Pause/Resume.
+
+### [v0.2.0] c41089a -- xiaoni -- Manual Decode button + /api/trajectory/decode
+- New `POST /api/trajectory/decode` endpoint; UI Decode button.
+
+### [v0.2.0] 40acc76 -- xiaoni -- Post-loop auto-decode + restore start pose
+- `web/state.py`: set/get_active_grabber(). Post-loop decode callback fires export_batch on background thread.
+- `TrajectoryPlayer.play()`: snapshots + restores pose on any exit.
+
+### [v0.2.0] 8ed197d -- xiaoni -- RDC-step capture_interval (16->16 captures land)
+- `TrajectoryPlayer.play()`: new `capture_interval=1.5` param; loop poke->settle->capture->dwell.
+- UI: `#capture_interval` input persisted in localStorage.
+
+### [v0.2.0] 8554e66 -- xiaoni -- run_capture: launch-and-wait session mode
+- `main.run_capture`: now launch+connect+block on stop_event only; all capture driven from UI.
+
+### [v0.2.0] d03a98c -- xiaoni -- Configurable focus delay for Capture + Play
+- UI: `#focus_delay` input + `_afterFocusDelay(fn)` helper; trajPlay() passes focus_delay to backend.
+
+### [v0.2.0] f6c58ad -- xiaoni -- Remove legacy volume/snake/cone capture pipeline
+- `main.py`: early-raise on run_capture; dropped volume/spacing/cone argparse + UI panels.
+
+### [v0.2.0] afc35b5 -- xiaoni -- Batman ue3_packed_int deg conversion
+- `game_profile.py`: `_deg_to_ue3_packed`/`_ue3_packed_to_deg`; write_camera + read_camera_pose use them.
+- `trajectory_player.py`: `_PokeField.raw_type` for per-tick conversion.
+- 4 new tests in `test_trajectory.py`.
+
+### [v0.2.0] c656837 -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
+- Bridge: ascii_strtof/ascii_strtod; slot cleanup on client exit; g_smooth_factor atomic; cam_manager_alive() GC check.
+- UI: fixed toggleAdvancedAob() scope; removed Lv2 menu Capture Area/Path/Cone items.
+
+### [v0.2.0] 2325ee6 -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
+- Bridge Debug panel trimmed; Advanced section collapsed; Trajectory panel gets Save/Del/auto-preview.
+- Backend: custom preset; /api/trajectory/save + saved/<name> GET/DELETE; 46 tests green.
+
+### [v0.2.0] ee9a5db -- xiaoni -- Game library trim to 6 active titles
+- `game_library.json`: 332->6 active titles; stub profiles for unreal_physics + black_myth_wukong.

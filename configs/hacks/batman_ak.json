@@ -27,7 +27,9 @@
     "normal_strategy": "r10g10b10a2_slot1",
     "normal_note": "R10G10B10A2 UNORM, Colour Pass #6 MRT slot 1 (GBufferA WorldNormal)",
     "depth_note": "D32S8_TYPELESS, Colour Pass #6 (unique DepthTarget, standard-Z not reversed)",
-    "depth_reversed_z": false
+    "depth_reversed_z": false,
+    "depth_curve": "log",
+    "depth_curve_note": "log compresses Gotham's far-skewed NDC depth so mid-distance city detail is visible in the PNG preview. Raw depth.exr is unaffected; AI training reads EXR. Other choices: 'linear' (no curve) / 'gamma' (0.45 power, milder)."
   },
 
   "camera_write_profile": {

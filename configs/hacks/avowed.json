@@ -2,37 +2,51 @@
   "schema_version": 1,
   "id": "avowed",
   "display_name": "Avowed",
-  "process_names": ["Avowed-Win64-Shipping.exe"],
+  "process_names": ["Avowed-Win.exe", "Avowed-Win64-Shipping.exe"],
   "engine": "UE5",
-  "engine_version": "UE 5.x via UUU 5.8.11",
-  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
-  "source": "uuuaobcapture/aob_patterns_by_game.json",
-  "notes": "Three overrides: camera struct copy, atmospheric component write, UObject::ProcessEvent hook.",
+  "engine_version": "5.3-5.4 (Obsidian build)",
+  "credits": "(IGCS per-game pool, raptoravis UUU 5.8.11 catalog: 3 keys)",
+  "source": "https://store.steampowered.com/app/2457220/Avowed/",
+  "notes": "Avowed has 3 dedicated AOB keys in the UUU 5.8.11 catalog. Per-game AOB_CAMERA_STRUCT_INTERCEPT1 uses 'rep movsq' instead of the field-by-field MOV block (Obsidian compiler optimization). We try the per-game pattern first, fall back to the shared SSE variant. Obsidian / Microsoft, no anti-cheat.",
 
   "intercepts": [
     {
-      "name": "camera_struct_intercept_1",
-      "description": "Camera struct copy intercept (AOB_CAMERA_STRUCT_INTERCEPT1, registered in FUN_180101210) -- Avowed variant",
+      "name": "camera_struct_intercept_avowed",
+      "description": "Per-game AOB_CAMERA_STRUCT_INTERCEPT1: 'rep movsq' copies 9 qwords (72 bytes) of FMinimalViewInfo from rdx to r15, then writes one DWORD field at [rbx+0x1538].",
       "size": 23,
-      "aob_literal": "B9 09 00 00 00 4C 89 FF 48 89 D6 F3 48 A5 8B 42 48 89 83 38 15 00 00",
+      "aob_literal":  "B9 09 00 00 00 4C 89 FF 48 89 D6 F3 48 A5 8B 42 48 89 83 38 15 00 00",
+      "aob_wildcard": null,
       "prefer": "literal",
-      "default_mode": "pass"
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Avowed AOB_CAMERA_STRUCT_INTERCEPT1)"
     },
     {
-      "name": "writeatmospherics_call",
-      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION, registered in FUN_1800eb060)",
-      "size": 23,
-      "aob_wildcard": "48 89 6C 24 20 44 8B 4C 24 30 E8 ?? ?? ?? ?? E9 ?? ?? ?? ?? 48 8D 15",
+      "name": "camera_struct_intercept_sse_fallback",
+      "description": "Shared UE5 pool fallback (SSE variant) -- only matches if the per-game pattern above misses.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
       "prefer": "wildcard",
-      "default_mode": "pass"
-    },
-    {
-      "name": "uobject_processevent",
-      "description": "UObject::ProcessEvent hook (AOB_UOBJECT_PROCESSEVENT, registered in FUN_180134b50) -- Avowed variant",
-      "size": 25,
-      "aob_wildcard": "80 3D ?? ?? ?? ?? 00 75 13 48 81 C4 80 00 00 00 5B 5F 5E 41 5E 41 5F E9 ??",
-      "prefer": "wildcard",
-      "default_mode": "pass"
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Shared, AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
     }
-  ]
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Open-world fantasy vistas -> log curve."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "Avowed uses the standard UE5 FMinimalViewInfo layout. Source pointer is rdx at hook entry (the rep-movsq source). Location is FVector3d (3 doubles, 24 bytes), Rotation FRotator (3 floats, 12 bytes), FOV float at 0x24.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_avowed",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
+  }
 }

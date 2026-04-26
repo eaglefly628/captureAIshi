@@ -45,6 +45,7 @@ Per-game GBuffer detection hints for `renderdoccmd exportframe`. Indices are NOT
 | `normal_note` | string | — | Human-readable description of the observed RenderDoc pass/slot (informational only). |
 | `depth_note` | string | — | Human-readable description of the depth buffer (informational only). |
 | `depth_reversed_z` | bool | `true` | Python-side only. `true` = UE5 reversed-Z (near=1.0 → white, far=0.0 → black). `false` = standard-Z (near=0.0 → white, far=1.0 → black). |
+| `depth_curve` | string | `"linear"` | Post-percentile contrast curve for the PNG preview. `"linear"` = legacy 1-99% stretch. `"log"` = `log1p` after stretch -- compresses far/highlights, expands near/mid; recommended for outdoor wide-range scenes (Batman/Gotham, open-world UE games). `"gamma"` = `pow(0.45)` -- milder remap, good middle ground. Raw depth.exr is unaffected, this only changes the PNG. |
 
 **Removed fields** (no longer valid): `rgb_index`, `normal_index`, `depth_index`, `rgb_linear`, `depth_range`. Texture indices are unstable across captures and were removed. Depth is now exported as raw float EXR by C++; Python applies per-frame 1st-99th percentile normalization automatically.
 

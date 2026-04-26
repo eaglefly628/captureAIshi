@@ -2,21 +2,41 @@
   "schema_version": 1,
   "id": "the_quarry",
   "display_name": "The Quarry",
-  "process_names": ["TheQuarry-Win64-Shipping.exe"],
+  "process_names": ["TheQuarry-Win64-Shipping.exe", "Quarry-Win64-Shipping.exe"],
   "engine": "UE4",
-  "engine_version": "UE 4.x via UUU 4.11.5",
-  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE4Unlocker4.11.5.dll",
-  "source": "uuuaobcapture/aob_patterns_by_game.json",
-  "notes": "Single special-case override (UWorld::IsPaused hook).",
+  "engine_version": "4.27 (Supermassive build)",
+  "credits": "(IGCS shared UE4 pool, raptoravis UUU 4.11.5 catalog)",
+  "source": "https://store.steampowered.com/app/1577380/The_Quarry/",
+  "notes": "The Quarry's per-game key in the catalog is a UWorld pause workaround (AOB_SPECIAL_CASE_THE_QUARRY_UWORLD_ISPAUSE), not a camera write site. Camera intercept comes from the UE4 shared pool's AOB_CAMERA_STRUCT_INTERCEPT1. Steam build stable since 2022, low AOB drift risk -- recommended UE4 smoke-test target.",
 
   "intercepts": [
     {
-      "name": "uworld_ispaused",
-      "description": "[The Quarry] UWorld::IsPaused hook (AOB_SPECIAL_CASE_THE_QUARRY_UWORLD_ISPAUSE, registered in FUN_180111610)",
-      "size": 19,
-      "aob_wildcard": "E8 ?? ?? ?? ?? 44 0F B6 F8 88 85 B0 01 00 00 48 8D 4D 90",
+      "name": "camera_struct_intercept_ue4_sse",
+      "description": "Shared UE4 AOB_CAMERA_STRUCT_INTERCEPT1 (SSE v0) - field-by-field MOV copying FMinimalViewInfo (UE4 layout: float location + float rotation + float FOV).",
+      "size": 32,
+      "aob_literal":  "F2 0F 10 02 48 8B D9 F2 0F 11 01 48 8B D1 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "aob_wildcard": "F2 0F 10 02 48 ?? ?? F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
       "prefer": "wildcard",
-      "default_mode": "pass"
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game4.11.5.json (Shared AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
     }
-  ]
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "linear",
+    "depth_reversed_z": true,
+    "_capture_note": "UE4 reversed-Z (4.27+). Indoor narrative -> linear is fine; switch to log only if a particular night-vista needs it."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "UE4 FMinimalViewInfo at rdx. Location FVector (3 floats) at 0x00, Rotation FRotator (3 floats) at 0x0C, FOV float at 0x18.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_ue4_sse",
+    "location": { "x": "0x00", "y": "0x04", "z": "0x08", "type": "float32" },
+    "rotation": { "pitch": "0x0C", "yaw": "0x10", "roll": "0x14", "type": "float32" },
+    "fov": { "off": "0x18", "type": "float32" }
+  }
 }

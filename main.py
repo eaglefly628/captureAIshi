@@ -10,10 +10,16 @@ or screenshot fallback.
 import argparse
 import json
 import logging
+import os
 import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
+
+# opencv-python disables EXR support by default; opt in before any
+# module triggers an `import cv2` (image_loader is imported lazily by
+# the grabber, so we set the env var first).
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 import numpy as np
 

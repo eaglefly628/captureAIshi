@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "hellblade_2",
+  "display_name": "Senua's Saga: Hellblade II",
+  "process_names": ["Hellblade2-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.4-5.5 (LWC, MetaHuman pipeline)",
+  "credits": "(IGCS shared UE5 pool, raptoravis UUU 5.8.11 catalog)",
+  "source": "https://store.steampowered.com/app/2461850/Senuas_Saga_Hellblade_II/",
+  "notes": "Hellblade II is in raptoravis's 'shared UE5 pool only' bucket (no per-game overrides). Camera intercept AOBs come from UUU 5.8.11 shared pool: AOB_CAMERA_STRUCT_INTERCEPT1 (the field-by-field MOV block that copies POV into the camera manager). Two variants below: SSE (UE5 5.3-5.4 era, has wildcards for the lea displacement) and AVX (UE5 5.5+, all literal). Microsoft first-party, no anti-cheat. depth_curve=log because Iceland-like wide outdoor vistas dominate the game.",
+
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_sse",
+      "description": "AOB_CAMERA_STRUCT_INTERCEPT1 (shared UE5 pool, SSE variant). 11 MOV pairs writing the camera POV fields. Match anchors before the | marker, NOP / patch the 48 bytes after.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Shared UE framework, AOB_CAMERA_STRUCT_INTERCEPT1 variant 0)"
+    },
+    {
+      "name": "camera_struct_intercept_avx",
+      "description": "AOB_CAMERA_STRUCT_INTERCEPT1 (shared UE5 pool, AVX variant). UE5 5.5+ release builds use VEX-encoded movups/movsd.",
+      "size": 46,
+      "aob_literal":  "C5 F8 11 01 C5 FB 10 4A 10 C5 FB 11 49 10 C5 F8 10 42 18 C5 F8 11 41 18 C5 FB 10 4A 28 C5 FB 11 49 28 8B 42 30 48 8B D9 89 41 30 48 8B FA",
+      "aob_wildcard": null,
+      "prefer": "literal",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Shared UE framework, AOB_CAMERA_STRUCT_INTERCEPT1 variant 1)"
+    }
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Wide outdoor vistas -> log curve for PNG preview; raw depth.exr unaffected for AI training."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "UE5 standard FMinimalViewInfo at rdx (source ptr of the AOB_CAMERA_STRUCT_INTERCEPT1 copy). Offsets are LWC layout: Location FVector3d (3x double) at 0x00, Rotation FRotator (3x float) at 0x18, FOV at 0x24. Verify with Test after Capture if values look wrong (some UE5.5+ builds insert padding before FOV).",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_sse",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
+  }
+}

@@ -4,19 +4,39 @@
   "display_name": "South of Midnight",
   "process_names": ["SouthOfMidnight-Win64-Shipping.exe"],
   "engine": "UE4",
-  "engine_version": "UE 4.x via UUU 4.11.5",
-  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE4Unlocker4.11.5.dll",
-  "source": "uuuaobcapture/aob_patterns_by_game.json",
-  "notes": "Single specific override (FOV read intercept).",
+  "engine_version": "4.27 (Compulsion / Microsoft build)",
+  "credits": "(IGCS shared UE4 pool, raptoravis UUU 4.11.5 catalog; per-game FOV-read only)",
+  "source": "https://store.steampowered.com/app/2199000/South_of_Midnight/",
+  "notes": "South of Midnight's per-game key in the catalog is a FOV-read intercept (AOB_SOM_INTERCEPT_FOV_READ_LOCATION), not the camera write. Camera intercept comes from the UE4 shared pool. Compulsion / Microsoft, no anti-cheat.",
 
   "intercepts": [
     {
-      "name": "fov_read",
-      "description": "[South of Midnight] FOV read (AOB_SOM_INTERCEPT_FOV_READ_LOCATION, registered in FUN_1800e14f0)",
-      "size": 24,
-      "aob_literal": "48 8B 07 48 8B CF F3 0F 10 4E 44 FF 90 D8 06 00 00 48 8B 07 48 8B CF FF",
-      "prefer": "literal",
-      "default_mode": "pass"
+      "name": "camera_struct_intercept_ue4_sse",
+      "description": "Shared UE4 AOB_CAMERA_STRUCT_INTERCEPT1 (SSE v0).",
+      "size": 32,
+      "aob_literal":  "F2 0F 10 02 48 8B D9 F2 0F 11 01 48 8B D1 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "aob_wildcard": "F2 0F 10 02 48 ?? ?? F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game4.11.5.json (Shared AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
     }
-  ]
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "gamma",
+    "depth_reversed_z": true,
+    "_capture_note": "UE4 reversed-Z. Mixed indoor / dense outdoor swamp -> gamma is the safe middle ground; flip to log if night-vista shots wash out."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "UE4 FMinimalViewInfo at rdx. Location 3xfloat at 0x00, Rotation 3xfloat at 0x0C, FOV at 0x18.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_ue4_sse",
+    "location": { "x": "0x00", "y": "0x04", "z": "0x08", "type": "float32" },
+    "rotation": { "pitch": "0x0C", "yaw": "0x10", "roll": "0x14", "type": "float32" },
+    "fov": { "off": "0x18", "type": "float32" }
+  }
 }

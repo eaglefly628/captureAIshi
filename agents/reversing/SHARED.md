@@ -105,6 +105,207 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.2.0] 28b09e1 -- xiaoni -- EXR probe diagnostics (run.bat install reverted in e4e8f1a)
+
+`28b09e1` originally added `pip install -r requirements.txt` to
+`run.bat` / `run_cli.bat` plus richer pip-output capture in
+`_ensure_exr_loader`. The run.bat additions were reverted in
+`e4e8f1a` after user pushback ("别这样做，我是做过pip install 了" --
+the install path was a red herring; cv2 was already installed but
+EXR support was disabled by an opencv build flag). The `_ensure_exr_
+loader` diagnostics (drop `--quiet`, capture stdout/stderr, log
+tail on success / exit + last 500 chars on failure,
+`importlib.invalidate_caches()` between install and re-import,
+probe-success log promoted DEBUG -> INFO) were kept and rebased
+forward.
+
+### [v0.2.0] f03387a -- xiaoni -- Tier 1 intercepts populated -- Apply/Capture/Play/Decode parity with Batman
+
+Follow-up to `f6728fb`. The 6 Tier 1 stub configs are now real
+profiles: intercepts[] filled from raptoravis's UUU 5.8.11/4.11.5
+catalog, camera_write_profile.enabled = true, struct_base_reg + field
+offsets set so the user-flow (Apply -> Capture -> Test -> Play -> auto
+decode) mirrors the existing Batman path.
+
+Pattern selection per game:
+
+- **Hellblade II** -- shared UE5 `AOB_CAMERA_STRUCT_INTERCEPT1` SSE
+  (variant 0, wildcards on the lea displacement) + AVX (variant 1,
+  literal). Two intercepts so either UE5 5.3-5.4 SSE or 5.5+ AVX
+  builds match.
+- **Avowed** -- per-game `AOB_CAMERA_STRUCT_INTERCEPT1` (uses
+  `rep movsq` to copy 9 qwords of FMinimalViewInfo + a single DWORD
+  write at `[rbx+0x1538]`); shared SSE pattern as fallback.
+- **Oblivion Remastered** -- shared UE5 SSE pattern (per-game keys
+  in catalog are atmospheric-write hooks, not the camera struct).
+- **The Quarry / The Invincible / South of Midnight** -- shared UE4
+  `AOB_CAMERA_STRUCT_INTERCEPT1` SSE v0 (per-game keys are
+  pause/blackbar/FOV-read quirks, not the camera write site).
+
+`camera_write_profile` field offsets per engine layout:
+
+- UE5 LWC (HB2 / Avowed / Oblivion R): Location FVector3d (3x double)
+  at 0x00, Rotation FRotator (3x float) at 0x18, FOV float at 0x24.
+  `struct_base_reg = "rdx"` (the read-source pointer in the field-
+  by-field MOV block).
+- UE4 (Quarry / Invincible / SoM): Location 3x float at 0x00,
+  Rotation 3x float at 0x0C, FOV float at 0x18. `struct_base_reg =
+  "rdx"`.
+
+Standard layout assumed; some Obsidian / 5.5+ builds may shift FOV
+by 4 bytes (padding). User Test button after Capture catches that --
+edit `fov.off` if values look wrong.
+
+`configs/game_library.json` -> 0.6.1; the 6 Tier 1 entries flipped
+from `test_status: "stub"` to `"ready"` (Apply path is wired; "ok"
+is reserved for after live verification).
+
+After this commit those 6 games behave exactly like
+`batman_ak.json`: dropdown -> Apply -> bridge installs camera
+intercept -> Capture button reads `rdx` at hook entry -> Test pokes
+verify offsets -> Play streams the trajectory + auto-decodes.
+
+### [v0.2.0] f6728fb -- xiaoni -- Tier 1 game configs from raptoravis UUU catalog + profile delete
+
+Two related additions in one batch:
+
+1. **Tier 1 game profiles imported from `uuuaobcapture/`**:
+   - `docs/uuuaobcapture_game_survey.md` -- full 26-game catalog
+     (UE4 13 + UE5 13) plus a 4-tier injection-ease ranking. Tier 1
+     (no AC + SP + Steam-current) covers Hellblade II, Avowed,
+     Oblivion Remastered, The Quarry, The Invincible, South of
+     Midnight.
+   - `configs/hacks/{hellblade_2, avowed, oblivion_remastered,
+     the_quarry, the_invincible, south_of_midnight}.json` -- all
+     stub profiles in the same shape as `unreal_physics.json` /
+     `black_myth_wukong.json`: process_names + engine + capture
+     section (rgb_strategy, normal_strategy, depth_curve,
+     depth_reversed_z) + camera_write_profile.enabled=false until
+     Commit D auto-discovery resolves the MOV write site. depth_curve
+     defaults to "log" for outdoor wide-range games (HB2 / Avowed /
+     Oblivion / Invincible), "linear" for narrative SP (The Quarry),
+     and "gamma" for the mixed indoor / dense outdoor case (South of
+     Midnight).
+   - `configs/game_library.json`: bumped to 0.6.0 + 6 new entries
+     ahead of the existing list, each tagged `tier: 1` and
+     `test_status: "stub"`. Cross-references docs survey.
+
+2. **Right-click delete on the Bridge Debug profile dropdown**:
+   - `web/routes/hacks.py`: new `DELETE /api/hacks/profile/<id>`.
+     Validates slug (alnum + underscore + hyphen), resolves to
+     `_HACKS_DIR / <id>.json`, refuses paths that escape the dir,
+     404s on missing.
+   - `web/templates/index.html`: `oncontextmenu` on
+     `#hackProfileSelect` -> `hackProfileContextMenu()` shows a
+     floating menu with the profile name as a header and a single
+     "Delete profile..." item; click triggers a confirm() then DELETE
+     fetch + `hackRefresh()` to repopulate the dropdown. Outside-click
+     listeners auto-close the menu. Defensive: ignored when no profile
+     is currently selected.
+
+### [v0.2.0] be9c6c6 -- xiaoni -- Per-game `depth_curve` for outdoor wide-range PNG preview
+
+User report: Gotham depth PNG washed out at distance -- city mid-band
+indistinguishable from sky highlights, only Batman silhouette visible.
+
+NDC depth from a perspective projection is already 1/z-like, so the
+sky / city / mid-distance pixels pile into a tiny raw range while
+the near-camera silhouette occupies the other end. A linear stretch
+can't separate the city from the sky because the stretch operates on
+already-collapsed values; the cluster has to be re-distributed
+*before* percentile-and-stretch.
+
+- `grabbers/renderdoc/image_loader._normalize_depth`: new optional
+  ``curve`` param. ``"linear"`` keeps legacy behaviour. ``"log"``
+  applies ``np.log(np.clip(raw, eps, 1.0))`` to the raw depth before
+  computing percentiles + stretch -- preserves the monotonic ordering
+  (so reversed_z polarity stays right) but exponentially clustered
+  values get spread out. ``"gamma"`` is a milder ``raw ** 0.45``
+  middle ground. Synthetic test (Gotham-like distribution: 50k sky +
+  30k city + 1k Batman): linear gives city=239, log gives city=122,
+  i.e. a real mid-gray instead of near-white.
+- `image_loader.load_depth_image`: thread ``capture_profile.depth_curve``
+  into ``_normalize_depth`` (default ``"linear"`` so other games are
+  untouched).
+- `configs/hacks/batman_ak.json`: capture section sets
+  ``depth_curve: "log"`` with explanatory comment.
+- `configs/hacks/_schema.md`: documented the field.
+
+PNG depth is preview-only; raw float `.exr` is written alongside and
+unaffected, so AI training reads the unmolested depth no matter
+which curve is set.
+
+This is image-pipeline territory (nominally xiaoxuan's grabbers
+domain), but the change is small and self-contained -- I left a
+peer-review note in `agents/rendering/SHARED.md` so xiaoxuan can
+audit + bump the other configs (open-world UE5 games like AC6 and
+Metro will benefit from `"log"` too).
+
+### [v0.2.0] e4e8f1a -- xiaoni -- cv2 EXR opt-in env var (real fix)
+
+User confirmed they ran `pip install -r requirements.txt` and
+opencv-python 4.8 is installed in their system Python 3.10
+site-packages, but the EXR error persisted. Real root cause: since
+OpenCV 4.5 the official `opencv-python` wheel **disables EXR support
+by default** (security policy after CVE-2020-15778-style EXR parser
+vulnerabilities). `cv2.imread(path, cv2.IMREAD_UNCHANGED)` returns
+``None`` on a `.exr` unless the process started with
+`OPENCV_IO_ENABLE_OPENEXR=1` in the environment **before the first
+`import cv2`**. Our error message ended with "(No module named
+'OpenEXR')" because that was the LAST fallback in
+`image_loader._read_exr_red` -- cv2 had silently failed first.
+
+- `web_ui.py`, `desktop_app.py`, `main.py`: set
+  `os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")` at the
+  very top of the file before any other import that could pull cv2.
+  All three entry points covered.
+- `grabbers/renderdoc/image_loader._read_exr_red`: defensive
+  setdefault inside the function for direct/library callers, plus
+  a more explicit RuntimeError message when cv2.imread returns None
+  so the env-var trap is visible in logs.
+- `run.bat` / `run_cli.bat`: reverted the auto-`pip install`
+  experiment per user pushback (no point installing into embedded
+  Python when the user already installed into their system Python;
+  the cv2 problem was the env var, not a missing package).
+
+### [v0.2.0] ca62f70 -- xiaoni -- Auto-install opencv-python at startup if EXR loader missing
+
+Follow-up to `1d53bf2`. Pinning `opencv-python` in `requirements.txt`
+helps fresh bootstraps but users who already bootstrapped won't re-run
+`pip install -r requirements.txt` automatically -- they keep hitting
+"Cannot read EXR" mid-capture and lose depth.
+
+- `web_ui.py`: new `_ensure_exr_loader()` startup probe. Tries
+  `import cv2`, then `import imageio.v3`, then `import OpenEXR`. If
+  all three are missing, logs a warning and shells out to
+  `python -m pip install --quiet opencv-python>=4.5.0` with a 180s
+  timeout. Re-imports cv2 to verify; logs success or a clear error
+  telling the user the manual command (`<python> -m pip install -r
+  requirements.txt`) on any failure.
+- `web_ui.py main()`: calls `_ensure_exr_loader()` right after
+  logging setup, before the Flask app starts.
+- `desktop_app.py main()`: imports and calls the same helper before
+  spinning up the Flask thread, so the pywebview path is also covered.
+
+Survives pip-not-available, network timeout, and restricted-install
+environments by logging an error rather than crashing -- non-depth
+features keep working in degraded mode.
+
+### [v0.2.0] 1d53bf2 -- xiaoni -- Pin opencv-python for EXR depth loading
+
+`99308e9` (xiaoxuan) switched the C++ exportframe depth output from
+normalized PNG to raw float EXR; the Python loader needs cv2 /
+imageio[freeimage] / OpenEXR but `requirements.txt` shipped none of
+them, so user-facing setups dropped depth on every capture (rgb +
+normal landed fine, just `[RDOC] Cannot read EXR ... depth.exr`).
+
+- `requirements.txt`: pinned `opencv-python>=4.5.0` (lightest Windows
+  install of the three; `image_loader.py` falls through to imageio /
+  OpenEXR if cv2 is unavailable).
+
+Posted a P1 peer-review note in `agents/rendering/SHARED.md` so
+xiaoxuan also bumps deps next time the export file format changes.
+
 ### [v0.2.0] 6c3b691 -- xiaoni -- Clean stale .rdc on grabber.setup()
 
 Per user ask: "每次启动后清除掉以前的rdc，不然会越来越大".
@@ -177,436 +378,6 @@ to a normal writable dir, the Present hook isn't wired (game started
 without renderdoccmd launch, or injected too late). The `captures=N`
 counter from `__cam_rdc_info` settles the question -- if it's 0
 after our 7 triggers, RDC isn't actually capturing.
-
-### [v0.2.0] f82f461 -- xiaoni -- Fix capture marker orientation in 3D preview
-
-User screenshot: on an orbit with `look_at_center=True`, the FOV
-pyramid markers pointed in wildly inconsistent directions -- some
-outward, some up/down, none reliably toward the orbit center.
-
-Root cause in `draw3d()`: I was pre-swapping the camera position into
-canvas coords (`ey = p[3]=gameZ`, `ez = p[2]=gameY`) and then adding
-game-space forward components (`fx, fy, fz`) to those pre-swapped
-coordinates. Result: the `fy` (horizontal Y) offset was added to the
-vertical axis, `fz` (vertical) was added to the horizontal depth axis.
-
-Rewrite keeps every vector math step in pure game space (X, Y, Z=up)
-and only swaps (x, z, y) at the `project3d` boundary via a local
-`projGame` helper. Also replace the cross-product right/up vectors
-with the well-known "right = normalize(forward x world_up)" form so
-the pyramid's width axis really is horizontal to the camera.
-
-- `web/templates/index.html` `draw3d()`: add `projGame(gx, gy, gz)`
-  thin wrapper; rewrite the capture-marker loop using only game-space
-  math. Apex/tip/far-rect corners all computed in (gameX, gameY, gameZ)
-  and projected via `projGame`.
-
-### [v0.2.0] a804214 -- xiaoni -- Unified 60Hz streaming for rdc-step + restore on any exit + decode fallback
-
-Three user-reported bugs in one commit:
-
-1. **Play jittered, Preview smooth.** rdc-step was a waypoint-driven
-   `for pose in points` loop with `time.sleep(min(0.05, target - now))`
-   — capped at 20 Hz between pokes so motion looked staccato. Preview
-   (non-capture) already used a 60 Hz `interp_linear` time-based loop
-   and looked smooth.
-
-2. **Stop did not restore the pre-play pose, so a subsequent Play with
-   relative_origin started from the stranded position.** Restore was
-   only in the rdc-step branch's `finally`; Preview / streaming exited
-   without calling `game_profile.write_camera`.
-
-3. **3 captures logged but manual Decode saw `no .rdc files in
-   output\ue5_rdoc\captures`.** Bridge likely wrote to RenderDoc's
-   default template path (`%TEMP%\RenderDoc`) rather than the
-   grabber's configured capture_dir; decoder had no fallback.
-
-`drivers/trajectory_player.py`
-- Removed the rdc-step specific waypoint loop. Both Preview and Play
-  now go through the single 60 Hz `interp_linear` time-based loop.
-  When `renderdoc_capture=True`, the loop additionally carries
-  `cap_times` = sorted `{points[i].t for i in capture_indices}`; after
-  each tick's poke, if the streaming cursor just crossed the next
-  capture time we re-interp the pose at that exact time, poke it,
-  sleep `settle`, fire `__cam_rdc_capture`, dwell `interval - settle`,
-  then fold `time.monotonic() - pause_start` into ``pause_budget`` so
-  the streaming clock stays in phase with the preset's `t`. Ticks in
-  between captures are real 60 Hz pokes, so in-game motion is now as
-  smooth as Preview.
-- Moved `restore_pose -> game_profile.write_camera` out of the
-  rdc-step-only finally into the unified finally block. Both Preview
-  and Play exits (including Stop mid-flight) now restore the original
-  pose.
-- Startup log expanded: `rdc-step capture_dir=<path> exists=<bool>
-  captures_planned=<N> interval=<s>`; warns when capture_dir is set
-  but doesn't exist on disk.
-
-`web/routes/trajectory.py` `/api/trajectory/decode`
-- When no explicit `paths` body is given and the grabber's
-  `capture_dir` is empty, also glob `%TEMP%\RenderDoc\**\*.rdc` (and
-  `%TEMP%\**\*.rdc` as a last resort) so captures that land in
-  RenderDoc's default template directory still get picked up. Error
-  response now includes the `searched` list so the user can see where
-  we looked.
-
-### [v0.2.0] 54cf28f -- xiaoni -- Uniform FOV marker size in 3D preview
-
-Follow-up to `5e7e1aa`: user reported capture markers with large FOV
-values blew up the frustum on the 3D canvas ("视图框特别长"). The
-markers are a schematic "here is a camera" icon, not a physically
-accurate frustum, so render them all the same size.
-
-- `web/templates/index.html` `draw3d()`: drop the per-point
-  `fovLen * tan(fov/2)` computation, replace with fixed
-  `FOV_HALF_W = fovLen * 0.28`, `FOV_HALF_H = fovLen * 0.16` (approx
-  16:9 hint). The capture point's `fov` field is intentionally no
-  longer consulted for the marker; it's still written to trajectory
-  JSON for downstream consumers.
-
-### [v0.2.0] 5e7e1aa -- xiaoni -- Fine path streaming + sparse captures + FOV/arrow 3D markers
-
-User asks:
-- 3D preview should draw the smoothest path.
-- Camera should actually move smoothly at the configured speed, every
-  frame.
-- Captures are computed from sample count over total time; preview
-  them on the 3D canvas with FOV frustum + forward arrow.
-
-Split "path density" from "capture count". All 5 presets now generate
-a fine path (`FINE_PATH_SAMPLES = 256`) for streaming + preview, while
-the user's ``samples`` param becomes the sparse capture count (evenly
-spaced indices into the fine path).
-
-`drivers/trajectory_presets.py`
-- New `generate_smooth(preset, params) -> (fine_path, capture_indices)`.
-  Computes the capture indices as `round(i * (N-1) / (samples-1))` so
-  they land exactly on evenly-spaced time ticks.
-
-`web/routes/trajectory.py`
-- `_generate_points` returns `(preset, fine_path, capture_indices)`.
-- `/api/trajectory/preview` response adds `capture_indices` +
-  `capture_count` alongside the existing `points` (which is now the
-  fine path).
-- `/api/trajectory/play` threads `capture_indices` into
-  `TrajectoryPlayer.play()`.
-
-`drivers/trajectory_player.py`
-- `play()` accepts `capture_indices`; defaults to "every waypoint is a
-  capture" when absent (back-compat with callers that passed sparse
-  lists directly).
-- rdc-step `_run()` now streams every fine waypoint in real time
-  (target = `stream_start + pose.t + stream_pause`) so the in-game
-  camera actually moves smoothly instead of jumping 8 octagonal
-  segments. Only indices in ``capture_indices`` trigger
-  ``__cam_rdc_capture`` + the ``capture_interval`` dwell; the time
-  spent on capture dwells is added to ``stream_pause`` so the
-  remaining waypoints stay phase-locked with their `t`.
-
-`web/templates/index.html`
-- Preview response is stashed as `{name, points, capture_indices}`.
-- 3D renderer replaces the old "every 20th waypoint gets an arrow"
-  sparse-tick overlay with: per-capture-index amber dot, forward arrow,
-  and a 4-edge FOV frustum (apex at camera pos -> 4 corners of a far
-  rect sized by `fovLen * tan(fov/2)`), plus a closed far rectangle.
-  Uses the waypoint's FOV, pitch, yaw (roll ignored for the frustum
-  hint). Fallback to 8 evenly-spaced indices when the server didn't
-  ship `capture_indices` yet.
-
-### [v0.2.0] 9495fd1 -- xiaoni -- Speed-driven trajectories + Preview/Play/Stop row
-
-User feedback: entering "duration" is not intuitive; speed (units/s) is.
-Also Pause/Resume buttons aren't used, and there should be a Preview
-button that streams the path without burning RDC captures.
-
-`drivers/trajectory_presets.py`
-- New `_path_length(preset, params)` helper with closed-form lengths
-  for orbit (2pi*r), helix (sqrt(circumference^2 + height^2)), line
-  (Euclidean), figure8 (4pi*r), custom (polyline sum).
-- `generate()` consumes a `speed` key if present and > 0, computing
-  `duration = length / speed` before dispatching to the preset
-  function. `speed` is popped so the preset fn (which still takes
-  `duration`) is not confused. When `speed` is missing or 0 the caller's
-  `duration` is honored (back-compat for saved trajectories).
-- `PRESET_SCHEMA`: replaced `duration` with `speed` (orbit=200,
-  helix=400, line=100, figure8=300, custom=100 units/s). `samples`
-  default changed to 8 across all presets. Help text explains the
-  `duration = length / speed` relationship per preset.
-
-`web/templates/index.html`
-- Trajectory control row rebuilt: `Preview | Play | Stop | Decode |
-  Preview 3D | Clear 3D`. Pause and Resume buttons dropped
-  (their JS fns remain, dead but harmless). Preview (new) calls
-  `/api/trajectory/play` with `renderdoc_capture:false` via a shared
-  `_trajBuildBody(rdc) / _trajPost(body, label)` helper pair.
-
-### [v0.2.0] c41089a -- xiaoni -- Manual Decode button + /api/trajectory/decode
-
-Follow-up to `40acc76`: user asked for an explicit decode trigger so
-re-decoding / post-hoc decode (session started without grabber, or
-auto-decode missed) is a one-click action instead of replaying a
-trajectory.
-
-- `web/routes/trajectory.py` new `POST /api/trajectory/decode`:
-  requires an active RenderDoc grabber (`web.state.get_active_grabber`),
-  collects `.rdc` files from `grabber.capture_dir` sorted by mtime (or
-  accepts an explicit `{"paths": [...]}` body for targeted re-decode),
-  kicks `grabber.export_batch(paths, output_dir)` on a background
-  `manual-decode` thread, and flips player state to `exporting` while
-  in flight. `output_dir` comes from the session's
-  `_capture_state["output_dir"]`.
-- `web/templates/index.html`: new `Decode` button in the Trajectory
-  control row (next to Play/Pause/Resume/Stop) + `trajDecode()` JS
-  helper that posts empty body; server picks "all .rdc in capture_dir".
-  Tooltip explains this is also the fallback for re-decoding.
-
-### [v0.2.0] 40acc76 -- xiaoni -- Post-loop auto-decode + restore start pose
-
-User report: 8 captures fired cleanly on 3 s interval but nothing
-happened after the rdc-step loop -- "No captures yet" in the gallery,
-no PNGs, camera left stranded on the last waypoint.
-
-Two fixes in one commit, both for the trajectory Play path:
-
-(1) Post-loop auto-decode via the active RenderDoc grabber.
-- `web/state.py`: new `set_active_grabber(g)` / `get_active_grabber()`
-  thread-safe module slot. `main.run_capture` publishes the grabber
-  after `grabber.setup()` succeeds and clears it in the finally block.
-- `web/routes/trajectory.py` `/api/trajectory/play`: if the active
-  grabber exposes `export_batch`, build a decode callback that calls
-  `grabber.export_batch(rdc_paths, output_dir)` where `output_dir`
-  comes from the session's `_capture_state['output_dir']`. Pass the
-  grabber's `capture_dir` so the player knows where .rdc files land.
-- `drivers/trajectory_player.py`: rdc-step loop now watches
-  `capture_dir` via `set(Path.glob('*.rdc'))` diffing and collects new
-  .rdc paths per pose. On loop exit, if `decode_callback` is set and
-  at least one .rdc was collected, fire the callback on a background
-  thread (so the player thread itself can unwind cleanly). Player
-  state transitions `playing -> exporting -> idle` so the UI poll can
-  show the decode phase.
-
-(2) Restore the pre-play camera pose so the user ends up exactly where
-they were before pressing Play.
-- `TrajectoryPlayer.play()` now unconditionally snapshots the current
-  pose via `game_profile.read_camera_pose`. When `relative_origin` is
-  on the same read is reused for the offset; it's also threaded into
-  `_run` as `restore_pose` and consumed in the rdc-step finally block,
-  which calls `game_profile.write_camera(...)` with the stored pose.
-  Failure is logged but does not abort the exporting pass.
-
-### [v0.2.0] 8ed197d -- xiaoni -- RDC-step capture_interval (16->16 captures land)
-
-User hit: figure8 trajectory Play with 16 samples @ 60 Hz + rdc_capture
-fired all 16 __cam_rdc_capture commands in ~0.5 s (log "rdc-step done
-captures=16" at +0.543 s after start) and only 2 .rdc files actually
-landed because the hardcoded step was `max(1/rate_hz, 0.033)` = 33 ms
-per pose -- RenderDoc can't capture 30 Presents in 0.5 s from queued
-triggers.
-
-- `drivers/trajectory_player.py` `TrajectoryPlayer.play()`: new
-  `capture_interval: float = 1.5` param. rdc-step loop now:
-  1. Poke camera + short settle (`max(1/rate_hz, 0.05)`) so the new
-     pose reaches the render thread.
-  2. Fire `__cam_rdc_capture`.
-  3. Sleep the remaining `interval - settle`, in 100 ms chunks so
-     Stop is responsive during long intervals.
-  4. Log `[PLAYER] capture X/N triggered (interval=Ns)` per pose.
-  Interval lower-bounded to `settle`.
-- `web_ui.py` `/api/trajectory/play`: forwards
-  `capture_interval=max(0.1, body["capture_interval"] or 1.5)`.
-- `web/templates/index.html` Bridge Debug panel: new
-  `#capture_interval` input next to `#focus_delay` (default 1.5 s,
-  min 0.1, step 0.1). Persisted in localStorage under
-  `captureAIshi.captureInterval`. Wired into `trajPlay()`.
-
-Deterministic sync via bridge `__cam_rdc_capture_await` (polling
-`RenderDoc::Inst().GetCaptures().size()`) + post-loop auto-decode
-via `grabber.export_batch(rdc_paths, output_dir)` are deferred --
-they need bridge DLL rebuild and grabber-singleton wiring.
-
-### [v0.2.0] 8554e66 -- xiaoni -- run_capture: launch-and-wait session mode
-
-Follow-up to `f6c58ad`: raising inside `run_capture` killed the main
-Web UI Start button (user report: "Legacy volume/snake/cone capture
-pipeline has been removed. Use the Web UI Play button..." traceback).
-The Start button still needs to launch the game via renderdoc and
-hold the bridge connection open so Capture / Play can be used.
-
-`main.run_capture` now:
-1. Creates driver / UI hider / grabber.
-2. `grabber.setup()` to launch the game via renderdoccmd (or inject).
-3. Connects the driver (manual-mode fallback on connection failure).
-4. Enables debug camera + runs the UWorld / LocalPlayer readiness gate.
-5. Hides UI once.
-6. Blocks on `stop_event` / KeyboardInterrupt.
-7. Finally block restores UI + tears down grabber + disconnects driver.
-
-No pose generation, no `poses.json`, no capture loop. All capture work
-is driven from the Debug panel (Capture button) and Trajectory panel
-(Play button) against the live bridge. The dead pose-gen + capture
-loop remains after a `return` statement inside run_capture and will be
-deleted in the next sweep along with `core/snake_path.py`,
-`core/cone_rotation.py`, `BoundingVolume`, `smooth_waypoints`, and
-their tests.
-
-### [v0.2.0] d03a98c -- xiaoni -- Configurable focus delay for Capture + Play
-
-Batman AK (and other focus-sensitive games) enters the pause menu when
-the browser click steals focus; the game stops ticking its hooked code,
-so `/api/hacks/capture` times out and trajectory Play writes fail. The
-trajectory_player already took a `focus_delay` param (default 5.0s) but
-the web UI was hardcoding 5s and the Capture button had no delay at all.
-
-- `web/templates/index.html` Bridge Debug panel: new `#focus_delay`
-  number input (default 5.0, step 0.5, min 0) with tooltip explaining
-  the alt-tab window. Value persists in `localStorage` under
-  `captureAIshi.focusDelay`, reloaded on DOMContentLoaded.
-- `_afterFocusDelay(fn)` helper logs "waiting Ns for game focus..." to
-  the debug console then `setTimeout`'s the fn; delay == 0 fires
-  immediately (no wait, no log).
-- `hackCapture()` wrapped in `_afterFocusDelay` so the Bridge Debug
-  "Capture" button now respects the configured delay (previously fired
-  instantly).
-- `trajPlay()` passes `focus_delay: focusDelay()` in the
-  `/api/trajectory/play` POST body instead of letting the backend pick
-  its 5.0 default.
-
-Backend consumption already in place: `web_ui.py:409` clamps the
-incoming `focus_delay` to `>= 0` and threads it into
-`TrajectoryPlayer.play()` → `_auto_capture(focus_delay=...)`, which
-only sleeps when `focus_delay > 0`.
-
-### [v0.2.0] f6c58ad -- xiaoni -- Remove legacy volume/snake/cone capture pipeline
-
-User request: drop the volume + snake path + cone rotation capture mode
-(source of 956-capture runs). Trajectory-based capture
-(`drivers/trajectory_player.py`) is now the only supported path.
-
-- `main.py` `run_capture`: early-raises `RuntimeError` with migration
-  message. Old Steps 1-3 + capture_loop left unreachable short-term
-  (full deletion in follow-up sweep that also drops
-  `core/snake_path.py`, `core/cone_rotation.py`, `BoundingVolume`,
-  tests, and `gui.py` spinners).
-- `main.py` argparse: dropped `--volume-min/--volume-max/--spacing/
-  --smooth/--smooth-points/--cone-angle/--cone-samples/--cone-rings`.
-- `web_ui.py` `_build_args` + `/api/defaults`: dropped volume /
-  spacing / cone / smooth fields. Residual preset data blobs at lines
-  719+ kept (inert now, swept next session).
-- `web/templates/index.html`: removed `catArea`, `catPath`, `catCone`
-  detail panels; removed corresponding `catMap` entries (lv2 menu items
-  were already gone since `c656837`). Dropped `vol_min/max`, `spacing`,
-  `smooth*`, `cone_*` references from `getFormData`, `applyParams`,
-  `_applyGameConfig`, `updateVisibility` (`smoothPointsWrap`), and
-  the 3D visualizer (bounding box + grid drew from the removed
-  `vol_min_x` / `spacing` inputs).
-
-Batman `ue3_packed_int` trajectory conversion from `afc35b5` is still
-in place; this CL doesn't touch that path.
-
-### [v0.2.0] afc35b5 -- xiaoni -- Batman ue3_packed_int deg conversion
-
-Fix long-standing TODO in `configs/hacks/batman_ak.json`: camera rotation
-writes for UE3 were casting deg floats to i32 verbatim, so any non-integer
-or out-of-range angle got truncated and rotation was effectively broken.
-
-- `drivers/game_profile.py`: add `_deg_to_ue3_packed` / `_ue3_packed_to_deg`
-  helpers (FRotator: 0x10000 = 360 deg, normalized to [-32768, 32768) so
-  values stay inside signed int32 and any ViewPitchMin/Max game clamp).
-- `drivers/game_profile.write_camera`: convert pitch/yaw/roll deg -> packed
-  int before the i32 poke when `rotation.type == "ue3_packed_int"`.
-- `drivers/game_profile.read_camera_pose`: reverse direction - packed -> deg
-  on read so the pose dict stays in degrees for UI / trajectory.
-- `drivers/trajectory_player.py`: `_PokeField` gains `raw_type` so per-tick
-  `_pose_value` can apply the same conversion before the i32 wire poke.
-- `tests/test_trajectory.py`: new `TestUE3PackedInt` class (4 cases) -
-  known-value table, deg<->packed roundtrip, float input from mem_peek,
-  `_pose_value` integration via `_PokeField`.
-
-Bridge side verified no change needed: `console_server.h` i32 parse uses
-`strtol` (accepts negatives) then `(uint32_t)(int32_t)v` to store the
-unsigned DWORD; e.g. -16384 -> 0xFFFFC000 which FRotator wraps correctly
-as -90 deg.
-
-batman_ak.json `_comment` updated to drop the "next commit" marker.
-
-### [v0.2.0] c656837 -- xiaoni -- Gemini review sweep + UI Phase 1 bug fixes
-
-Gemini external + round-2 review items, plus 2 UI bugs reported by the
-user after testing the Phase 1 build. Next session = UI Phase 2
-(main.py trajectory-driven capture + legacy form removal).
-
-Fixed (bridge, both trees where applicable):
-- P0 strtof locale trap (Gemini): new ascii_strtof/ascii_strtod parsers;
-  all strtof/strtod sites in console_server.h + bridge.cpp replaced.
-- P1 handle_client dead socket not removed (Gemini): renderdoc tree
-  slot cleanup on thread exit + trailing-compaction. 3rdparty tree
-  already did this.
-- P1 g_smooth_factor atomic (Gemini): std::atomic<float> with relaxed
-  ordering on both trees.
-- P1 UObject GC lifecycle (Gemini round-2, verified by Opus 4.7):
-  UEVersionLayout.ue_obj_flags_off field + cam_manager_alive() SEH
-  probe + clear-on-GC-mark. Renderdoc-tree only (3rdparty lacks the
-  layout struct).
-
-Fixed (UI, reported by user against 2325ee6):
-- Bridge Debug "Advanced" toggle did nothing: `toggleAdvancedAob()` was
-  defined inside the IIFE that wraps `toggleDebugPanel`, so it wasn't
-  on window. Moved to global scope.
-- Cascade Lv2 menu still listed Capture Area / Path / Cone Rotation.
-  Removed those 3 items from the lv2 menu. The DOM nodes they opened
-  are intentionally kept so stale JS reading vol_min_x/spacing/cone_angle
-  ids keeps seeing the default values; full removal lands with the
-  Phase 2 main.py migration.
-
-Deferred to next session:
-- P2 __try call-chain audit (review-only, partial done -- cam_patch_write
-  is clean, but other __try sites need a full sweep).
-- P2 Catmull-Rom uniform -> centripetal.
-
-### [v0.2.0] 2325ee6 -- xiaoni -- UI Phase 1: debug refactor + custom trajectory + save/load + auto-preview
-
-Phase 1 of the operator workflow re-focus. Phase 2 (backend capture
-migration + removing legacy volume/spacing/cone pipeline) lands in a
-separate CL.
-
-UI:
-- Bridge Debug panel trimmed. REMOVED from always-visible row:
-  slomo / Normal / FPS / Stat Off / DebugCam / HUD Off / HUD On / Pause
-  / Status / Arm Break. Status + Arm Break survived into new Advanced
-  section. KEPT visible: Re-scan UE, Cam POV (Find/Read/OV On/OV Off).
-- COLLAPSED under new "Advanced: AOB intercept + per-game profile":
-  Intercept (List/NOP/Pass/Uninstall + install form), per-game Profile
-  (Apply/Lock/Unlock/Clear + select), Capture (Capture/Read Addr/Test).
-- Trajectory panel: Save/Del + saved-trajectory dropdown
-  (configs/trajectories/*.json round-trip); auto-preview checkbox
-  (250 ms debounced); RDC capture checkbox plumbed into
-  TrajectoryPlayer.play(renderdoc_capture=...).
-
-Backend:
-- `drivers/trajectory_presets.py`: new `custom` preset (3/6/7-tuple
-  waypoints, linear subdivision, optional look_at).
-- `web_ui.py`: `/api/trajectory/save` + `/api/trajectory/saved/<name>`
-  GET/DELETE + list. Name slugged to block path traversal.
-- `drivers/trajectory_player.py`: PlayerStatus carries `renderdoc_capture`.
-
-Tests: 46 in test_trajectory.py (custom preset + 7 saved-trajectory
-flask tests incl. path-traversal rejection). All green.
-
-Phase 2 TODO (next CL): main.py trajectory-driven capture; remove
-volume/spacing/cone UI form; repurpose cone as per-waypoint sweep into
-trajectory JSON; wire RDC capture trigger in backend.
-
-### [v0.2.0] ee9a5db -- xiaoni -- Game library trim to 6 active titles
-
-- `configs/game_library.json`: 332 -> 6. Active: StackOBot (UE5 self-built),
-  Batman: Arkham Knight (UE3), Hellblade: Senua's Sacrifice (UE4),
-  Cyberpunk 2077 (REDengine 4), Unreal Physics (UE5), Black Myth: Wukong (UE5).
-- `configs/game_library_full.json`: backup of the original 332-entry UUU lib.
-- `configs/hacks/unreal_physics.json` + `black_myth_wukong.json`: STUB profiles
-  (intercepts=[], camera_write_profile.enabled=false). apply_profile() will
-  only run __cam_intercept_uninstall until intercepts[] populated by Commit D
-  auto-discovery or CE.
-- `/api/games` now returns 6, `/api/hacks/list` returns 6. Profile dropdown
-  and Game Library panel both show only these titles after hard refresh.
 
 ---
 

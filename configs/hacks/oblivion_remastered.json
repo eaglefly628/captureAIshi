@@ -1,30 +1,42 @@
 {
   "schema_version": 1,
   "id": "oblivion_remastered",
-  "display_name": "Oblivion Remastered",
-  "process_names": ["OblivionRemastered-Win64-Shipping.exe"],
+  "display_name": "The Elder Scrolls IV: Oblivion Remastered",
+  "process_names": ["OblivionRemastered-Win.exe", "OblivionRemastered-Win64-Shipping.exe"],
   "engine": "UE5",
-  "engine_version": "UE 5.x via UUU 5.8.11",
-  "credits": "UUU project (raptoravis/uuuaobcapture); patterns extracted from UniversalUE5Unlocker5.8.11.dll",
-  "source": "uuuaobcapture/aob_patterns_by_game.json",
-  "notes": "Two overrides: two atmospheric component write hooks.",
+  "engine_version": "5.3 (UE5 wrapper around Gamebryo)",
+  "credits": "(IGCS shared UE5 pool, raptoravis UUU 5.8.11 catalog)",
+  "source": "https://store.steampowered.com/app/2623190/The_Elder_Scrolls_IV_Oblivion_Remastered/",
+  "notes": "Oblivion Remastered's 2 per-game keys in the catalog are atmospheric-write hooks (not camera write); the actual camera intercept comes from the shared UE5 pool's AOB_CAMERA_STRUCT_INTERCEPT1. Bethesda title, mod-friendly, no anti-cheat.",
 
   "intercepts": [
     {
-      "name": "writeatmospherics_call_1",
-      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION, registered in FUN_1800eb060) -- Oblivion Remastered variant 1",
-      "size": 21,
-      "aob_wildcard": "FF 50 08 8B 45 E3 48 8D 4D DF F7 D0 21 45 EF E8 ?? ?? ?? ?? EB",
+      "name": "camera_struct_intercept_sse",
+      "description": "AOB_CAMERA_STRUCT_INTERCEPT1 (shared UE5 pool, SSE variant) - field-by-field MOV block copying FMinimalViewInfo from rdx to rcx.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
       "prefer": "wildcard",
-      "default_mode": "pass"
-    },
-    {
-      "name": "writeatmospherics_call_2",
-      "description": "Atmospheric component write hook (AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION2, registered in FUN_1800eb060) -- Oblivion Remastered variant 2",
-      "size": 24,
-      "aob_wildcard": "F2 0F 11 4C 24 40 48 89 7C 24 20 E8 ?? ?? ?? ?? 4C 8D 9C 24 B0 00 00 00",
-      "prefer": "wildcard",
-      "default_mode": "pass"
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Shared AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
     }
-  ]
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Open-world Cyrodiil with deep horizon -> log curve essential."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "Standard UE5 FMinimalViewInfo at rdx. Location FVector3d (3 doubles) at 0x00, Rotation FRotator (3 floats) at 0x18, FOV at 0x24. Verify offsets after Capture if values look wrong.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_sse",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
+  }
 }
