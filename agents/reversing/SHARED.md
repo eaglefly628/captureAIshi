@@ -119,6 +119,52 @@ tail on success / exit + last 500 chars on failure,
 probe-success log promoted DEBUG -> INFO) were kept and rebased
 forward.
 
+### [v0.2.0] (pending push) -- xiaoni -- Tier 1 intercepts populated -- Apply/Capture/Play/Decode parity with Batman
+
+Follow-up to `f6728fb`. The 6 Tier 1 stub configs are now real
+profiles: intercepts[] filled from raptoravis's UUU 5.8.11/4.11.5
+catalog, camera_write_profile.enabled = true, struct_base_reg + field
+offsets set so the user-flow (Apply -> Capture -> Test -> Play -> auto
+decode) mirrors the existing Batman path.
+
+Pattern selection per game:
+
+- **Hellblade II** -- shared UE5 `AOB_CAMERA_STRUCT_INTERCEPT1` SSE
+  (variant 0, wildcards on the lea displacement) + AVX (variant 1,
+  literal). Two intercepts so either UE5 5.3-5.4 SSE or 5.5+ AVX
+  builds match.
+- **Avowed** -- per-game `AOB_CAMERA_STRUCT_INTERCEPT1` (uses
+  `rep movsq` to copy 9 qwords of FMinimalViewInfo + a single DWORD
+  write at `[rbx+0x1538]`); shared SSE pattern as fallback.
+- **Oblivion Remastered** -- shared UE5 SSE pattern (per-game keys
+  in catalog are atmospheric-write hooks, not the camera struct).
+- **The Quarry / The Invincible / South of Midnight** -- shared UE4
+  `AOB_CAMERA_STRUCT_INTERCEPT1` SSE v0 (per-game keys are
+  pause/blackbar/FOV-read quirks, not the camera write site).
+
+`camera_write_profile` field offsets per engine layout:
+
+- UE5 LWC (HB2 / Avowed / Oblivion R): Location FVector3d (3x double)
+  at 0x00, Rotation FRotator (3x float) at 0x18, FOV float at 0x24.
+  `struct_base_reg = "rdx"` (the read-source pointer in the field-
+  by-field MOV block).
+- UE4 (Quarry / Invincible / SoM): Location 3x float at 0x00,
+  Rotation 3x float at 0x0C, FOV float at 0x18. `struct_base_reg =
+  "rdx"`.
+
+Standard layout assumed; some Obsidian / 5.5+ builds may shift FOV
+by 4 bytes (padding). User Test button after Capture catches that --
+edit `fov.off` if values look wrong.
+
+`configs/game_library.json` -> 0.6.1; the 6 Tier 1 entries flipped
+from `test_status: "stub"` to `"ready"` (Apply path is wired; "ok"
+is reserved for after live verification).
+
+After this commit those 6 games behave exactly like
+`batman_ak.json`: dropdown -> Apply -> bridge installs camera
+intercept -> Capture button reads `rdx` at hook entry -> Test pokes
+verify offsets -> Play streams the trajectory + auto-decodes.
+
 ### [v0.2.0] f6728fb -- xiaoni -- Tier 1 game configs from raptoravis UUU catalog + profile delete
 
 Two related additions in one batch:

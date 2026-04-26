@@ -4,28 +4,39 @@
   "display_name": "The Elder Scrolls IV: Oblivion Remastered",
   "process_names": ["OblivionRemastered-Win.exe", "OblivionRemastered-Win64-Shipping.exe"],
   "engine": "UE5",
-  "engine_version": "5.3 (UE5 wrapper around Gamebryo for legacy gameplay)",
-  "credits": "(IGCS per-game pool, raptoravis UUU 5.8.11 catalog: 2 keys)",
+  "engine_version": "5.3 (UE5 wrapper around Gamebryo)",
+  "credits": "(IGCS shared UE5 pool, raptoravis UUU 5.8.11 catalog)",
   "source": "https://store.steampowered.com/app/2623190/The_Elder_Scrolls_IV_Oblivion_Remastered/",
-  "notes": "STUB profile -- Oblivion Remastered has 2 dedicated AOB keys in the UUU 5.8.11 catalog. Bethesda title, mod-friendly history, no anti-cheat. UE5 wrapper drives lighting/atmospherics; legacy Gamebryo handles gameplay/AI. Open-world Cyrodiil -> log depth curve. To populate intercepts[]: lift the 2 per-game patterns + UE5 shared pool AOBs from the catalog. camera_write_profile.enabled=false until Commit D pins the MOV write site.",
+  "notes": "Oblivion Remastered's 2 per-game keys in the catalog are atmospheric-write hooks (not camera write); the actual camera intercept comes from the shared UE5 pool's AOB_CAMERA_STRUCT_INTERCEPT1. Bethesda title, mod-friendly, no anti-cheat.",
 
-  "intercepts": [],
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_sse",
+      "description": "AOB_CAMERA_STRUCT_INTERCEPT1 (shared UE5 pool, SSE variant) - field-by-field MOV block copying FMinimalViewInfo from rdx to rcx.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Shared AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    }
+  ],
 
   "capture": {
     "rgb_strategy": "auto",
     "normal_strategy": "r10g10b10a2_slot1",
     "depth_curve": "log",
     "depth_reversed_z": true,
-    "_capture_note": "UE5 reversed-Z. Open-world fantasy with extreme draw distance (Imperial City + Tamriel skybox) -> log curve essential."
+    "_capture_note": "UE5 reversed-Z. Open-world Cyrodiil with deep horizon -> log curve essential."
   },
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
-    "struct_base_reg": "TBD",
-    "capture_from_intercept": "TBD",
-    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
-    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
-    "fov": { "off": "TBD", "type": "float32" }
+    "enabled": true,
+    "_comment": "Standard UE5 FMinimalViewInfo at rdx. Location FVector3d (3 doubles) at 0x00, Rotation FRotator (3 floats) at 0x18, FOV at 0x24. Verify offsets after Capture if values look wrong.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_sse",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
   }
 }

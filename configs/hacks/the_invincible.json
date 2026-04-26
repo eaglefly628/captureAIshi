@@ -5,11 +5,22 @@
   "process_names": ["TheInvincible-Win64-Shipping.exe", "Invincible-Win64-Shipping.exe"],
   "engine": "UE4",
   "engine_version": "4.27 (Starward build)",
-  "credits": "(IGCS per-game pool, raptoravis UUU 4.11.5 catalog: 1 key)",
+  "credits": "(IGCS shared UE4 pool, raptoravis UUU 4.11.5 catalog; per-game blackbars only)",
   "source": "https://store.steampowered.com/app/1283250/The_Invincible/",
-  "notes": "STUB profile -- The Invincible has 1 dedicated AOB key in the UUU 4.11.5 catalog. Starward narrative exploration on planet Regis III, no anti-cheat. Atompunk alien outdoor environments -> log depth curve recommended. To populate intercepts[]: lift the per-game pattern + UE4 shared pool AOBs from the catalog. camera_write_profile.enabled=false until Commit D resolves the write site.",
+  "notes": "The Invincible's per-game key in the catalog is a black-bar removal hook (AOB_TI_CAMERA_BLACKBARS_CAMERA_COMPONENT1), not the camera write site. Camera intercept comes from the UE4 shared pool. Atompunk alien outdoor environments -> log depth curve.",
 
-  "intercepts": [],
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_ue4_sse",
+      "description": "Shared UE4 AOB_CAMERA_STRUCT_INTERCEPT1 (SSE v0).",
+      "size": 32,
+      "aob_literal":  "F2 0F 10 02 48 8B D9 F2 0F 11 01 48 8B D1 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "aob_wildcard": "F2 0F 10 02 48 ?? ?? F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game4.11.5.json (Shared AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    }
+  ],
 
   "capture": {
     "rgb_strategy": "auto",
@@ -20,12 +31,12 @@
   },
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "UE4 (pre-LWC): location/rotation are float32, fov is float. Offsets to be filled once Commit D auto-discovery runs.",
-    "struct_base_reg": "TBD",
-    "capture_from_intercept": "TBD",
-    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "float32" },
-    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "float32" },
-    "fov": { "off": "TBD", "type": "float32" }
+    "enabled": true,
+    "_comment": "UE4 FMinimalViewInfo at rdx. Location 3xfloat at 0x00, Rotation 3xfloat at 0x0C, FOV at 0x18.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_ue4_sse",
+    "location": { "x": "0x00", "y": "0x04", "z": "0x08", "type": "float32" },
+    "rotation": { "pitch": "0x0C", "yaw": "0x10", "roll": "0x14", "type": "float32" },
+    "fov": { "off": "0x18", "type": "float32" }
   }
 }

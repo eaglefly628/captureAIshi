@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "version": "0.6.0",
+    "version": "0.6.1",
     "updated": "2026-04-26",
     "note": "Active list. test_status: 'ok'=tested+working, 'version_mismatch'=tested but AOB needs update for installed build, 'untested'=not yet verified, 'stub'=profile present, intercepts pending. aob_source tracks where bytes came from. Tier 1 entries from raptoravis UUU 5.8.11 / 4.11.5 catalog (see docs/uuuaobcapture_game_survey.md)."
   },
@@ -13,7 +13,7 @@
       "process_name": "Hellblade2-Win64-Shipping.exe",
       "source": "Steam / Game Pass (https://store.steampowered.com/app/2461850)",
       "ac": "none",
-      "test_status": "stub",
+      "test_status": "ready",
       "aob_source": "raptoravis UUU 5.8.11 catalog (shared UE5 pool)",
       "tier": 1,
       "note": "Tier 1 inject target. Microsoft first-party, no AC. Existing hellblade_ue4 (HB1) is the closest reference."
@@ -26,7 +26,7 @@
       "process_name": "Avowed-Win.exe",
       "source": "Steam / Game Pass (https://store.steampowered.com/app/2457220)",
       "ac": "none",
-      "test_status": "stub",
+      "test_status": "ready",
       "aob_source": "raptoravis UUU 5.8.11 catalog (3 per-game keys)",
       "tier": 1,
       "note": "Tier 1 inject target. Obsidian/MS, no AC. Open-world Eora -> log depth curve."
@@ -39,7 +39,7 @@
       "process_name": "OblivionRemastered-Win.exe",
       "source": "Steam / Game Pass (https://store.steampowered.com/app/2623190)",
       "ac": "none",
-      "test_status": "stub",
+      "test_status": "ready",
       "aob_source": "raptoravis UUU 5.8.11 catalog (2 per-game keys)",
       "tier": 1,
       "note": "Tier 1 inject target. Bethesda mod-friendly. Wide-vista Cyrodiil -> log depth curve."
@@ -52,7 +52,7 @@
       "process_name": "TheQuarry-Win64-Shipping.exe",
       "source": "Steam (https://store.steampowered.com/app/1577380)",
       "ac": "none",
-      "test_status": "stub",
+      "test_status": "ready",
       "aob_source": "raptoravis UUU 4.11.5 catalog (1 per-game key)",
       "tier": 1,
       "note": "Tier 1 inject target / recommended UE4 smoke-test. Steam build stable since 2022 (low AOB drift risk)."
@@ -65,7 +65,7 @@
       "process_name": "TheInvincible-Win64-Shipping.exe",
       "source": "Steam (https://store.steampowered.com/app/1283250)",
       "ac": "none",
-      "test_status": "stub",
+      "test_status": "ready",
       "aob_source": "raptoravis UUU 4.11.5 catalog (1 per-game key)",
       "tier": 1,
       "note": "Tier 1 inject target. Atompunk alien planet -> log depth curve."
@@ -78,7 +78,7 @@
       "process_name": "SouthOfMidnight-Win64-Shipping.exe",
       "source": "Steam / Game Pass (https://store.steampowered.com/app/2199000)",
       "ac": "none",
-      "test_status": "stub",
+      "test_status": "ready",
       "aob_source": "raptoravis UUU 4.11.5 catalog (1 per-game key)",
       "tier": 1,
       "note": "Tier 1 inject target. MS first-party, no AC. Mixed indoor/swamp -> gamma depth curve."

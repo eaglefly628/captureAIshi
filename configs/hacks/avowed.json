@@ -7,9 +7,30 @@
   "engine_version": "5.3-5.4 (Obsidian build)",
   "credits": "(IGCS per-game pool, raptoravis UUU 5.8.11 catalog: 3 keys)",
   "source": "https://store.steampowered.com/app/2457220/Avowed/",
-  "notes": "STUB profile -- Avowed has 3 dedicated AOB keys in the UUU 5.8.11 catalog (see uuuaobcapture/aob_patterns_by_game.json -> UE5 -> Avowed: AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION + 2 others). Obsidian / Microsoft, no anti-cheat. Open-world Eora setting -> log depth curve. To populate intercepts[]: copy the 3 per-game patterns + relevant shared pool AOBs from the catalog into the IGCS-style asm-stub format used in batman_ak.json. camera_write_profile.enabled=false until Commit D auto-discovery resolves the MOV write site.",
+  "notes": "Avowed has 3 dedicated AOB keys in the UUU 5.8.11 catalog. Per-game AOB_CAMERA_STRUCT_INTERCEPT1 uses 'rep movsq' instead of the field-by-field MOV block (Obsidian compiler optimization). We try the per-game pattern first, fall back to the shared SSE variant. Obsidian / Microsoft, no anti-cheat.",
 
-  "intercepts": [],
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_avowed",
+      "description": "Per-game AOB_CAMERA_STRUCT_INTERCEPT1: 'rep movsq' copies 9 qwords (72 bytes) of FMinimalViewInfo from rdx to r15, then writes one DWORD field at [rbx+0x1538].",
+      "size": 23,
+      "aob_literal":  "B9 09 00 00 00 4C 89 FF 48 89 D6 F3 48 A5 8B 42 48 89 83 38 15 00 00",
+      "aob_wildcard": null,
+      "prefer": "literal",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Avowed AOB_CAMERA_STRUCT_INTERCEPT1)"
+    },
+    {
+      "name": "camera_struct_intercept_sse_fallback",
+      "description": "Shared UE5 pool fallback (SSE variant) -- only matches if the per-game pattern above misses.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game5.8.11.json (Shared, AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    }
+  ],
 
   "capture": {
     "rgb_strategy": "auto",
@@ -20,12 +41,12 @@
   },
 
   "camera_write_profile": {
-    "enabled": false,
-    "_comment": "UE5 LWC: location/rotation are double, fov is float. Offsets to be filled once Commit D auto-discovery runs against this game.",
-    "struct_base_reg": "TBD",
-    "capture_from_intercept": "TBD",
-    "location": { "x": "TBD", "y": "TBD", "z": "TBD", "type": "double64" },
-    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "double64" },
-    "fov": { "off": "TBD", "type": "float32" }
+    "enabled": true,
+    "_comment": "Avowed uses the standard UE5 FMinimalViewInfo layout. Source pointer is rdx at hook entry (the rep-movsq source). Location is FVector3d (3 doubles, 24 bytes), Rotation FRotator (3 floats, 12 bytes), FOV float at 0x24.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_avowed",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
   }
 }
