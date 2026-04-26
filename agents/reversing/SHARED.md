@@ -119,7 +119,7 @@ tail on success / exit + last 500 chars on failure,
 probe-success log promoted DEBUG -> INFO) were kept and rebased
 forward.
 
-### [v0.2.0] (pending push) -- xiaoni -- Tier 1 intercepts populated -- Apply/Capture/Play/Decode parity with Batman
+### [v0.2.0] f03387a -- xiaoni -- Tier 1 intercepts populated -- Apply/Capture/Play/Decode parity with Batman
 
 Follow-up to `f6728fb`. The 6 Tier 1 stub configs are now real
 profiles: intercepts[] filled from raptoravis's UUU 5.8.11/4.11.5
