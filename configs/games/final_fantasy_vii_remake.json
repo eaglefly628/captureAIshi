@@ -1,0 +1,23 @@
+{
+  "driver": "ue5",
+  "driver_host": "127.0.0.1",
+  "driver_port": 9998,
+  "ce_mode": "file",
+  "grabber": "renderdoc",
+  "target_exe": "E:\\games\\ff7remake\\3DMGAME_Final_Fantasy_VII_Remake.CHS.Green.part001\\Final Fantasy VII Remake Intergrade\\ff7remake.exe",
+  "hack_profile_id": "ff7_remake",
+  "launch_resx": 1920,
+  "launch_resy": 1080,
+  "launch_windowed": true,
+  "launch_log": false,
+  "renderdoc_path": "",
+  "no_hide_ui": false,
+  "output_dir": "./output",
+  "dry_run": false,
+  "debug_scan": false,
+  "clean_start": true,
+  "streaming": true,
+  "streaming_settle": 0.5,
+  "fov": 90,
+  "aspect": 1.7778
+}

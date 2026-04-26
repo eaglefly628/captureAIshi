@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "id": "final_fantasy_7_rebirth",
+  "display_name": "Final Fantasy VII Rebirth",
+  "process_names": ["ff7rebirth_.exe", "FF7Rebirth-Win64-Shipping.exe"],
+  "engine": "UE4",
+  "engine_version": "4.27 (Square Enix custom)",
+  "credits": "(IGCS / raptoravis UUU 4.11.5 catalog: 9 per-game keys, 4 of them are camera writes)",
+  "source": "https://store.steampowered.com/app/2909400/FINAL_FANTASY_VII_REBIRTH/",
+  "notes": "FF7 Rebirth has 4 per-game camera-write AOB keys (CAMERA_WRITE1..4) plus 5 PP/HUD/lens hooks. Camera intercept primary = AOB_FF7REBIRTH_CAMERA_WRITE1_KEY (writes Location to [rdi]). Shared UE4 pool AOB_CAMERA_STRUCT_INTERCEPT1 added as fallback. Pattern 1 has a wildcarded disp32 -> wildcard only.",
+
+  "intercepts": [
+    {
+      "name": "camera_write_ff7r_1",
+      "description": "Per-game AOB_FF7REBIRTH_CAMERA_WRITE1_KEY: 89 07 mov[rdi], eax + 2 vmovss to [rdi+4]/[rdi+8] -- Location X/Y/Z stores.",
+      "size": 12,
+      "aob_literal":  null,
+      "aob_wildcard": "89 07 C5 FA 11 57 04 C5 FA 11 4F 08 C5 F8 10 8B ?? ?? ?? ?? C5 F0 C2 83",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (FF7 Rebirth AOB_FF7REBIRTH_CAMERA_WRITE1_KEY v0)"
+    },
+    {
+      "name": "camera_write_ff7r_2",
+      "description": "Per-game AOB_FF7REBIRTH_CAMERA_WRITE2_KEY: vmovss [rdi+0xC] + mov [rdi+0x14] -- Rotation block writes.",
+      "size": 9,
+      "aob_literal":  "C5 FB 11 47 0C 8B 46 08 89 47 14 44 84 B3 0C 02 00 00 74 12",
+      "aob_wildcard": null,
+      "prefer": "literal",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (FF7 Rebirth AOB_FF7REBIRTH_CAMERA_WRITE2_KEY v0)"
+    },
+    {
+      "name": "camera_write_ff7r_4",
+      "description": "Per-game AOB_FF7REBIRTH_CAMERA_WRITE4_KEY: 3 mov writes to [rbx+0x28/30/3C] reading from [rdi+disp32] -- alt camera struct path.",
+      "size": 22,
+      "aob_literal":  "89 43 28 8B 87 48 02 00 00 89 43 30 8B 87 50 02 00 00 89 43 3C 8B",
+      "aob_wildcard": null,
+      "prefer": "literal",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (FF7 Rebirth AOB_FF7REBIRTH_CAMERA_WRITE4_KEY v0)"
+    },
+    {
+      "name": "camera_struct_intercept_ue4_sse_fallback",
+      "description": "Shared UE4 pool AOB_CAMERA_STRUCT_INTERCEPT1 (SSE v0) -- only matches if the per-game patterns above miss.",
+      "size": 32,
+      "aob_literal":  "F2 0F 10 02 48 8B D9 F2 0F 11 01 48 8B D1 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "aob_wildcard": "F2 0F 10 02 48 ?? ?? F2 0F 11 01 48 ?? ?? 8B 42 08 89 41 08 F2 0F 10 42 0C F2 0F 11 41 0C 8B 42 14 89 41 14 8B 42 18",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (Shared UE4 AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    }
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE4 reversed-Z. Open-world cinematics with deep horizon -> log curve."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "Per-game CAMERA_WRITE1 uses rdi as camera struct base with float Location at 0x00/0x04/0x08; rotation/FOV offsets need verification via __cam_intercept_capture before enabling trajectory playback.",
+    "struct_base_reg": "rdi",
+    "capture_from_intercept": "camera_write_ff7r_1",
+    "location": { "x": "0x00", "y": "0x04", "z": "0x08", "type": "float32" },
+    "rotation": { "pitch": "TBD", "yaw": "TBD", "roll": "TBD", "type": "float32" },
+    "fov": { "off": "TBD", "type": "float32" }
+  }
+}

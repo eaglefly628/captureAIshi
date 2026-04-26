@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "code_vein_2",
+  "display_name": "Code Vein II",
+  "process_names": ["CodeVein2-Win64-Shipping.exe", "CV2-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.x (Bandai Namco)",
+  "credits": "(IGCS shared UE5 pool, raptoravis UUU 5.8.11 catalog; per-game key is atmospherics only)",
+  "source": "https://store.steampowered.com/app/2680010/Code_Vein_II/",
+  "notes": "Code Vein II's only per-game catalog key is AOB_CUSTOM_WRITEATMOSPHERICS_CALL_LOCATION (atmospheric component hook), not a camera write. Camera intercept comes from the shared UE5 pool's AOB_CAMERA_STRUCT_INTERCEPT1.",
+
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_sse",
+      "description": "AOB_CAMERA_STRUCT_INTERCEPT1 (shared UE5 pool, SSE variant) -- field-by-field MOV block.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (Shared UE5 AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    }
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "gamma",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Mixed action-RPG indoors+outdoors -> gamma middle-ground."
+  },
+
+  "camera_write_profile": {
+    "enabled": true,
+    "_comment": "Standard UE5 FMinimalViewInfo at rdx. Location FVector3d (3 doubles) at 0x00, Rotation FRotator (3 floats) at 0x18, FOV at 0x24.",
+    "struct_base_reg": "rdx",
+    "capture_from_intercept": "camera_struct_intercept_sse",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
+  }
+}

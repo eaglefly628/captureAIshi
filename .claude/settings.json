@@ -13,34 +13,6 @@
       "WebSearch",
       "NotebookEdit"
     ],
-    "deny": [
-      "Bash(rm -rf /)",
-      "Bash(git push --force *)"
-    ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "git checkout claudeMainBranch 2>/dev/null && git pull origin claudeMainBranch 2>/dev/null; echo '[AUTO-START] On branch:' $(git branch --show-current)",
-            "timeout": 30000
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -m utils.feishu_notify 'Code Pushed' \"$(git log --oneline -1)\"",
-            "timeout": 15000
-          }
-        ]
-      }
-    ]
+    "deny": ["Bash(rm -rf /)", "Bash(git push --force *)"]
   }
 }

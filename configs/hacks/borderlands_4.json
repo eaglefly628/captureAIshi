@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "borderlands_4",
+  "display_name": "Borderlands 4",
+  "process_names": ["Borderlands4.exe", "OakGame-Win64-Shipping.exe", "BL4-Win64-Shipping.exe"],
+  "engine": "UE5",
+  "engine_version": "5.x (Gearbox OakGame UE5)",
+  "credits": "(IGCS per-game pool, raptoravis UUU 5.8.11 catalog: 5 keys including dedicated CAMERA_STRUCT_INTERCEPT1)",
+  "source": "https://store.steampowered.com/app/1285190/Borderlands_4/",
+  "notes": "Borderlands 4 has its own per-game AOB_CAMERA_STRUCT_INTERCEPT1 plus 4 supporting keys (coords write, main-thread call intercept, post-process write, GUObjectArray). Per-game pattern is preferred; shared UE5 SSE variant is fallback. Ships with EAC -- verify offline mode before injecting.",
+
+  "intercepts": [
+    {
+      "name": "camera_struct_intercept_bl4",
+      "description": "Per-game AOB_CAMERA_STRUCT_INTERCEPT1: 8-instruction MOV/MOVUPS block copying camera location+rotation pairs from [rbx+0x40..0x68] to [rdi].",
+      "size": 32,
+      "aob_literal":  "48 8B 43 50 48 89 47 10 0F 10 43 40 0F 11 07 0F 10 43 58 0F 11 47 18 48 8B 43 68 48 89 47 28",
+      "aob_wildcard": null,
+      "prefer": "literal",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (Borderlands 4 AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    },
+    {
+      "name": "camera_struct_intercept_ue5_sse_fallback",
+      "description": "Shared UE5 pool fallback (SSE variant) -- only matches if the per-game pattern above misses.",
+      "size": 48,
+      "aob_literal":  "0F 10 02 0F 11 01 F2 0F 10 4A 10 F2 0F 11 49 10 0F 10 42 18 0F 11 41 18 F2 0F 10 4A 28 F2 0F 11 49 28 8B 42 30 89 41 30 8B 42 38 89 41 38 8B 42 40 89 41",
+      "aob_wildcard": "0F 10 02 ?? ?? ?? ?? ?? ?? 0F 11 01 F2 0F 10 4A ?? F2 0F 11 49 ?? 0F 10 42 ?? 0F 11 41 ?? F2 0F 10 4A ?? F2 0F 11 49 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41 ?? 8B 42 ?? 89 41",
+      "prefer": "wildcard",
+      "default_mode": "pass",
+      "source": "uuuaobcapture/aob_patterns_by_game.json (Shared UE5 AOB_CAMERA_STRUCT_INTERCEPT1 v0)"
+    }
+  ],
+
+  "capture": {
+    "rgb_strategy": "auto",
+    "normal_strategy": "r10g10b10a2_slot1",
+    "depth_curve": "log",
+    "depth_reversed_z": true,
+    "_capture_note": "UE5 reversed-Z. Open-world Pandora-style vistas -> log curve."
+  },
+
+  "camera_write_profile": {
+    "enabled": false,
+    "_comment": "Per-game pattern reads source from rbx and writes to rdi. Verify register snapshot via __cam_intercept_capture before enabling trajectory playback. UE5 LWC: Location FVector3d (3 doubles) at 0x00, Rotation FRotator (3 floats) at 0x18, FOV at 0x24 -- VERIFY for OakGame UE5.",
+    "struct_base_reg": "rbx",
+    "capture_from_intercept": "camera_struct_intercept_bl4",
+    "location": { "x": "0x00", "y": "0x08", "z": "0x10", "type": "double64" },
+    "rotation": { "pitch": "0x18", "yaw": "0x1C", "roll": "0x20", "type": "float32" },
+    "fov": { "off": "0x24", "type": "float32" }
+  }
+}
