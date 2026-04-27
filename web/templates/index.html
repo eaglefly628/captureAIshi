@@ -1215,6 +1215,7 @@ body {
       <div style="display:flex;gap:8px;align-items:center">
         <span class="center-tab active" id="tabLog" onclick="switchCenterTab('log')">Output</span>
         <span class="center-tab" id="tab3d" onclick="switchCenterTab('3d')">3D View</span>
+        <span class="center-tab" id="tabInput" onclick="switchCenterTab('input')">⏺ Input Rec</span>
       </div>
       <span id="logCount" style="font-weight:400;text-transform:none;letter-spacing:0">0 lines</span>
     </div>
@@ -1229,6 +1230,28 @@ body {
       <div class="log-line log-info">$ captureAIshi ready</div>
     </div>
     <canvas id="view3d" style="display:none;width:100%;flex:1;background:var(--bg-base);cursor:grab;"></canvas>
+
+    <!-- ── Input Recording Panel ── -->
+    <div id="inputRecPanel" style="display:none;flex-direction:column;height:100%;padding:12px;gap:10px;overflow-y:auto;box-sizing:border-box">
+      <!-- Controls row -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-accent" id="btnInputRec" onclick="inputRecToggle()">⏺ Record</button>
+        <span id="inputRecStatus" style="font-size:11px;color:var(--text-tertiary)">Stopped</span>
+        <span id="inputRecTimer" style="font-size:11px;color:var(--text-secondary);min-width:48px"></span>
+        <span id="inputRecCount" style="font-size:11px;color:var(--text-tertiary)"></span>
+      </div>
+      <!-- Load row -->
+      <div style="display:flex;align-items:center;gap:6px">
+        <select class="sel" id="inputRecFileList" style="flex:1;font-size:11px" onchange="inputRecLoad(this.value)">
+          <option value="">-- load recording --</option>
+        </select>
+        <button class="btn" onclick="inputRecRefreshFiles()" title="Refresh file list">↻</button>
+      </div>
+      <!-- Loaded file summary -->
+      <div id="inputRecSummary" style="font-size:11px;color:var(--text-secondary);background:var(--bg-elevated);border-radius:var(--radius);padding:8px;display:none"></div>
+      <!-- Event timeline -->
+      <div id="inputRecTimeline" style="flex:1;overflow-y:auto;font-size:10px;font-family:var(--font-mono,monospace);color:var(--text-secondary);background:var(--bg-elevated);border-radius:var(--radius);padding:6px;min-height:80px"></div>
+    </div>
     <div class="path-controls" id="pathControls">
       <div class="path-toolbar">
         <select class="sel" id="pathSelect" onchange="switchPath(this.value)">
@@ -1839,6 +1862,89 @@ function lbRender() {
   document.getElementById('lbLabel').textContent = `${lbIndex + 1} / ${rgbList.length}  —  ${name}`;
 }
 
+// ─── Input Recording ───
+let _inputRecPollTimer = null;
+
+async function inputRecToggle() {
+  const btn = document.getElementById('btnInputRec');
+  const status = document.getElementById('inputRecStatus');
+  const statusResp = await fetch('/api/input/status').then(r=>r.json()).catch(()=>null);
+  if (!statusResp) return;
+  if (statusResp.recording) {
+    const r = await fetch('/api/input/stop', {method:'POST'}).then(r=>r.json()).catch(()=>({}));
+    status.textContent = r.ok ? `Saved ${r.events||0} events` : ('Error: '+(r.error||'?'));
+    status.style.color = r.ok ? '#3ecf8e' : '#f03e3e';
+    btn.textContent = '⏺ Record';
+    btn.classList.remove('btn-danger');
+    btn.classList.add('btn-accent');
+    document.getElementById('inputRecTimer').textContent = '';
+    document.getElementById('inputRecCount').textContent = '';
+    inputRecPollStop();
+    inputRecRefreshFiles();
+  } else {
+    const outDir = document.getElementById('output_dir')?.value || 'output/ue5_obs';
+    const r = await fetch('/api/input/start', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({output_dir: outDir + '/ue5_obs'})
+    }).then(r=>r.json()).catch(()=>({}));
+    if (r.ok) {
+      status.textContent = 'Recording… (' + r.backend + ')';
+      status.style.color = '#f59e0b';
+      btn.textContent = '⏹ Stop';
+      btn.classList.remove('btn-accent');
+      btn.classList.add('btn-danger');
+      inputRecPollStart();
+    } else {
+      status.textContent = 'Error: ' + (r.error || '?');
+      status.style.color = '#f03e3e';
+    }
+  }
+}
+
+function inputRecPollStart() {
+  if (_inputRecPollTimer) return;
+  _inputRecPollTimer = setInterval(async () => {
+    const r = await fetch('/api/input/status').then(r=>r.json()).catch(()=>null);
+    if (!r || !r.recording) { inputRecPollStop(); return; }
+    document.getElementById('inputRecTimer').textContent = r.elapsed + 's';
+    document.getElementById('inputRecCount').textContent = r.events + ' events';
+  }, 500);
+}
+function inputRecPollStop() {
+  if (_inputRecPollTimer) { clearInterval(_inputRecPollTimer); _inputRecPollTimer = null; }
+}
+
+async function inputRecRefreshFiles() {
+  const sel = document.getElementById('inputRecFileList');
+  const r = await fetch('/api/input/files').then(r=>r.json()).catch(()=>({files:[]}));
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">-- load recording --</option>' +
+    (r.files||[]).map(f=>`<option value="${f.path}">${f.name} (${(f.size/1024).toFixed(1)}KB)</option>`).join('');
+  if (prev) sel.value = prev;
+}
+
+async function inputRecLoad(path) {
+  if (!path) return;
+  const r = await fetch('/api/input/load?path=' + encodeURIComponent(path)).then(r=>r.json()).catch(()=>null);
+  if (!r || !r.ok) return;
+  const summary = document.getElementById('inputRecSummary');
+  summary.style.display = 'block';
+  summary.innerHTML = `<b>${r.event_count} events</b> &nbsp;|&nbsp; ${r.duration_s?.toFixed(1)}s &nbsp;|&nbsp; ${r.recorded_at?.slice(0,19).replace('T',' ')} UTC`;
+  const tl = document.getElementById('inputRecTimeline');
+  const evts = (r.events || []).slice(0, 300);
+  tl.innerHTML = evts.map(e => {
+    let color = '#888';
+    if (e.type === 'key_down') color = '#3ecf8e';
+    else if (e.type === 'key_up') color = '#555';
+    else if (e.type === 'mouse_move') color = '#60a5fa';
+    else if (e.type.startsWith('mouse')) color = '#f59e0b';
+    const detail = e.type === 'mouse_move' ? `dx=${e.dx} dy=${e.dy}`
+      : e.type.startsWith('key') ? `key=${e.key}`
+      : e.button ? `btn=${e.button}` : '';
+    return `<div style="color:${color};padding:1px 0">${e.t.toFixed(3)}s &nbsp; ${e.type} &nbsp; <span style="opacity:.6">${detail}</span></div>`;
+  }).join('') + (r.events?.length > 300 ? `<div style="color:#666">… ${r.events.length-300} more</div>` : '');
+}
+
 // ─── 3D Viewer ───
 let view3dActive = false;
 const cam3d = { rotX: -0.5, rotY: 0.6, dist: 20, cx: 0, cy: 1.5, cz: 0 };
@@ -1849,24 +1955,38 @@ function switchCenterTab(tab) {
   const progEl = document.getElementById('progressWrap');
   const canvas = document.getElementById('view3d');
   const pathCtl = document.getElementById('pathControls');
+  const inputPanel = document.getElementById('inputRecPanel');
   document.getElementById('tabLog').classList.toggle('active', tab === 'log');
   document.getElementById('tab3d').classList.toggle('active', tab === '3d');
+  document.getElementById('tabInput').classList.toggle('active', tab === 'input');
   if (tab === '3d') {
     logEl.style.display = 'none';
     progEl.style.display = 'none';
     canvas.style.display = 'block';
     pathCtl.classList.add('visible');
+    inputPanel.style.display = 'none';
     view3dActive = true;
     resizeCanvas3d();
     loadTrajectory();
     loadPathList();
     draw3d();
+  } else if (tab === 'input') {
+    logEl.style.display = 'none';
+    progEl.style.display = 'none';
+    canvas.style.display = 'none';
+    pathCtl.classList.remove('visible');
+    inputPanel.style.display = 'flex';
+    view3dActive = false;
+    inputRecRefreshFiles();
+    inputRecPollStart();
   } else {
     logEl.style.display = '';
     progEl.style.display = '';
     canvas.style.display = 'none';
     pathCtl.classList.remove('visible');
+    inputPanel.style.display = 'none';
     view3dActive = false;
+    inputRecPollStop();
   }
 }
 
