@@ -1281,9 +1281,9 @@ uint32_t RenderDoc::GetCapturableWindowCount()
 rdcstr RenderDoc::GetOverlayText(RDCDriver driver, DeviceOwnedWindow devWnd, uint32_t frameNumber,
                                  int flags)
 {
-  // Branded overlay: only emit the AiMeng banner, the "captures saved" notice,
-  // and the per-capture frame index for recently saved captures (<20s window).
-  // Driver / FPS / hotkey hints are intentionally suppressed.
+  // Branded overlay: emit the AiMeng banner plus the per-capture frame index
+  // for recently saved captures (<20s window). Driver / FPS / hotkey hints
+  // are intentionally suppressed.
   // Suppress unused-parameter warnings under /W4 /WX.
   (void)driver;
   (void)devWnd;
@@ -1293,7 +1293,6 @@ rdcstr RenderDoc::GetOverlayText(RDCDriver driver, DeviceOwnedWindow devWnd, uin
   rdcstr overlayText = "AIMen tech Support";
   if(!m_Captures.empty())
   {
-    overlayText += "\nAImen trigger Capture Saved";
     uint64_t now = Timing::GetUnixTimestamp();
     for(size_t i = 0; i < m_Captures.size(); i++)
     {
@@ -1302,7 +1301,7 @@ rdcstr RenderDoc::GetOverlayText(RDCDriver driver, DeviceOwnedWindow devWnd, uin
         if(m_Captures[i].frameNumber == ~0U)
           overlayText += "\nCaptured user-defined capture.";
         else
-          overlayText += StringFormat::Fmt("\nCaptured frame %d.", m_Captures[i].frameNumber);
+          overlayText += StringFormat::Fmt("\nAImen trigger Captured frame %d", m_Captures[i].frameNumber);
       }
     }
   }

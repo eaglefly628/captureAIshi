@@ -31,9 +31,8 @@
 - Connection 面板 `<label>renderdoccmd</label>` -> `爱萌捕捉` (placeholder 保留技术名)
 - `renderdoc/renderdoc/core/core.cpp::GetOverlayText` 简化:
   - 第一行固定 `AIMen tech Support`
-  - 有 captures 时追加 `AImen trigger Capture Saved`
-  - 最近 20s 内每张 capture 仍显示 `Captured frame N.`
-  - 删除 driver/Frame/FPS/F12 等 RDC 原生提示
+  - 最近 20s 内每张 capture 显示 `AImen trigger Captured frame N`
+  - 删除 driver/Frame/FPS/F12/Captures saved summary 等 RDC 原生提示
   - 跨域改动 (renderdoc/), 需小萱 review + 重新编译 renderdoc.dll 才生效
 
 ### [v0.3.0] — 小由 (Output gallery: 一组 capture 一行)
