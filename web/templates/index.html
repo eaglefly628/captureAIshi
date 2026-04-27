@@ -948,6 +948,8 @@ body {
       <div class="menu-dropdown-item" onclick="openAnalyzeRdc()">&#x1F50D; Analyze Capture File</div>
       <div class="menu-dropdown-sep"></div>
       <div class="menu-dropdown-item" onclick="openCaptureConfig()">&#x2699;&#xFE0E; Capture Config</div>
+      <div class="menu-dropdown-sep"></div>
+      <div class="menu-dropdown-item" onclick="showModal('obsModal')">&#x1F3A5; OBS Settings</div>
     </div>
   </div>
   <div class="menu-item" onclick="toggleMenu(this)">Help
@@ -957,6 +959,25 @@ body {
       <div class="menu-dropdown-sep"></div>
       <div class="menu-dropdown-item" onclick="showModal('copyrightModal')">&#x00A9; Copyright</div>
     </div>
+  </div>
+</div>
+
+<!-- OBS Settings Modal -->
+<div class="modal-overlay" id="obsModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal-box" style="width:320px">
+    <h3>OBS Settings</h3>
+    <div class="f" style="margin-bottom:6px"><label>Host</label><input type="text" id="obs_host" value="127.0.0.1"></div>
+    <div class="f" style="margin-bottom:6px"><label>Port</label><input type="number" id="obs_port" value="4455" min="1" max="65535"></div>
+    <div class="f" style="margin-bottom:6px"><label>Password</label><input type="password" id="obs_password" value=""></div>
+    <div class="f" style="margin-bottom:6px"><label>Scene</label><input type="text" id="obs_scene" value="Capture"></div>
+    <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="hide_hud_during_recording" checked><div class="track"></div>Hide HUD via Bridge</label>
+    <label class="tog" style="margin-bottom:10px"><input type="checkbox" id="strict_video"><div class="track"></div>Strict (abort on OBS failure)</label>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn" onclick="obsTest()">Test Connection</button>
+      <button class="btn" onclick="obsSetup()">Setup OBS</button>
+    </div>
+    <span id="obsStatus" style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:8px"></span>
+    <button class="modal-close" onclick="closeModal(obsModal)">Close</button>
   </div>
 </div>
 
@@ -1059,6 +1080,7 @@ body {
     <option value="none">No Grab</option>
     <option value="renderdoc">RenderDoc</option>
     <option value="screenshot">Screenshot</option>
+    <option value="obs">OBS Video</option>
   </select>
   <div class="toolbar-sep"></div>
   <label class="tog"><input type="checkbox" id="clean_start" checked><div class="track"></div>Clean</label>
@@ -1104,26 +1126,6 @@ body {
         </div>
       </div>
 
-      <!-- Video Recording -->
-      <div class="sec">
-        <button class="sec-head" onclick="toggleSec(this)"><span class="arr">&#9654;&#xFE0E;</span> Video Recording</button>
-        <div class="sec-body" style="padding:8px 10px;display:none">
-          <label class="tog" style="margin-bottom:6px" title="Tell OBS to record gameplay during the session.">
-            <input type="checkbox" id="recorder_enabled"><div class="track"></div>Enable Recording
-          </label>
-          <div class="f"><label>OBS Host</label><input type="text" id="obs_host" value="127.0.0.1"></div>
-          <div class="f"><label>OBS Port</label><input type="number" id="obs_port" value="4455" min="1" max="65535"></div>
-          <div class="f"><label>OBS Password</label><input type="password" id="obs_password" value=""></div>
-          <div class="f"><label>Scene</label><input type="text" id="obs_scene" value="Capture"></div>
-          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="hide_hud_during_recording" checked><div class="track"></div>Hide HUD via Bridge</label>
-          <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="strict_video"><div class="track"></div>Strict (abort on OBS failure)</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-            <button class="btn" onclick="obsTest()">Test Connection</button>
-            <button class="btn" onclick="obsSetup()">Setup OBS</button>
-          </div>
-          <span id="obsStatus" style="font-size:11px;color:var(--text-tertiary);display:block;margin-top:4px"></span>
-        </div>
-      </div>
 
     </div>
   </div>
@@ -1404,7 +1406,7 @@ function getFormData() {
     streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
     fov:pf('fov'), aspect:pf('aspect'),
     recorder: {
-      enabled: cb('recorder_enabled'),
+      enabled: val('grabber') === 'obs',
       obs_host: val('obs_host'),
       obs_port: pi('obs_port'),
       obs_password: val('obs_password'),
