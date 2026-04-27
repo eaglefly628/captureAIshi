@@ -124,8 +124,8 @@ def create_grabber(args):
         return ScreenshotGrabber(
             screenshot_dir=str(args.output_dir / "screenshots"),
         )
-    elif args.grabber == "none":
-        logging.debug("[INIT] No grabber selected")
+    elif args.grabber in ("none", "obs"):
+        logging.debug(f"[INIT] No frame grabber (grabber={args.grabber})")
         return None
     else:
         raise ValueError(f"Unknown grabber: {args.grabber}")
@@ -898,7 +898,7 @@ def main():
     )
 
     # Grabber
-    parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
+    parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none", "obs"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
     parser.add_argument(
         "--inject", action="store_true",

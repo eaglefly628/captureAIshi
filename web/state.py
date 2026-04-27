@@ -135,7 +135,7 @@ def _run_in_thread(args):
 # ── Config/validation constants (reused by /api/start + /api/games) ──────────
 
 _VALID_DRIVERS = {"manual", "ue5", "unity", "cheatengine"}
-_VALID_GRABBERS = {"none", "renderdoc", "screenshot"}
+_VALID_GRABBERS = {"none", "renderdoc", "screenshot", "obs"}
 _VALID_CE_MODES = {"file", "socket"}
 
 _GAME_LIBRARY_FILE = Path("configs/game_library.json")
