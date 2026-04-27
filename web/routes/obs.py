@@ -84,6 +84,34 @@ def obs_test():
         return jsonify({"ok": False, "error": f"connect failed: {e}"}), 500
 
 
+_OBS_SAVEABLE_KEYS = {
+    "obs_host", "obs_port", "obs_password", "obs_scene",
+    "hide_hud_during_recording", "strict_video",
+}
+
+
+@bp.route("/api/obs/config", methods=["GET"])
+def obs_config_get():
+    """Return current configs/obs.json for pre-filling the OBS Settings modal."""
+    return jsonify({"ok": True, **_load_obs_config()})
+
+
+@bp.route("/api/obs/config", methods=["POST"])
+def obs_config_save():
+    """Persist OBS UI settings to configs/obs.json."""
+    body = request.get_json(silent=True) or {}
+    cfg = _load_obs_config()
+    for k, v in body.items():
+        if k in _OBS_SAVEABLE_KEYS:
+            cfg[k] = v
+    try:
+        OBS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        OBS_CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
 @bp.route("/api/obs/status", methods=["GET"])
 def obs_status():
     cfg = _load_obs_config()

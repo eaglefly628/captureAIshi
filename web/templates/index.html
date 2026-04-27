@@ -1447,15 +1447,29 @@ function connLoad() {
 document.addEventListener('DOMContentLoaded', connLoad);
 
 // ─── OBS Video Recording ───
-const OBS_TEXT_KEYS = ['obs_host','obs_port','obs_password','obs_scene'];
-const OBS_CB_KEYS = ['hide_hud_during_recording','strict_video'];
 function obsSaveSettings() {
-  OBS_TEXT_KEYS.forEach(k => { const el=document.getElementById(k); if(el) try { localStorage.setItem('captureAIshi.'+k, el.value); } catch(_){} });
-  OBS_CB_KEYS.forEach(k => { const el=document.getElementById(k); if(el) try { localStorage.setItem('captureAIshi.'+k, el.checked?'1':'0'); } catch(_){} });
+  const body = {
+    obs_host: (document.getElementById('obs_host')||{}).value||'',
+    obs_port: parseInt((document.getElementById('obs_port')||{}).value||'4455'),
+    obs_password: (document.getElementById('obs_password')||{}).value||'',
+    obs_scene: (document.getElementById('obs_scene')||{}).value||'',
+    hide_hud_during_recording: !!(document.getElementById('hide_hud_during_recording')||{}).checked,
+    strict_video: !!(document.getElementById('strict_video')||{}).checked,
+  };
+  fetch('/api/obs/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).catch(()=>{});
 }
-function obsLoadSettings() {
-  OBS_TEXT_KEYS.forEach(k => { const v=localStorage.getItem('captureAIshi.'+k); const el=document.getElementById(k); if(v!=null&&el) el.value=v; });
-  OBS_CB_KEYS.forEach(k => { const v=localStorage.getItem('captureAIshi.'+k); const el=document.getElementById(k); if(v!=null&&el) el.checked=(v==='1'); });
+async function obsLoadSettings() {
+  try {
+    const r = await fetch('/api/obs/config');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.obs_host) document.getElementById('obs_host').value = d.obs_host;
+    if (d.obs_port) document.getElementById('obs_port').value = d.obs_port;
+    if (d.obs_password != null) document.getElementById('obs_password').value = d.obs_password;
+    if (d.obs_scene) document.getElementById('obs_scene').value = d.obs_scene;
+    if (d.hide_hud_during_recording != null) document.getElementById('hide_hud_during_recording').checked = !!d.hide_hud_during_recording;
+    if (d.strict_video != null) document.getElementById('strict_video').checked = !!d.strict_video;
+  } catch(_) {}
 }
 document.addEventListener('DOMContentLoaded', obsLoadSettings);
 
