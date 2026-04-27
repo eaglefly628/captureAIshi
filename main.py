@@ -264,6 +264,35 @@ def run_capture(args):
             except Exception as e:
                 logging.warning(f"[DRIVER] Failed to enable debug camera: {e}")
 
+        # Start video recording early so it captures the full session,
+        # including the time the player spends in the readiness gate below.
+        if (
+            getattr(args, "recorder_enabled", False)
+            and getattr(args, "hide_hud_during_recording", True)
+            and hasattr(driver, "send_console_command")
+        ):
+            try:
+                driver.send_console_command("__hud_toggle")
+                hud_hidden_via_bridge = True
+                logging.info("[VIDEO] HUD toggled via bridge for clean footage")
+            except Exception as e:
+                logging.debug(f"[VIDEO] bridge __hud_toggle failed: {e}")
+
+        if getattr(args, "recorder_enabled", False):
+            _obs_port = getattr(args, "obs_port", 4455)
+            if args.driver_port == _obs_port:
+                logging.warning(
+                    f"[VIDEO] driver_port ({args.driver_port}) matches obs_port ({_obs_port}). "
+                    f"Driver may have connected to OBS instead of the game bridge. "
+                    f"Set driver_port to your bridge port (default 9998)."
+                )
+            try:
+                recorder.__enter__()
+                _session_name = output_dir.name or "captureAIshi"
+                recorder.start(_session_name)
+            except Exception as e:
+                logging.warning(f"[VIDEO] recorder start failed: {e}")
+
         # UE object readiness gate: wait for UWorld + LocalPlayer so the
         # Debug panel's Capture / Play buttons can find addresses.
         if hasattr(driver, 'wait_for_objects_ready'):
@@ -292,26 +321,6 @@ def run_capture(args):
                 logging.info(f"[UI] Hide result: {result.method} -- {result.message}")
             except Exception as e:
                 logging.warning(f"[UI] Failed to hide UI (continuing): {e}")
-
-        if (
-            getattr(args, "recorder_enabled", False)
-            and getattr(args, "hide_hud_during_recording", True)
-            and hasattr(driver, "send_console_command")
-        ):
-            try:
-                driver.send_console_command("__hud_toggle")
-                hud_hidden_via_bridge = True
-                logging.info("[VIDEO] HUD toggled via bridge for clean footage")
-            except Exception as e:
-                logging.debug(f"[VIDEO] bridge __hud_toggle failed: {e}")
-
-        if getattr(args, "recorder_enabled", False):
-            try:
-                recorder.__enter__()
-                _session_name = output_dir.name or "captureAIshi"
-                recorder.start(_session_name)
-            except Exception as e:
-                logging.warning(f"[VIDEO] recorder start failed: {e}")
 
         logging.info(
             "[SESSION] Game is running and bridge is connected. Use the "
