@@ -25,11 +25,22 @@ import webview
 from web_ui import _ensure_exr_loader, app
 
 
-def _find_free_port() -> int:
-    """Find an available TCP port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+_DEFAULT_PORT = 5173
+
+def _find_free_port(preferred: int = _DEFAULT_PORT) -> int:
+    """Return preferred port if free, else fall back to a random one.
+
+    Using a fixed preferred port keeps localStorage data consistent across
+    restarts (localStorage key includes the origin, i.e. the port).
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", preferred))
+            return preferred
+    except OSError:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
 
 
 def _run_flask(port: int) -> None:
