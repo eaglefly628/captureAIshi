@@ -191,6 +191,9 @@ def run_capture(args):
         logging.info("Dry run: skipping driver/grabber setup.")
         return
 
+    from recorders import create_recorder
+    recorder = create_recorder(args, output_dir)
+
     try:
         driver = create_driver(args)
     except Exception as e:
@@ -235,6 +238,7 @@ def run_capture(args):
             raise
 
     driver_connected = False
+    hud_hidden_via_bridge = False
     try:
         try:
             driver.connect()
@@ -289,6 +293,26 @@ def run_capture(args):
             except Exception as e:
                 logging.warning(f"[UI] Failed to hide UI (continuing): {e}")
 
+        if (
+            getattr(args, "recorder_enabled", False)
+            and getattr(args, "hide_hud_during_recording", True)
+            and hasattr(driver, "send_console_command")
+        ):
+            try:
+                driver.send_console_command("__hud_toggle")
+                hud_hidden_via_bridge = True
+                logging.info("[VIDEO] HUD toggled via bridge for clean footage")
+            except Exception as e:
+                logging.debug(f"[VIDEO] bridge __hud_toggle failed: {e}")
+
+        if getattr(args, "recorder_enabled", False):
+            try:
+                recorder.__enter__()
+                _session_name = output_dir.name or "captureAIshi"
+                recorder.start(_session_name)
+            except Exception as e:
+                logging.warning(f"[VIDEO] recorder start failed: {e}")
+
         logging.info(
             "[SESSION] Game is running and bridge is connected. Use the "
             "Web UI (Bridge Debug -> Capture / Trajectory -> Play) to "
@@ -303,6 +327,20 @@ def run_capture(args):
         except KeyboardInterrupt:
             logging.info("[SESSION] Interrupted by user.")
     finally:
+        try:
+            if recorder.is_recording:
+                recorder.stop()
+        except Exception as e:
+            logging.warning(f"[VIDEO] stop failed: {e}")
+        try:
+            recorder.__exit__(None, None, None)
+        except Exception as e:
+            logging.debug(f"[VIDEO] recorder __exit__: {e}")
+        if hud_hidden_via_bridge and driver_connected and hasattr(driver, "send_console_command"):
+            try:
+                driver.send_console_command("__hud_toggle")
+            except Exception as e:
+                logging.debug(f"[VIDEO] HUD restore failed: {e}")
         if ui_hider:
             try:
                 ui_hider.restore()
@@ -893,6 +931,27 @@ def main():
     parser.add_argument(
         "--streaming-settle", type=float, default=0.5,
         help="Seconds to wait for texture/level streaming after each camera move (default: 0.5)",
+    )
+
+    # Video recording (OBS WebSocket v5)
+    parser.add_argument(
+        "--video", dest="recorder_enabled", action="store_true",
+        help="Record gameplay video via OBS WebSocket (off by default).",
+    )
+    parser.add_argument(
+        "--no-video", dest="recorder_enabled", action="store_false",
+        help="Disable video recording (default).",
+    )
+    parser.set_defaults(recorder_enabled=False)
+    parser.add_argument("--obs-host", default="127.0.0.1")
+    parser.add_argument("--obs-port", type=int, default=4455)
+    parser.add_argument("--obs-password", default="")
+    parser.add_argument("--obs-scene", default="Capture")
+    parser.add_argument("--obs-source-name", default="Game Capture")
+    parser.add_argument("--obs-exe-path", default=None)
+    parser.add_argument(
+        "--strict-video", action="store_true",
+        help="Abort the session if OBS connect/start fails (default: degrade silently).",
     )
 
     # Output

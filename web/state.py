@@ -30,6 +30,57 @@ _active_grabber = None
 
 _path_store = PathStore()
 
+# Per-pose timestamps (seconds since recorder.start()) accumulated during a
+# session. Drained by the recorder on stop() and written to
+# video_metadata.json. List-of-floats; index aligns with trajectory.json.
+_pose_timestamps: list = []
+_recorder_t0_monotonic = None  # float | None: time.monotonic() when recording started
+
+
+def set_recorder_t0(t0: float) -> None:
+    """Publish the recorder's start time so routes can compute pose offsets."""
+    global _recorder_t0_monotonic
+    with _lock:
+        _recorder_t0_monotonic = float(t0)
+
+
+def clear_recorder_t0() -> None:
+    global _recorder_t0_monotonic
+    with _lock:
+        _recorder_t0_monotonic = None
+
+
+def record_pose_timestamp_now() -> None:
+    """If video recording is active, append the current offset to the buffer."""
+    import time as _time
+    with _lock:
+        t0 = _recorder_t0_monotonic
+    if t0 is None:
+        return
+    record_pose_timestamp(_time.monotonic() - t0)
+
+
+def record_pose_timestamp(t_seconds: float) -> None:
+    """Append a pose-capture timestamp to the active session buffer."""
+    with _lock:
+        _pose_timestamps.append(round(float(t_seconds), 4))
+
+
+def drain_pose_timestamps() -> list:
+    """Return and clear the accumulated pose timestamps."""
+    global _pose_timestamps
+    with _lock:
+        out = list(_pose_timestamps)
+        _pose_timestamps = []
+    return out
+
+
+def reset_pose_timestamps() -> None:
+    """Discard any buffered timestamps. Called at session start."""
+    global _pose_timestamps
+    with _lock:
+        _pose_timestamps = []
+
 
 def set_active_grabber(grabber) -> None:
     """Record the grabber for the currently running capture session.

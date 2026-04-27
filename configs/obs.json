@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "backend": "obs",
+  "obs_host": "127.0.0.1",
+  "obs_port": 4455,
+  "obs_password": "",
+  "obs_scene": "Capture",
+  "obs_source_name": "Game Capture",
+  "obs_exe_path": null,
+  "auto_launch_obs": true,
+  "hide_hud_during_recording": true,
+  "strict_video": false,
+  "video_bitrate_kbps": 50000,
+  "video_framerate": 60.0,
+  "video_resolution_match_game": true
+}
