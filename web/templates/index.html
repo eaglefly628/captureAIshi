@@ -977,7 +977,7 @@ body {
       <button class="btn" onclick="obsSetup()">Setup OBS</button>
     </div>
     <span id="obsStatus" style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:8px"></span>
-    <button class="modal-close" onclick="closeModal(obsModal)">Close</button>
+    <button class="modal-close" onclick="obsSaveSettings();closeModal(obsModal)">Close</button>
   </div>
 </div>
 
@@ -1437,6 +1437,15 @@ async function startCapture() {
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
 // ─── OBS Video Recording ───
+const OBS_KEYS = ['obs_host','obs_port','obs_password','obs_scene'];
+function obsSaveSettings() {
+  OBS_KEYS.forEach(k => { try { localStorage.setItem('captureAIshi.'+k, document.getElementById(k).value); } catch(_){} });
+}
+function obsLoadSettings() {
+  OBS_KEYS.forEach(k => { const v = localStorage.getItem('captureAIshi.'+k); if (v != null) document.getElementById(k).value = v; });
+}
+document.addEventListener('DOMContentLoaded', obsLoadSettings);
+
 async function obsTest() {
   const status = document.getElementById('obsStatus');
   status.textContent = 'Testing...';
