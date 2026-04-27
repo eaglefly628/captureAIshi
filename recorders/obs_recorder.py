@@ -221,9 +221,14 @@ class OBSRecorder:
         try:
             self._client.set_current_program_scene(self.scene)
         except Exception as e:
+            try:
+                scenes_resp = self._client.get_scene_list()
+                available = [s.get("sceneName", "") for s in getattr(scenes_resp, "scenes", [])]
+            except Exception:
+                available = []
             logger.warning(
                 f"[VIDEO] could not set scene '{self.scene}': {e}. "
-                f"Run scripts/setup_obs.py to provision the default scene."
+                f"Available scenes: {available}. Update the Scene field in OBS Settings."
             )
 
         try:

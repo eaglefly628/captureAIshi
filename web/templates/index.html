@@ -966,10 +966,10 @@ body {
 <div class="modal-overlay" id="obsModal" onclick="if(event.target===this){obsSaveSettings();closeModal(this);}">
   <div class="modal-box" style="width:320px">
     <h3>OBS Settings</h3>
-    <div class="f" style="margin-bottom:6px"><label>Host</label><input type="text" id="obs_host" value="127.0.0.1" onchange="obsSaveSettings()"></div>
-    <div class="f" style="margin-bottom:6px"><label>Port</label><input type="number" id="obs_port" value="4455" min="1" max="65535" onchange="obsSaveSettings()"></div>
-    <div class="f" style="margin-bottom:6px"><label>Password</label><input type="password" id="obs_password" value="" onchange="obsSaveSettings()"></div>
-    <div class="f" style="margin-bottom:6px"><label>Scene</label><input type="text" id="obs_scene" value="Capture" onchange="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Host</label><input type="text" id="obs_host" value="127.0.0.1" oninput="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Port</label><input type="number" id="obs_port" value="4455" min="1" max="65535" oninput="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Password</label><input type="password" id="obs_password" value="" oninput="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Scene</label><input type="text" id="obs_scene" value="Capture" oninput="obsSaveSettings()"></div>
     <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="hide_hud_during_recording" checked><div class="track"></div>Hide HUD via Bridge</label>
     <label class="tog" style="margin-bottom:10px"><input type="checkbox" id="strict_video"><div class="track"></div>Strict (abort on OBS failure)</label>
     <div style="display:flex;gap:6px;margin-bottom:8px">
