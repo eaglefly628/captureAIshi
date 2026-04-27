@@ -1162,13 +1162,13 @@ body {
     </div>
     <div class="cascade-detail" id="catConnection" style="display:none">
       <div class="row">
-        <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1"></div>
-        <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999"></div>
+        <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1" oninput="connSave()"></div>
+        <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999" oninput="connSave()"></div>
       </div>
       <div class="f" id="ceModeWrap"><label>CE Mode</label>
         <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
       </div>
-      <div class="f" id="targetExeWrap"><label>Game EXE Path</label><input type="text" id="target_exe" placeholder="C:\Games\MyGame\game.exe"></div>
+      <div class="f" id="targetExeWrap"><label>Game EXE Path</label><input type="text" id="target_exe" placeholder="C:\Games\MyGame\game.exe" oninput="connSave()"></div>
       <div id="gameLaunchOpts">
         <div class="f"><label>Resolution Preset</label>
           <select id="launch_res_preset" onchange="applyResPreset(this.value)">
@@ -1197,7 +1197,7 @@ body {
     </div>
     <div class="cascade-detail" id="catOutput" style="display:none">
       <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="no_hide_ui"><div class="track"></div>Disable UI Hiding</label>
-      <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output"></div>
+      <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output" oninput="connSave()"></div>
     </div>
 
     <div class="cascade-detail" id="catAdvanced" style="display:none">
@@ -1436,6 +1436,16 @@ async function startCapture() {
     _applySelectedGameProfile();
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
+// ─── Connection field persistence ───
+const CONN_KEYS = ['target_exe','driver_host','driver_port','output_dir'];
+function connSave() {
+  CONN_KEYS.forEach(k => { const el=document.getElementById(k); if(el) try { localStorage.setItem('captureAIshi.'+k, el.value); } catch(_){} });
+}
+function connLoad() {
+  CONN_KEYS.forEach(k => { const v=localStorage.getItem('captureAIshi.'+k); const el=document.getElementById(k); if(v!=null&&el) el.value=v; });
+}
+document.addEventListener('DOMContentLoaded', connLoad);
+
 // ─── OBS Video Recording ───
 const OBS_KEYS = ['obs_host','obs_port','obs_password','obs_scene'];
 function obsSaveSettings() {

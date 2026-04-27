@@ -222,6 +222,20 @@ def run_capture(args):
     stop_event = getattr(args, '_stop_event', None)
     grabber_ctx = grabber if grabber else None
 
+    _direct_game_process = None
+    if grabber_ctx is None and getattr(args, "target_exe", None) and not args.dry_run:
+        from grabbers.renderdoc import launch as _launch
+        _direct_game_process = _launch.launch_game_direct(
+            args.target_exe, getattr(args, "target_args", [])
+        )
+        _wait_port = None
+        if getattr(args, "driver", "manual") != "manual":
+            _wait_port = getattr(args, "driver_port", None)
+        try:
+            _launch.wait_for_game_ready(_direct_game_process, 90.0, _wait_port, args.target_exe)
+        except RuntimeError as e:
+            logging.warning(f"[LAUNCH] Game exited unexpectedly: {e}")
+
     if grabber_ctx:
         try:
             grabber_ctx.setup()
