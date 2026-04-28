@@ -26,6 +26,14 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (Demo Mode scaffolding, step 1)
+- 新增 `web/demo.py`: `is_demo_mode()` (env `DEMOAISHI=1`) + `DemoSession` 后台脚本化时间线 + canned 响应汇总 (bridge/hacks/obs/tools/trajectory)
+- 路由短路: `capture.py` (start/stop/bridge-test/defaults), `bridge.py` (scan_status/rescan), `hacks.py` (inject/apply/lock/unlock/uninstall/capture/get_capture/write/read_pose), `obs.py` (test/setup/status), `tools.py` (analyze_rdc), `trajectory.py` (play/decode)
+- `/api/defaults` 多返回 `demo_mode: bool`
+- UI 顶栏右侧加 `演示模式 / Demo` 渐变 ribbon, JS 在 `DOMContentLoaded` 拉 defaults 后才显
+- DEMOAISHI=0 路径全程未改, regression smoke test pass (defaults.demo_mode=False, 真实路径调用如常)
+- step 2 待办: 烤资产包 (`demo/scenarios/<name>/frames/`), step 3 timeline -> manifest 化, step 4 Dockerfile + 部署 README
+
 ### [v0.3.0] — 小由 (品牌化: 顶部 RenderDoc 字样改 爱萌捕捉 + overlay 简化)
 - toolbar grabber 下拉 `RenderDoc` -> `爱萌捕捉` (value="renderdoc" 不变, 后端无感)
 - Connection 面板 `<label>renderdoccmd</label>` -> `爱萌捕捉` (placeholder 保留技术名)

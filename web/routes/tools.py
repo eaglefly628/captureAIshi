@@ -7,6 +7,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_from_directory
 
 from grabbers.renderdoc.paths import resolve_renderdoccmd
+from web.demo import canned_tools_analyze, is_demo_mode
 
 bp = Blueprint("tools", __name__)
 
@@ -22,6 +23,8 @@ def tools_analyze_rdc():
 
     JSON body: {rdc_path: str, renderdoc_path?: str}
     """
+    if is_demo_mode():
+        return jsonify(canned_tools_analyze()), 503
     body = request.get_json(silent=True) or {}
     rdc_path_str = body.get("rdc_path", "").strip()
     if not rdc_path_str:

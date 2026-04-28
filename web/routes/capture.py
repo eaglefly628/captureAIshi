@@ -6,6 +6,9 @@ import threading
 
 from flask import Blueprint, jsonify, request
 
+from web.demo import (
+    DemoSession, canned_bridge_test, is_demo_mode,
+)
 from web.helpers import _bridge_send, _build_args
 from web.state import _capture_state, _lock, _run_in_thread, _stop_event
 
@@ -17,6 +20,11 @@ def start_capture():
     with _lock:
         if _capture_state["running"]:
             return jsonify({"ok": False, "error": "Capture already running"}), 409
+
+    if is_demo_mode():
+        if not DemoSession.start():
+            return jsonify({"ok": False, "error": "Demo session already running"}), 409
+        return jsonify({"ok": True, "demo": True})
 
     data = request.json
     if data is None:
@@ -52,6 +60,9 @@ def start_capture():
 
 @bp.route("/api/stop", methods=["POST"])
 def stop_capture():
+    if is_demo_mode():
+        DemoSession.stop()
+        return jsonify({"ok": True, "demo": True})
     _stop_event.set()
     logging.info("Stop requested by user")
     return jsonify({"ok": True})
@@ -88,6 +99,9 @@ def bridge_test():
     if not any(cmd.lower().startswith(p) for p in _SAFE_PREFIXES):
         return jsonify({"ok": False, "error": f"Command not in allowlist: {cmd}"}), 403
 
+    if is_demo_mode():
+        return jsonify(canned_bridge_test(cmd))
+
     try:
         resp = _bridge_send(cmd, timeout=8.0)
         return jsonify({"ok": True, "response": resp, "cmd": cmd})
@@ -116,4 +130,5 @@ def defaults():
         "streaming_settle": 0.5,
         "fov": 90.0,
         "aspect": 1.7778,
+        "demo_mode": is_demo_mode(),
     })

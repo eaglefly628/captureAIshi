@@ -1087,6 +1087,7 @@ body {
   <label class="tog"><input type="checkbox" id="dry_run"><div class="track"></div>Dry</label>
   <label class="tog"><input type="checkbox" id="debug_scan"><div class="track"></div>Scan</label>
   <div class="toolbar-spacer"></div>
+  <div id="demoRibbon" style="display:none;background:linear-gradient(90deg,#e94560,#f0b03e);color:#fff;font-size:10px;font-weight:700;letter-spacing:1px;padding:3px 10px;border-radius:10px;margin-right:8px;text-transform:uppercase">演示模式 / Demo</div>
   <div id="statusBadge" class="badge badge-idle"><div class="dot"></div><span id="statusText">Idle</span></div>
 </div>
 
@@ -1633,6 +1634,13 @@ function syncResPreset() {
 document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('launch_resx').addEventListener('input', syncResPreset);
   document.getElementById('launch_resy').addEventListener('input', syncResPreset);
+  // Reveal the Demo ribbon when the backend reports DEMOAISHI=1.
+  fetch('/api/defaults').then(r => r.json()).then(d => {
+    if (d && d.demo_mode) {
+      const r = document.getElementById('demoRibbon');
+      if (r) r.style.display = 'inline-block';
+    }
+  }).catch(()=>{});
 });
 
 // ─── Visibility ───

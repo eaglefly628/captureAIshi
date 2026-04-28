@@ -18,6 +18,10 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from web.demo import (
+    canned_obs_setup, canned_obs_status, canned_obs_test, is_demo_mode,
+)
+
 bp = Blueprint("obs", __name__)
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,8 @@ def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 @bp.route("/api/obs/test", methods=["POST"])
 def obs_test():
     """Probe OBS WebSocket. Returns version + available scenes if reachable."""
+    if is_demo_mode():
+        return jsonify(canned_obs_test())
     body = request.get_json(silent=True) or {}
     cfg = _load_obs_config()
     host = str(body.get("obs_host") or cfg.get("obs_host", "127.0.0.1"))
@@ -114,6 +120,8 @@ def obs_config_save():
 
 @bp.route("/api/obs/status", methods=["GET"])
 def obs_status():
+    if is_demo_mode():
+        return jsonify(canned_obs_status())
     cfg = _load_obs_config()
     host = cfg.get("obs_host", "127.0.0.1")
     port = int(cfg.get("obs_port", 4455))
@@ -136,6 +144,8 @@ _setup_running = False
 def obs_setup():
     """Run scripts/setup_obs.py in the background; route stdout to log."""
     global _setup_running
+    if is_demo_mode():
+        return jsonify(canned_obs_setup())
     if not SETUP_SCRIPT.is_file():
         return jsonify({"ok": False, "error": f"{SETUP_SCRIPT} not found"}), 500
 
