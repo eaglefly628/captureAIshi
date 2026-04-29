@@ -26,6 +26,14 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (Demo Mode step 4: Dockerfile + 部署 README)
+- 新增 `Dockerfile` (python:3.11-slim + gunicorn 1 worker / 4 threads, 默认 DEMOAISHI=1, DEMOAISHI_SCENARIO=batman_ak, PORT=8080)
+- 新增 `requirements-demo.txt` (flask + numpy + gunicorn 三件套, 不含 cv2/obsws/mss/Pillow/pywebview/requests)
+- 新增 `.dockerignore` (剔 renderdoc/, 3rdparty/, output/, *.rdc/*.exr, recorders/obs_recorder.py, desktop_app.py, tests/, agents/, .claude/, docs/refCode/) -- 镜像目标 ~150MB
+- `web_ui.py` `_ensure_exr_loader()` 在 demo 下跳过 (省 30s 冷启 + 80MB cv2)
+- 新增 `docs/deploy_demo.md`: docker build/run 本地 + Fly.io / Render / Railway / VPS 四条部署路径 + 真帧 drop-in 流程 + 新场景模板 + curl smoke test
+- 用 meta_path GuardLoader 验证 demo 全流程 import 不触 cv2/obsws/webview/mss/PIL/requests, 烤镜像深度可控
+
 ### [v0.3.0] — 小由 (Demo Mode step 2: Batman scenario bundle)
 - 新增 `demo/scenarios/batman_ak/` 场景包: `manifest.json` (display_name / total_poses / dwell), `script.json` (preamble + pose_template + postamble Batman-flavored), `frames/.gitkeep` (用户后续填真帧), `README.md`
 - `web/demo.py` 重构: `_load_scenario(name)` 从盘加载 + 缓存; 缺失时回退 in-module default; `DemoSession.__init__(scenario: dict)` 改读 manifest 的 total_poses / dwell; pose_template 走 `.format(i, n)`

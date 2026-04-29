@@ -1,0 +1,52 @@
+# Drop everything the demo container does not need at runtime.
+# This keeps the image small (~150 MB instead of ~3 GB).
+
+# Forks / vendored binaries
+renderdoc/
+3rdparty/
+renderdoc_ext/
+
+# Captures, intermediate output, RDC files
+output/
+**/*.rdc
+**/*.exr
+
+# Build artefacts
+build/
+dist/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.so
+**/*.pyd
+
+# Dev-only docs and reference code
+docs/refCode/
+docs/uuuaobcapture_game_survey.md
+
+# Tests + scripts not used in demo
+tests/
+scripts/setup_obs.py
+
+# Local IDE / git noise
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Agent workspace + per-user state
+agents/
+.claude/
+
+# Real-capture-only modules (defensive: demo path never imports these,
+# but if a future regression starts pulling them they will be missing
+# in the image and fail loud rather than try to dial real hardware)
+recorders/obs_recorder.py
+desktop_app.py
+
+# Heavy native deps that are NOT in requirements-demo.txt; if they get
+# accidentally added to the build context, drop them too
+*.dll
+*.exe
