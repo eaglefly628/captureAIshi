@@ -26,6 +26,13 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (Demo Mode step 2: Batman scenario bundle)
+- 新增 `demo/scenarios/batman_ak/` 场景包: `manifest.json` (display_name / total_poses / dwell), `script.json` (preamble + pose_template + postamble Batman-flavored), `frames/.gitkeep` (用户后续填真帧), `README.md`
+- `web/demo.py` 重构: `_load_scenario(name)` 从盘加载 + 缓存; 缺失时回退 in-module default; `DemoSession.__init__(scenario: dict)` 改读 manifest 的 total_poses / dwell; pose_template 走 `.format(i, n)`
+- env `DEMOAISHI_SCENARIO` 选场景, 默认 `batman_ak`
+- `DemoSession.start()` 自动把 `_capture_state.output_dir` 指向场景 `frames/`, 这样 `/api/sessions` + `/api/captures` 直接服务真帧, 无需额外接线
+- Smoke: 场景加载 OK, 11 preamble + 5 postamble + 30 poses, log 显示 'Demo capture session starting (DEMO_MODE: Batman: Arkham Knight)', sessions 列表 active='frames'
+
 ### [v0.3.0] — 小由 (Demo Mode scaffolding, step 1)
 - 新增 `web/demo.py`: `is_demo_mode()` (env `DEMOAISHI=1`) + `DemoSession` 后台脚本化时间线 + canned 响应汇总 (bridge/hacks/obs/tools/trajectory)
 - 路由短路: `capture.py` (start/stop/bridge-test/defaults), `bridge.py` (scan_status/rescan), `hacks.py` (inject/apply/lock/unlock/uninstall/capture/get_capture/write/read_pose), `obs.py` (test/setup/status), `tools.py` (analyze_rdc), `trajectory.py` (play/decode)

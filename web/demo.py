@@ -13,16 +13,24 @@ Runtime behaviour:
 - ``canned_*`` helpers return shaped responses for the bridge / hacks /
   OBS endpoints so 注入菜单 and friends never see an error.
 
-Step-1 scope: scaffolding only. No pre-baked frames yet (Output gallery
-will be empty until step 2 ships ``demo/scenarios/<name>/frames/``).
+The active scenario is selected via ``DEMOAISHI_SCENARIO`` (default
+``batman_ak``). It must point at a directory under
+``demo/scenarios/<name>/`` containing ``manifest.json`` and
+``script.json``. If either file is missing the session falls back to
+the in-module default timeline.
 """
 
+import json
 import logging
 import os
 import threading
 import time
+from pathlib import Path
 
 from web.state import _capture_state, _lock
+
+
+_SCENARIO_ROOT = Path(__file__).resolve().parent.parent / "demo" / "scenarios"
 
 
 def is_demo_mode() -> bool:
@@ -30,31 +38,83 @@ def is_demo_mode() -> bool:
     return os.environ.get("DEMOAISHI", "").strip() == "1"
 
 
-# ── Scripted timeline ────────────────────────────────────────────────────────
+def active_scenario_name() -> str:
+    """Name of the scenario directory under ``demo/scenarios/``."""
+    return os.environ.get("DEMOAISHI_SCENARIO", "").strip() or "batman_ak"
 
-# Pre-amble lines (emitted before the per-pose loop). Each tuple is
-# (delay_seconds_after_previous, message). Times are spaced so the user
-# can read along.
-_PREAMBLE = [
+
+# ── Default in-module timeline (used when the scenario files are missing) ────
+
+_DEFAULT_PREAMBLE = [
     (0.0, "[CLEAN] Removing previous output: ./output/demo"),
     (0.4, "[STARTUP] Launching capture target via 爱萌捕捉"),
-    (1.0, "[STARTUP] Game window detected on adapter 0 (NVIDIA RTX 4080)"),
-    (0.6, "[BRIDGE] Connecting to renderdoc.dll (127.0.0.1:9999)..."),
+    (1.0, "[STARTUP] Game window detected on adapter 0"),
     (0.5, "[BRIDGE] Connected. UWorld=0x12A4E0000 LocalPlayer=0x12A6F8240"),
-    (0.4, "[INJECT] Loading hack profile: cyberpunk2077"),
-    (0.6, "[INJECT] AOB scan @ camwrite (24 bytes): hit at 0x7FF6A2C18E40"),
+    (0.4, "[INJECT] AOB scan: hit at 0x7FF6A2C18E40"),
     (0.4, "[INJECT] All sites switched to NOP, base register captured"),
-    (0.5, "[CAPTURE] Trajectory loaded: 30 waypoints (smooth, 5 pts/segment)"),
-    (0.3, "[CAPTURE] Beginning capture loop @ 1.5s/pose"),
+    (0.5, "[CAPTURE] Trajectory loaded"),
+    (0.3, "[CAPTURE] Beginning capture loop"),
 ]
 
-_POSTAMBLE = [
-    (0.4, "[CAPTURE] All poses done. Decoding 30 .rdc files..."),
-    (1.2, "[CAPTURE] Decoded 30 captures: RGB + Depth + Normal triplets"),
-    (0.3, "[CAPTURE] Wrote trajectory.json + frame index"),
-    (0.2, "[BRIDGE] Disconnecting"),
+_DEFAULT_POSE_TEMPLATE = "Pose {i}/{n} captured"
+
+_DEFAULT_POSTAMBLE = [
+    (0.4, "[CAPTURE] All poses done. Decoding..."),
+    (1.0, "[CAPTURE] Decoded captures: RGB + Depth + Normal triplets"),
     (0.2, "Capture finished."),
 ]
+
+
+def _load_scenario(name: str) -> dict:
+    """Load a scenario (manifest + script) from disk. Cached after first call."""
+    cached = _SCENARIO_CACHE.get(name)
+    if cached is not None:
+        return cached
+
+    sc_dir = _SCENARIO_ROOT / name
+    manifest_path = sc_dir / "manifest.json"
+    script_path = sc_dir / "script.json"
+    out: dict = {
+        "name": name,
+        "dir": sc_dir if sc_dir.is_dir() else None,
+        "manifest": {},
+        "preamble": list(_DEFAULT_PREAMBLE),
+        "postamble": list(_DEFAULT_POSTAMBLE),
+        "pose_template": _DEFAULT_POSE_TEMPLATE,
+    }
+    if manifest_path.is_file():
+        try:
+            out["manifest"] = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logging.warning("[demo] manifest %s parse failed: %s", manifest_path, e)
+    if script_path.is_file():
+        try:
+            doc = json.loads(script_path.read_text(encoding="utf-8"))
+            if isinstance(doc.get("preamble"), list):
+                out["preamble"] = [(float(t), str(m)) for t, m in doc["preamble"]]
+            if isinstance(doc.get("postamble"), list):
+                out["postamble"] = [(float(t), str(m)) for t, m in doc["postamble"]]
+            if isinstance(doc.get("pose_template"), str):
+                out["pose_template"] = doc["pose_template"]
+        except Exception as e:
+            logging.warning("[demo] script %s parse failed: %s", script_path, e)
+    _SCENARIO_CACHE[name] = out
+    return out
+
+
+_SCENARIO_CACHE: dict = {}
+
+
+def _scenario_frames_dir(scenario: dict) -> Path | None:
+    """Return frames/ for the scenario if it exists and contains files."""
+    sc_dir = scenario.get("dir")
+    if sc_dir is None:
+        return None
+    sub = scenario.get("manifest", {}).get("frames_dir") or "frames"
+    frames = Path(sc_dir) / sub
+    if not frames.is_dir():
+        return None
+    return frames
 
 
 class DemoSession:
@@ -63,9 +123,11 @@ class DemoSession:
     _instance = None  # type: ignore[assignment]
     _lock = threading.Lock()
 
-    def __init__(self, total_poses: int = 30, capture_dwell_s: float = 0.45):
-        self.total = total_poses
-        self.dwell = capture_dwell_s
+    def __init__(self, scenario: dict):
+        self.scenario = scenario
+        manifest = scenario.get("manifest", {})
+        self.total = int(manifest.get("total_poses", 30))
+        self.dwell = float(manifest.get("pose_dwell_seconds", 0.45))
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -81,18 +143,25 @@ class DemoSession:
         return self._stop.wait(timeout=seconds)
 
     def _run(self) -> None:
+        manifest = self.scenario.get("manifest", {})
+        display = manifest.get("display_name") or self.scenario.get("name", "demo")
         try:
-            self._emit("Demo capture session starting (DEMO_MODE)")
+            self._emit(f"Demo capture session starting (DEMO_MODE: {display})")
             self._emit(f"Total camera poses: {self.total}")
-            for delay, msg in _PREAMBLE:
+            for delay, msg in self.scenario.get("preamble", _DEFAULT_PREAMBLE):
                 if self._sleep(delay):
                     return
                 self._emit(msg)
-            for i in range(self.total):
+            tmpl = self.scenario.get("pose_template", _DEFAULT_POSE_TEMPLATE)
+            for i in range(1, self.total + 1):
                 if self._sleep(self.dwell):
                     return
-                self._emit(f"Pose {i + 1}/{self.total} captured")
-            for delay, msg in _POSTAMBLE:
+                try:
+                    msg = tmpl.format(i=i, n=self.total)
+                except (KeyError, ValueError):
+                    msg = f"Pose {i}/{self.total} captured"
+                self._emit(msg)
+            for delay, msg in self.scenario.get("postamble", _DEFAULT_POSTAMBLE):
                 if self._sleep(delay):
                     return
                 self._emit(msg)
@@ -112,13 +181,19 @@ class DemoSession:
         with cls._lock:
             if cls._instance is not None:
                 return False
-            sess = cls()
+            scenario = _load_scenario(active_scenario_name())
+            sess = cls(scenario)
             cls._instance = sess
+        # Point the output_dir at the scenario's frames/ when present, so the
+        # existing /api/sessions + /api/captures routes serve real triplets
+        # without any extra plumbing. Falls back to ./output/demo otherwise.
+        frames = _scenario_frames_dir(scenario)
+        out_dir = str(frames) if frames is not None else "./output/demo"
         with _lock:
             _capture_state["running"] = True
             _capture_state["logs"] = []
             _capture_state["error"] = None
-            _capture_state["output_dir"] = "./output/demo"
+            _capture_state["output_dir"] = out_dir
         sess._thread.start()
         return True
 
