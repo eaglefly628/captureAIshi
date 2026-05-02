@@ -25,6 +25,18 @@
             "program": "${workspaceFolder}/web_ui.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Web UI (Demo Mode)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/web_ui.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "DEMOAISHI": "1",
+                "DEMOAISHI_SCENARIO": "batman_ak"
+            }
         }
     ]
 }
