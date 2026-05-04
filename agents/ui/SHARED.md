@@ -26,6 +26,13 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (爱萌官网 WP-lite stack 与 demo 同 ECS)
+- 新增 `wp-stack/docker-compose.yml`: MySQL 8 (tuned) + WP 6.5 (php-fpm-alpine) + Nginx, RAM 上限合计 ~550MB, 2GB ECS 余量充足
+- MySQL tuning: innodb_buffer_pool_size=64M, max_connections=20, performance_schema=OFF -> 从默认 600MB 砍到 ~280MB
+- 端口 8081 (demo 占 8080), `.env.example` + `.gitignore` 防泄密码
+- `docs/deploy_wp.md`: 一次性部署 + 安全组 + 首次安装向导 + Astra Starter Templates 推荐 + 必装插件 + 升级/备份 + MariaDB 切换备案
+- 用户决定先用 MySQL 试,瓶颈再切 MariaDB
+
 ### [v0.3.0] — 小由 (Demo Mode: 7-pose Batman + 3D progressive draw)
 - `manifest.json`: total_poses 30 -> 7, pose_dwell 0.45 -> 2.0 (节奏更接近真实抓帧, 总时长 ~27s)
 - `script.json` postamble 改成"逐帧 decode" 7 行, 听感像真跑 renderdoccmd
