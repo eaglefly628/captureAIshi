@@ -1457,7 +1457,31 @@ async function startCapture() {
     const dp = document.getElementById('debugPanel');
     if (dp && dp.style.display === 'none') toggleDebugPanel();
     _applySelectedGameProfile();
+    // Demo-mode: switch to 3D View so the customer watches the trajectory
+    // being traced as DemoSession ticks. Reset progress + load orbit path
+    // pre-baked at demo/scenarios/<name>/frames/trajectory.json.
+    if (r.demo) {
+      demoPose = 0;
+      activeSession = activeSession || 'frames';
+      viewSession = activeSession;
+      switchCenterTab('3d');
+      _startDemoAnimLoop();
+    }
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
+}
+
+// rAF loop that re-renders the 3D canvas while a demo run is active so the
+// pulsing highlight on the current waypoint stays animated.
+function _startDemoAnimLoop() {
+  if (demoAnimRaf) cancelAnimationFrame(demoAnimRaf);
+  const tick = () => {
+    if (view3dActive) draw3d();
+    demoAnimRaf = requestAnimationFrame(tick);
+  };
+  demoAnimRaf = requestAnimationFrame(tick);
+}
+function _stopDemoAnimLoop() {
+  if (demoAnimRaf) { cancelAnimationFrame(demoAnimRaf); demoAnimRaf = null; }
 }
 // ─── Connection field persistence ───
 const CONN_KEYS = ['target_exe','driver_host','driver_port','output_dir'];
@@ -1571,6 +1595,13 @@ function startPolling() {
     try {
       const r = await(await fetch('/api/status')).json();
       if(r.logs.length>last){ for(let i=last;i<r.logs.length;i++) addLog(r.logs[i]); last=r.logs.length; }
+      // Demo-mode progress: drive the progressive trajectory render.
+      if (typeof r.demo_pose === 'number') {
+        if (r.demo_pose !== demoPose) {
+          demoPose = r.demo_pose;
+          if (view3dActive) draw3d();
+        }
+      }
       if(!r.running){
         clearInterval(polling); polling=null;
         document.getElementById('btnStart').disabled=false;
@@ -1578,6 +1609,9 @@ function startPolling() {
         document.getElementById('btnStop').style.display='none';
         if(r.error){ setBadge('error'); addLog('FAILED: '+r.error,'error'); }
         else { setBadge('idle'); addLog('Capture finished.','success'); }
+        // Demo run finished -> stop animation, reveal the full path.
+        _stopDemoAnimLoop();
+        if (demoPose > 0) { demoPose = 0; if (view3dActive) draw3d(); }
         fetch('/api/input/stop', {method:'POST'}).then(async resp => {
           const d = await resp.json().catch(()=>({}));
           if (d.ok && d.file) { addLog(`[INPUT] saved ${d.events} events → ${d.file}`, 'info'); inputRecRefreshFiles(); }
@@ -2068,6 +2102,9 @@ function inputRecDraw(events) {
 let view3dActive = false;
 const cam3d = { rotX: -0.5, rotY: 0.6, dist: 20, cx: 0, cy: 1.5, cz: 0 };
 let trajData = null;
+// Demo-mode progress: 1..N during a fake run, 0 = inactive (full path).
+let demoPose = 0;
+let demoAnimRaf = null;
 
 function switchCenterTab(tab) {
   const logEl = document.getElementById('logBody');
@@ -2156,24 +2193,58 @@ function draw3d() {
   // Waypoints from trajectory
   const points = trajData || [];
   if (points.length) {
-    // Path lines
+    // Demo-mode progressive draw: only render points up to demoPose. The
+    // current pose (demoPose-1, 0-indexed) gets a pulsing highlight so
+    // the client sees the trajectory being traced as the capture loop
+    // ticks. Outside demo mode we render the whole path normally.
+    const limit = (demoPose > 0) ? demoPose : points.length;
+
+    // Path lines (only up to current pose in demo)
     ctx.strokeStyle = 'rgba(62,207,142,0.5)';
     ctx.lineWidth = 1.5 * devicePixelRatio;
     ctx.beginPath();
     let started = false;
-    points.forEach(p => {
+    for (let i = 0; i < limit; i++) {
+      const p = points[i];
       const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
       if (pp) { if (!started) { ctx.moveTo(pp.x, pp.y); started = true; } else ctx.lineTo(pp.x, pp.y); }
-    });
+    }
     ctx.stroke();
+
+    // Future (un-captured) waypoints: faint dashed preview
+    if (demoPose > 0 && demoPose < points.length) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      let started2 = false;
+      for (let i = demoPose - 1; i < points.length; i++) {
+        const p = points[i];
+        const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
+        if (pp) { if (!started2) { ctx.moveTo(pp.x, pp.y); started2 = true; } else ctx.lineTo(pp.x, pp.y); }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     // Dots
     points.forEach((p, i) => {
       const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
       if (!pp) return;
-      const r = 3 * devicePixelRatio;
-      ctx.fillStyle = p.viewName === 'center' ? '#3ecf8e' : '#5b8af0';
-      ctx.beginPath(); ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2); ctx.fill();
+      const isCurrent = (demoPose > 0 && i === demoPose - 1);
+      const isFuture = (demoPose > 0 && i >= demoPose);
+      const baseR = 3 * devicePixelRatio;
+      if (isFuture) {
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, baseR, 0, Math.PI * 2); ctx.fill();
+      } else if (isCurrent) {
+        // Pulsing accent for the most recently captured pose
+        const pulse = 1 + 0.5 * Math.sin(performance.now() / 200);
+        ctx.fillStyle = '#f0b03e';
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, baseR * pulse, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = p.viewName === 'center' ? '#3ecf8e' : '#5b8af0';
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, baseR, 0, Math.PI * 2); ctx.fill();
+      }
     });
   }
 

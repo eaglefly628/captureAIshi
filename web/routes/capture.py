@@ -71,11 +71,17 @@ def stop_capture():
 @bp.route("/api/status")
 def capture_status():
     with _lock:
-        return jsonify({
+        out = {
             "running": _capture_state["running"],
             "logs": _capture_state["logs"],
             "error": _capture_state["error"],
-        })
+        }
+        # Demo mode only: tell the front-end how many poses are "done"
+        # so the 3D viewer can render the trajectory progressively.
+        if "demo_pose" in _capture_state:
+            out["demo_pose"] = _capture_state["demo_pose"]
+            out["demo_total"] = _capture_state.get("demo_total", 0)
+        return jsonify(out)
 
 
 @bp.route("/api/bridge-test", methods=["POST"])

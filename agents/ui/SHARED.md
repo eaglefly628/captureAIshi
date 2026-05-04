@@ -26,6 +26,17 @@
 
 ## Changelog (latest)
 
+### [v0.3.0] — 小由 (Demo Mode: 7-pose Batman + 3D progressive draw)
+- `manifest.json`: total_poses 30 -> 7, pose_dwell 0.45 -> 2.0 (节奏更接近真实抓帧, 总时长 ~27s)
+- `script.json` postamble 改成"逐帧 decode" 7 行, 听感像真跑 renderdoccmd
+- 新增 `frames/trajectory.json`: 7 个 orbit waypoint (r=4, 略带 y 波动), 视图绕原点
+- `demo.py` `DemoSession` 在 pose loop 里发布 `demo_pose` 到 `_capture_state`
+- `routes/capture.py` `/api/status` 返回 `demo_pose` + `demo_total`
+- `index.html` startCapture 在 demo 分支自动 `switchCenterTab('3d')` + 启 rAF 循环刷新画面
+- `draw3d` 改: 已抓 waypoint 实色 + 当前 waypoint 橘色脉动 + 未抓 waypoint 半透灰 + 未来段虚线
+- startPolling 拾取 `demo_pose`, demo 结束自动停 anim loop, 复位 0 显示完整路径
+- 7 帧虚拟 + 3D 实时画路径 = 客户能看到"相机沿轨迹拍照"的过程
+
 ### [v0.3.0] — 小由 (Demo Mode step 4: Dockerfile + 部署 README)
 - 新增 `Dockerfile` (python:3.11-slim + gunicorn 1 worker / 4 threads, 默认 DEMOAISHI=1, DEMOAISHI_SCENARIO=batman_ak, PORT=8080)
 - 新增 `requirements-demo.txt` (flask + numpy + gunicorn 三件套, 不含 cv2/obsws/mss/Pillow/pywebview/requests)

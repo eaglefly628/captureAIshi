@@ -148,6 +148,9 @@ class DemoSession:
         try:
             self._emit(f"Demo capture session starting (DEMO_MODE: {display})")
             self._emit(f"Total camera poses: {self.total}")
+            with _lock:
+                _capture_state["demo_pose"] = 0
+                _capture_state["demo_total"] = self.total
             for delay, msg in self.scenario.get("preamble", _DEFAULT_PREAMBLE):
                 if self._sleep(delay):
                     return
@@ -161,6 +164,9 @@ class DemoSession:
                 except (KeyError, ValueError):
                     msg = f"Pose {i}/{self.total} captured"
                 self._emit(msg)
+                # Publish progress so the 3D viewer can highlight up to here.
+                with _lock:
+                    _capture_state["demo_pose"] = i
             for delay, msg in self.scenario.get("postamble", _DEFAULT_POSTAMBLE):
                 if self._sleep(delay):
                     return
