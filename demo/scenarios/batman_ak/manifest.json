@@ -1,0 +1,10 @@
+{
+  "scenario": "batman_ak",
+  "display_name": "Batman: Arkham Knight",
+  "game_profile_id": "batman_ak",
+  "engine": "UE3",
+  "total_poses": 7,
+  "pose_dwell_seconds": 2.0,
+  "frames_dir": "frames",
+  "notes": "Client-demo scenario. 7-pose virtual capture matched to 7 user-uploaded RGB+Depth+Normal triplets in frames/. trajectory.json is pre-baked (orbit) so the 3D View renders progressively as the demo runs."
+}

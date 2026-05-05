@@ -70,6 +70,15 @@ def _hack_profile_launch_style(profile_id: str, target_exe: str = "") -> str:
     return _hack_profile_data(profile_id, target_exe).get("launch_arg_style", "unreal")
 
 
+def _load_obs_defaults() -> dict:
+    """Load configs/obs.json once per call (cheap), fall back to empty dict."""
+    path = Path(__file__).resolve().parent.parent / "configs" / "obs.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
 def _build_session_name(driver: str, grabber: str, dry_run: bool) -> str:
     """Build a short session subdirectory name from capture config."""
     _driver_abbrev = {
@@ -163,4 +172,32 @@ def _build_args(data: dict) -> Namespace:
     session_name = _build_session_name(driver, grabber, args.dry_run)
     args.output_dir = base_dir / session_name
     args.clean_start = bool(data.get("clean_start", True))
+
+    # Video recording (OBS WebSocket). Form keys live under "recorder" or
+    # at the top level; missing keys fall through to configs/obs.json.
+    rec = data.get("recorder")
+    if not isinstance(rec, dict):
+        rec = {}
+    obs_defaults = _load_obs_defaults()
+
+    def _rec(key: str, default):
+        if key in rec:
+            return rec[key]
+        if key in obs_defaults:
+            return obs_defaults[key]
+        return default
+
+    args.recorder_enabled = bool(_rec("enabled", False))
+    args.recorder_backend = str(_rec("backend", "obs"))
+    args.obs_host = str(_rec("obs_host", "127.0.0.1"))
+    args.obs_port = max(1, min(65535, int(_rec("obs_port", 4455))))
+    args.obs_password = str(_rec("obs_password", ""))
+    args.obs_scene = str(_rec("obs_scene", "Capture"))
+    args.obs_source_name = str(_rec("obs_source_name", "Game Capture"))
+    args.obs_exe_path = _rec("obs_exe_path", None) or None
+    args.auto_launch_obs = bool(_rec("auto_launch_obs", True))
+    args.hide_hud_during_recording = bool(_rec("hide_hud_during_recording", True))
+    args.strict_video = bool(_rec("strict_video", False))
+    args.video_bitrate_kbps = int(_rec("video_bitrate_kbps", 50000))
+    args.video_framerate = float(_rec("video_framerate", 60.0))
     return args

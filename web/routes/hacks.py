@@ -7,6 +7,11 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from web.demo import (
+    canned_hacks_apply, canned_hacks_get_capture, canned_hacks_read_pose,
+    canned_hacks_simple, canned_hacks_write, canned_inject, is_demo_mode,
+)
+
 _HACKS_DIR = Path(__file__).resolve().parent.parent.parent / "configs" / "hacks"
 
 bp = Blueprint("hacks", __name__)
@@ -24,6 +29,8 @@ def hacks_list():
 @bp.route("/api/inject", methods=["POST"])
 def inject_bridge():
     """Inject renderdoc.dll (bridge) into a running game process via renderdoccmd inject."""
+    if is_demo_mode():
+        return jsonify(canned_inject())
     data = request.get_json(silent=True) or {}
     process_name = data.get("process_name", "").strip()
     renderdoc_path = data.get("renderdoc_path", "renderdoccmd").strip() or "renderdoccmd"
@@ -105,6 +112,8 @@ def hacks_profile_delete(profile_id: str):
 def hacks_apply(profile_id: str):
     if not profile_id.replace("_", "").isalnum():
         return jsonify({"ok": False, "error": "bad profile id"}), 400
+    if is_demo_mode():
+        return jsonify(canned_hacks_apply(profile_id))
     try:
         from drivers import game_profile
         result = game_profile.apply_profile(profile_id)
@@ -119,6 +128,8 @@ def hacks_apply(profile_id: str):
 
 @bp.route("/api/hacks/lock", methods=["POST"])
 def hacks_lock():
+    if is_demo_mode():
+        return jsonify(canned_hacks_simple("lock"))
     try:
         from drivers import game_profile
         return jsonify({"ok": True, "result": game_profile.lock_camera()})
@@ -128,6 +139,8 @@ def hacks_lock():
 
 @bp.route("/api/hacks/unlock", methods=["POST"])
 def hacks_unlock():
+    if is_demo_mode():
+        return jsonify(canned_hacks_simple("unlock"))
     try:
         from drivers import game_profile
         return jsonify({"ok": True, "result": game_profile.unlock_camera()})
@@ -137,6 +150,8 @@ def hacks_unlock():
 
 @bp.route("/api/hacks/uninstall", methods=["POST"])
 def hacks_uninstall():
+    if is_demo_mode():
+        return jsonify(canned_hacks_simple("uninstall"))
     try:
         from drivers import game_profile
         return jsonify({"ok": True, "result": game_profile.uninstall_all()})
@@ -147,6 +162,8 @@ def hacks_uninstall():
 @bp.route("/api/hacks/capture", methods=["POST"])
 def hacks_capture():
     """Switch all sites to CAPTURE mode (NOP + snapshot base register)."""
+    if is_demo_mode():
+        return jsonify(canned_hacks_simple("capture"))
     try:
         from drivers import game_profile
         return jsonify({"ok": True, "result": game_profile.capture_all()})
@@ -157,6 +174,8 @@ def hacks_capture():
 @bp.route("/api/hacks/get_capture", methods=["GET"])
 def hacks_get_capture():
     """Return captured struct address for a slot. ?slot=0 by default."""
+    if is_demo_mode():
+        return jsonify(canned_hacks_get_capture())
     try:
         from drivers import game_profile
         slot = int(request.args.get("slot", "0"))
@@ -179,6 +198,8 @@ def hacks_write(profile_id: str):
     """
     if not profile_id.replace("_", "").isalnum():
         return jsonify({"ok": False, "error": "bad profile id"}), 400
+    if is_demo_mode():
+        return jsonify(canned_hacks_write(profile_id))
     body = request.get_json(silent=True) or {}
     try:
         from drivers import game_profile
@@ -205,6 +226,8 @@ def hacks_read_pose(profile_id: str):
     """Read current camera pose from captured struct using profile offsets."""
     if not profile_id.replace("_", "").isalnum():
         return jsonify({"ok": False, "error": "bad profile id"}), 400
+    if is_demo_mode():
+        return jsonify(canned_hacks_read_pose(profile_id))
     try:
         from drivers import game_profile
         slot = int(request.args.get("slot", 0))

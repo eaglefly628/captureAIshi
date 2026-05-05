@@ -1,0 +1,32 @@
+{
+  "preamble": [
+    [0.0, "[CLEAN] Removing previous output: ./output/demo"],
+    [0.5, "[STARTUP] Launching capture target via 爱萌捕捉"],
+    [0.9, "[STARTUP] Game window detected: BatmanAK.exe (UE3, build 1.6.2.0)"],
+    [0.6, "[STARTUP] Adapter 0 ready, swapchain 1920x1080 R8G8B8A8_UNORM"],
+    [0.5, "[BRIDGE] Connecting to renderdoc.dll @ 127.0.0.1:9998 ..."],
+    [0.6, "[BRIDGE] __bridge_status uworld_found=1 localplayer_found=1 camera_manager_found=1"],
+    [0.5, "[INJECT] Loading hack profile: batman_ak (Batman: Arkham Knight)"],
+    [0.7, "[INJECT] AOB scan @ camera_write (60 bytes literal: 89 83 74 05 00 00 ...)"],
+    [0.8, "[INJECT] Site 'camera_write' matched at 0x7FF6A2C18E40 (rbx-based, UE3 packed rotator)"],
+    [0.4, "[INJECT] Apply: 1/1 sites installed, NOP-mode armed, base register snapshot ready"],
+    [0.5, "[CAPTURE] Trajectory loaded: 7 waypoints (orbit, smooth)"],
+    [0.4, "[CAPTURE] Beginning capture loop @ 2.0 s/pose"]
+  ],
+  "pose_template": "Pose {i}/{n} captured -> ./output/demo/{i:04d}_main.png + _d.png + _n.png",
+  "postamble": [
+    [0.6, "[CAPTURE] All 7 poses done. Pulling .rdc files from disk..."],
+    [0.4, "[DECODE] renderdoccmd exportframe spawned (PID 19284)"],
+    [0.5, "[DECODE] 0001_main.rdc -> RGB (R8G8B8A8 unorm_pre_ui) + Depth (D32S8 log) + Normal (R10G10B10A2 GBufferA)"],
+    [0.5, "[DECODE] 0002_main.rdc -> RGB + Depth + Normal"],
+    [0.5, "[DECODE] 0003_main.rdc -> RGB + Depth + Normal"],
+    [0.5, "[DECODE] 0004_main.rdc -> RGB + Depth + Normal"],
+    [0.5, "[DECODE] 0005_main.rdc -> RGB + Depth + Normal"],
+    [0.5, "[DECODE] 0006_main.rdc -> RGB + Depth + Normal"],
+    [0.5, "[DECODE] 0007_main.rdc -> RGB + Depth + Normal"],
+    [0.4, "[DECODE] All 7 captures decoded. 21 PNG triplets written."],
+    [0.3, "[CAPTURE] Wrote trajectory.json (7 poses) + frame index"],
+    [0.3, "[BRIDGE] Disconnecting -- camera unlocked, sites uninstalled"],
+    [0.3, "Capture finished."]
+  ]
+}

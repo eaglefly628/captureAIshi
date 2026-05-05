@@ -17,7 +17,7 @@ After finishing a TODO / pushing code / producing a document, call `notify("titl
 
 ## Version
 
-**Current: v0.2.0** — see `.claude/rules/versioning.md` for rules, `CHANGELOG.md` for history.
+**Current: v0.3.0** — see `.claude/rules/versioning.md` for rules, `CHANGELOG.md` for history.
 
 ## Architecture
 
@@ -26,8 +26,9 @@ Pipeline for capturing RGB + Depth + Normal from published games:
 1. **Core** (`core/`) — Pure Python path generation (waypoints, snake path, cone rotation, tangent smoothing). Engine-agnostic.
 2. **Drivers** (`drivers/`) — Camera control adapters. Each driver connects to a game via its specific protocol (UE5 console TCP, Unity BepInEx socket, Cheat Engine memory, manual).
 3. **Grabbers** (`grabbers/`) — Frame capture. RenderDoc replay API for RGB+Depth+Normal, screenshot fallback.
-4. **Web UI** (`web_ui.py` + `web/templates/`) — Flask + pywebview desktop GUI. Capture controls, log viewer, image gallery, 3D waypoint visualizer.
-5. **Utils** (`utils/`) — Shared utilities (coordinate system conversions, etc.).
+4. **Recorders** (`recorders/`) — Optional gameplay video capture. `OBSRecorder` drives OBS Studio over WebSocket v5; `NullRecorder` is the no-op fallback when video is disabled. Output lands as `video.mp4` + `video_metadata.json` (with pose timestamps for trajectory alignment) next to `trajectory.json`.
+5. **Web UI** (`web_ui.py` + `web/templates/`) — Flask + pywebview desktop GUI. Capture controls, log viewer, image gallery, 3D waypoint visualizer.
+6. **Utils** (`utils/`) — Shared utilities (coordinate system conversions, etc.).
 
 ### Startup order
 

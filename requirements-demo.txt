@@ -1,0 +1,7 @@
+# Minimum runtime deps for the cloud-deployed DEMOAISHI=1 build.
+# The full pipeline deps (cv2, obsws-python, mss, pywebview, requests, etc.)
+# are intentionally excluded -- demo mode never imports the real grabber /
+# recorder / driver modules.
+flask>=2.0.0
+numpy>=1.21.0
+gunicorn>=21.2.0

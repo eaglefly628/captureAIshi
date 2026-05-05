@@ -124,8 +124,8 @@ def create_grabber(args):
         return ScreenshotGrabber(
             screenshot_dir=str(args.output_dir / "screenshots"),
         )
-    elif args.grabber == "none":
-        logging.debug("[INIT] No grabber selected")
+    elif args.grabber in ("none", "obs"):
+        logging.debug(f"[INIT] No frame grabber (grabber={args.grabber})")
         return None
     else:
         raise ValueError(f"Unknown grabber: {args.grabber}")
@@ -191,6 +191,9 @@ def run_capture(args):
         logging.info("Dry run: skipping driver/grabber setup.")
         return
 
+    from recorders import create_recorder
+    recorder = create_recorder(args, output_dir)
+
     try:
         driver = create_driver(args)
     except Exception as e:
@@ -219,6 +222,20 @@ def run_capture(args):
     stop_event = getattr(args, '_stop_event', None)
     grabber_ctx = grabber if grabber else None
 
+    _direct_game_process = None
+    if grabber_ctx is None and getattr(args, "target_exe", None) and not args.dry_run:
+        from grabbers.renderdoc import launch as _launch
+        _direct_game_process = _launch.launch_game_direct(
+            args.target_exe, getattr(args, "target_args", [])
+        )
+        _wait_port = None
+        if getattr(args, "driver", "manual") != "manual":
+            _wait_port = getattr(args, "driver_port", None)
+        try:
+            _launch.wait_for_game_ready(_direct_game_process, 90.0, _wait_port, args.target_exe)
+        except RuntimeError as e:
+            logging.warning(f"[LAUNCH] Game exited unexpectedly: {e}")
+
     if grabber_ctx:
         try:
             grabber_ctx.setup()
@@ -235,6 +252,7 @@ def run_capture(args):
             raise
 
     driver_connected = False
+    hud_hidden_via_bridge = False
     try:
         try:
             driver.connect()
@@ -259,6 +277,35 @@ def run_capture(args):
                 logging.info("[DRIVER] Debug camera mode enabled")
             except Exception as e:
                 logging.warning(f"[DRIVER] Failed to enable debug camera: {e}")
+
+        # Start video recording early so it captures the full session,
+        # including the time the player spends in the readiness gate below.
+        if (
+            getattr(args, "recorder_enabled", False)
+            and getattr(args, "hide_hud_during_recording", True)
+            and hasattr(driver, "send_console_command")
+        ):
+            try:
+                driver.send_console_command("__hud_toggle")
+                hud_hidden_via_bridge = True
+                logging.info("[VIDEO] HUD toggled via bridge for clean footage")
+            except Exception as e:
+                logging.debug(f"[VIDEO] bridge __hud_toggle failed: {e}")
+
+        if getattr(args, "recorder_enabled", False):
+            _obs_port = getattr(args, "obs_port", 4455)
+            if args.driver_port == _obs_port:
+                logging.warning(
+                    f"[VIDEO] driver_port ({args.driver_port}) matches obs_port ({_obs_port}). "
+                    f"Driver may have connected to OBS instead of the game bridge. "
+                    f"Set driver_port to your bridge port (default 9998)."
+                )
+            try:
+                recorder.__enter__()
+                _session_name = output_dir.name or "captureAIshi"
+                recorder.start(_session_name)
+            except Exception as e:
+                logging.warning(f"[VIDEO] recorder start failed: {e}")
 
         # UE object readiness gate: wait for UWorld + LocalPlayer so the
         # Debug panel's Capture / Play buttons can find addresses.
@@ -303,6 +350,20 @@ def run_capture(args):
         except KeyboardInterrupt:
             logging.info("[SESSION] Interrupted by user.")
     finally:
+        try:
+            if recorder.is_recording:
+                recorder.stop()
+        except Exception as e:
+            logging.warning(f"[VIDEO] stop failed: {e}")
+        try:
+            recorder.__exit__(None, None, None)
+        except Exception as e:
+            logging.debug(f"[VIDEO] recorder __exit__: {e}")
+        if hud_hidden_via_bridge and driver_connected and hasattr(driver, "send_console_command"):
+            try:
+                driver.send_console_command("__hud_toggle")
+            except Exception as e:
+                logging.debug(f"[VIDEO] HUD restore failed: {e}")
         if ui_hider:
             try:
                 ui_hider.restore()
@@ -860,7 +921,7 @@ def main():
     )
 
     # Grabber
-    parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none"], default="none")
+    parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none", "obs"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
     parser.add_argument(
         "--inject", action="store_true",
@@ -893,6 +954,27 @@ def main():
     parser.add_argument(
         "--streaming-settle", type=float, default=0.5,
         help="Seconds to wait for texture/level streaming after each camera move (default: 0.5)",
+    )
+
+    # Video recording (OBS WebSocket v5)
+    parser.add_argument(
+        "--video", dest="recorder_enabled", action="store_true",
+        help="Record gameplay video via OBS WebSocket (off by default).",
+    )
+    parser.add_argument(
+        "--no-video", dest="recorder_enabled", action="store_false",
+        help="Disable video recording (default).",
+    )
+    parser.set_defaults(recorder_enabled=False)
+    parser.add_argument("--obs-host", default="127.0.0.1")
+    parser.add_argument("--obs-port", type=int, default=4455)
+    parser.add_argument("--obs-password", default="")
+    parser.add_argument("--obs-scene", default="Capture")
+    parser.add_argument("--obs-source-name", default="Game Capture")
+    parser.add_argument("--obs-exe-path", default=None)
+    parser.add_argument(
+        "--strict-video", action="store_true",
+        help="Abort the session if OBS connect/start fails (default: degrade silently).",
     )
 
     # Output

@@ -106,7 +106,11 @@ def main():
     # Suppress noisy Werkzeug request logs for polling endpoints.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
-    _ensure_exr_loader()
+    # In DEMOAISHI=1 the cloud image never reads .exr files, so skip the
+    # cv2 auto-install probe (saves ~30 s + 80 MB on first cold start).
+    from web.demo import is_demo_mode
+    if not is_demo_mode():
+        _ensure_exr_loader()
 
     port = 5000
     print(f"captureAIshi Web UI: http://127.0.0.1:{port}")

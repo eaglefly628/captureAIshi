@@ -1281,203 +1281,30 @@ uint32_t RenderDoc::GetCapturableWindowCount()
 rdcstr RenderDoc::GetOverlayText(RDCDriver driver, DeviceOwnedWindow devWnd, uint32_t frameNumber,
                                  int flags)
 {
-  bool activeWindow;
-  const bool capturesEnabled = (flags & eOverlay_CaptureDisabled) == 0;
+  // Branded overlay: emit the AiMeng banner plus the per-capture frame index
+  // for recently saved captures (<20s window). Driver / FPS / hotkey hints
+  // are intentionally suppressed.
+  // Suppress unused-parameter warnings under /W4 /WX.
+  (void)driver;
+  (void)devWnd;
+  (void)frameNumber;
+  (void)flags;
 
-  uint32_t overlay = GetOverlayBits();
-
-  RDCDriver activeDriver = RDCDriver::Unknown;
-  RDCDriver curDriver = RDCDriver::Unknown;
-
-  int activeIdx = -1, curIdx = -1, idx = 0;
-  size_t numWindows;
+  rdcstr overlayText = "AIMen tech Support";
+  if(!m_Captures.empty())
   {
-    SCOPED_LOCK(m_CapturerListLock);
-
-    activeWindow = (devWnd == m_ActiveWindow);
-
-    for(auto it = m_WindowFrameCapturers.begin(); it != m_WindowFrameCapturers.end(); ++it, ++idx)
+    uint64_t now = Timing::GetUnixTimestamp();
+    for(size_t i = 0; i < m_Captures.size(); i++)
     {
-      if(it->first == m_ActiveWindow)
+      if(now - m_Captures[i].timestamp < 20)
       {
-        activeIdx = idx;
-        activeDriver = it->second.FrameCapturer->GetFrameCaptureDriver();
-      }
-      if(it->first == devWnd)
-      {
-        curIdx = idx;
-        curDriver = it->second.FrameCapturer->GetFrameCaptureDriver();
-      }
-    }
-
-    numWindows = m_WindowFrameCapturers.size();
-  }
-
-  if(activeDriver == RDCDriver::Unknown)
-    activeDriver = curDriver;
-
-  if(activeDriver == RDCDriver::Unknown)
-    activeDriver = driver;
-
-  // example layout:
-  //
-  // Capturing D3D11.  Frame: 1234. 33ms (30 FPS)
-  // F12, PrtScrn to capture. 3 Captures saved.
-  // Captured frame 1200.
-  //
-  // Frame number, FPS, capture list are optional. If capture list is disabled
-  // the second line still displays the keys as long as capturing is allowed.
-  // if capturing is disabled, only the first line displays.
-  //
-  // On platforms without keyboards, the keys are replaced by a remote access connection status
-  // message.
-  //
-  // with multiple windows the active window will look like:
-  //
-  // Capturing D3D11.  Window 1 active. Frame: 1234. 33ms (30 FPS)
-  // F12, PrtScrn to capture. 3 Captures saved.
-  // Captured frame 1200.
-  //
-  // Inactive windows will look like:
-  //
-  // Capturing D3D11.  Window 1 active.
-  // F11 to cycle. OpenGL window 2.
-
-  rdcstr overlayText = ToStr(activeDriver) + ".";
-
-  // pad this so it's the same length regardless of API length
-  while(overlayText.length() < 8)
-    overlayText.push_back(' ');
-
-  overlayText = "AiMeng Tech capture " + overlayText;
-
-  if(numWindows > 1)
-  {
-    if(activeIdx >= 0)
-      overlayText += StringFormat::Fmt(" Window %d active.", activeIdx);
-    else
-      overlayText += " No window active.";
-  }
-
-  if(activeWindow)
-  {
-    if(overlay & eRENDERDOC_Overlay_FrameNumber)
-      overlayText += StringFormat::Fmt(" Frame: %d.", frameNumber);
-
-    if(overlay & eRENDERDOC_Overlay_FrameRate)
-    {
-      const double frameTime = m_FrameTimer.GetAvgFrameTime();
-      // max with 0.01ms so that we don't divide by zero
-      const double fps = 1000.0f / RDCMAX(0.01, frameTime);
-
-      if(frameTime < 0.0001)
-      {
-        overlayText += " --- ms (--- FPS)";
-      }
-      else
-      {
-        // only display frametime fractions if it's relevant (sub-integer frame time or FPS)
-
-        if(frameTime < 1.0)
-          overlayText += StringFormat::Fmt(" %.2lf ms", m_FrameTimer.GetAvgFrameTime());
+        if(m_Captures[i].frameNumber == ~0U)
+          overlayText += "\nCaptured user-defined capture.";
         else
-          overlayText += StringFormat::Fmt(" %d ms", int(m_FrameTimer.GetAvgFrameTime()));
-
-        if(fps < 1.0)
-          overlayText += StringFormat::Fmt(" (%.2lf FPS)", fps);
-        else
-          overlayText += StringFormat::Fmt(" (%d FPS)", int(fps));
+          overlayText += StringFormat::Fmt("\nAImen trigger Captured frame %d", m_Captures[i].frameNumber);
       }
     }
   }
-
-  overlayText += "\n";
-
-#if ENABLED(RDOC_DEVEL)
-  {
-    overlayText += StringFormat::Fmt("%llu chunks - %.2f MB\n", Chunk::NumLiveChunks(),
-                                     float(Chunk::TotalMem()) / 1024.0f / 1024.0f);
-  }
-#endif
-
-  if(capturesEnabled)
-  {
-    if(activeWindow)
-    {
-      rdcarray<RENDERDOC_InputButton> keys = GetCaptureKeys();
-
-      if(Keyboard::PlatformHasKeyInput())
-      {
-        for(size_t i = 0; i < keys.size(); i++)
-        {
-          if(i > 0)
-            overlayText += ", ";
-
-          overlayText += ToStr(keys[i]);
-        }
-
-        if(!keys.empty())
-          overlayText += " to capture.";
-      }
-      else
-      {
-        if(IsTargetControlConnected())
-          overlayText += "Connected by " + GetTargetControlUsername() + ".";
-        else
-          overlayText += "No remote access connection.";
-      }
-
-      if(overlay & eRENDERDOC_Overlay_CaptureList)
-      {
-        overlayText += StringFormat::Fmt(" %d Captures saved.\n", (uint32_t)m_Captures.size());
-
-        uint64_t now = Timing::GetUnixTimestamp();
-        for(size_t i = 0; i < m_Captures.size(); i++)
-        {
-          if(now - m_Captures[i].timestamp < 20)
-          {
-            if(m_Captures[i].frameNumber == ~0U)
-              overlayText += "Captured user-defined capture.\n";
-            else
-              overlayText += StringFormat::Fmt("Captured frame %d.\n", m_Captures[i].frameNumber);
-          }
-        }
-      }
-    }
-    else
-    {
-      rdcarray<RENDERDOC_InputButton> keys = GetFocusKeys();
-
-      if(Keyboard::PlatformHasKeyInput())
-      {
-        for(size_t i = 0; i < keys.size(); i++)
-        {
-          if(i > 0)
-            overlayText += ", ";
-
-          overlayText += ToStr(keys[i]);
-        }
-
-        if(!keys.empty())
-          overlayText += " to cycle.";
-      }
-      else
-      {
-        if(IsTargetControlConnected())
-          overlayText += "Connected by " + GetTargetControlUsername() + ".";
-        else
-          overlayText += "No remote access connection.";
-      }
-
-      if(curIdx >= 0)
-        overlayText += StringFormat::Fmt(" %s window %d.", ToStr(curDriver).c_str(), curIdx);
-      else if(curDriver != RDCDriver::Unknown)
-        overlayText += StringFormat::Fmt(" Unknown %s window.", ToStr(curDriver).c_str());
-      else
-        overlayText += " Unknown window.";
-    }
-  }
-
   return overlayText;
 }
 

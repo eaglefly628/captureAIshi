@@ -11,3 +11,7 @@ pytest-timeout>=2.3.0
 # RDOC depth pipeline (grabbers/renderdoc/image_loader.load_depth_image)
 # tries them in that order.
 opencv-python>=4.5.0
+# OBS WebSocket v5 client (recorders/obs_recorder.py). Sync wrapper, no asyncio.
+obsws-python>=1.6.0
+# scripts/setup_obs.py downloads the official OBS installer from GitHub.
+requests>=2.31

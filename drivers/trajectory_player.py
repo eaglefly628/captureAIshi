@@ -704,6 +704,11 @@ class TrajectoryPlayer:
                         session.send("__cam_rdc_capture")
                     except (OSError, ConnectionError) as e:
                         logger.error("[PLAYER] __cam_rdc_capture send failed: %s", e)
+                    try:
+                        from web import state as _web_state
+                        _web_state.record_pose_timestamp_now()
+                    except Exception:
+                        pass
                     cap_fired += 1
                     logger.info(
                         "[PLAYER] capture %d/%d triggered at t=%.2fs (interval=%.2fs)",

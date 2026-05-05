@@ -2,6 +2,7 @@
 
 from flask import Blueprint, jsonify
 
+from web.demo import canned_bridge_rescan, canned_bridge_scan, is_demo_mode
 from web.helpers import _bridge_send
 
 bp = Blueprint("bridge", __name__)
@@ -20,6 +21,8 @@ def _parse_kv(raw: str) -> dict:
 @bp.route("/api/bridge/scan_status", methods=["GET"])
 def bridge_scan_status():
     """Query current UWorld + LocalPlayer + CameraManager scan state."""
+    if is_demo_mode():
+        return jsonify(canned_bridge_scan())
     try:
         status = _parse_kv(_bridge_send("__bridge_status", timeout=5.0))
         return jsonify({
@@ -41,6 +44,8 @@ def bridge_scan_status():
 def bridge_rescan():
     """Trigger UWorld + LocalPlayer + CameraManager re-scan in the bridge.
     Call this after map load. Bridge clears stale pointers and rescans."""
+    if is_demo_mode():
+        return jsonify(canned_bridge_rescan())
     try:
         raw = _bridge_send("__bridge_rescan_objects", timeout=35.0)
         result = _parse_kv(raw)

@@ -6,6 +6,8 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from web.demo import canned_trajectory_action, is_demo_mode
+
 bp = Blueprint("trajectory", __name__)
 
 
@@ -74,6 +76,8 @@ def trajectory_play():
         "rate_hz": float (default 60), "loop": bool, "slot": int
     }
     """
+    if is_demo_mode():
+        return jsonify(canned_trajectory_action("play"))
     body = request.get_json(silent=True) or {}
     profile_id = body.get("profile_id", "")
     if not isinstance(profile_id, str) or not profile_id.replace("_", "").isalnum():
@@ -197,6 +201,8 @@ def trajectory_decode():
     on a background thread and the player state -> ``exporting`` while
     it's in flight.
     """
+    if is_demo_mode():
+        return jsonify(canned_trajectory_action("decode"))
     from web import state as _web_state
     grabber = _web_state.get_active_grabber()
     if grabber is None or not hasattr(grabber, "export_batch"):

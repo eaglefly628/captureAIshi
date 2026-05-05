@@ -948,6 +948,8 @@ body {
       <div class="menu-dropdown-item" onclick="openAnalyzeRdc()">&#x1F50D; Analyze Capture File</div>
       <div class="menu-dropdown-sep"></div>
       <div class="menu-dropdown-item" onclick="openCaptureConfig()">&#x2699;&#xFE0E; Capture Config</div>
+      <div class="menu-dropdown-sep"></div>
+      <div class="menu-dropdown-item" onclick="showModal('obsModal')">&#x1F3A5; OBS Settings</div>
     </div>
   </div>
   <div class="menu-item" onclick="toggleMenu(this)">Help
@@ -957,6 +959,25 @@ body {
       <div class="menu-dropdown-sep"></div>
       <div class="menu-dropdown-item" onclick="showModal('copyrightModal')">&#x00A9; Copyright</div>
     </div>
+  </div>
+</div>
+
+<!-- OBS Settings Modal -->
+<div class="modal-overlay" id="obsModal" onclick="if(event.target===this){obsSaveSettings();closeModal(this);}">
+  <div class="modal-box" style="width:320px">
+    <h3>OBS Settings</h3>
+    <div class="f" style="margin-bottom:6px"><label>Host</label><input type="text" id="obs_host" value="127.0.0.1" oninput="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Port</label><input type="number" id="obs_port" value="4455" min="1" max="65535" oninput="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Password</label><input type="password" id="obs_password" value="" oninput="obsSaveSettings()"></div>
+    <div class="f" style="margin-bottom:6px"><label>Scene</label><input type="text" id="obs_scene" value="Capture" oninput="obsSaveSettings()"></div>
+    <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="hide_hud_during_recording" checked onchange="obsSaveSettings()"><div class="track"></div>Hide HUD via Bridge</label>
+    <label class="tog" style="margin-bottom:10px"><input type="checkbox" id="strict_video" onchange="obsSaveSettings()"><div class="track"></div>Strict (abort on OBS failure)</label>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn" onclick="obsTest()">Test Connection</button>
+      <button class="btn" onclick="obsSetup()">Setup OBS</button>
+    </div>
+    <span id="obsStatus" style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:8px"></span>
+    <button class="modal-close" onclick="obsSaveSettings();closeModal(obsModal)">Close</button>
   </div>
 </div>
 
@@ -1057,14 +1078,16 @@ body {
   </select>
   <select class="sel" id="grabber" onchange="updateVisibility()">
     <option value="none">No Grab</option>
-    <option value="renderdoc">RenderDoc</option>
+    <option value="renderdoc">爱萌捕捉</option>
     <option value="screenshot">Screenshot</option>
+    <option value="obs">OBS Video</option>
   </select>
   <div class="toolbar-sep"></div>
   <label class="tog"><input type="checkbox" id="clean_start" checked><div class="track"></div>Clean</label>
   <label class="tog"><input type="checkbox" id="dry_run"><div class="track"></div>Dry</label>
   <label class="tog"><input type="checkbox" id="debug_scan"><div class="track"></div>Scan</label>
   <div class="toolbar-spacer"></div>
+  <div id="demoRibbon" style="display:none;background:linear-gradient(90deg,#e94560,#f0b03e);color:#fff;font-size:10px;font-weight:700;letter-spacing:1px;padding:3px 10px;border-radius:10px;margin-right:8px;text-transform:uppercase">演示模式 / Demo</div>
   <div id="statusBadge" class="badge badge-idle"><div class="dot"></div><span id="statusText">Idle</span></div>
 </div>
 
@@ -1104,6 +1127,7 @@ body {
         </div>
       </div>
 
+
     </div>
   </div>
 
@@ -1139,13 +1163,13 @@ body {
     </div>
     <div class="cascade-detail" id="catConnection" style="display:none">
       <div class="row">
-        <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1"></div>
-        <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999"></div>
+        <div class="f"><label>Host</label><input type="text" id="driver_host" value="127.0.0.1" oninput="connSave()"></div>
+        <div class="f"><label>Port</label><input type="number" id="driver_port" value="9999" oninput="connSave()"></div>
       </div>
       <div class="f" id="ceModeWrap"><label>CE Mode</label>
         <select id="ce_mode"><option value="file">File</option><option value="socket">Socket</option></select>
       </div>
-      <div class="f" id="targetExeWrap"><label>Game EXE Path</label><input type="text" id="target_exe" placeholder="C:\Games\MyGame\game.exe"></div>
+      <div class="f" id="targetExeWrap"><label>Game EXE Path</label><input type="text" id="target_exe" placeholder="C:\Games\MyGame\game.exe" oninput="connSave()"></div>
       <div id="gameLaunchOpts">
         <div class="f"><label>Resolution Preset</label>
           <select id="launch_res_preset" onchange="applyResPreset(this.value)">
@@ -1166,7 +1190,7 @@ body {
           <label class="tog"><input type="checkbox" id="launch_log"><div class="track"></div>Enable Log (-log)</label>
         </div>
       </div>
-      <div class="f" id="rdocPathWrap"><label>renderdoccmd</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
+      <div class="f" id="rdocPathWrap"><label>爱萌捕捉</label><input type="text" id="renderdoc_path" placeholder="renderdoccmd (or full path)"></div>
     </div>
     <div class="cascade-detail" id="catStreaming" style="display:none">
       <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="streaming" checked onchange="updateVisibility()"><div class="track"></div>Streaming Mgmt</label>
@@ -1174,8 +1198,9 @@ body {
     </div>
     <div class="cascade-detail" id="catOutput" style="display:none">
       <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="no_hide_ui"><div class="track"></div>Disable UI Hiding</label>
-      <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output"></div>
+      <div class="f"><label>Output Dir</label><input type="text" id="output_dir" value="./output" oninput="connSave()"></div>
     </div>
+
     <div class="cascade-detail" id="catAdvanced" style="display:none">
       <label class="tog" style="margin-bottom:6px"><input type="checkbox" id="showAllEngines" onchange="toggleAllEngines()"><div class="track"></div>Show All Engines</label>
       <p style="font-size:10px;color:var(--text-tertiary);margin-top:4px">Enables Unity and CheatEngine driver options.</p>
@@ -1191,6 +1216,7 @@ body {
       <div style="display:flex;gap:8px;align-items:center">
         <span class="center-tab active" id="tabLog" onclick="switchCenterTab('log')">Output</span>
         <span class="center-tab" id="tab3d" onclick="switchCenterTab('3d')">3D View</span>
+        <span class="center-tab" id="tabInput" onclick="switchCenterTab('input')">⏺ Input Rec</span>
       </div>
       <span id="logCount" style="font-weight:400;text-transform:none;letter-spacing:0">0 lines</span>
     </div>
@@ -1205,6 +1231,24 @@ body {
       <div class="log-line log-info">$ captureAIshi ready</div>
     </div>
     <canvas id="view3d" style="display:none;width:100%;flex:1;background:var(--bg-base);cursor:grab;"></canvas>
+
+    <!-- ── Input Recording Panel ── -->
+    <div id="inputRecPanel" style="display:none;flex-direction:column;height:100%;padding:10px;gap:8px;box-sizing:border-box">
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <button class="btn btn-accent" id="btnInputRec" onclick="inputRecToggle()">⏺ Record</button>
+        <span id="inputRecStatus" style="font-size:11px;color:var(--text-tertiary)">Stopped</span>
+        <span id="inputRecTimer" style="font-size:11px;color:var(--text-secondary);min-width:44px"></span>
+        <span id="inputRecCount" style="font-size:11px;color:var(--text-tertiary)"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <select class="sel" id="inputRecFileList" style="flex:1;font-size:11px" onchange="inputRecLoad(this.value)">
+          <option value="">-- load recording --</option>
+        </select>
+        <button class="btn" onclick="inputRecRefreshFiles()" title="Refresh">↻</button>
+      </div>
+      <div id="inputRecSummary" style="font-size:10px;color:var(--text-tertiary);flex-shrink:0;display:none"></div>
+      <canvas id="inputRecCanvas" style="flex:1;min-height:0;width:100%;background:var(--bg-base);border-radius:var(--radius)"></canvas>
+    </div>
     <div class="path-controls" id="pathControls">
       <div class="path-toolbar">
         <select class="sel" id="pathSelect" onchange="switchPath(this.value)">
@@ -1381,6 +1425,15 @@ function getFormData() {
     output_dir:val('output_dir'), dry_run:cb('dry_run'), debug_scan:cb('debug_scan'), clean_start:cb('clean_start'),
     streaming:cb('streaming'), streaming_settle:pf('streaming_settle'),
     fov:pf('fov'), aspect:pf('aspect'),
+    recorder: {
+      enabled: val('grabber') === 'obs',
+      obs_host: val('obs_host'),
+      obs_port: pi('obs_port'),
+      obs_password: val('obs_password'),
+      obs_scene: val('obs_scene'),
+      hide_hud_during_recording: cb('hide_hud_during_recording'),
+      strict_video: cb('strict_video'),
+    },
   };
 }
 
@@ -1396,13 +1449,131 @@ async function startCapture() {
     btn.style.display='none';
     document.getElementById('btnStop').style.display='';
     startPolling();
+    // Auto-start input recording alongside session
+    const outDir = (document.getElementById('output_dir')?.value||'output') + '/input_rec';
+    fetch('/api/input/start', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({output_dir:outDir})}).catch(()=>{});
     // Open 注入菜单 alongside so the user can watch/operate injection while
     // capture runs. Profile preselection is already wired in selectGame.
     const dp = document.getElementById('debugPanel');
     if (dp && dp.style.display === 'none') toggleDebugPanel();
     _applySelectedGameProfile();
+    // Demo-mode: switch to 3D View so the customer watches the trajectory
+    // being traced as DemoSession ticks. Reset progress + load orbit path
+    // pre-baked at demo/scenarios/<name>/frames/trajectory.json.
+    if (r.demo) {
+      demoPose = 0;
+      activeSession = activeSession || 'frames';
+      viewSession = activeSession;
+      switchCenterTab('3d');
+      _startDemoAnimLoop();
+    }
   } catch(e) { addLog('ERROR: '+e.message,'error'); btn.disabled=false; }
 }
+
+// rAF loop that re-renders the 3D canvas while a demo run is active so the
+// pulsing highlight on the current waypoint stays animated.
+function _startDemoAnimLoop() {
+  if (demoAnimRaf) cancelAnimationFrame(demoAnimRaf);
+  const tick = () => {
+    if (view3dActive) draw3d();
+    demoAnimRaf = requestAnimationFrame(tick);
+  };
+  demoAnimRaf = requestAnimationFrame(tick);
+}
+function _stopDemoAnimLoop() {
+  if (demoAnimRaf) { cancelAnimationFrame(demoAnimRaf); demoAnimRaf = null; }
+}
+// ─── Connection field persistence ───
+const CONN_KEYS = ['target_exe','driver_host','driver_port','output_dir'];
+function connSave() {
+  CONN_KEYS.forEach(k => { const el=document.getElementById(k); if(el) try { localStorage.setItem('captureAIshi.'+k, el.value); } catch(_){} });
+}
+function connLoad() {
+  CONN_KEYS.forEach(k => { const v=localStorage.getItem('captureAIshi.'+k); const el=document.getElementById(k); if(v!=null&&el) el.value=v; });
+}
+document.addEventListener('DOMContentLoaded', connLoad);
+
+// ─── OBS Video Recording ───
+function obsSaveSettings() {
+  const body = {
+    obs_host: (document.getElementById('obs_host')||{}).value||'',
+    obs_port: parseInt((document.getElementById('obs_port')||{}).value||'4455'),
+    obs_password: (document.getElementById('obs_password')||{}).value||'',
+    obs_scene: (document.getElementById('obs_scene')||{}).value||'',
+    hide_hud_during_recording: !!(document.getElementById('hide_hud_during_recording')||{}).checked,
+    strict_video: !!(document.getElementById('strict_video')||{}).checked,
+  };
+  fetch('/api/obs/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).catch(()=>{});
+}
+async function obsLoadSettings() {
+  try {
+    const r = await fetch('/api/obs/config');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.obs_host) document.getElementById('obs_host').value = d.obs_host;
+    if (d.obs_port) document.getElementById('obs_port').value = d.obs_port;
+    if (d.obs_password != null) document.getElementById('obs_password').value = d.obs_password;
+    if (d.obs_scene) document.getElementById('obs_scene').value = d.obs_scene;
+    if (d.hide_hud_during_recording != null) document.getElementById('hide_hud_during_recording').checked = !!d.hide_hud_during_recording;
+    if (d.strict_video != null) document.getElementById('strict_video').checked = !!d.strict_video;
+  } catch(_) {}
+}
+document.addEventListener('DOMContentLoaded', obsLoadSettings);
+
+async function obsTest() {
+  const status = document.getElementById('obsStatus');
+  status.textContent = 'Testing...';
+  status.style.color = 'var(--text-tertiary)';
+  try {
+    const payload = {
+      obs_host: val('obs_host'),
+      obs_port: pi('obs_port'),
+      obs_password: val('obs_password'),
+    };
+    const resp = await fetch('/api/obs/test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const r = await resp.json();
+    if (r.ok) {
+      status.style.color = '#22c55e';
+      status.textContent = `OBS ${r.obs_version || '?'} (rpc ${r.rpc_version || '?'}), ${(r.scenes || []).length} scenes`;
+      addLog(`[OBS] connected to OBS ${r.obs_version}, scenes: ${(r.scenes || []).join(', ')}`, 'success');
+    } else {
+      status.style.color = '#ef4444';
+      status.textContent = r.error || 'failed';
+      addLog(`[OBS] test failed: ${r.error}`, 'error');
+    }
+  } catch (e) {
+    status.style.color = '#ef4444';
+    status.textContent = e.message;
+  }
+}
+
+async function obsSetup() {
+  if (!confirm('Download and install OBS Studio (~150 MiB)?\nThe installer will run silently and write a default Capture scene.')) {
+    return;
+  }
+  const status = document.getElementById('obsStatus');
+  status.textContent = 'Setup running, watch the log...';
+  status.style.color = 'var(--text-tertiary)';
+  try {
+    const resp = await fetch('/api/obs/setup', {method: 'POST'});
+    const r = await resp.json();
+    if (!r.ok) {
+      status.style.color = '#ef4444';
+      status.textContent = r.error || 'failed';
+      addLog(`[OBS-SETUP] ${r.error}`, 'error');
+    } else {
+      addLog(r.message || '[OBS-SETUP] started', 'info');
+    }
+  } catch (e) {
+    status.style.color = '#ef4444';
+    status.textContent = e.message;
+  }
+}
+
 async function stopCapture() {
   try {
     await fetch('/api/stop', { method: 'POST' });
@@ -1410,6 +1581,11 @@ async function stopCapture() {
   } catch(e) {
     addLog('Failed to send stop: ' + e.message, 'error');
   }
+  // Auto-stop input recording
+  fetch('/api/input/stop', {method:'POST'}).then(async r => {
+    const d = await r.json().catch(()=>({}));
+    if (d.ok && d.file) { addLog(`[INPUT] saved ${d.events} events → ${d.file}`, 'info'); inputRecRefreshFiles(); }
+  }).catch(()=>{});
 }
 
 function startPolling() {
@@ -1419,6 +1595,13 @@ function startPolling() {
     try {
       const r = await(await fetch('/api/status')).json();
       if(r.logs.length>last){ for(let i=last;i<r.logs.length;i++) addLog(r.logs[i]); last=r.logs.length; }
+      // Demo-mode progress: drive the progressive trajectory render.
+      if (typeof r.demo_pose === 'number') {
+        if (r.demo_pose !== demoPose) {
+          demoPose = r.demo_pose;
+          if (view3dActive) draw3d();
+        }
+      }
       if(!r.running){
         clearInterval(polling); polling=null;
         document.getElementById('btnStart').disabled=false;
@@ -1426,6 +1609,13 @@ function startPolling() {
         document.getElementById('btnStop').style.display='none';
         if(r.error){ setBadge('error'); addLog('FAILED: '+r.error,'error'); }
         else { setBadge('idle'); addLog('Capture finished.','success'); }
+        // Demo run finished -> stop animation, reveal the full path.
+        _stopDemoAnimLoop();
+        if (demoPose > 0) { demoPose = 0; if (view3dActive) draw3d(); }
+        fetch('/api/input/stop', {method:'POST'}).then(async resp => {
+          const d = await resp.json().catch(()=>({}));
+          if (d.ok && d.file) { addLog(`[INPUT] saved ${d.events} events → ${d.file}`, 'info'); inputRecRefreshFiles(); }
+        }).catch(()=>{});
       }
     } catch(_){}
   },500);
@@ -1478,6 +1668,13 @@ function syncResPreset() {
 document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('launch_resx').addEventListener('input', syncResPreset);
   document.getElementById('launch_resy').addEventListener('input', syncResPreset);
+  // Reveal the Demo ribbon when the backend reports DEMOAISHI=1.
+  fetch('/api/defaults').then(r => r.json()).then(d => {
+    if (d && d.demo_mode) {
+      const r = document.getElementById('demoRibbon');
+      if (r) r.style.display = 'inline-block';
+    }
+  }).catch(()=>{});
 });
 
 // ─── Visibility ───
@@ -1715,34 +1912,239 @@ function lbRender() {
   document.getElementById('lbLabel').textContent = `${lbIndex + 1} / ${rgbList.length}  —  ${name}`;
 }
 
+// ─── Input Recording ───
+let _inputRecPollTimer = null;
+
+async function inputRecToggle() {
+  const btn = document.getElementById('btnInputRec');
+  const st = document.getElementById('inputRecStatus');
+  const statusResp = await fetch('/api/input/status').then(r=>r.json()).catch(()=>null);
+  if (!statusResp) return;
+  if (statusResp.recording) {
+    const r = await fetch('/api/input/stop',{method:'POST'}).then(r=>r.json()).catch(()=>({}));
+    st.textContent = r.ok ? `Saved ${r.events||0} events` : 'Error: '+(r.error||'?');
+    st.style.color = r.ok ? '#3ecf8e' : '#f03e3e';
+    btn.textContent = '⏺ Record'; btn.classList.remove('btn-danger'); btn.classList.add('btn-accent');
+    document.getElementById('inputRecTimer').textContent = '';
+    document.getElementById('inputRecCount').textContent = '';
+    inputRecPollStop(); inputRecRefreshFiles();
+  } else {
+    const outDir = (document.getElementById('output_dir')?.value||'output') + '/input_rec';
+    const r = await fetch('/api/input/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({output_dir:outDir})}).then(r=>r.json()).catch(()=>({}));
+    if (r.ok) {
+      st.textContent = 'Recording…'; st.style.color = '#f59e0b';
+      btn.textContent = '⏹ Stop'; btn.classList.remove('btn-accent'); btn.classList.add('btn-danger');
+      inputRecPollStart();
+    } else { st.textContent = 'Error: '+(r.error||'?'); st.style.color = '#f03e3e'; }
+  }
+}
+function inputRecPollStart() {
+  if (_inputRecPollTimer) return;
+  _inputRecPollTimer = setInterval(async () => {
+    const r = await fetch('/api/input/status').then(r=>r.json()).catch(()=>null);
+    if (!r || !r.recording) { inputRecPollStop(); return; }
+    document.getElementById('inputRecTimer').textContent = r.elapsed + 's';
+    document.getElementById('inputRecCount').textContent = r.events + ' ev';
+  }, 500);
+}
+function inputRecPollStop() {
+  if (_inputRecPollTimer) { clearInterval(_inputRecPollTimer); _inputRecPollTimer = null; }
+}
+async function inputRecRefreshFiles() {
+  const sel = document.getElementById('inputRecFileList');
+  if (!sel) return;
+  const r = await fetch('/api/input/files').then(r=>r.json()).catch(()=>({files:[]}));
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">-- load recording --</option>' +
+    (r.files||[]).map(f=>`<option value="${f.path}">${f.name} (${(f.size/1024).toFixed(1)}KB)</option>`).join('');
+  if (prev) sel.value = prev;
+}
+async function inputRecLoad(path) {
+  if (!path) return;
+  const r = await fetch('/api/input/load?path='+encodeURIComponent(path)).then(r=>r.json()).catch(()=>null);
+  if (!r || !r.ok) return;
+  const sum = document.getElementById('inputRecSummary');
+  sum.style.display = 'block';
+  sum.textContent = `${r.event_count} events · ${r.duration_s?.toFixed(1)}s · ${r.recorded_at?.slice(0,19).replace('T',' ')} UTC`;
+  inputRecDraw(r.events || []);
+}
+
+// ── WASD dead-reckoning + isometric renderer ──────────────────────────────
+
+function inputRecComputePositions(events) {
+  const SPEED = 5.0;   // units per second
+  const MOUSE_YAW_SENS = 0.003;  // rad per pixel
+  const DT = 0.05;
+  const endT = events.length ? events[events.length-1].t : 0;
+
+  let yaw = 0, x = 0, z = 0;
+  let pressed = {w:false,a:false,s:false,d:false};
+  const positions = [{x:0, z:0, t:0}];
+  let ei = 0;
+
+  for (let t = DT; t <= endT + DT; t += DT) {
+    while (ei < events.length && events[ei].t <= t) {
+      const e = events[ei++];
+      const k = (e.key||'').toLowerCase();
+      if (e.type === 'key_down' && 'wasd'.includes(k)) pressed[k] = true;
+      else if (e.type === 'key_up' && 'wasd'.includes(k)) pressed[k] = false;
+      else if (e.type === 'mouse_move') yaw += (e.dx||0) * MOUSE_YAW_SENS;
+    }
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    if (pressed.w) { x += fx*SPEED*DT; z += fz*SPEED*DT; }
+    if (pressed.s) { x -= fx*SPEED*DT; z -= fz*SPEED*DT; }
+    if (pressed.d) { x += rx*SPEED*DT; z += rz*SPEED*DT; }
+    if (pressed.a) { x -= rx*SPEED*DT; z -= rz*SPEED*DT; }
+    positions.push({x, z, t});
+  }
+  return positions;
+}
+
+function inputRecSmooth(pts, r=6) {
+  return pts.map((p,i) => {
+    let sx=0, sz=0, n=0;
+    for (let j=Math.max(0,i-r); j<=Math.min(pts.length-1,i+r); j++) { sx+=pts[j].x; sz+=pts[j].z; n++; }
+    return {x:sx/n, z:sz/n, t:p.t};
+  });
+}
+
+function inputRecDraw(events) {
+  const canvas = document.getElementById('inputRecCanvas');
+  if (!canvas) return;
+  const raw = inputRecComputePositions(events);
+  const pts = inputRecSmooth(raw, 8);
+
+  canvas.width = canvas.clientWidth * devicePixelRatio;
+  canvas.height = canvas.clientHeight * devicePixelRatio;
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  if (pts.length < 2) {
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.font = `${14*devicePixelRatio}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('No WASD movement detected', W/2, H/2);
+    return;
+  }
+
+  // Isometric projection: world (x,z) → screen
+  const C30 = Math.cos(Math.PI/6), S30 = Math.sin(Math.PI/6);
+  const isoX = (x,z) => (x-z)*C30;
+  const isoY = (x,z) => (x+z)*S30;
+
+  const ixs = pts.map(p => isoX(p.x, p.z)), iys = pts.map(p => isoY(p.x, p.z));
+  const minIX = Math.min(...ixs), maxIX = Math.max(...ixs);
+  const minIY = Math.min(...iys), maxIY = Math.max(...iys);
+  const pad = 52 * devicePixelRatio;
+  const scaleX = (W - pad*2) / Math.max(maxIX - minIX, 0.01);
+  const scaleY = (H - pad*2) / Math.max(maxIY - minIY, 0.01);
+  const scale = Math.min(scaleX, scaleY);
+  const offX = (W - (maxIX-minIX)*scale) / 2 - minIX*scale;
+  const offY = (H - (maxIY-minIY)*scale) / 2 - minIY*scale;
+  const toS = (x,z) => ({ sx: isoX(x,z)*scale+offX, sy: isoY(x,z)*scale+offY });
+
+  // ── Grid ──
+  const extent = Math.max(maxIX-minIX, maxIY-minIY) / scale;
+  const gridStep = Math.pow(10, Math.ceil(Math.log10(extent/5)));
+  const wx = pts.map(p=>p.x), wz = pts.map(p=>p.z);
+  const [minWX,maxWX,minWZ,maxWZ] = [Math.min(...wx),Math.max(...wx),Math.min(...wz),Math.max(...wz)];
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+  for (let gx=Math.floor(minWX/gridStep)*gridStep; gx<=maxWX+gridStep; gx+=gridStep) {
+    const a=toS(gx,minWZ-gridStep), b=toS(gx,maxWZ+gridStep);
+    ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+  }
+  for (let gz=Math.floor(minWZ/gridStep)*gridStep; gz<=maxWZ+gridStep; gz+=gridStep) {
+    const a=toS(minWX-gridStep,gz), b=toS(maxWX+gridStep,gz);
+    ctx.beginPath(); ctx.moveTo(a.sx,a.sy); ctx.lineTo(b.sx,b.sy); ctx.stroke();
+  }
+
+  // ── Path (smooth bezier) ──
+  const sp = pts.map(p=>toS(p.x,p.z));
+  ctx.save(); ctx.strokeStyle='#60a5fa'; ctx.lineWidth=2*devicePixelRatio; ctx.shadowColor='#3b82f6'; ctx.shadowBlur=6;
+  ctx.beginPath(); ctx.moveTo(sp[0].sx, sp[0].sy);
+  for (let i=1; i<sp.length-1; i++) {
+    ctx.quadraticCurveTo(sp[i].sx, sp[i].sy, (sp[i].sx+sp[i+1].sx)/2, (sp[i].sy+sp[i+1].sy)/2);
+  }
+  ctx.lineTo(sp[sp.length-1].sx, sp[sp.length-1].sy);
+  ctx.stroke(); ctx.restore();
+
+  // ── Origin dot ──
+  const o = toS(0,0);
+  ctx.fillStyle='#3ecf8e'; ctx.beginPath(); ctx.arc(o.sx,o.sy,4*devicePixelRatio,0,Math.PI*2); ctx.fill();
+
+  // ── Capsule at end ──
+  const ep = sp[sp.length-1];
+  const capR = Math.max(8, scale*0.28) * devicePixelRatio;
+  const capH = capR * 3.2;
+  const capEY = capR * 0.38; // ellipse y-radius for iso circles
+  // shadow
+  ctx.save(); ctx.globalAlpha=0.25; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(ep.sx, ep.sy+capR*0.4, capR*1.1, capEY*0.8, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+  // body sides
+  ctx.fillStyle='#2563eb';
+  ctx.fillRect(ep.sx-capR, ep.sy-capH, capR*2, capH);
+  // bottom ellipse
+  ctx.fillStyle='#60a5fa';
+  ctx.beginPath(); ctx.ellipse(ep.sx, ep.sy, capR, capEY, 0, 0, Math.PI*2); ctx.fill();
+  // top ellipse
+  ctx.fillStyle='#93c5fd';
+  ctx.beginPath(); ctx.ellipse(ep.sx, ep.sy-capH, capR, capEY, 0, 0, Math.PI*2); ctx.fill();
+  // outline
+  ctx.strokeStyle='#bfdbfe'; ctx.lineWidth=devicePixelRatio;
+  ctx.beginPath(); ctx.ellipse(ep.sx, ep.sy-capH, capR, capEY, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ep.sx-capR, ep.sy); ctx.lineTo(ep.sx-capR, ep.sy-capH);
+  ctx.moveTo(ep.sx+capR, ep.sy); ctx.lineTo(ep.sx+capR, ep.sy-capH); ctx.stroke();
+}
+
 // ─── 3D Viewer ───
 let view3dActive = false;
 const cam3d = { rotX: -0.5, rotY: 0.6, dist: 20, cx: 0, cy: 1.5, cz: 0 };
 let trajData = null;
+// Demo-mode progress: 1..N during a fake run, 0 = inactive (full path).
+let demoPose = 0;
+let demoAnimRaf = null;
 
 function switchCenterTab(tab) {
   const logEl = document.getElementById('logBody');
   const progEl = document.getElementById('progressWrap');
   const canvas = document.getElementById('view3d');
   const pathCtl = document.getElementById('pathControls');
+  const inputPanel = document.getElementById('inputRecPanel');
   document.getElementById('tabLog').classList.toggle('active', tab === 'log');
   document.getElementById('tab3d').classList.toggle('active', tab === '3d');
+  document.getElementById('tabInput').classList.toggle('active', tab === 'input');
   if (tab === '3d') {
     logEl.style.display = 'none';
     progEl.style.display = 'none';
     canvas.style.display = 'block';
     pathCtl.classList.add('visible');
+    inputPanel.style.display = 'none';
     view3dActive = true;
     resizeCanvas3d();
     loadTrajectory();
     loadPathList();
     draw3d();
+  } else if (tab === 'input') {
+    logEl.style.display = 'none';
+    progEl.style.display = 'none';
+    canvas.style.display = 'none';
+    pathCtl.classList.remove('visible');
+    inputPanel.style.display = 'flex';
+    view3dActive = false;
+    inputRecRefreshFiles();
+    inputRecPollStart();
+    // Redraw canvas after layout settles
+    requestAnimationFrame(() => { const s=document.getElementById('inputRecFileList'); if(s?.value) inputRecLoad(s.value); });
   } else {
     logEl.style.display = '';
     progEl.style.display = '';
     canvas.style.display = 'none';
     pathCtl.classList.remove('visible');
+    inputPanel.style.display = 'none';
     view3dActive = false;
+    inputRecPollStop();
   }
 }
 
@@ -1791,24 +2193,58 @@ function draw3d() {
   // Waypoints from trajectory
   const points = trajData || [];
   if (points.length) {
-    // Path lines
+    // Demo-mode progressive draw: only render points up to demoPose. The
+    // current pose (demoPose-1, 0-indexed) gets a pulsing highlight so
+    // the client sees the trajectory being traced as the capture loop
+    // ticks. Outside demo mode we render the whole path normally.
+    const limit = (demoPose > 0) ? demoPose : points.length;
+
+    // Path lines (only up to current pose in demo)
     ctx.strokeStyle = 'rgba(62,207,142,0.5)';
     ctx.lineWidth = 1.5 * devicePixelRatio;
     ctx.beginPath();
     let started = false;
-    points.forEach(p => {
+    for (let i = 0; i < limit; i++) {
+      const p = points[i];
       const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
       if (pp) { if (!started) { ctx.moveTo(pp.x, pp.y); started = true; } else ctx.lineTo(pp.x, pp.y); }
-    });
+    }
     ctx.stroke();
+
+    // Future (un-captured) waypoints: faint dashed preview
+    if (demoPose > 0 && demoPose < points.length) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      let started2 = false;
+      for (let i = demoPose - 1; i < points.length; i++) {
+        const p = points[i];
+        const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
+        if (pp) { if (!started2) { ctx.moveTo(pp.x, pp.y); started2 = true; } else ctx.lineTo(pp.x, pp.y); }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     // Dots
     points.forEach((p, i) => {
       const pp = project3d(p.Position.x, p.Position.y, p.Position.z, w, h);
       if (!pp) return;
-      const r = 3 * devicePixelRatio;
-      ctx.fillStyle = p.viewName === 'center' ? '#3ecf8e' : '#5b8af0';
-      ctx.beginPath(); ctx.arc(pp.x, pp.y, r, 0, Math.PI * 2); ctx.fill();
+      const isCurrent = (demoPose > 0 && i === demoPose - 1);
+      const isFuture = (demoPose > 0 && i >= demoPose);
+      const baseR = 3 * devicePixelRatio;
+      if (isFuture) {
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, baseR, 0, Math.PI * 2); ctx.fill();
+      } else if (isCurrent) {
+        // Pulsing accent for the most recently captured pose
+        const pulse = 1 + 0.5 * Math.sin(performance.now() / 200);
+        ctx.fillStyle = '#f0b03e';
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, baseR * pulse, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = p.viewName === 'center' ? '#3ecf8e' : '#5b8af0';
+        ctx.beginPath(); ctx.arc(pp.x, pp.y, baseR, 0, Math.PI * 2); ctx.fill();
+      }
     });
   }
 
