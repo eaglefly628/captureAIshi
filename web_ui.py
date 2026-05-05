@@ -92,6 +92,12 @@ app = Flask(__name__, template_folder="web/templates", static_folder="web/static
 for _bp in ALL_BLUEPRINTS:
     app.register_blueprint(_bp)
 
+# Prime demo state at import time so gunicorn workers pick it up. Without
+# this the pre-Start /api/sessions response lists every directory under
+# cwd as a fake session.
+from web.demo import init_demo_state as _init_demo_state
+_init_demo_state()
+
 
 @app.route("/")
 def index():
@@ -108,6 +114,7 @@ def main():
 
     # In DEMOAISHI=1 the cloud image never reads .exr files, so skip the
     # cv2 auto-install probe (saves ~30 s + 80 MB on first cold start).
+    # init_demo_state() already ran at import time above.
     from web.demo import is_demo_mode
     if not is_demo_mode():
         _ensure_exr_loader()

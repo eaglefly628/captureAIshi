@@ -4,6 +4,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, send_from_directory
 
+from web.demo import filter_files_by_pose, is_demo_mode
 from web.state import _capture_state, _lock
 
 bp = Blueprint("sessions", __name__)
@@ -53,6 +54,8 @@ def list_captures(session=None):
         for f in sorted(target.rglob("*")):
             if f.suffix.lower() in _IMAGE_EXTS:
                 files.append(f.relative_to(target).as_posix())
+    if is_demo_mode():
+        files = filter_files_by_pose(files)
     return jsonify({"files": files, "session": target.name if target.is_dir() else ""})
 
 
@@ -79,11 +82,12 @@ def session_stats(session=None):
             return jsonify({"error": "Invalid session path"}), 403
     else:
         target = Path(output_dir)
-    total_size = 0
-    count = 0
+    pairs = []
     if target.is_dir():
-        for f in target.rglob("*"):
+        for f in sorted(target.rglob("*")):
             if f.suffix.lower() in _IMAGE_EXTS:
-                count += 1
-                total_size += f.stat().st_size
-    return jsonify({"count": count, "size_bytes": total_size})
+                pairs.append((f.relative_to(target).as_posix(), f.stat().st_size))
+    if is_demo_mode():
+        allowed = set(filter_files_by_pose([n for n, _ in pairs]))
+        pairs = [(n, s) for n, s in pairs if n in allowed]
+    return jsonify({"count": len(pairs), "size_bytes": sum(s for _, s in pairs)})

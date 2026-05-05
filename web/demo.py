@@ -23,6 +23,7 @@ the in-module default timeline.
 import json
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -115,6 +116,43 @@ def _scenario_frames_dir(scenario: dict) -> Path | None:
     if not frames.is_dir():
         return None
     return frames
+
+
+def init_demo_state() -> None:
+    """Prime the shared output_dir so /api/sessions shows the scenario's
+    frames/ as the (only) session from page load -- without this, the
+    pre-Start UI lists every directory under cwd as a fake session."""
+    if not is_demo_mode():
+        return
+    scenario = _load_scenario(active_scenario_name())
+    frames = _scenario_frames_dir(scenario)
+    if frames is None:
+        return
+    with _lock:
+        _capture_state["output_dir"] = str(frames)
+
+
+_TRIPLET_SUFFIX_RE = re.compile(r"(_d|_n)\.png$", re.IGNORECASE)
+
+
+def filter_files_by_pose(files: list) -> list:
+    """Trim a sorted file list to the first N distinct pose triplets,
+    where N is the active DemoSession's pose count. Returns [] before
+    any session has run, so the gallery is empty on first paint and
+    fills in progressively as DemoSession ticks."""
+    with _lock:
+        pose = int(_capture_state.get("demo_pose", 0) or 0)
+    if pose <= 0:
+        return []
+    keys_in_order = []
+    seen = set()
+    for f in files:
+        key = _TRIPLET_SUFFIX_RE.sub(".png", f)
+        if key not in seen:
+            seen.add(key)
+            keys_in_order.append(key)
+    allowed = set(keys_in_order[:pose])
+    return [f for f in files if _TRIPLET_SUFFIX_RE.sub(".png", f) in allowed]
 
 
 class DemoSession:
