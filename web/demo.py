@@ -117,6 +117,20 @@ def _scenario_frames_dir(scenario: dict) -> Path | None:
     return frames
 
 
+def init_demo_state() -> None:
+    """Prime the shared output_dir so /api/sessions and /api/captures show
+    the scenario's frames/ from page load -- without this, the pre-Start
+    UI briefly lists every directory under cwd as a fake session."""
+    if not is_demo_mode():
+        return
+    scenario = _load_scenario(active_scenario_name())
+    frames = _scenario_frames_dir(scenario)
+    if frames is None:
+        return
+    with _lock:
+        _capture_state["output_dir"] = str(frames)
+
+
 class DemoSession:
     """Background thread that emits the scripted timeline."""
 
