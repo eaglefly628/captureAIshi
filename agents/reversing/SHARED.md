@@ -9,6 +9,13 @@ Current context lives here. Completed items and old CL entries move to
 
 ### Open items
 
+- [ ] **P0: unicap dxgi.dll proxy 整合** — 同事找到更稳定注入方法。
+  `3rdparty/unicap`（已 clone，commit `424113d`）使用 dxgi.dll proxy 注入 ReShade
+  采帧，**无 CreateRemoteThread / LoadLibraryW**，不触发 anti-cheat。
+  目标：作为 captureAIshi 的新 grabber 后端（`grabbers/unicap_grabber.py`），
+  在现有 renderdoc 注入失败时自动 fallback。
+  参考：`3rdparty/unicap/reshade-addons/99-frame_capture/` + `tools/capture/survey.py`
+
 - [x] **P1: trajectory decode callbacks 不保存 PNG** (spotted by 小萱, fixed 9498850) —
   `export_batch` 返回 numpy arrays，调用方需调 `save_frame` 写盘。
   `trajectory_play._decode` 和 `/api/trajectory/decode._run_decode` 都直接丢弃了
