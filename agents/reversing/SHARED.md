@@ -125,7 +125,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- Path B review fixes (P0..P2 from architect review)
+### [v0.3.0] 41d7e26 -- xiaoni -- Path B review fixes (P0..P2 from architect review)
 
 - C++ loader-lock fix: `bridge.cpp` DllMain now only calls `fc_embed::register_events()` (event hooks, no thread spawn); `fc_embed::start_workers()` runs in the deferred bootstrap thread alongside `startup()`. Symmetrical detach order: `shutdown()` -> `stop_workers` -> `unregister_events` -> `unregister_addon`.
 - C++ symbol isolation: `frame_capture.cpp` internals wrapped in anonymous namespace; only `fc_embed::{register,unregister}_events` + `fc_embed::{start,stop}_workers` are visible. New `frame_capture/embed_api.h` is the single ABI seen by bridge.cpp.
