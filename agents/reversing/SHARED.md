@@ -9,33 +9,25 @@ Current context lives here. Completed items and old CL entries move to
 
 ### Open items
 
-- [ ] **P0: Path B Phase 1 -- embed frame_capture into bridge addon**
-  Phase 0 (eb65088) + 0.5 (75fb383) done: scaffold + vendored unicap source.
-  **Decision (2026-05-09, 老白): embed.** Output = one `.addon` file per
-  game = bridge TCP/engine/camera + frame capture compiled together.
-  Files to touch:
-    - `3rdparty/reshade_bridge/src/CMakeLists.txt` -- add
-      `../frame_capture/frame_capture.cpp` to target sources; add
-      `../deps/{imgui,stb,tinyexr}` and `../frame_capture` to includes;
-      add `../shaders/` copy step or document manual deploy.
-    - `3rdparty/reshade_bridge/src/bridge.cpp` -- after
-      `reshade::register_addon`, also call `register_addon_FC()` from
-      `frame_capture.cpp` so both subsystems wire up in one DllMain.
-      Resolve any symbol clashes (NAME / DESCRIPTION are already exported
-      from bridge.cpp -- frame_capture.cpp's must be removed or made static).
-    - Sidecar protocol: keep `fc_*.txt` for now (zero refactor); rename
-      `%TEMP%\unicap\` -> `%TEMP%\captureAIshi\` in frame_capture.cpp.
-    - `grabbers/reshade_grabber.py` -- new; consumes BMP/PNG + EXR pairs
-      from output dir, mirrors `RenderDocGrabber` interface.
-    - `web_ui` -- `injection_mode = renderdoc | reshade` dropdown;
-      `main.py` factory picks grabber + injection script per mode.
-  Path A (`3rdparty/bridge/`) untouched throughout.
-  Reference: `3rdparty/reshade_bridge/README.md` Phase 1 plan section.
-
-- [ ] **P0: unicap dxgi.dll proxy 整合** [SUPERSEDED by above] -- absorbed
-  into Path B Phase 1; this old item kept for chronological context.
-  Original ask: drop-in fallback grabber. New plan: full Path B vehicle
-  with bridge protocol parity (not just a grabber).
+- [ ] **P0: Path B Phase 2 -- build & validate end-to-end on Hellblade II**
+  Phase 0 / 0.5 / 1 done (eb65088 / 75fb383 / Phase 1 commit). Code path
+  is in place: bridge.cpp + frame_capture embedded -> one
+  `captureAIshi_bridge.addon`; `grabbers/reshade_grabber.py` reads its
+  output; UI dropdown + main.py factory wired; `scripts/deploy_reshade.py`
+  copies binaries into game dir.
+  Outstanding before "works":
+    - Build the addon on a Windows host:
+        `cd 3rdparty/reshade_bridge/src && cmake -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Release`
+      and the ReShade core (3rdparty/reshade/) for `dxgi.dll`.
+    - Iterate on inevitable C++ compile errors from embedding (FormatEnum
+      symbol clashes, /utf-8 mismatches, MSVC /W3 warnings, etc.).
+    - `scripts/deploy_reshade.py --game-dir <hellblade2> --output-dir <out>`,
+      launch game, verify ReShade overlay shows "captureAIshi Bridge".
+    - Connect bridge driver (TCP 9998), confirm GEngine scan finds UE5
+      objects; run a short trajectory; confirm BMP+EXR triplets land.
+    - Optional polish: `__fc_capture_now` TCP command for pose-precise
+      capture (current grabber polls timer-driven output, ~33ms latency).
+  Path A unaffected throughout. Reference: 3rdparty/reshade_bridge/README.md.
 
 - [x] **P1: trajectory decode callbacks 不保存 PNG** (spotted by 小萱, fixed 9498850) —
   `export_batch` 返回 numpy arrays，调用方需调 `save_frame` 写盘。
@@ -132,6 +124,15 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 ## Changelog (latest 3)
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
+
+### [v0.3.0] (pending) -- xiaoni -- Path B Phase 1: embed frame_capture; grabber + UI wired
+
+- `3rdparty/reshade_bridge/src/CMakeLists.txt` -- adds `frame_capture/frame_capture.cpp` + imgui `*.cpp` + deps include dirs (sdk/imgui/stb/tinyexr) to bridge target; one `.addon` output.
+- `3rdparty/reshade_bridge/frame_capture/frame_capture.cpp` -- removed standalone DllMain/NAME/DESCRIPTION; new `init_addon_FC()` + `shutdown_addon_FC()` wrappers (worker threads + reshade event registration) for bridge.cpp to call.
+- `3rdparty/reshade_bridge/src/bridge.cpp` -- DllMain calls init/shutdown FC alongside `reshade::register_addon`; NAME/DESC updated to advertise both subsystems.
+- `grabbers/reshade_grabber.py` -- new FrameGrabber that polls `<output_dir>` for `<exe> <ts> {BackBuffer.{png,bmp},DepthBuffer.exr,NormalBuffer.exr}` triplets; setup() writes `fc_output_dir.txt` sidecar to game dir.
+- `web/templates/index.html` + `main.py:create_grabber` -- new `reshade` grabber option / branch.
+- `scripts/deploy_reshade.py` -- copies dxgi.dll + .addon + shaders into a game dir, primes sidecar; `--undeploy` reverses.
 
 ### [v0.3.0] 75fb383 -- xiaoni -- Vendor unicap source (drop submodule)
 

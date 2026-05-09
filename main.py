@@ -118,6 +118,15 @@ def create_grabber(args):
             wait_for_port=int(driver_port) if driver_port else None,
             capture_profile=capture_profile,
         )
+    elif args.grabber == "reshade":
+        from grabbers.reshade_grabber import ReShadeGrabber
+        target_exe = getattr(args, 'target_exe', None)
+        if not target_exe:
+            raise ValueError("ReShade grabber requires --target-exe (game dir is derived from it)")
+        game_dir = Path(target_exe).parent
+        out_dir = args.output_dir / "frames"
+        logging.debug(f"[INIT] ReShade grabber: game_dir={game_dir}, output_dir={out_dir}")
+        return ReShadeGrabber(output_dir=out_dir, game_dir=game_dir)
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber
         logging.debug(f"[INIT] Screenshot grabber: dir={args.output_dir / 'screenshots'}")

@@ -703,8 +703,15 @@ static void shutdown()
 
 extern "C" __declspec(dllexport) const char* NAME        = "captureAIshi Bridge";
 extern "C" __declspec(dllexport) const char* DESCRIPTION =
-    "UE5 game control bridge (TCP 9998). Path B vehicle hosted as ReShade addon. "
-    "Phase 0: bridge logic only; no frame-capture events wired yet.";
+    "UE5 game control bridge (TCP 9998) + frame capture (color BMP/PNG + "
+    "depth/normal EXR). Path B vehicle hosted as ReShade addon.";
+
+/* Frame-capture subsystem entry points. Defined in
+ * 3rdparty/reshade_bridge/frame_capture/frame_capture.cpp. The .cpp is
+ * compiled into this same DLL (Phase 1 embed decision, 2026-05-09);
+ * forward-declared here so the loader sees a single DllMain. */
+extern void init_addon_FC();
+extern void shutdown_addon_FC();
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
 {
@@ -716,11 +723,16 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
          * proxy enumerates *.addon files. If registration fails (e.g. host
          * is not ReShade) we still spin up the bridge -- the TCP server is
          * usable on its own and harmless when the proxy is absent. */
-        reshade::register_addon(hModule);
+        if (reshade::register_addon(hModule)) {
+            /* Frame-capture wires its own ReShade events; only safe to
+             * call after register_addon succeeded. */
+            init_addon_FC();
+        }
         /* Defer to new thread to avoid DllMain loader lock */
         std::thread(startup).detach();
         break;
     case DLL_PROCESS_DETACH:
+        shutdown_addon_FC();
         shutdown();
         reshade::unregister_addon(hModule);
         break;

@@ -47,16 +47,36 @@ and back-port to Path A.
 - `3rdparty/unicap` submodule dropped; `.gitmodules` removed
 - See "Provenance" + "Layout" sections below
 
-**Phase 1 (next)**: hook ReShade frame events for capture.
-- **Decision (2026-05-09): embed.** `frame_capture.cpp` compiles into the
-  bridge addon target -- one `.addon` file ships per game, contains TCP
-  bridge protocol + GEngine scan + camera control + frame capture all in
-  one binary. Co-load (sibling addons) was rejected as unnecessary now
-  that the source is fully ours.
-- Register `reshade_present` / `bind_render_targets_and_depth_stencil` events
-- Write `grabbers/reshade_grabber.py` to consume addon output
+**Phase 1 (this commit)**: embed frame_capture into the bridge addon. DONE.
+- `src/CMakeLists.txt` -- adds `frame_capture/frame_capture.cpp` + imgui
+  sources + deps include dirs to the bridge target.
+- `frame_capture/frame_capture.cpp` -- DllMain / NAME / DESCRIPTION
+  removed; replaced with `init_addon_FC()` / `shutdown_addon_FC()`
+  wrappers that bridge.cpp calls from its DllMain.
+- `src/bridge.cpp` -- DllMain calls `init_addon_FC()` after
+  `reshade::register_addon` succeeds; calls `shutdown_addon_FC()` first
+  on detach. NAME/DESCRIPTION updated to advertise both subsystems.
+- `grabbers/reshade_grabber.py` -- new; polls output dir for the latest
+  `<exe> <ts> {BackBuffer.{png,bmp},DepthBuffer.exr,NormalBuffer.exr}`
+  triplet; setup() writes `fc_output_dir.txt` sidecar.
+- `web/templates/index.html` -- grabber dropdown gains
+  `reshade` option labelled `爱萌捕捉 (ReShade)`; renderdoc relabelled
+  `(RenderDoc)` for symmetry.
+- `main.py` -- `create_grabber()` gains `reshade` branch.
+- `scripts/deploy_reshade.py` -- copies `dxgi.dll` + `*.addon` + shaders
+  into a game directory, primes sidecar.
 
-**Phase 2**: end-to-end on Hellblade II (the AC game that motivated this).
+Path A (`3rdparty/bridge/`) untouched throughout.
+
+**Phase 2 (next)**: end-to-end on Hellblade II (the AC game that motivated this).
+- Build the addon on a Windows host (`cmake -B build && cmake --build`).
+- Run `scripts/deploy_reshade.py` against game dir.
+- Launch game, verify ReShade overlay shows "captureAIshi Bridge".
+- Connect bridge driver, run a test trajectory, confirm BMP+EXR triplets
+  land in `--output-dir`.
+- Optional pose-precise capture: add `__fc_capture_now` TCP command on
+  the bridge channel so grabber requests a frame on demand instead of
+  polling the timer-driven output.
 
 ## Layout
 

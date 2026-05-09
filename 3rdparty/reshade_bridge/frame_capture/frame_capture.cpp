@@ -1316,35 +1316,38 @@ void unregister_addon_FC()
     reshade::unregister_event<reshade::addon_event::reshade_begin_effects>(on_begin_render_effects);
 }
 
-// ── DLL entry ─────────────────────────────────────────────────────────────────
+// ── Embed entry points ────────────────────────────────────────────────────────
+//
+// Originally this TU owned its own DllMain + NAME/DESCRIPTION exports and
+// was built as a standalone .addon. After Phase 1 (2026-05-09) it is
+// embedded into captureAIshi_bridge.addon -- bridge.cpp now owns the DLL
+// entry, the addon name, and the reshade::register_addon call. To keep the
+// frame-capture subsystem self-contained we expose two wrappers:
+//
+//   init_addon_FC()      bring up worker threads + register reshade events
+//   shutdown_addon_FC()  reverse, join workers
+//
+// bridge.cpp calls these from its DllMain. NAME/DESCRIPTION are removed so
+// the linker doesn't trip on duplicate symbols with bridge.cpp's exports.
 
-extern "C" __declspec(dllexport) const char* NAME        = "Frame Capture";
-extern "C" __declspec(dllexport) const char* DESCRIPTION = "Captures depth and color textures via ReShade. Timer-driven, no key required.";
-
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
+void init_addon_FC()
 {
-    switch (fdwReason) {
-    case DLL_PROCESS_ATTACH:
-        if (!reshade::register_addon(hModule))
-            return FALSE;
-        g_worker_stop = false;
-        g_save_threads.reserve(NUM_WORKERS);
-        for (size_t i = 0; i < NUM_WORKERS; ++i)
-            g_save_threads.emplace_back(save_worker_fn);
-        register_addon_FC();
-        break;
-    case DLL_PROCESS_DETACH:
-        unregister_addon_FC();
-        reshade::unregister_addon(hModule);
-        {
-            std::lock_guard<std::mutex> lk(g_queue_mutex);
-            g_worker_stop = true;
-        }
-        g_queue_cv.notify_all();
-        for (auto& t : g_save_threads)
-            if (t.joinable()) t.join();
-        g_save_threads.clear();
-        break;
+    g_worker_stop = false;
+    g_save_threads.reserve(NUM_WORKERS);
+    for (size_t i = 0; i < NUM_WORKERS; ++i)
+        g_save_threads.emplace_back(save_worker_fn);
+    register_addon_FC();
+}
+
+void shutdown_addon_FC()
+{
+    unregister_addon_FC();
+    {
+        std::lock_guard<std::mutex> lk(g_queue_mutex);
+        g_worker_stop = true;
     }
-    return TRUE;
+    g_queue_cv.notify_all();
+    for (auto& t : g_save_threads)
+        if (t.joinable()) t.join();
+    g_save_threads.clear();
 }
