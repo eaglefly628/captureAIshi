@@ -1,4 +1,13 @@
-# reshade_bridge -- Path B injection vehicle
+# reshade_bridge -- Path B injection vehicle (standalone addon variant)
+
+> **There is also an "embedded" variant** at
+> `3rdparty/reshade/source/captureAIshi/` that compiles the same bridge +
+> frame-capture logic directly into `dxgi.dll` (ReShade core's output).
+> Mirrors Path A's `renderdoc/core/bridge/console_server.h` baked into
+> renderdoc.dll. With that variant you ship ONE binary (dxgi.dll); with this
+> directory's variant you ship TWO (dxgi.dll + .addon). Both work. Pick per
+> game / per ops preference. Sources are independent copies on each side --
+> bug fixes apply to both manually.
 
 Independent re-implementation of `3rdparty/bridge/` as a ReShade addon DLL.
 Same TCP 9998 protocol, same UE5 engine scan, same camera/HUD/path control.

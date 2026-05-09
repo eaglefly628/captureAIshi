@@ -8,6 +8,7 @@
 #include "ini_file.hpp"
 #include "hook_manager.hpp"
 #include "addon_manager.hpp"
+#include "captureAIshi/embed_api.h"   // captureAIshi embedded bridge entry points
 #include <Windows.h>
 #include <Psapi.h>
 #include <delayimp.h> // Delay-load helpers
@@ -370,11 +371,34 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 				}
 			}
 #endif
+
+			// captureAIshi embedded bridge -- mirrors Path A's
+			// renderdoc/core/core.cpp pattern of starting the bridge inside
+			// the host DLL itself. Brings up:
+			//   - TCP 9998 console server (UE5 GEngine scan, camera/HUD/path)
+			//   - Frame capture (color BMP/PNG + depth/normal EXR via ReShade events)
+			// See source/captureAIshi/{bridge.cpp,frame_capture.cpp,embed_api.h}.
+			extern "C" void bridge_start();
+			extern "C" void bridge_stop();   // forward decl for DETACH below
+			(void)bridge_stop;
+			::bridge_start();
+#if RESHADE_ADDON >= 2
+			fc_embed::register_events();
+			fc_embed::start_workers();
+#endif
 		}
 		break;
 	case DLL_PROCESS_DETACH:
 		{
 			reshade::log::message(reshade::log::level::info, "Exiting ...");
+
+			// captureAIshi embedded bridge teardown (reverse order of init).
+#if RESHADE_ADDON >= 2
+			fc_embed::stop_workers();
+			fc_embed::unregister_events();
+#endif
+			extern "C" void bridge_stop();
+			::bridge_stop();
 
 #if RESHADE_ADDON >= 2
 			if (reshade::has_loaded_addons())

@@ -125,6 +125,17 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- Path B "embedded" variant: bridge baked into dxgi.dll
+
+Mirrors Path A's `renderdoc/renderdoc/core/bridge/` pattern where bridge code compiles into renderdoc.dll itself. New variant: `dxgi.dll` (= ReShade64.dll renamed) directly contains TCP 9998 + GEngine scan + frame capture. No separate `.addon` file. Standalone addon path at `3rdparty/reshade_bridge/` left intact -- both build modes now coexist.
+
+- `3rdparty/reshade/source/captureAIshi/` (new): copies of bridge.cpp + 4 headers + frame_capture.cpp + FormatEnum.h + embed_api.h; `deps/` for v1 stb_image_resize + tinyexr + miniz (ReShade core does not provide these).
+- `bridge.cpp` (embedded copy): DllMain / NAME / DESCRIPTION / register_addon ripped (those are addon idioms). Public ABI = `extern "C" void bridge_start() / bridge_stop()`.
+- `frame_capture.cpp` (embedded copy): drops `STB_IMAGE_WRITE_IMPLEMENTATION` (reshade core's `deps/stb_impl.c` provides it; redefining = link error). Keeps `STB_IMAGE_RESIZE_IMPLEMENTATION` + `TINYEXR_IMPLEMENTATION`. Adds `WIN32_LEAN_AND_MEAN` (winsock.h vs winsock2.h).
+- `3rdparty/reshade/source/dll_main.cpp`: includes `captureAIshi/embed_api.h`; ATTACH calls `bridge_start()` + `fc_embed::register_events()` + `start_workers()`; DETACH symmetric reverse.
+- `3rdparty/reshade/ReShade.vcxproj`: 2 new `<ClCompile>` entries with `WarningLevel=Level3`, `TreatWarningAsError=false`, third-party warning silencing, and `AdditionalIncludeDirectories` for `deps/imgui;deps/stb;source/captureAIshi` on frame_capture.cpp. `ws2_32.lib` + `psapi.lib` pulled via `#pragma comment(lib,...)` in bridge.cpp.
+- Built unverified -- expect a couple iterations of compile errors on first Windows MSBuild. Reference: Path A precedent in `renderdoc/renderdoc/core/core.cpp:43,689,788`.
+
 ### [v0.3.0] 41d7e26 -- xiaoni -- Path B review fixes (P0..P2 from architect review)
 
 - C++ loader-lock fix: `bridge.cpp` DllMain now only calls `fc_embed::register_events()` (event hooks, no thread spawn); `fc_embed::start_workers()` runs in the deferred bootstrap thread alongside `startup()`. Symmetrical detach order: `shutdown()` -> `stop_workers` -> `unregister_events` -> `unregister_addon`.

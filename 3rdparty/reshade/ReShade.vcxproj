@@ -603,6 +603,22 @@
     <ClCompile Include="source\ddraw\ddraw.cpp" />
     <ClCompile Include="source\dll_log.cpp" />
     <ClCompile Include="source\dll_main.cpp" />
+    <!-- captureAIshi embedded bridge: TCP 9998 + UE5 GEngine scan + frame capture
+         baked into ReShade's dxgi.dll. /W3 + relaxed flags: this is third-party
+         code we vendored, NOT part of ReShade core. Mirror of Path A's
+         renderdoc/core/bridge/console_server.h pattern. -->
+    <ClCompile Include="source\captureAIshi\bridge.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <ExceptionHandling>Async</ExceptionHandling>
+    </ClCompile>
+    <ClCompile Include="source\captureAIshi\frame_capture.cpp">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <AdditionalIncludeDirectories>$(SolutionDir)deps\imgui;$(SolutionDir)deps\stb;$(SolutionDir)source\captureAIshi;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <ClCompile Include="source\dll_main_test_app.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Debug App' And '$(Configuration)'!='Release App'">true</ExcludedFromBuild>
     </ClCompile>
