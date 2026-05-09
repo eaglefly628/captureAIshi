@@ -9,12 +9,33 @@ Current context lives here. Completed items and old CL entries move to
 
 ### Open items
 
-- [ ] **P0: unicap dxgi.dll proxy 整合** — 同事找到更稳定注入方法。
-  `3rdparty/unicap`（已 clone，commit `424113d`）使用 dxgi.dll proxy 注入 ReShade
-  采帧，**无 CreateRemoteThread / LoadLibraryW**，不触发 anti-cheat。
-  目标：作为 captureAIshi 的新 grabber 后端（`grabbers/unicap_grabber.py`），
-  在现有 renderdoc 注入失败时自动 fallback。
-  参考：`3rdparty/unicap/reshade-addons/99-frame_capture/` + `tools/capture/survey.py`
+- [ ] **P0: Path B Phase 1 -- embed frame_capture into bridge addon**
+  Phase 0 (eb65088) + 0.5 (75fb383) done: scaffold + vendored unicap source.
+  **Decision (2026-05-09, 老白): embed.** Output = one `.addon` file per
+  game = bridge TCP/engine/camera + frame capture compiled together.
+  Files to touch:
+    - `3rdparty/reshade_bridge/src/CMakeLists.txt` -- add
+      `../frame_capture/frame_capture.cpp` to target sources; add
+      `../deps/{imgui,stb,tinyexr}` and `../frame_capture` to includes;
+      add `../shaders/` copy step or document manual deploy.
+    - `3rdparty/reshade_bridge/src/bridge.cpp` -- after
+      `reshade::register_addon`, also call `register_addon_FC()` from
+      `frame_capture.cpp` so both subsystems wire up in one DllMain.
+      Resolve any symbol clashes (NAME / DESCRIPTION are already exported
+      from bridge.cpp -- frame_capture.cpp's must be removed or made static).
+    - Sidecar protocol: keep `fc_*.txt` for now (zero refactor); rename
+      `%TEMP%\unicap\` -> `%TEMP%\captureAIshi\` in frame_capture.cpp.
+    - `grabbers/reshade_grabber.py` -- new; consumes BMP/PNG + EXR pairs
+      from output dir, mirrors `RenderDocGrabber` interface.
+    - `web_ui` -- `injection_mode = renderdoc | reshade` dropdown;
+      `main.py` factory picks grabber + injection script per mode.
+  Path A (`3rdparty/bridge/`) untouched throughout.
+  Reference: `3rdparty/reshade_bridge/README.md` Phase 1 plan section.
+
+- [ ] **P0: unicap dxgi.dll proxy 整合** [SUPERSEDED by above] -- absorbed
+  into Path B Phase 1; this old item kept for chronological context.
+  Original ask: drop-in fallback grabber. New plan: full Path B vehicle
+  with bridge protocol parity (not just a grabber).
 
 - [x] **P1: trajectory decode callbacks 不保存 PNG** (spotted by 小萱, fixed 9498850) —
   `export_batch` 返回 numpy arrays，调用方需调 `save_frame` 写盘。

@@ -48,8 +48,12 @@ and back-port to Path A.
 - See "Provenance" + "Layout" sections below
 
 **Phase 1 (next)**: hook ReShade frame events for capture.
+- **Decision (2026-05-09): embed.** `frame_capture.cpp` compiles into the
+  bridge addon target -- one `.addon` file ships per game, contains TCP
+  bridge protocol + GEngine scan + camera control + frame capture all in
+  one binary. Co-load (sibling addons) was rejected as unnecessary now
+  that the source is fully ours.
 - Register `reshade_present` / `bind_render_targets_and_depth_stencil` events
-- Decide: embed `frame_capture.cpp` into bridge addon vs co-load as sibling
 - Write `grabbers/reshade_grabber.py` to consume addon output
 
 **Phase 2**: end-to-end on Hellblade II (the AC game that motivated this).
@@ -134,10 +138,10 @@ directory).
 
 1. Wire frame-capture events in `bridge.cpp` (or co-load `frame_capture.cpp`
    as a sibling `.addon` -- decision below).
-2. **Embed vs co-load decision**: lean toward **embed** so the entire Path B
-   payload is one `.addon` file plus shaders. Co-loading was preferred when
-   we treated unicap as upstream black-box; now that it is ours, one binary
-   is simpler to ship. Confirm before Phase 1 work starts.
+2. **Embed decided (2026-05-09)**: one `.addon` per game = bridge logic +
+   frame capture compiled together. Update CMakeLists to add
+   `frame_capture/frame_capture.cpp` (and its deps include dirs) to the
+   `captureAIshi_reshade_bridge` target.
 3. Adapt sidecar-file protocol to bridge TCP channel where it makes sense
    (output dir redirection -> single TCP command; per-frame state ping
    stays as `%TEMP%/captureAIshi/` files for live in-game overlay).
