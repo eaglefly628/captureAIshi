@@ -13,18 +13,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Phase 0: bridge logic only. No render-pipeline event hooks yet.
 # Phase 1: hook reshade::addon_event::reshade_present etc. for frame export.
 
-# ReShade SDK headers come from the unicap submodule (which already pins a
-# known-good v6 ReShade source we consume in Path B). If you want to swap
-# ReShade versions, update the submodule pin -- do not vendor headers here.
+# ReShade addon SDK headers vendored at 3rdparty/reshade_bridge/sdk/.
+# Originally extracted from a known-good v6 ReShade source pin (see
+# 3rdparty/reshade_bridge/README.md provenance section). Treated as our own
+# code: edit in place when needed.
 set(RESHADE_SDK_INCLUDE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../unicap/reshade-addons/deps/reshade/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../sdk"
     CACHE PATH "ReShade addon SDK headers (reshade.hpp + reshade_*.hpp)"
 )
 
 if(NOT EXISTS "${RESHADE_SDK_INCLUDE}/reshade.hpp")
     message(FATAL_ERROR
         "ReShade SDK headers not found at ${RESHADE_SDK_INCLUDE}. "
-        "Run: git submodule update --init --recursive 3rdparty/unicap")
+        "Expected vendored copy at 3rdparty/reshade_bridge/sdk/reshade.hpp.")
 endif()
 
 add_library(captureAIshi_reshade_bridge SHARED

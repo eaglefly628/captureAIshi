@@ -41,49 +41,116 @@ and back-port to Path A.
 - CMakeLists builds `captureAIshi_bridge.addon`
 - **Not yet built / tested.** Compilation against ReShade SDK pending Windows host.
 
+**Phase 0.5 (this commit)**: vendor unicap source into our tree.
+- ReShade core source -> `3rdparty/reshade/`
+- Addon SDK headers + `frame_capture.cpp` + deps + shaders -> `3rdparty/reshade_bridge/{sdk,frame_capture,deps,shaders}/`
+- `3rdparty/unicap` submodule dropped; `.gitmodules` removed
+- See "Provenance" + "Layout" sections below
+
 **Phase 1 (next)**: hook ReShade frame events for capture.
 - Register `reshade_present` / `bind_render_targets_and_depth_stencil` events
-- Decide capture-output format (match Path A: PNG color + EXR depth + EXR normal)
-- Write `grabbers/reshade_grabber.py` to consume the addon's output
+- Decide: embed `frame_capture.cpp` into bridge addon vs co-load as sibling
+- Write `grabbers/reshade_grabber.py` to consume addon output
 
 **Phase 2**: end-to-end on Hellblade II (the AC game that motivated this).
 
-## Build (planned, Windows)
+## Layout
+
+```
+3rdparty/reshade_bridge/
+├── README.md              this file
+├── src/                   Path B bridge port (copy of 3rdparty/bridge/ + reshade hooks)
+│   ├── bridge.cpp
+│   ├── pattern_scan.h
+│   ├── ue5_engine.h
+│   ├── camera_path.h
+│   └── CMakeLists.txt
+├── sdk/                   ReShade addon SDK headers (vendored, edit in place)
+│   ├── reshade.hpp
+│   ├── reshade_api.hpp
+│   ├── reshade_events.hpp
+│   └── ...
+├── deps/                  header-only deps for frame_capture
+│   ├── imgui/             ReShade overlay widgets (used by frame_capture overlay)
+│   ├── stb/               stb_image / stb_image_write / stb_image_resize
+│   └── tinyexr/           EXR encoder for depth/normal export
+├── frame_capture/         ReShade frame-capture addon (vendored from unicap)
+│   ├── frame_capture.cpp  ~1350 LOC; color BMP/PNG + depth/normal EXR
+│   ├── FormatEnum.h
+│   └── ...
+└── shaders/               FX shaders the addon reads back
+    ├── DepthToAddon.fx    exports DepthToAddon_DepthTex / _NormalTex
+    ├── BackBufferExport.fx
+    ├── CaptureStatus.fx
+    └── ReShade.fxh
+```
+
+The sibling `3rdparty/reshade/` directory holds the **ReShade core source**
+(60 MB, builds `dxgi.dll` proxy via MSBuild). Also vendored, also edit in
+place when needed. Pin: 6.7.3.16 UNOFFICIAL (originally from unicap repo).
+
+## Provenance
+
+All vendored code originated in https://github.com/raptoravis/unicap @ commit
+`424113d` (cloned briefly as a submodule, then absorbed). Per project
+decision (2026-05-09): unicap is treated as "ours" -- there is no upstream
+sync workflow, no submodule, no compatibility constraint. Edit any file
+freely. If unicap upstream changes, that is a manual cherry-pick choice.
+
+What was inherited:
+- Full ReShade core source         -> `3rdparty/reshade/` (60 MB)
+- ReShade addon SDK headers        -> `3rdparty/reshade_bridge/sdk/`
+- Frame-capture addon source       -> `3rdparty/reshade_bridge/frame_capture/`
+- Header-only addon deps           -> `3rdparty/reshade_bridge/deps/{imgui,stb,tinyexr}`
+- DepthToAddon / BackBufferExport / CaptureStatus shaders -> `shaders/`
+
+What was deliberately NOT inherited (we have our own):
+- unicap `main.py` (Python CLI orchestrator)
+- unicap `tools/capture/` (survey + capture loop) -- the protocol bits we
+  need will land in `grabbers/reshade_grabber.py` when Phase 1 wires Python
+  to the addon. Survey-skip-count auto-detection is one such function.
+- unicap `profiles/`, `unicap_gui/`, `auto_play/` etc. -- captureAIshi has
+  its own UI / profile / driver layer.
+
+## Build (Windows)
 
 ```powershell
-cd 3rdparty/reshade_bridge/src
+# Path B bridge addon (TCP + GEngine + camera control, no frame capture yet)
+cd 3rdparty\reshade_bridge\src
 cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
-# Output: 3rdparty/reshade_bridge/captureAIshi_bridge.addon
+# -> 3rdparty\reshade_bridge\captureAIshi_bridge.addon
+
+# ReShade core (dxgi.dll proxy that loads the .addon)
+# Driven by MSBuild against ReShade.sln; see 3rdparty\reshade\README.md
 ```
 
-ReShade SDK headers come from the `3rdparty/unicap` submodule. Init it first:
+A top-level CMakeLists wiring all pieces (bridge addon + frame_capture addon
++ ReShade core + shader copy) lands in Phase 1 along with the actual
+deployment script (which `dxgi.dll` and `*.addon` files go into the game
+directory).
 
-```powershell
-git submodule update --init --recursive 3rdparty/unicap
-```
+## Phase 1 plan (next session)
 
-## Frame capture notes (for Phase 1)
+1. Wire frame-capture events in `bridge.cpp` (or co-load `frame_capture.cpp`
+   as a sibling `.addon` -- decision below).
+2. **Embed vs co-load decision**: lean toward **embed** so the entire Path B
+   payload is one `.addon` file plus shaders. Co-loading was preferred when
+   we treated unicap as upstream black-box; now that it is ours, one binary
+   is simpler to ship. Confirm before Phase 1 work starts.
+3. Adapt sidecar-file protocol to bridge TCP channel where it makes sense
+   (output dir redirection -> single TCP command; per-frame state ping
+   stays as `%TEMP%/captureAIshi/` files for live in-game overlay).
+4. Write `grabbers/reshade_grabber.py` to consume addon output (BMP/PNG +
+   EXR pairs, same downstream contract as renderdoc grabber).
+5. Add UI dropdown `injection_mode = renderdoc | reshade`; main.py picks
+   grabber + injection script per mode.
 
-unicap's `99-frame_capture` addon already solves color + depth + normal export
-for ReShade and is the reference implementation we should adopt wholesale
-rather than re-derive. Key facts:
+## Frame-capture reference (Phase 1 reading)
 
-- **Color**: `runtime->capture_screenshot()` (post-UI) or pre-UI hook on
-  `bind_render_targets_and_depth_stencil` -> staging texture -> RGBA8 BMP/PNG.
-- **Depth + Normal**: handled by the FX shader `shaders/DepthToAddon.fx` in
-  unicap, which exposes `DepthToAddon_DepthTex` and `DepthToAddon_NormalTex`
-  texture variables; the addon reads them back to EXR.
-- **Pre-UI capture**: needs a per-game `FC_PreUISkipCount` survey first
-  (unicap's `tools/capture/survey.py`). For our pipeline a fixed-value
-  config per game is acceptable since trajectories are scripted.
-- **Sidecar protocol**: unicap's addon reads `%TEMP%/unicap/unicap.ini` plus
-  per-game-dir txt files for output redirection. Our addon should likely
-  use the bridge TCP channel instead of sidecar files (one less moving part)
-  but keeping unicap's file protocol as-is is also viable in Phase 1.
-
-Decision pending for Phase 1: do we **embed** unicap's `frame_capture.cpp`
-into this addon (single `.addon` per game), or **co-load** it as a sibling
-addon (`98-bridge.addon` + `99-frame_capture.addon`)? Co-loading keeps unicap
-upstream as a true black-box dependency. Embedding gives one binary to ship.
-Defer to start of Phase 1.
+| Question | Where to look |
+|---|---|
+| How does color export work? | `frame_capture/frame_capture.cpp` -- `runtime->capture_screenshot()` (post-UI) or `on_bind_rts_dsv` hook (pre-UI) |
+| How are Depth + Normal exported? | `shaders/DepthToAddon.fx` exposes `DepthToAddon_{Depth,Normal}Tex`; addon reads them back to EXR |
+| Pre-UI skip count auto-detect | unicap `tools/capture/survey.py` (NOT vendored; port to Python in Phase 1) |
+| Sidecar files (Python <-> addon) | `frame_capture.cpp` reads `fc_output_dir.txt` / `fc_skip_count.txt` / `fc_state.txt` from game exe dir each `on_reshade_present` |

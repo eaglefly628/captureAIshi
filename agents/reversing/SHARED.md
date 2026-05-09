@@ -112,6 +112,15 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- Vendor unicap source (drop submodule)
+
+- `3rdparty/reshade/` -- full ReShade core source 60MB (was unicap/reshade/), pin 6.7.3.16 UNOFFICIAL; builds dxgi.dll proxy via MSBuild.
+- `3rdparty/reshade_bridge/{sdk,frame_capture,deps,shaders}/` -- addon SDK headers + frame_capture.cpp (1350 LOC) + imgui/stb/tinyexr + DepthToAddon/BackBufferExport/CaptureStatus shaders.
+- `3rdparty/unicap` submodule + `.gitmodules` removed. Per project decision: unicap is "ours" now; no upstream sync.
+- `3rdparty/reshade_bridge/src/CMakeLists.txt` -- SDK include points at vendored `../sdk/` instead of submodule path.
+- `3rdparty/reshade_bridge/README.md` -- Layout + Provenance + Phase 0.5/1/2 sections; Phase 1 lean = embed frame_capture into bridge addon (one .addon to ship).
+- NOT vendored: unicap `main.py`/`tools/capture/`/`profiles/`/`unicap_gui/`/`auto_play/` -- captureAIshi has its own pipeline; only protocol bits port to `grabbers/reshade_grabber.py` in Phase 1.
+
 ### [v0.3.0] eb65088 -- xiaoni -- Path B scaffold: reshade_bridge addon
 
 - `3rdparty/reshade_bridge/src/{pattern_scan,ue5_engine,camera_path}.h` -- byte-identical copies from `3rdparty/bridge/src/` (independent vehicle).
