@@ -125,7 +125,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- Path B Phase 1: embed frame_capture; grabber + UI wired
+### [v0.3.0] 4c5ad75 -- xiaoni -- Path B Phase 1: embed frame_capture; grabber + UI wired
 
 - `3rdparty/reshade_bridge/src/CMakeLists.txt` -- adds `frame_capture/frame_capture.cpp` + imgui `*.cpp` + deps include dirs (sdk/imgui/stb/tinyexr) to bridge target; one `.addon` output.
 - `3rdparty/reshade_bridge/frame_capture/frame_capture.cpp` -- removed standalone DllMain/NAME/DESCRIPTION; new `init_addon_FC()` + `shutdown_addon_FC()` wrappers (worker threads + reshade event registration) for bridge.cpp to call.
