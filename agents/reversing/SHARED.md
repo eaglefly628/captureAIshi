@@ -112,7 +112,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- Path B scaffold: reshade_bridge addon
+### [v0.3.0] eb65088 -- xiaoni -- Path B scaffold: reshade_bridge addon
 
 - `3rdparty/reshade_bridge/src/{pattern_scan,ue5_engine,camera_path}.h` -- byte-identical copies from `3rdparty/bridge/src/` (independent vehicle).
 - `3rdparty/reshade_bridge/src/bridge.cpp` -- copy + 3 minimal edits: banner; `#include <reshade.hpp>`; `DllMain` adds `reshade::{,un}register_addon` and NAME/DESCRIPTION exports.
