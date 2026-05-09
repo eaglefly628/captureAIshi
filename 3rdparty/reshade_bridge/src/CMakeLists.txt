@@ -63,14 +63,27 @@ target_sources(captureAIshi_reshade_bridge PRIVATE ${IMGUI_SOURCES})
 target_link_libraries(captureAIshi_reshade_bridge PRIVATE ws2_32 psapi)
 
 if(MSVC)
-    # /utf-8 + ASCII-only source -> avoids C4819. /EHa for __try/__except.
-    # Drop /WX because reshade + tinyexr + miniz spill warnings under /W4.
-    target_compile_options(captureAIshi_reshade_bridge PRIVATE /W3 /utf-8 /EHa)
-    # Silence the inevitable C4244/C4267 etc. from third-party headers.
+    # Per-file warning levels:
+    #   - Our own bridge.cpp gets /W4 /WX (matching Path A) so we keep the
+    #     warning-as-error safety net on code we wrote.
+    #   - Vendored frame_capture.cpp + imgui sources get /W3 (no /WX) since
+    #     they will never pass /W4 cleanly under MSVC.
+    target_compile_options(captureAIshi_reshade_bridge PRIVATE /utf-8 /EHa)
     target_compile_definitions(captureAIshi_reshade_bridge PRIVATE
         _CRT_SECURE_NO_WARNINGS
         WIN32_LEAN_AND_MEAN
         NOMINMAX
+    )
+
+    set_source_files_properties(
+        bridge.cpp
+        PROPERTIES COMPILE_OPTIONS "/W4;/WX"
+    )
+
+    set_source_files_properties(
+        "${FC_SOURCE_DIR}/frame_capture.cpp"
+        ${IMGUI_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "/W3"
     )
 endif()
 

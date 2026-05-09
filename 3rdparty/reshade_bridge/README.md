@@ -47,7 +47,31 @@ and back-port to Path A.
 - `3rdparty/unicap` submodule dropped; `.gitmodules` removed
 - See "Provenance" + "Layout" sections below
 
-**Phase 1 (this commit)**: embed frame_capture into the bridge addon. DONE.
+**Phase 1 (this commit)**: embed frame_capture into the bridge addon, with
+review fixes. DONE.
+
+Review fixes applied on top of the initial Phase 1 commit (`4c5ad75`):
+- DllMain loader-lock: ReShade events register in DllMain (where the
+  contract requires it); worker thread spawn is pushed out to a deferred
+  bootstrap thread alongside the bridge `startup` call. See
+  `frame_capture/embed_api.h` for the four-function split rationale.
+- Symbol isolation: `frame_capture.cpp` internals are now in an anonymous
+  namespace; only `fc_embed::{register,unregister}_events` and
+  `fc_embed::{start,stop}_workers` are externally visible.
+- Per-file warning flags: `bridge.cpp` gets `/W4 /WX` (our code keeps the
+  Path A safety net); vendored `frame_capture.cpp` + imgui sources get
+  `/W3` since they cannot pass `/W4` cleanly.
+- Grabber triplet race: `_wait_quiescent()` confirms color/depth/normal
+  file sizes are stable across consecutive samples before reading.
+- Grabber readiness gate: `setup()` polls TCP 9998 until the bridge is
+  reachable, mirroring `RenderDocGrabber.wait_for_port`.
+- Grabber double-IO: `save_frame()` overridden to copy addon files
+  instead of re-encoding decoded numpy arrays (preserves float-EXR
+  precision).
+- Deploy backup: `scripts/deploy_reshade.py` backs up any pre-existing
+  `dxgi.dll` / `*.addon` to `*.before-captureAIshi`; `--undeploy`
+  restores it.
+- 14 new unit tests in `tests/test_reshade_grabber.py`.
 - `src/CMakeLists.txt` -- adds `frame_capture/frame_capture.cpp` + imgui
   sources + deps include dirs to the bridge target.
 - `frame_capture/frame_capture.cpp` -- DllMain / NAME / DESCRIPTION

@@ -60,6 +60,11 @@ def main() -> int:
             if dst.exists():
                 dst.unlink()
                 print(f"removed {dst}")
+            # Restore a pre-deploy backup if we made one.
+            backup = dst.with_suffix(dst.suffix + ".before-captureAIshi")
+            if backup.exists():
+                shutil.move(str(backup), str(dst))
+                print(f"restored {backup} -> {dst}")
         if shaders_target.exists():
             shutil.rmtree(shaders_target.parent)
             print(f"removed {shaders_target.parent}")
@@ -73,6 +78,18 @@ def main() -> int:
             return 3
 
     for dst, src in targets.items():
+        # Back up any pre-existing file so we don't silently overwrite a
+        # third-party dxgi.dll (player's own ReShade install, SpecialK,
+        # etc.) or a previously deployed addon. The .before-captureAIshi
+        # suffix is also what --undeploy looks for to restore.
+        if dst.exists():
+            backup = dst.with_suffix(dst.suffix + ".before-captureAIshi")
+            if backup.exists():
+                print(f"warn: backup {backup} already exists; "
+                      f"overwriting {dst} without re-backing-up")
+            else:
+                shutil.move(str(dst), str(backup))
+                print(f"backup   {dst.name} -> {backup}")
         shutil.copy2(src, dst)
         print(f"deployed {src.name} -> {dst}")
 

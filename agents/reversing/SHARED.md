@@ -125,6 +125,17 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- Path B review fixes (P0..P2 from architect review)
+
+- C++ loader-lock fix: `bridge.cpp` DllMain now only calls `fc_embed::register_events()` (event hooks, no thread spawn); `fc_embed::start_workers()` runs in the deferred bootstrap thread alongside `startup()`. Symmetrical detach order: `shutdown()` -> `stop_workers` -> `unregister_events` -> `unregister_addon`.
+- C++ symbol isolation: `frame_capture.cpp` internals wrapped in anonymous namespace; only `fc_embed::{register,unregister}_events` + `fc_embed::{start,stop}_workers` are visible. New `frame_capture/embed_api.h` is the single ABI seen by bridge.cpp.
+- Build hygiene: per-file `/W4 /WX` on `bridge.cpp`, `/W3` on vendored `frame_capture.cpp` + imgui sources -- our own code keeps the warning-as-error safety net Path A enjoys.
+- Grabber triplet race fix: `_wait_quiescent()` re-stat()s color/depth/normal until sizes are stable across consecutive samples before reading; rejects zero-size files; bounded by `poll_timeout_s`.
+- Grabber readiness gate: `setup()` polls `bridge_port` (default 9998) for up to `readiness_timeout_s` (default 60s) before returning -- analogue of `RenderDocGrabber.wait_for_port`.
+- Grabber double-IO fix: `save_frame()` overridden to copy addon-produced files instead of re-encoding decoded numpy arrays (preserves float-EXR depth precision; falls back to base `save_frame` when `_last_paths` is empty, e.g. unit tests).
+- `scripts/deploy_reshade.py`: backs up any pre-existing `dxgi.dll` / `*.addon` to `*.before-captureAIshi`; `--undeploy` restores the backup.
+- Tests: 14 unit tests for `ReShadeGrabber` (prefix detection, candidate paths, quiescence on stable / growing / empty files, sidecar lifecycle, save_frame copy + base fallback, readiness gate timeout). `python -m pytest tests/test_reshade_grabber.py` passes locally.
+
 ### [v0.3.0] 4c5ad75 -- xiaoni -- Path B Phase 1: embed frame_capture; grabber + UI wired
 
 - `3rdparty/reshade_bridge/src/CMakeLists.txt` -- adds `frame_capture/frame_capture.cpp` + imgui `*.cpp` + deps include dirs (sdk/imgui/stb/tinyexr) to bridge target; one `.addon` output.

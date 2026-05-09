@@ -68,6 +68,12 @@ static std::chrono::steady_clock::time_point s_last_capture;
 
 using namespace reshade::api;
 
+// All TU-internal symbols live in an anonymous namespace so they cannot
+// collide with bridge.cpp or any other .cpp linked into the same .addon
+// DLL. Only the four functions in fc_embed:: (defined at the bottom of
+// this file) are visible to other TUs. See frame_capture/embed_api.h.
+namespace {
+
 // ── Async save queue ──────────────────────────────────────────────────────────
 
 struct SaveTask {
@@ -1316,32 +1322,44 @@ void unregister_addon_FC()
     reshade::unregister_event<reshade::addon_event::reshade_begin_effects>(on_begin_render_effects);
 }
 
-// ── Embed entry points ────────────────────────────────────────────────────────
+} // namespace (anonymous)
+
+// ── Embed entry points (public ABI; see embed_api.h) ─────────────────────────
 //
 // Originally this TU owned its own DllMain + NAME/DESCRIPTION exports and
 // was built as a standalone .addon. After Phase 1 (2026-05-09) it is
 // embedded into captureAIshi_bridge.addon -- bridge.cpp now owns the DLL
-// entry, the addon name, and the reshade::register_addon call. To keep the
-// frame-capture subsystem self-contained we expose two wrappers:
+// entry, the addon name, and the reshade::register_addon call.
 //
-//   init_addon_FC()      bring up worker threads + register reshade events
-//   shutdown_addon_FC()  reverse, join workers
-//
-// bridge.cpp calls these from its DllMain. NAME/DESCRIPTION are removed so
-// the linker doesn't trip on duplicate symbols with bridge.cpp's exports.
+// The four entry points are split (rather than init/shutdown pairs) to
+// keep ReShade event registration in DllMain (where it must run) while
+// pushing thread creation out of DllMain to avoid loader-lock interaction
+// with the new threads' own DLL attaches.
 
-void init_addon_FC()
+#include "embed_api.h"
+
+namespace fc_embed {
+
+void register_events()
+{
+    register_addon_FC();
+}
+
+void unregister_events()
+{
+    unregister_addon_FC();
+}
+
+void start_workers()
 {
     g_worker_stop = false;
     g_save_threads.reserve(NUM_WORKERS);
     for (size_t i = 0; i < NUM_WORKERS; ++i)
         g_save_threads.emplace_back(save_worker_fn);
-    register_addon_FC();
 }
 
-void shutdown_addon_FC()
+void stop_workers()
 {
-    unregister_addon_FC();
     {
         std::lock_guard<std::mutex> lk(g_queue_mutex);
         g_worker_stop = true;
@@ -1351,3 +1369,5 @@ void shutdown_addon_FC()
         if (t.joinable()) t.join();
     g_save_threads.clear();
 }
+
+} // namespace fc_embed

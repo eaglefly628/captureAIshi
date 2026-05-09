@@ -701,17 +701,28 @@ static void shutdown()
 
 /* ── ReShade addon manifest ────────────────────────────────────────── */
 
+#include "../frame_capture/embed_api.h"
+
 extern "C" __declspec(dllexport) const char* NAME        = "captureAIshi Bridge";
 extern "C" __declspec(dllexport) const char* DESCRIPTION =
     "UE5 game control bridge (TCP 9998) + frame capture (color BMP/PNG + "
     "depth/normal EXR). Path B vehicle hosted as ReShade addon.";
 
-/* Frame-capture subsystem entry points. Defined in
- * 3rdparty/reshade_bridge/frame_capture/frame_capture.cpp. The .cpp is
- * compiled into this same DLL (Phase 1 embed decision, 2026-05-09);
- * forward-declared here so the loader sees a single DllMain. */
-extern void init_addon_FC();
-extern void shutdown_addon_FC();
+/* DllMain-stage state shared with the bootstrap thread. Static to this
+ * TU; lifetime is the full DLL load. */
+static bool s_fc_events_registered = false;
+
+static void bootstrap()
+{
+    /* Worker thread creation is pushed out of DllMain to avoid loader-lock
+     * interaction with the new threads' own DLL attaches. ReShade event
+     * registration stayed inside DllMain where the addon contract requires
+     * it -- see frame_capture/embed_api.h for the split rationale. */
+    if (s_fc_events_registered) {
+        fc_embed::start_workers();
+    }
+    startup();
+}
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
 {
@@ -724,16 +735,23 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
          * is not ReShade) we still spin up the bridge -- the TCP server is
          * usable on its own and harmless when the proxy is absent. */
         if (reshade::register_addon(hModule)) {
-            /* Frame-capture wires its own ReShade events; only safe to
-             * call after register_addon succeeded. */
-            init_addon_FC();
+            /* Event registration is the only frame-capture work safe to
+             * do under loader lock. Workers spawn in bootstrap thread. */
+            fc_embed::register_events();
+            s_fc_events_registered = true;
         }
-        /* Defer to new thread to avoid DllMain loader lock */
-        std::thread(startup).detach();
+        std::thread(bootstrap).detach();
         break;
     case DLL_PROCESS_DETACH:
-        shutdown_addon_FC();
+        /* Order matters: stop the bridge TCP server first so it cannot
+         * issue any new render-thread-bound work, then drain frame-capture
+         * workers, then unhook ReShade events, then unregister the addon. */
         shutdown();
+        if (s_fc_events_registered) {
+            fc_embed::stop_workers();
+            fc_embed::unregister_events();
+            s_fc_events_registered = false;
+        }
         reshade::unregister_addon(hModule);
         break;
     }
