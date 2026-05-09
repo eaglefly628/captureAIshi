@@ -125,7 +125,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- Path B "embedded" variant: bridge baked into dxgi.dll
+### [v0.3.0] cd631a4 -- xiaoni -- Path B "embedded" variant: bridge baked into dxgi.dll
 
 Mirrors Path A's `renderdoc/renderdoc/core/bridge/` pattern where bridge code compiles into renderdoc.dll itself. New variant: `dxgi.dll` (= ReShade64.dll renamed) directly contains TCP 9998 + GEngine scan + frame capture. No separate `.addon` file. Standalone addon path at `3rdparty/reshade_bridge/` left intact -- both build modes now coexist.
 
