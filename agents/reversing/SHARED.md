@@ -112,6 +112,15 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- Path B scaffold: reshade_bridge addon
+
+- `3rdparty/reshade_bridge/src/{pattern_scan,ue5_engine,camera_path}.h` -- byte-identical copies from `3rdparty/bridge/src/` (independent vehicle).
+- `3rdparty/reshade_bridge/src/bridge.cpp` -- copy + 3 minimal edits: banner; `#include <reshade.hpp>`; `DllMain` adds `reshade::{,un}register_addon` and NAME/DESCRIPTION exports.
+- `3rdparty/reshade_bridge/src/CMakeLists.txt` -- builds `captureAIshi_bridge.addon`; SDK headers from `3rdparty/unicap` submodule.
+- `3rdparty/reshade_bridge/README.md` -- A/B comparison table, design rationale, Phase 0/1/2 plan, Phase 1 frame-capture pointers (unicap `DepthToAddon.fx` + `frame_capture.cpp`).
+- Phase 0 = scaffold only. No render-pipeline events hooked yet (Phase 1).
+- Path A `3rdparty/bridge/` untouched -- zero regression risk.
+
 ### [v0.2.0] 28b09e1 -- xiaoni -- EXR probe diagnostics (run.bat install reverted in e4e8f1a)
 
 `28b09e1` originally added `pip install -r requirements.txt` to
