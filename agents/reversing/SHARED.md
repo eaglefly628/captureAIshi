@@ -112,7 +112,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- Vendor unicap source (drop submodule)
+### [v0.3.0] 75fb383 -- xiaoni -- Vendor unicap source (drop submodule)
 
 - `3rdparty/reshade/` -- full ReShade core source 60MB (was unicap/reshade/), pin 6.7.3.16 UNOFFICIAL; builds dxgi.dll proxy via MSBuild.
 - `3rdparty/reshade_bridge/{sdk,frame_capture,deps,shaders}/` -- addon SDK headers + frame_capture.cpp (1350 LOC) + imgui/stb/tinyexr + DepthToAddon/BackBufferExport/CaptureStatus shaders.
