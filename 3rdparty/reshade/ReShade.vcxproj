@@ -610,13 +610,22 @@
     <ClCompile Include="source\captureAIshi\bridge.cpp">
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
-      <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;4005;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ExceptionHandling>Async</ExceptionHandling>
+      <!-- /EHa explicit: ReShade's per-Config ItemDefinitionGroup sets
+           ExceptionHandling=false (no /EH at all). Per-file override via
+           <ExceptionHandling> alone has been observed not to take effect
+           in some MSBuild versions, so we also force /EHa via
+           AdditionalOptions to allow __try/__except in functions that
+           have C++ destructors (ue5_engine.h SEH-guards memory reads). -->
+      <AdditionalOptions>/EHa %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ClCompile Include="source\captureAIshi\frame_capture.cpp">
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
-      <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;4005;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <ExceptionHandling>Async</ExceptionHandling>
+      <AdditionalOptions>/EHa %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>$(SolutionDir)deps\imgui;$(SolutionDir)deps\stb;$(SolutionDir)source\captureAIshi;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="source\dll_main_test_app.cpp">

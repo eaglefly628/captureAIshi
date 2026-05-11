@@ -14,7 +14,9 @@
 #ifndef CAPTUREAI_UE5_ENGINE_H
 #define CAPTUREAI_UE5_ENGINE_H
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <cstdint>
 #include <cstdio>

@@ -11,7 +11,9 @@
 #ifndef CAPTUREAI_PATTERN_SCAN_H
 #define CAPTUREAI_PATTERN_SCAN_H
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <psapi.h>
 #include <cstdint>
