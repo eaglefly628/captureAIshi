@@ -101,21 +101,7 @@ class ReShadeGrabber(FrameGrabber):
             raise FileNotFoundError(
                 f"[ReShadeGrabber] game_dir not found: {self.game_dir}")
 
-        # Path B has two build modes; either is fine as long as dxgi.dll is in
-        # the game dir. Embedded mode = bridge baked into dxgi.dll (no .addon).
-        # Standalone-addon mode = dxgi.dll + captureAIshi_bridge.addon both present.
-        dxgi_path  = self.game_dir / "dxgi.dll"
-        addon_path = self.game_dir / "captureAIshi_bridge.addon"
-        if not dxgi_path.exists():
-            logger.warning(
-                "[ReShadeGrabber] %s missing -- ReShade proxy not deployed. "
-                "Copy 3rdparty\\reshade\\bin\\x64\\Release\\ReShade64.dll to "
-                "%s as dxgi.dll, or use scripts/deploy_reshade.py. The bridge "
-                "TCP port will never open without it.", dxgi_path, self.game_dir)
-        elif addon_path.exists():
-            logger.info("[ReShadeGrabber] standalone-addon build detected (dxgi.dll + .addon)")
-        else:
-            logger.info("[ReShadeGrabber] embedded build detected (dxgi.dll only, no .addon)")
+        self._auto_deploy()
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -235,6 +221,48 @@ class ReShadeGrabber(FrameGrabber):
         return saved
 
     # ── internals ──────────────────────────────────────────────────────
+
+    def _auto_deploy(self) -> None:
+        """Ensure dxgi.dll + shaders are present in game_dir; copy from
+        the repo build outputs if missing. Idempotent."""
+        repo_root  = Path(__file__).resolve().parent.parent
+        reshade_dll = repo_root / "3rdparty" / "reshade" / "bin" / "x64" / "Release" / "ReShade64.dll"
+        addon_dll   = repo_root / "3rdparty" / "reshade_bridge" / "captureAIshi_bridge.addon"
+        shaders_src = repo_root / "3rdparty" / "reshade_bridge" / "shaders"
+
+        dxgi_dst    = self.game_dir / "dxgi.dll"
+        addon_dst   = self.game_dir / "captureAIshi_bridge.addon"
+        shaders_dst = self.game_dir / "captureAIshi-shaders" / "Shaders"
+
+        # 1. dxgi.dll
+        if not dxgi_dst.exists():
+            if not reshade_dll.exists():
+                logger.error("[ReShadeGrabber] cannot auto-deploy: %s not built. "
+                             "Run msbuild on 3rdparty\\reshade\\ReShade.sln.", reshade_dll)
+            else:
+                shutil.copy2(reshade_dll, dxgi_dst)
+                logger.info("[ReShadeGrabber] deployed %s -> %s",
+                            reshade_dll.name, dxgi_dst)
+        else:
+            logger.info("[ReShadeGrabber] %s already present, skipping copy", dxgi_dst)
+
+        # 2. standalone-addon optional copy
+        if addon_dll.exists() and not addon_dst.exists():
+            shutil.copy2(addon_dll, addon_dst)
+            logger.info("[ReShadeGrabber] deployed %s -> %s", addon_dll.name, addon_dst)
+
+        # 3. shaders
+        if shaders_src.exists():
+            shaders_dst.mkdir(parents=True, exist_ok=True)
+            copied = 0
+            for fx in shaders_src.glob("*.fx*"):
+                dst = shaders_dst / fx.name
+                if not dst.exists() or dst.stat().st_size != fx.stat().st_size:
+                    shutil.copy2(fx, dst)
+                    copied += 1
+            if copied:
+                logger.info("[ReShadeGrabber] deployed %d shader file(s) -> %s",
+                            copied, shaders_dst)
 
     def _wait_for_bridge(self) -> None:
         deadline = time.monotonic() + self.readiness_timeout_s
