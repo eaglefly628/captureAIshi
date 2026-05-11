@@ -9,6 +9,7 @@
 #include "addon_manager.hpp"
 #include "dll_log.hpp"
 #include "ini_file.hpp"
+#include "captureAIshi/embed_api.h"   // captureAIshi Bridge built-in addon entry points
 #include <algorithm> // std::find, std::find_if, std::remove, std::remove_if
 #include <Windows.h>
 
@@ -183,6 +184,28 @@ void reshade::load_addons()
 			info.handle = g_module_handle;
 
 			register_addon_effect_runtime_sync();
+		}
+	}
+
+	// captureAIshi Bridge -- embedded as a built-in addon (no separate
+	// .addon DLL). Mirrors the Generic Depth / Effect Runtime Sync pattern
+	// above: push an addon_info entry into addon_loaded_info with
+	// handle = g_module_handle and external = false, then register events.
+	// Without the addon_info entry, find_addon(callback) returns nullptr
+	// because ReShade's own module isn't normally in addon_loaded_info,
+	// and register_event / register_overlay silently fail.
+	{	addon_info &info = addon_loaded_info.emplace_back();
+		info.name = "captureAIshi Bridge";
+		info.description = "UE5 game control bridge (TCP 9998) + frame capture (color BMP/PNG + depth/normal EXR).";
+		info.author = "captureAIshi";
+		info.external = false;
+
+		if (std::find(disabled_addons.cbegin(), disabled_addons.cend(), info.name) == disabled_addons.cend())
+		{
+			info.handle = g_module_handle;
+
+			fc_embed::register_events();
+			fc_embed::start_workers();
 		}
 	}
 #endif
@@ -377,6 +400,10 @@ void reshade::unload_addons()
 #if 1
 	unregister_addon_depth();
 	unregister_addon_effect_runtime_sync();
+
+	// captureAIshi Bridge teardown -- reverse order of load
+	fc_embed::stop_workers();
+	fc_embed::unregister_events();
 #endif
 
 	// Remove all unloaded add-ons

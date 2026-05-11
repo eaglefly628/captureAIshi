@@ -380,33 +380,27 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 
 			// captureAIshi embedded bridge -- mirrors Path A's
 			// renderdoc/core/core.cpp pattern of starting the bridge inside
-			// the host DLL itself. Brings up:
-			//   - TCP 9998 console server (UE5 GEngine scan, camera/HUD/path)
-			//   - Frame capture (color BMP/PNG + depth/normal EXR via ReShade events)
-			// See source/captureAIshi/{bridge.cpp,frame_capture.cpp,embed_api.h}.
+			// the host DLL itself. Brings up the TCP 9998 console server
+			// (UE5 GEngine scan, camera/HUD/path control).
+			//
+			// The frame_capture subsystem is registered separately by
+			// addon_manager.cpp's load_addons() as a *built-in addon* --
+			// pushing an addon_info entry into addon_loaded_info with
+			// handle = g_module_handle and external = false, mirroring
+			// the Generic Depth / Effect Runtime Sync pattern. That is
+			// the only way register_event / register_overlay can resolve
+			// to an addon when the callbacks live inside ReShade's own
+			// dxgi.dll module (the public reshade::register_addon API
+			// explicitly rejects g_module_handle).
 			::bridge_start();
-#if RESHADE_ADDON >= 2
-			// Register ourselves as a ReShade addon so the overlay entry
-			// ("Frame Capture") appears under Add-ons tab. Without this
-			// call, register_overlay / register_event still record the
-			// callbacks but they're not associated with any visible addon
-			// in the overlay -- our settings panel never shows up.
-			reshade::register_addon(hModule);
-			fc_embed::register_events();
-			fc_embed::start_workers();
-#endif
 		}
 		break;
 	case DLL_PROCESS_DETACH:
 		{
 			reshade::log::message(reshade::log::level::info, "Exiting ...");
 
-			// captureAIshi embedded bridge teardown (reverse order of init).
-#if RESHADE_ADDON >= 2
-			fc_embed::stop_workers();
-			fc_embed::unregister_events();
-			reshade::unregister_addon(hModule);
-#endif
+			// captureAIshi embedded bridge teardown. fc_embed unload is
+			// handled by addon_manager.cpp's unload_addons() block.
 			::bridge_stop();
 
 #if RESHADE_ADDON >= 2
