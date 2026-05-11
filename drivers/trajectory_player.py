@@ -700,10 +700,22 @@ class TrajectoryPlayer:
                             break
                     pause_start = time.monotonic()
                     time.sleep(settle)
+                    # Pick capture command based on active grabber type.
+                    # RenderDoc grabber -> __cam_rdc_capture (renderdoccmd
+                    # writes .rdc file). ReShade grabber -> __fc_capture
+                    # (embedded frame_capture writes BMP+EXR triplet).
+                    cap_cmd = "__cam_rdc_capture"
                     try:
-                        session.send("__cam_rdc_capture")
+                        from web import state as _ws
+                        g = _ws.get_active_grabber()
+                        if g is not None and type(g).__name__ == "ReShadeGrabber":
+                            cap_cmd = "__fc_capture"
+                    except Exception:
+                        pass
+                    try:
+                        session.send(cap_cmd)
                     except (OSError, ConnectionError) as e:
-                        logger.error("[PLAYER] __cam_rdc_capture send failed: %s", e)
+                        logger.error("[PLAYER] %s send failed: %s", cap_cmd, e)
                     try:
                         from web import state as _web_state
                         _web_state.record_pose_timestamp_now()
