@@ -13,6 +13,12 @@
 #include <Psapi.h>
 #include <delayimp.h> // Delay-load helpers
 
+// captureAIshi embedded bridge -- function bodies live in
+// source/captureAIshi/bridge.cpp. These extern "C" forward declarations
+// must be at namespace scope (C2598 if placed inside DllMain).
+extern "C" void bridge_start();
+extern "C" void bridge_stop();
+
 // Export special symbol to identify modules as ReShade instances
 extern "C" __declspec(dllexport) const char *ReShadeVersion = VERSION_STRING_PRODUCT;
 
@@ -378,9 +384,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 			//   - TCP 9998 console server (UE5 GEngine scan, camera/HUD/path)
 			//   - Frame capture (color BMP/PNG + depth/normal EXR via ReShade events)
 			// See source/captureAIshi/{bridge.cpp,frame_capture.cpp,embed_api.h}.
-			extern "C" void bridge_start();
-			extern "C" void bridge_stop();   // forward decl for DETACH below
-			(void)bridge_stop;
 			::bridge_start();
 #if RESHADE_ADDON >= 2
 			fc_embed::register_events();
@@ -397,7 +400,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 			fc_embed::stop_workers();
 			fc_embed::unregister_events();
 #endif
-			extern "C" void bridge_stop();
 			::bridge_stop();
 
 #if RESHADE_ADDON >= 2
