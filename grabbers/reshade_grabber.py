@@ -225,8 +225,31 @@ class ReShadeGrabber(FrameGrabber):
     def _auto_deploy(self) -> None:
         """Ensure dxgi.dll + shaders are present in game_dir; copy from
         the repo build outputs if missing. Idempotent."""
-        repo_root  = Path(__file__).resolve().parent.parent
-        reshade_dll = repo_root / "3rdparty" / "reshade" / "bin" / "x64" / "Release" / "ReShade64.dll"
+        repo_root   = Path(__file__).resolve().parent.parent
+        bin_root    = repo_root / "3rdparty" / "reshade" / "bin"
+        # ReShade.sln's $(Platform) is "64-bit" (literal name, not "x64").
+        # MSBuild expanded $(SolutionDir)bin\$(Platform)\Release lands the
+        # DLL at bin/64-bit/Release/. Try the canonical "x64" first in case
+        # someone used a different platform, then fall back. Also accept
+        # the .sln-platform "Release" without architecture subdir.
+        reshade_dll = None
+        for candidate in [
+            bin_root / "x64"     / "Release" / "ReShade64.dll",
+            bin_root / "64-bit"  / "Release" / "ReShade64.dll",
+            bin_root / "x64"     / "Release" / "dxgi.dll",
+            bin_root / "Release" / "ReShade64.dll",
+        ]:
+            if candidate.exists():
+                reshade_dll = candidate
+                break
+        if reshade_dll is None:
+            # Last resort: recursive search under bin/
+            try:
+                hits = list(bin_root.rglob("ReShade64.dll"))
+                if hits:
+                    reshade_dll = hits[0]
+            except OSError:
+                pass
         addon_dll   = repo_root / "3rdparty" / "reshade_bridge" / "captureAIshi_bridge.addon"
         shaders_src = repo_root / "3rdparty" / "reshade_bridge" / "shaders"
 
@@ -236,13 +259,15 @@ class ReShadeGrabber(FrameGrabber):
 
         # 1. dxgi.dll
         if not dxgi_dst.exists():
-            if not reshade_dll.exists():
-                logger.error("[ReShadeGrabber] cannot auto-deploy: %s not built. "
-                             "Run msbuild on 3rdparty\\reshade\\ReShade.sln.", reshade_dll)
+            if reshade_dll is None:
+                logger.error("[ReShadeGrabber] cannot auto-deploy: ReShade64.dll not "
+                             "found under %s. Build it via msbuild 3rdparty\\reshade\\"
+                             "ReShade.sln /p:Configuration=Release /p:Platform=\"64-bit\".",
+                             bin_root)
             else:
                 shutil.copy2(reshade_dll, dxgi_dst)
                 logger.info("[ReShadeGrabber] deployed %s -> %s",
-                            reshade_dll.name, dxgi_dst)
+                            reshade_dll, dxgi_dst)
         else:
             logger.info("[ReShadeGrabber] %s already present, skipping copy", dxgi_dst)
 
