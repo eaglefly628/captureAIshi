@@ -70,12 +70,18 @@ def main() -> int:
             print(f"removed {shaders_target.parent}")
         return 0
 
-    for src in (args.dxgi, args.addon):
-        if not src.exists():
-            print(f"error: source not found: {src}", file=sys.stderr)
-            print("       build it first (see 3rdparty/reshade_bridge/README.md)",
-                  file=sys.stderr)
-            return 3
+    # dxgi.dll is mandatory; .addon is only present in standalone-addon
+    # build mode. In the embedded mode (bridge baked into dxgi.dll) the
+    # .addon file does not exist and is correctly skipped.
+    if not args.dxgi.exists():
+        print(f"error: source not found: {args.dxgi}", file=sys.stderr)
+        print("       build it first (see 3rdparty/reshade_bridge/README.md)",
+              file=sys.stderr)
+        return 3
+    if not args.addon.exists():
+        print(f"note: {args.addon} not present -- embedded mode "
+              f"(bridge already baked into dxgi.dll). Skipping addon copy.")
+        targets.pop(args.game_dir / "captureAIshi_bridge.addon", None)
 
     for dst, src in targets.items():
         # Back up any pre-existing file so we don't silently overwrite a
