@@ -386,6 +386,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 			// See source/captureAIshi/{bridge.cpp,frame_capture.cpp,embed_api.h}.
 			::bridge_start();
 #if RESHADE_ADDON >= 2
+			// Register ourselves as a ReShade addon so the overlay entry
+			// ("Frame Capture") appears under Add-ons tab. Without this
+			// call, register_overlay / register_event still record the
+			// callbacks but they're not associated with any visible addon
+			// in the overlay -- our settings panel never shows up.
+			reshade::register_addon(hModule);
 			fc_embed::register_events();
 			fc_embed::start_workers();
 #endif
@@ -399,6 +405,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 #if RESHADE_ADDON >= 2
 			fc_embed::stop_workers();
 			fc_embed::unregister_events();
+			reshade::unregister_addon(hModule);
 #endif
 			::bridge_stop();
 
