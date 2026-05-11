@@ -26,23 +26,25 @@
 #endif
 
 #define ImTextureID unsigned long long
-/* IMPORTANT: in the embedded build, ReShade core's deps/stb_impl.c
- * already provides STB_IMAGE_IMPLEMENTATION and STB_IMAGE_WRITE_IMPLEMENTATION,
- * so we MUST NOT redefine them here -- doing so would create multiple
- * symbol definitions at link time. We still own STB_IMAGE_RESIZE
- * (we ship the legacy v1 header in deps/stb_image_resize.h because
- * frame_capture's API predates ReShade's stb_image_resize2.h v2) and
- * TINYEXR + MINIZ implementations (ReShade does not embed those).
+/* Stb implementation macros: stb_image_write.h's declarations are gated
+ * behind STB_IMAGE_WRITE_IMPLEMENTATION in our copy of the headers (newer
+ * stb single-header style). Even though ReShade core's deps/stb_impl.c
+ * exists, its symbols are in a separate static lib whose declarations are
+ * not visible in our TU. Keep our own implementation here. If the linker
+ * complains about duplicate symbols later, swap to STB_IMAGE_WRITE_STATIC
+ * to make our copy file-local.
  *
- * The standalone addon build at 3rdparty/reshade_bridge/ has its own
- * STB_IMAGE_WRITE_IMPLEMENTATION still active there because that build
- * has no host providing it.
- */
+ * STB_IMAGE_IMPLEMENTATION is NOT defined here because we only use
+ * write/resize -- not the image loader -- so the loader stays unimplemented
+ * (we just need its types via the header). */
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #define TINYEXR_IMPLEMENTATION
 
 #include <imgui.h>
 #include <reshade.hpp>
+#include "../dll_log.hpp"             /* reshade::log::message / level (internal) */
 #include <vector>
 #include <array>
 #include <cstring>
