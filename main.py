@@ -126,7 +126,13 @@ def create_grabber(args):
         game_dir = Path(target_exe).parent
         out_dir = args.output_dir / "frames"
         logging.debug(f"[INIT] ReShade grabber: game_dir={game_dir}, output_dir={out_dir}")
-        return ReShadeGrabber(output_dir=out_dir, game_dir=game_dir)
+        return ReShadeGrabber(
+            output_dir=out_dir,
+            game_dir=game_dir,
+            target_exe=target_exe,
+            target_args=getattr(args, 'target_args', []),
+            auto_launch=True,
+        )
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber
         logging.debug(f"[INIT] Screenshot grabber: dir={args.output_dir / 'screenshots'}")

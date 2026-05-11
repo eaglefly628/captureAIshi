@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import shutil
 import socket
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -70,6 +71,9 @@ class ReShadeGrabber(FrameGrabber):
         output_dir: str | Path,
         game_dir: str | Path,
         *,
+        target_exe: Optional[str] = None,
+        target_args: Optional[list] = None,
+        auto_launch: bool = True,
         bridge_port: Optional[int] = 9998,
         bridge_host: str = "127.0.0.1",
         readiness_timeout_s: float = 60.0,
@@ -79,6 +83,9 @@ class ReShadeGrabber(FrameGrabber):
     ) -> None:
         self.output_dir = Path(output_dir)
         self.game_dir = Path(game_dir)
+        self.target_exe = target_exe
+        self.target_args = list(target_args or [])
+        self.auto_launch = bool(auto_launch and target_exe)
         self.bridge_port = bridge_port
         self.bridge_host = bridge_host
         self.readiness_timeout_s = readiness_timeout_s
@@ -87,6 +94,7 @@ class ReShadeGrabber(FrameGrabber):
         self.quiescence_samples = max(2, int(quiescence_samples))
         self._last_prefix: Optional[str] = None
         self._last_paths: Dict[str, Path] = {}
+        self._game_proc = None  # type: ignore  # subprocess.Popen
 
     # ── lifecycle ─────────────────────────────────────────────────────
 
@@ -125,12 +133,53 @@ class ReShadeGrabber(FrameGrabber):
         logger.info(
             "[ReShadeGrabber] baseline prefix=%r", self._last_prefix)
 
+        # Launch the game (auto_launch flag mirrors RenderDocGrabber). The
+        # game's LoadLibrary("dxgi.dll") triggers ReShade init, which calls
+        # bridge_start() and opens TCP 9998. Without this, the readiness
+        # gate just times out.
+        if self.auto_launch:
+            self._launch_game()
+
         # Readiness gate: wait for bridge TCP server, mirroring the
         # RenderDocGrabber wait_for_port behaviour.
         if self.bridge_port:
             self._wait_for_bridge()
 
+    def _launch_game(self) -> None:
+        if not self.target_exe:
+            return
+        exe = Path(self.target_exe)
+        if not exe.exists():
+            logger.error("[ReShadeGrabber] target_exe not found: %s", exe)
+            return
+        cmd = [str(exe), *self.target_args]
+        logger.info("[ReShadeGrabber] launching game: %s (cwd=%s)", cmd, self.game_dir)
+        try:
+            self._game_proc = subprocess.Popen(
+                cmd,
+                cwd=str(self.game_dir),
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+            logger.info("[ReShadeGrabber] game launched, pid=%d", self._game_proc.pid)
+        except OSError as exc:
+            logger.error("[ReShadeGrabber] game launch failed: %s", exc)
+            self._game_proc = None
+
     def teardown(self) -> None:
+        # Terminate the game we launched (best-effort; if user closed it
+        # already poll() returns non-None and we skip).
+        if self._game_proc is not None and self._game_proc.poll() is None:
+            try:
+                logger.info("[ReShadeGrabber] terminating game pid=%d",
+                            self._game_proc.pid)
+                self._game_proc.terminate()
+                try:
+                    self._game_proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    self._game_proc.kill()
+            except OSError as exc:
+                logger.warning("[ReShadeGrabber] terminate failed: %s", exc)
+
         sidecar = self.game_dir / "fc_output_dir.txt"
         try:
             if sidecar.exists():
