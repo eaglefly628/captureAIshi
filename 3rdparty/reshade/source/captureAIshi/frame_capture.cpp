@@ -26,17 +26,28 @@
 #endif
 
 #define ImTextureID unsigned long long
-/* Stb implementation macros: stb_image_write.h's declarations are gated
- * behind STB_IMAGE_WRITE_IMPLEMENTATION in our copy of the headers (newer
- * stb single-header style). Even though ReShade core's deps/stb_impl.c
- * exists, its symbols are in a separate static lib whose declarations are
- * not visible in our TU. Keep our own implementation here. If the linker
- * complains about duplicate symbols later, swap to STB_IMAGE_WRITE_STATIC
- * to make our copy file-local.
+
+/* ── stb_image_write include path / macro armor ─────────────────────────
  *
- * STB_IMAGE_IMPLEMENTATION is NOT defined here because we only use
- * write/resize -- not the image loader -- so the loader stays unimplemented
- * (we just need its types via the header). */
+ * ReShade's deps/fpng.props prepends $(SolutionDir)deps\fpng\src to
+ * include search; that directory has its OWN stb_image_write.h. Whichever
+ * one wins, the file-based declarations (stbi_write_png/_bmp) are gated
+ * behind `#ifndef STBI_WRITE_NO_STDIO`. ReShade's deps/stb.props sets
+ * STBI_WRITE_NO_STDIO and `_HAS_EXCEPTIONS=0` -- and even though stb.props
+ * isn't directly imported by ReShade.vcxproj, some transitive code path
+ * here ends up hiding our declarations. Force them ON by undefining the
+ * macro right before include.
+ *
+ * STB_IMAGE_WRITE_STATIC makes our copy file-local (linker won't clash
+ * with reshade's stb.lib copy). STB_IMAGE_WRITE_IMPLEMENTATION emits the
+ * function bodies in this TU.
+ *
+ * STB_IMAGE_IMPLEMENTATION is NOT defined here: we don't use the image
+ * LOADER -- only the writer + resizer -- so the loader stays as types-
+ * only declarations.
+ */
+#undef  STBI_WRITE_NO_STDIO
+#undef  STBI_NO_STDIO
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
@@ -53,8 +64,10 @@
 #include <unordered_set>
 #include "FormatEnum.h"
 #include <filesystem>
-#include <stb_image_write.h>          /* from reshade/deps/stb (header use only) */
-#include "stb_image.h"                /* from reshade/deps/stb (header use only) */
+/* Use explicit relative paths so the resolver cannot be hijacked by
+ * fpng's vendored stb_image_write.h via fpng.props's prepended dir. */
+#include "../../deps/stb/stb_image_write.h"
+#include "../../deps/stb/stb_image.h"
 #include "deps/stb_image_resize.h"    /* legacy v1 API, our copy */
 #include "deps/tinyexr.h"
 #include "deps/miniz.c"
