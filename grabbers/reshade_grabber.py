@@ -101,12 +101,21 @@ class ReShadeGrabber(FrameGrabber):
             raise FileNotFoundError(
                 f"[ReShadeGrabber] game_dir not found: {self.game_dir}")
 
+        # Path B has two build modes; either is fine as long as dxgi.dll is in
+        # the game dir. Embedded mode = bridge baked into dxgi.dll (no .addon).
+        # Standalone-addon mode = dxgi.dll + captureAIshi_bridge.addon both present.
+        dxgi_path  = self.game_dir / "dxgi.dll"
         addon_path = self.game_dir / "captureAIshi_bridge.addon"
-        if not addon_path.exists():
+        if not dxgi_path.exists():
             logger.warning(
-                "[ReShadeGrabber] %s missing -- did you run "
-                "scripts/deploy_reshade.py? Continuing in case the user is "
-                "about to do so manually.", addon_path)
+                "[ReShadeGrabber] %s missing -- ReShade proxy not deployed. "
+                "Copy 3rdparty\\reshade\\bin\\x64\\Release\\ReShade64.dll to "
+                "%s as dxgi.dll, or use scripts/deploy_reshade.py. The bridge "
+                "TCP port will never open without it.", dxgi_path, self.game_dir)
+        elif addon_path.exists():
+            logger.info("[ReShadeGrabber] standalone-addon build detected (dxgi.dll + .addon)")
+        else:
+            logger.info("[ReShadeGrabber] embedded build detected (dxgi.dll only, no .addon)")
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
