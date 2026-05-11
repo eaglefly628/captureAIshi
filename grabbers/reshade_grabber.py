@@ -334,12 +334,52 @@ class ReShadeGrabber(FrameGrabber):
             copied = 0
             for fx in shaders_src.glob("*.fx*"):
                 dst = shaders_dst / fx.name
-                if not dst.exists() or dst.stat().st_size != fx.stat().st_size:
-                    shutil.copy2(fx, dst)
-                    copied += 1
+                shutil.copy2(fx, dst)
+                copied += 1
             if copied:
                 logger.info("[ReShadeGrabber] deployed %d shader file(s) -> %s",
                             copied, shaders_dst)
+
+        # 4. ReShade ini + preset -- without these the .fx files are on
+        # disk but never loaded, so BackBufferExport_ColorTex /
+        # DepthToAddon_DepthTex don't exist as ReShade textures and
+        # frame_capture logs "not ready, skipped" every frame.
+        self._write_reshade_config()
+
+    def _write_reshade_config(self) -> None:
+        """Force-write unicap.ini + captureAIshi-preset.ini so ReShade
+        picks up our shaders. ReShade names the global ini after
+        VERSION_STRING_FILE which is still 'unicap' in our vendored
+        source -- hence the filename."""
+        ini_path    = self.game_dir / "unicap.ini"
+        preset_path = self.game_dir / "captureAIshi-preset.ini"
+
+        ini_content = (
+            "[GENERAL]\n"
+            "EffectSearchPaths=.\\captureAIshi-shaders\\Shaders\n"
+            "TextureSearchPaths=.\\captureAIshi-shaders\\Shaders\n"
+            "PresetPath=.\\captureAIshi-preset.ini\n"
+            "PerformanceMode=0\n"
+            "PerformanceModeNextHotkey=0,0,0,0\n"
+            "[ADDON]\n"
+            "FC_EnableCapture=1\n"
+            "FC_ExportDepth=1\n"
+            "FC_ExportNormal=0\n"
+            "FC_TargetFPS=30\n"
+            "FC_UsePNG=1\n"
+            "FC_PreUICapture=0\n"
+        )
+        preset_content = (
+            "Techniques=BackBufferExport@BackBufferExport.fx,"
+            "DepthToAddon@DepthToAddon.fx\n"
+            "TechniqueSorting=BackBufferExport@BackBufferExport.fx,"
+            "DepthToAddon@DepthToAddon.fx\n"
+        )
+
+        ini_path.write_text(ini_content, encoding="utf-8")
+        preset_path.write_text(preset_content, encoding="utf-8")
+        logger.info("[ReShadeGrabber] wrote ReShade ini + preset (%s, %s)",
+                    ini_path.name, preset_path.name)
 
     def _wait_for_bridge(self) -> None:
         deadline = time.monotonic() + self.readiness_timeout_s
