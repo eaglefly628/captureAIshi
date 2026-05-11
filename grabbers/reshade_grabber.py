@@ -306,22 +306,25 @@ class ReShadeGrabber(FrameGrabber):
         addon_dst   = self.game_dir / "captureAIshi_bridge.addon"
         shaders_dst = self.game_dir / "captureAIshi-shaders" / "Shaders"
 
-        # 1. dxgi.dll
-        if not dxgi_dst.exists():
-            if reshade_dll is None:
-                logger.error("[ReShadeGrabber] cannot auto-deploy: ReShade64.dll not "
-                             "found under %s. Build it via msbuild 3rdparty\\reshade\\"
-                             "ReShade.sln /p:Configuration=Release /p:Platform=\"64-bit\".",
-                             bin_root)
-            else:
-                shutil.copy2(reshade_dll, dxgi_dst)
-                logger.info("[ReShadeGrabber] deployed %s -> %s",
-                            reshade_dll, dxgi_dst)
+        # 1. dxgi.dll -- always overwrite so a freshly-rebuilt ReShade64.dll
+        # gets picked up. Otherwise iterating on the embedded bridge would
+        # silently use a stale copy from the last UI run. mtime comparison
+        # would be marginally faster but copy2 of ~3MB takes ~10ms; not worth.
+        if reshade_dll is None:
+            logger.error("[ReShadeGrabber] cannot auto-deploy: ReShade64.dll not "
+                         "found under %s. Build it via msbuild 3rdparty\\reshade\\"
+                         "ReShade.sln /p:Configuration=Release /p:Platform=\"64-bit\".",
+                         bin_root)
         else:
-            logger.info("[ReShadeGrabber] %s already present, skipping copy", dxgi_dst)
+            shutil.copy2(reshade_dll, dxgi_dst)
+            logger.info("[ReShadeGrabber] deployed %s (%d bytes, mtime=%s) -> %s",
+                        reshade_dll.name, reshade_dll.stat().st_size,
+                        time.strftime("%Y-%m-%d %H:%M:%S",
+                                      time.localtime(reshade_dll.stat().st_mtime)),
+                        dxgi_dst)
 
-        # 2. standalone-addon optional copy
-        if addon_dll.exists() and not addon_dst.exists():
+        # 2. standalone-addon optional copy (also always overwrite)
+        if addon_dll.exists():
             shutil.copy2(addon_dll, addon_dst)
             logger.info("[ReShadeGrabber] deployed %s -> %s", addon_dll.name, addon_dst)
 
