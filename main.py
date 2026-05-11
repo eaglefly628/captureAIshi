@@ -930,7 +930,7 @@ def main():
     )
 
     # Grabber
-    parser.add_argument("--grabber", choices=["renderdoc", "screenshot", "none", "obs"], default="none")
+    parser.add_argument("--grabber", choices=["renderdoc", "reshade", "screenshot", "none", "obs"], default="none")
     parser.add_argument("--target-exe", help="Game executable for RenderDoc auto-launch")
     parser.add_argument(
         "--inject", action="store_true",
