@@ -51,6 +51,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_STATIC      /* file-local: avoid LNK2005 against reshade's stb.lib stb_image_resize2 impl */
 #define TINYEXR_IMPLEMENTATION
 
 #include <imgui.h>
