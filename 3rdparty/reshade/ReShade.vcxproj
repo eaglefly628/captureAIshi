@@ -626,7 +626,7 @@
       <DisableSpecificWarnings>4244;4267;4456;4457;4458;4459;4996;4005;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ExceptionHandling>Async</ExceptionHandling>
       <AdditionalOptions>/EHa %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(SolutionDir)deps\imgui;$(SolutionDir)deps\stb;$(SolutionDir)source\captureAIshi;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)deps\imgui;$(SolutionDir)deps\stb;$(SolutionDir)source\captureAIshi;$(SolutionDir)source\captureAIshi\deps;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="source\dll_main_test_app.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Debug App' And '$(Configuration)'!='Release App'">true</ExcludedFromBuild>
