@@ -362,7 +362,13 @@ class ReShadeGrabber(FrameGrabber):
             "PerformanceMode=0\n"
             "PerformanceModeNextHotkey=0,0,0,0\n"
             "[ADDON]\n"
-            "FC_EnableCapture=1\n"
+            # FC_EnableCapture defaults to OFF so opening the game does not
+            # instantly start dumping ~300KB/frame * 30FPS to disk. Toggle
+            # the "Enable capturing" checkbox in ReShade overlay (Home ->
+            # Add-ons -> captureAIshi Bridge) when you actually want to
+            # record. The addon writes the toggled value back to this ini
+            # via set_config_value so it persists across sessions.
+            "FC_EnableCapture=0\n"
             "FC_ExportDepth=1\n"
             "FC_ExportNormal=0\n"
             "FC_TargetFPS=30\n"

@@ -26,6 +26,7 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "embed_api.h"   /* fc_embed::trigger_oneshot from frame_capture.cpp */
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -266,6 +267,16 @@ static bool route_command(SOCKET client, const std::string& cmd)
 
     if (cmd == "__bridge_ping") {
         reply(client, "pong\n");
+        return true;
+    }
+
+    /* One-shot frame capture (parity with RenderDoc's __cam_rdc_capture).
+     * Bypasses FC_EnableCapture + FPS gate -- writes exactly one BMP/PNG
+     * (+ DepthBuffer.exr / NormalBuffer.exr if enabled) on next present.
+     * Use from Bridge Debug "Capture" button or trajectory Play loop. */
+    if (cmd == "__fc_capture") {
+        fc_embed::trigger_oneshot();
+        reply(client, "OK\n");
         return true;
     }
 

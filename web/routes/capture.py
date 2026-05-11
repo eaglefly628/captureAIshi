@@ -92,7 +92,7 @@ def bridge_test():
 
     _SAFE_PREFIXES = (
         "__bridge_", "__cam_", "__timestop", "__hud_", "__hotsample",
-        "__smooth", "__path_",
+        "__smooth", "__path_", "__fc_",
         "slomo ", "stat ", "showflag.", "r.", "t.",
         "toggledebugcamera", "showhud",
     )

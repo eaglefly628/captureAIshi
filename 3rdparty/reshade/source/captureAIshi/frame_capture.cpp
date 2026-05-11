@@ -101,6 +101,12 @@ static int      windowSize[2]     = { 320, 560 };
 
 static std::chrono::steady_clock::time_point s_last_capture;
 
+// One-shot trigger: bridge.cpp sets this via fc_embed::trigger_oneshot()
+// when the __fc_capture TCP command arrives. Cleared by on_reshade_present
+// after the capture is queued. Bypasses both FC_EnableCapture and the
+// FPS gate so a single trigger always produces exactly one triplet.
+static std::atomic<bool> s_oneshot_trigger{false};
+
 using namespace reshade::api;
 
 // All TU-internal symbols live in an anonymous namespace so they cannot
@@ -842,12 +848,17 @@ static void on_begin_render_effects(effect_runtime* runtime, command_list*, reso
 
 static void on_reshade_present(effect_runtime* runtime)
 {
-    if (!enableCapturing) goto reset_frame_state;
+    // One-shot trigger bypasses both the enable flag and the FPS gate so
+    // a single __fc_capture TCP command always produces exactly one triplet.
+    bool oneshot = s_oneshot_trigger.exchange(false);
+
+    if (!oneshot && !enableCapturing) goto reset_frame_state;
 
     {
         auto tick = std::chrono::steady_clock::now();
         float fps = (g_target_fps > 0.0f) ? g_target_fps : 30.0f;
-        if (std::chrono::duration<float>(tick - s_last_capture).count() < 1.0f / fps)
+        if (!oneshot &&
+            std::chrono::duration<float>(tick - s_last_capture).count() < 1.0f / fps)
             goto reset_frame_state;
         s_last_capture = tick;
 
@@ -1403,6 +1414,11 @@ void stop_workers()
     for (auto& t : g_save_threads)
         if (t.joinable()) t.join();
     g_save_threads.clear();
+}
+
+void trigger_oneshot()
+{
+    s_oneshot_trigger.store(true);
 }
 
 } // namespace fc_embed
