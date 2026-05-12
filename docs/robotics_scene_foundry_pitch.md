@@ -386,6 +386,99 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 
 ---
 
+### 9.1.6 业务边界收敛（2026-05-12 第三批，最终 scope）
+
+**核心定调：我们是「UE 里跑机器人训练场景的 PCG 工厂 + 下游训练数据格式适配器」。我们不做机器人训练本身。**
+
+这是对 §9.1.5 双轨架构的进一步收敛，避开训练侧的深坑。
+
+#### 在做 / 不在做
+
+| | **在做** | **不在做** |
+|---|---------|------------|
+| UE5 + PCG 场景批量生产 | ✓ 核心 | |
+| MRQ 多层 EXR / Cryptomatte 导出 | ✓ 核心 | |
+| Cosmos Transfer 2.5 photoreal 渲染 | ✓ 核心（Phase 1 接） | |
+| 下游训练标准格式适配（LeRobot dataset / RT-X TFDS / Isaac GR00T schema / robomimic HDF5）| ✓ 加深对齐 | |
+| 机器人 URDF 在 UE 内作运动学摆放（waypoint + 关节角度静态展示） | ✓ 够用 | |
+| **Isaac Sim 物理仿真双轨** | | ✗ **从 §9.1.5 移除** |
+| 机器人策略训练 / RL / 模仿学习 | | ✗ 客户自己跑 |
+| 机器人控制栈 / ROS bag 输出 | | ✗ 不碰 |
+| 接触 / 力 / 关节动力学求解 | | ✗ 不碰 |
+
+#### 简化后的架构
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  最终架构 (post-9.1.6)                                                     │
+│                                                                            │
+│   UE5 + PCG + Fab + MetaHuman + Sequencer                                  │
+│            │                                                                │
+│            ├── 机器人 URDF (kinematic only, 摆姿势用)                       │
+│            │                                                                │
+│            ▼                                                                │
+│   MRQ 多层 EXR (RGB / Depth / Normal / Cryptomatte / motion vector)        │
+│            │                                                                │
+│            ├──► Cosmos Transfer 2.5 ──► photoreal video                    │
+│            │                                                                │
+│            ▼                                                                │
+│   数据适配层 (我们的差异化)                                                 │
+│   ├── LeRobot dataset (parquet + videos)                                   │
+│   ├── RT-X TFDS schema                                                     │
+│   ├── NVIDIA Isaac GR00T data schema                                       │
+│   └── robomimic HDF5                                                       │
+│            │                                                                │
+│            ▼                                                                │
+│   交付给客户 → 客户在自己的训练平台跑训练 (不归我们)                        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 价值主张更新
+
+> 「世界模型 / 具身策略团队需要海量、可控、多样化、photoreal 的训练场景。我们用 UE5 PCG 工业管线 + Cosmos 渲染，按你要的下游数据格式（LeRobot / RT-X / GR00T / robomimic）直接交付数据集。你专注训模型，我们专注出数据。」
+
+#### Phase 1 工时回缩（10w → 6w）
+
+| 周 | 内容 |
+|---|------|
+| 1 | NVIDIA Inception 申请 + UE 5.6 + Robotics Plugin + Cosmos API 接入 |
+| 2 | 三类场景 PCG 缩水模板（warehouse / 客厅 / 工业一角） |
+| 3 | URDF kinematic posing（FRANKA Panda + Unitree H1 + UR5 静态摆放） |
+| 4 | MRQ 多层 EXR 批量出图 + Cosmos Transfer photoreal video 端到端 |
+| 5 | **数据适配器（核心差异化）**：LeRobot dataset + RT-X TFDS 二选一先打通 |
+| 6 | 三场景各 30 frames × 5 variants 完整数据集 + 客户 demo 包装 |
+
+Isaac Sim 暂不接，省 3-4 周工时和一条学习曲线。客户要物理仿真自己跑 Isaac Sim / MuJoCo / SAPIEN。
+
+#### 修订后的本周必做
+
+```
+本周必做：
+  □ 提 NVIDIA Inception（Cosmos GPU + Robotics Plugin 资源）
+  □ UE 5.6 + Robotics Plugin（仅 URDF import + kinematic posing 用）
+  □ 拉 FRANKA / H1 / UR5 URDF
+  □ 调研三套下游数据格式 spec：LeRobot (HuggingFace) / RT-X (TFDS) / GR00T (NVIDIA)
+  □ 找 2-3 个真客户聊「你们要什么格式」(Physical Intelligence / 1X / 银河通用 / NVIDIA Isaac team)
+  □ 修 RenderDoc P0 (xiaoxuan)
+
+不再做（再次收敛）：
+  ✗ Isaac Sim 双轨物理仿真
+  ✗ 任何训练侧实现（policy / RL / imitation learning）
+  ✗ 机器人控制栈 / ROS / 实时仿真闭环
+```
+
+#### 风险也跟着降级
+
+| 原风险 | 状态 |
+|--------|------|
+| Isaac Sim 学习曲线 | ✓ 消除 |
+| UE ↔ Isaac Sim USD 双轨打通（Omniverse 黑洞）| ✓ 消除 |
+| 训练侧坑无底洞 | ✓ 消除（不做） |
+| **新风险：客户要的数据格式我们没覆盖** | ⚠ 缓解办法：本周做格式调研 + 客户访谈 |
+| Cosmos GPU 配额 | 留存（Inception 审批） |
+
+---
+
 ### 9.2 国产化备选：华为 Ascend + MindSpore 路线（宣讲用 Option）
 
 **动机**：国内具身公司（银河 / 智元 / 宇树 / 智源 / 国地中心）面临两个现实约束 ——
