@@ -270,7 +270,7 @@ static bool route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
-    /* One-shot frame capture (parity with RenderDoc's __cam_rdc_capture).
+    /* One-shot frame capture (parity with grabber.trigger_capture()).
      * Bypasses FC_EnableCapture + FPS gate -- writes exactly one BMP/PNG
      * (+ DepthBuffer.exr / NormalBuffer.exr if enabled) on next present.
      * Use from Bridge Debug "Capture" button or trajectory Play loop. */

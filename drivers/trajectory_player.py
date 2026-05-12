@@ -609,7 +609,7 @@ class TrajectoryPlayer:
         # and Play (renderdoc=True) we advance a time cursor and sample
         # the pose via interp_linear so motion is smooth. In Play mode we
         # also check if the cursor just crossed the next capture time; if
-        # so we hold the exact capture pose, fire __cam_rdc_capture, dwell
+        # so we hold the exact capture pose, trigger capture, dwell
         # for capture_interval (folded into pause_budget so the streaming
         # clock is preserved), then resume.
         try:
@@ -687,7 +687,7 @@ class TrajectoryPlayer:
                     return
 
                 # rdc-step: if we just crossed the next capture time,
-                # hold the exact capture pose, fire __cam_rdc_capture,
+                # hold the exact capture pose, trigger capture via grabber,
                 # dwell for capture_interval, then resume streaming.
                 if cap_fired < len(cap_times) and elapsed >= cap_times[cap_fired]:
                     cap_t = cap_times[cap_fired]
@@ -700,22 +700,25 @@ class TrajectoryPlayer:
                             break
                     pause_start = time.monotonic()
                     time.sleep(settle)
-                    # Pick capture command based on active grabber type.
-                    # RenderDoc grabber -> __cam_rdc_capture (renderdoccmd
-                    # writes .rdc file). ReShade grabber -> __fc_capture
-                    # (embedded frame_capture writes BMP+EXR triplet).
-                    cap_cmd = "__cam_rdc_capture"
+                    # Trigger capture via the active grabber.
+                    # ReShade: TCP __fc_capture to the bridge addon.
+                    # RenderDoc (and any future grabber): direct call to
+                    # grabber.trigger_capture() -- no bridge handler needed.
                     try:
+                        from grabbers.reshade_grabber import ReShadeGrabber
                         from web import state as _ws
                         g = _ws.get_active_grabber()
-                        if g is not None and type(g).__name__ == "ReShadeGrabber":
-                            cap_cmd = "__fc_capture"
-                    except Exception:
-                        pass
-                    try:
-                        session.send(cap_cmd)
-                    except (OSError, ConnectionError) as e:
-                        logger.error("[PLAYER] %s send failed: %s", cap_cmd, e)
+                        if isinstance(g, ReShadeGrabber):
+                            try:
+                                session.send("__fc_capture")
+                            except (OSError, ConnectionError) as e:
+                                logger.error("[PLAYER] __fc_capture send failed: %s", e)
+                        elif g is not None:
+                            g.trigger_capture()
+                        else:
+                            logger.warning("[PLAYER] no active grabber; capture skipped")
+                    except Exception as e:
+                        logger.error("[PLAYER] capture trigger failed: %s", e)
                     try:
                         from web import state as _web_state
                         _web_state.record_pose_timestamp_now()
