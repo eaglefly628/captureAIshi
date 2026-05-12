@@ -99,6 +99,46 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (from lead review)
 
+- [ ] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, 2026-05-12) — `drivers/trajectory_player.py:707-718` 在每个 capture pose 处发 TCP `__cam_rdc_capture` 到 bridge，**但 bridge / addon / Python 全栈都没有这个命令的 handler**。grep 结果：
+  ```
+  3rdparty/reshade/source/captureAIshi/bridge.cpp  ← 仅一行注释引用，无 route 分支
+  3rdparty/reshade/source/captureAIshi/embed_api.h ← 仅注释提及
+  drivers/ue5_console.py                            ← 0 命中
+  ```
+  Player 发完命令 → bridge 静默丢弃 → `.rdc` 文件永远不出现 → trajectory 全部回归（Batman / StackOBot 当前都跑不通）。这条线是你 9d2b8ba0 "feat(trajectory): pick capture cmd by grabber type" 引入的，但只对 ReShade 侧 `__fc_capture` 做了 wiring，RDC 侧没补。
+  
+  **修复方向（自己拍方案，三选一）**：
+  
+  (A) **Python 侧直调 grabber**（推荐，零 C++ 改动）— 把 `trajectory_player.py:707-718` 的 TCP 发送替换为 `_ws.get_active_grabber().trigger_capture()`。`RenderDocGrabber.trigger_capture()` 已存在 (`grabbers/renderdoc_grabber.py:195-229`)，链路全：native bridge → renderdoccmd triggercapture --interactive → Python API → SendInput keypress。一次性解决。ReShade 路径不变（继续 `__fc_capture`）。
+  
+  (B) **Bridge addon 加 `__cam_rdc_capture` handler** — 在 `3rdparty/reshade/source/captureAIshi/bridge.cpp` 的 router 里加分支，调 in-proc RenderDoc API 的 `TriggerCapture()`。问题：RDC 路径用的是 `renderdoc_grabber.py` 走 renderdoccmd CLI / 外部 RDC.dll，addon 上下文里没有 in-proc RenderDoc handle 可用。**不推荐**。
+  
+  (C) **退回批量模式** — 干脆禁掉 trajectory 的 per-pose 触发，回到老的 `renderdoccmd capture` 一帧一文件批跑。回归大，**不推荐**。
+  
+  **推荐 A**。`isinstance` 取代字符串比对：
+  ```python
+  from grabbers.reshade_grabber import ReShadeGrabber  # 已存在
+  if isinstance(g, ReShadeGrabber):
+      session.send("__fc_capture")
+  else:
+      g.trigger_capture()   # 含 RDC / 任何未来 grabber
+  ```
+  
+  **验收**：
+  1. Batman + RDC grabber 跑 trajectory：所有 capture pose 都产 `.rdc` 文件（之前是 0 个）
+  2. StackOBot + RDC grabber 跑 trajectory：同上
+  3. ReShade grabber + 任意游戏跑 trajectory：行为不回归（继续走 `__fc_capture`）
+  4. `grep -rn "__cam_rdc_capture" --include="*.py" --include="*.cpp"` 应 0 命中（彻底删干净，包括 comments）
+  
+  **顺手清理**（属同一 PR）：
+  - `drivers/trajectory_player.py:612, 690, 704-706` 三处 `__cam_rdc_capture` comment 全删
+  - `3rdparty/reshade/source/captureAIshi/embed_api.h:42-44` 把 `mirroring RenderDoc's __cam_rdc_capture flow` 改成 `mirroring grabber.trigger_capture() flow`
+  - `3rdparty/reshade/source/captureAIshi/bridge.cpp:273` 注释同上
+  
+  **工时估计**：1-2h（含 Batman/StackOBot 端到端回归）
+  
+  **背景**：完整 review 报告见 ad-hoc, 这是 review 列的 #1 收尾项。#2 (UI `injection_mode` 下拉 + `create_grabber()` 工厂) 和 #3 (字符串 type 检测) 一起做完更省心，但 P0 最小修复只要 A 方案那一段。
+
 - [ ] **P2: depth_curve 跨域改动** (spotted by 小逆, fixed in pending push) — 用户报告 Batman PNG 远景 city 段塌成 near-white。我在 `image_loader._normalize_depth` 加了 `depth_curve` 参数（"linear" / "gamma" / "log"），`batman_ak.json` 默认 "log"。代码在你域 (grabbers/) 里，麻烦 review 一下：(1) curve 实现是否合理（log on raw before percentile，保留 monotonic 极性）；(2) 其他 outdoor 配置（ac6 / metro_exodus / black_myth_wukong）也建议默认 "log"；(3) 字段已加到 `_schema.md`。
 
 - [x] **P1: 99308e9 EXR depth 没补 requirements.txt** (spotted by 小逆, fixed 1d53bf2) — `image_loader.load_depth_image` 三选一 cv2/imageio/OpenEXR 全没装的话整批 capture 的 depth 都会失败（用户报告：rgb+normal 出图但 depth 为 0）。已加 `opencv-python>=4.5.0`。下次改 file format 麻烦顺手 bump deps。
