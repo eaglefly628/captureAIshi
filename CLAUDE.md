@@ -76,10 +76,69 @@ Inter-agent communication stays in `agents/*/SHARED.md`. Context dashboard at `a
 
 ## Branch Policy
 
-**All work MUST be committed and pushed directly to `claudeMainBranch`.** Do NOT create feature branches or push to auto-generated `claude/xxx` branches. If the platform assigns a different branch, switch first:
+**All work targets `claudeMainBranch`.** Development happens on the
+sandbox-assigned `claude/write-handoff-docs-XXXXX` branch (per-session,
+the platform refuses direct push to `claudeMainBranch` with HTTP 403).
+A GitHub Action auto-forwards every push on `claude/**` to
+`claudeMainBranch` within ~10 seconds.
 
-```bash
-git checkout claudeMainBranch && git pull origin claudeMainBranch
+### How the auto-merge works
+
+```
+session work
+   │
+   ▼  git push origin HEAD:claude/write-handoff-docs-XXXXX
+sandbox proxy → push succeeds
+   │
+   ▼  GitHub receives push on claude/** branch
+.github/workflows/auto-merge-claude.yml triggers (runs on GitHub side)
+   │
+   ▼  workflow uses GITHUB_TOKEN:
+         git checkout claudeMainBranch
+         git merge --ff-only origin/claude/write-handoff-docs-XXXXX
+         (falls back to no-ff merge commit if histories diverged)
+         git push origin claudeMainBranch
+   │
+   ▼  ~10s later
+claudeMainBranch tip == claude/write-handoff-docs-XXXXX tip
 ```
 
-GitHub default branch must be `claudeMainBranch` (Settings → General → Default branch).
+**Net effect for new sessions**: just `git push` to whatever branch the
+sandbox assigned. Code lands on `claudeMainBranch` automatically. No
+manual PR. No user intervention. Workflow file lives at
+`.github/workflows/auto-merge-claude.yml` (committed in `2dd243a`).
+
+### Pre-reqs (one-time setup; already done)
+
+1. GitHub default branch = `claudeMainBranch`
+   (Settings → General → Default branch)
+2. No branch protection rule blocking `GITHUB_TOKEN` from pushing to
+   `claudeMainBranch` (Settings → Branches)
+3. `.github/workflows/auto-merge-claude.yml` exists on `claudeMainBranch`
+
+### Caveats
+
+- The workflow trusts `claude/**` pushes blindly. If you push broken code,
+  `claudeMainBranch` gets broken code ~10s later. Use the auto-merge
+  carefully -- think before pushing experimental commits.
+- The first push of any session goes through, but if the workflow fails
+  (rare -- GitHub Actions outage, branch protection changes, etc.) the
+  fallback is a manual PR: open
+  `https://github.com/eaglefly628/captureAIshi/pull/new/<branch>`
+  and merge by hand.
+- "All work goes to claudeMainBranch" is the **logical** policy. The
+  **mechanical** path is via the assigned branch + workflow.
+
+### Per-session quickstart
+
+On new session start:
+```bash
+git checkout claudeMainBranch && git pull origin claudeMainBranch
+# work
+git push -u origin HEAD:claude/write-handoff-docs-XXXXX
+# done -- claudeMainBranch updates itself within ~10s
+```
+
+If sandbox lets you push directly to claudeMainBranch (no 403), do that
+and skip the assigned-branch indirection -- the workflow no-ops on
+already-merged branches.
