@@ -284,17 +284,81 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 
 ---
 
-## 9. 7 项关键决策点（需你拍板）
+## 9. 7 项关键决策（已锁定 2026-05-12）
 
-| # | 决策 | 选项 | 我的倾向 |
-|---|------|------|---------|
-| 1 | **首发垂直** | 仓储 / 通用人形 / 工业制造 / 家居 | **仓储**（资产简、客户钱多、任务清晰） |
-| 2 | **机器人本体** | 通用 6-DoF / FRANKA Panda / UR5 / 客户自带 | **FRANKA**（学术标杆，Isaac Lab 默认支持） |
-| 3 | **物理引擎** | UE PhysX 5 / UE Chaos / 嵌 PhysX SDK / Mujoco | **嵌 PhysX 5 SDK**（与 Isaac Sim 同源） |
-| 4 | **Cosmos 集成时机** | Phase 1 通 / Phase 3 接 / 不接 | **Phase 3**（GPU 成本高，先验客户用例） |
-| 5 | **核心 IP 重心** | LLM→场景 / 物理标注 / 资产自动化 / SaaS 工作流 | **物理标注 + SaaS 工作流**（壁垒 + 售卖载体） |
-| 6 | **NVIDIA 关系** | 纯产品对接 / Inception 加入 / 联合 GTM / 啥也不做 | **Inception → 联合 GTM**（免费 GPU + PR 资源） |
-| 7 | **国内外节奏** | 先国内 / 先海外 / 并行 | **先国内**（语言地理客户决策快） |
+| # | 决策 | **最终方案** | 关键含义 |
+|---|------|--------------|---------|
+| 1 | 首发垂直 | **通用人形机器人** | 目标市场是 Skild / Figure / 1X / 银河 / 智元 / 智源等。Phase 1 spike 仍用 FRANKA 单臂做 manipulation 验证，作为人形上肢的简化代理 |
+| 2 | Phase 1 机器人本体 | **FRANKA Panda 7-DoF** | 学术标杆，Isaac Lab 默认支持。Phase 2 起加 UR5 + 自定义 URDF + 客户人形 |
+| 3 | 物理引擎 | **嵌入 NVIDIA PhysX 5 SDK** | 与 Isaac Sim 同源，下游验证省力。Phase 1 Week 1 加 C++ 集成工作（约 3-5 天） |
+| 4 | Cosmos 集成时机 | **Phase 3 接入** | Phase 1/2 先专心做 UE → Cosmos-ready 4D 数据格式，不调 Cosmos API。Phase 3 视客户 PoC 需求上 |
+| 5 | 核心 IP 三大重心 | **物理标注准确性 + LLM→Spec 提示工程 + 资产库自动化** | 走"深度技术"路线（NOT SaaS UX）。意味着研发为主，论文 + 开源 + 标杆数据集为壁垒形式 |
+| 6 | NVIDIA 关系 | **先加 Inception → 谈联合 GTM** | 本周提交 Inception 申请；Phase 2 跑出 PoC 后启动联合发布对话 |
+| 7 | 国内外节奏 | **国内海外并行** | Phase 3 同时跑两条 GTM。意味着所有外发素材双语化，Phase 2 起补 EN 案例研究 |
+
+### 9.1 决策组合的深层含义
+
+| 信号 | 含义 |
+|------|------|
+| 通用人形 + 嵌 PhysX 5 SDK | 不做轻量级 SaaS，做**工程深度产品**，对标 Parallel Domain 而非 Datagen |
+| 核心 IP 选物理 + LLM + 资产，**未选 SaaS 工作流** | 公司定位是"研发驱动技术供应商"，**不是产品化 SaaS**。客户接入更多通过 API + 数据集授权而非 web UI 自助 |
+| 并行国内外 | 团队需配置：国内销售 + 海外学术营销（NeurIPS / CoRL / ICRA 投稿 + Skild/Figure 触达）|
+| Inception → 联合 GTM | NVIDIA 是"放大器"而非"渠道"。我们独立运营，但用 NVIDIA 品牌力做 PR 与流量 |
+
+### 9.2 国产化备选：华为 Ascend + MindSpore 路线（宣讲用 Option）
+
+**动机**：国内具身公司（银河 / 智元 / 宇树 / 智源 / 国地中心）面临两个现实约束 ——
+1. **信创合规**：央国企客户与"具身国家队"明确要求训练算力国产化
+2. **美国出口管制**：H100 / B100 在中国受限，Cosmos / Isaac Lab 直接落地中国云有壁垒
+
+**我们的应对**：单一 NVIDIA 路线对中国市场是风险，**双轨设计可同时通吃 NVIDIA + 华为生态**。
+
+#### 华为对标矩阵
+
+| 层 | NVIDIA 方案 | **华为方案** | 我们的对接 |
+|---|------------|-------------|----------|
+| 训练算力 | H100 / B100 / GB200 | **Ascend 910B / 910C / 384 超节点** | 数据格式无关，两边都吃 |
+| 训练框架 | PyTorch + CUDA | **MindSpore + CANN** | 输出 MindSpore data loader |
+| 推理芯片 | Jetson / Drive | **Atlas 200 / 300 系列** | 数据集复用 |
+| 仿真栈 | Cosmos + Isaac Lab + GR00T | **盘古具身大模型 + 华为云 ModelArts** | 提供 Pangu-Embodied 兼容格式 |
+| 云平台 | Omniverse Cloud + DGX Cloud | **华为云 ModelArts + Atlas 集群** | 部署 docker 镜像双发 |
+| 机器人 SDK | Isaac ROS | **OpenHarmony 机器人套件 / KaihongOS** | URDF 标准导出双轨 |
+
+#### 数据格式天然兼容性（关键卖点）
+
+我们的 4D 输出**完全是数值张量**（depth EXR、normal EXR、Cryptomatte segmentation、pose JSON）—— **不绑定任何 GPU 厂商或框架**。下游想用 PyTorch+CUDA 还是 MindSpore+CANN 都可以读。**这是我们与 NVIDIA Replicator 的核心差异**（Replicator 输出与 Omniverse / CUDA 深绑定）。
+
+#### 工程工作量增量（小）
+
+| 项 | 工时 | 何时做 |
+|----|------|--------|
+| MindSpore Dataset 适配层（封装我们的 4D EXR + JSON）| 3 天 | Phase 3 商业化阶段 |
+| Pangu-Embodied 输入格式 adapter（与 Cosmos Transfer 对偶）| 5 天 | Phase 3，若有客户需求 |
+| 华为云 ModelArts 部署 docker 镜像 | 2 天 | Phase 3 |
+| 测试 Ascend 910B 跑通整套训练 demo | 5-10 天（含硬件协调）| 与第一个国央企客户 PoC 合并做 |
+
+**总增量约 15-20 天**，但解锁的市场（央国企 + 国家队具身基础设施项目）规模远大于此。
+
+#### 销售/宣讲口径
+
+PPT 中提及的话术建议：
+
+> *"我们的合成数据栈与训练框架无关 —— NVIDIA Cosmos + Isaac Lab 用户拿到的是 PyTorch/CUDA 格式；华为 Ascend + MindSpore 用户拿到的是 MindSpore + CANN 格式。客户不需要为算力选型妥协数据来源，也不需要为信创要求改换数据供应商。"*
+
+#### 华为合作策略（与 NVIDIA Inception 并行）
+
+| 阶段 | 动作 |
+|------|------|
+| Phase 1 | 内部技术准备：保持数据格式 framework-agnostic（默认做到）|
+| Phase 2 | 加入华为云开发者生态 / 联系华为昇腾 ISV 合作伙伴计划 |
+| Phase 3 | 与央国企客户（中车 / 国家电网 / 中石化等具身落地）做 PoC，借势进入华为推荐供应商目录 |
+| Phase 4 | 申请加入"具身智能国家科技重大专项"配套工具链供应商 |
+
+**风险点**：MindSpore + CANN 生态文档与 NVIDIA 比有差距，适配过程会踩坑。预留 buffer。
+
+#### 决策建议
+
+**"NVIDIA 主推 + 华为对标做选项"** —— Phase 1/2 不投资华为，但**全程保证不做单一栈绑定**；Phase 3 视客户来源决定是否启动 5-15 天的 Huawei 适配工作。**单笔央国企订单即可回本**。
 
 ---
 
