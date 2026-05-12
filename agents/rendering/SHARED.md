@@ -99,7 +99,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (from lead review)
 
-- [ ] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, 2026-05-12) — `drivers/trajectory_player.py:707-718` 在每个 capture pose 处发 TCP `__cam_rdc_capture` 到 bridge，**但 bridge / addon / Python 全栈都没有这个命令的 handler**。grep 结果：
+- [x] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, fixed 03ce4a8 by 小萱) — `drivers/trajectory_player.py:707-718` 在每个 capture pose 处发 TCP `__cam_rdc_capture` 到 bridge，**但 bridge / addon / Python 全栈都没有这个命令的 handler**。grep 结果：
   ```
   3rdparty/reshade/source/captureAIshi/bridge.cpp  ← 仅一行注释引用，无 route 分支
   3rdparty/reshade/source/captureAIshi/embed_api.h ← 仅注释提及
@@ -139,7 +139,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
   
   **背景**：完整 review 报告见 ad-hoc, 这是 review 列的 #1 收尾项。#2 (UI `injection_mode` 下拉 + `create_grabber()` 工厂) 和 #3 (字符串 type 检测) 一起做完更省心，但 P0 最小修复只要 A 方案那一段。
 
-- [ ] **P2: depth_curve 跨域改动** (spotted by 小逆, fixed in pending push) — 用户报告 Batman PNG 远景 city 段塌成 near-white。我在 `image_loader._normalize_depth` 加了 `depth_curve` 参数（"linear" / "gamma" / "log"），`batman_ak.json` 默认 "log"。代码在你域 (grabbers/) 里，麻烦 review 一下：(1) curve 实现是否合理（log on raw before percentile，保留 monotonic 极性）；(2) 其他 outdoor 配置（ac6 / metro_exodus / black_myth_wukong）也建议默认 "log"；(3) 字段已加到 `_schema.md`。
+- [x] **P2: depth_curve 跨域改动** (spotted by 小逆, reviewed by 小萱 2026-05-12) — 用户报告 Batman PNG 远景 city 段塌成 near-white。我在 `image_loader._normalize_depth` 加了 `depth_curve` 参数（"linear" / "gamma" / "log"），`batman_ak.json` 默认 "log"。代码在你域 (grabbers/) 里，麻烦 review 一下：(1) curve 实现是否合理（log on raw before percentile，保留 monotonic 极性）；(2) 其他 outdoor 配置（ac6 / metro_exodus / black_myth_wukong）也建议默认 "log"；(3) 字段已加到 `_schema.md`。
 
 - [x] **P1: 99308e9 EXR depth 没补 requirements.txt** (spotted by 小逆, fixed 1d53bf2) — `image_loader.load_depth_image` 三选一 cv2/imageio/OpenEXR 全没装的话整批 capture 的 depth 都会失败（用户报告：rgb+normal 出图但 depth 为 0）。已加 `opencv-python>=4.5.0`。下次改 file format 麻烦顺手 bump deps。
 
@@ -161,6 +161,13 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 6. **3D 可视化器** 可以直接用 trajectory.json 里的 Position + Rotation 画相机锥体
 
 ## Changelog
+
+### [v0.2.0] 03ce4a8 — 小萱
+- P0 fix: trajectory_player RDC capture chain (dispatches to grabber.trigger_capture())
+  - isinstance(g, ReShadeGrabber) → TCP __fc_capture; else → g.trigger_capture() direct
+  - Removed __cam_rdc_capture string from all Python/trajectory code (0 hits in *.py)
+  - Note: console_server.h handler remains as low-level fallback (not removed)
+  - Reviewed P2 depth_curve: log monotonicity + polarity correct for standard-Z
 
 ### [v0.2.0] 99308e9 — 小萱
 - feat: strategy-based GBuffer detection replaces unstable texture indices
