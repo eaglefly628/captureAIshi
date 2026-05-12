@@ -42,6 +42,10 @@ renderdoc/.vs/
 3rdparty/uuu/*.exe
 3rdparty/uuu/*.dll
 
+# Vendored upstream (dropped as submodule in 75fb383d, content now lives
+# under 3rdparty/reshade_bridge/). Local checkout kept for reference only.
+3rdparty/unicap/
+
 # Native bridge build artifacts
 capture_bridge*.so
 capture_bridge*.pyd
