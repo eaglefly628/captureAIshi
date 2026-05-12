@@ -40,8 +40,8 @@ void stop_workers();
 
 // One-shot trigger -- fires a single capture next frame regardless of
 // FC_EnableCapture or the FPS gate. Called from bridge.cpp when the
-// __fc_capture TCP command is received, mirroring RenderDoc's
-// __cam_rdc_capture flow (trigger from UI / trajectory per pose).
+// __fc_capture TCP command is received, mirroring grabber.trigger_capture()
+// flow (trigger from UI / trajectory per pose).
 void trigger_oneshot();
 
 } // namespace fc_embed
