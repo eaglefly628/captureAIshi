@@ -305,6 +305,87 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 | 并行国内外 | 团队需配置：国内销售 + 海外学术营销（NeurIPS / CoRL / ICRA 投稿 + Skild/Figure 触达）|
 | Inception → 联合 GTM | NVIDIA 是"放大器"而非"渠道"。我们独立运营，但用 NVIDIA 品牌力做 PR 与流量 |
 
+### 9.1.5 决策修订（2026-05-12 第二批，覆盖原 §9）
+
+第一批决策后追加 4 项，**部分覆盖原决策**：
+
+| # | 原决策 | **修订后** | 影响 |
+|---|--------|------------|------|
+| 4. Cosmos 时机 | Phase 3 接入 | **🔴 Phase 1 立刻接** | MVP 必须包 Cosmos Transfer photoreal 输出。技术风险 + GPU 成本前置。Inception 申请必须本周提 |
+| Phase 1 场景 | 单仓库（隐含）| **🔴 多场景同推** | 工时翻倍至少。需同时立 3 类模板（仓储 / 人形家居 / 工业）做缩水版 spike |
+| 物理引擎 | 嵌 PhysX 5 SDK in UE | **🔴 UE + Isaac Sim 双轨** | UE 做场景+视觉，Isaac Sim 做机器人物理，USD 互通。架构层次大幅扩展 |
+| 机器人资产 | （未定）| **自带 URDF 优先** | 工程简，FRANKA Panda + Unitree H1 + UR5 公开 URDF 入手 |
+
+#### 修订带来的架构变化
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  ★ 新双轨架构 (修订后)                                                     │
+│                                                                            │
+│  ┌─────────────────────┐         USD              ┌──────────────────────┐ │
+│  │   UE5 (场景层)       │  ◄──────────────────►   │   Isaac Sim (物理层)  │ │
+│  │   PCG + Fab + 资产   │   双向同步              │   PhysX 5 + 机器人    │ │
+│  │   MetaHuman + 光照   │                          │   articulation        │ │
+│  │   MRQ 多层 EXR        │                          │   接触 / 力 / 关节   │ │
+│  └─────────────────────┘                          └──────────────────────┘ │
+│              ↓                                              ↓               │
+│   RGB / Depth / Normal / Cryptomatte           contact / force / pose       │
+│              ↓                                              ↓               │
+│              └───────────┬──────────────────────────────────┘               │
+│                          ▼                                                  │
+│              ┌──────────────────────┐                                       │
+│              │  NVIDIA Cosmos       │                                       │
+│              │  Transfer 2.5        │   ← Phase 1 立刻接                    │
+│              │  (photoreal video)   │                                       │
+│              └──────────────────────┘                                       │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Phase 1 工时重估（4 周 → 8-10 周）
+
+| 周 | 内容 |
+|---|------|
+| 1 | NVIDIA Inception 申请 + Isaac Sim 环境搭建 + UE 5.6 + Robotics Plugin |
+| 2 | UE 三类场景 PCG 缩水模板（warehouse / 客厅 / 工业一角）|
+| 3 | FRANKA Panda 在 Isaac Sim 跑 manipulation + USD 导出场景到 UE |
+| 4 | UE ↔ Isaac Sim USD 同步管线 + Sequencer 编排联动 |
+| 5 | MRQ 多层 EXR + Isaac Sim 物理事件时序合并写出 |
+| 6 | Cosmos Transfer 2.5 API 接入，从 4D 数据生成 photoreal 视频 |
+| 7 | 三场景各 30 frames × 5 variants 端到端跑通 |
+| 8-10 | 调试 + 客户 demo 包装 + buffer |
+
+**风险点**：USD 双向同步管线（UE ↔ Isaac Sim）是已知工程黑洞，NVIDIA Omniverse 跑了 4 年还没完全打磨平。预留 2-3 周 buffer。
+
+#### 修订后的工作排序
+
+```
+本周必做（无依赖）：
+  □ 提 NVIDIA Inception 申请（Cosmos GPU 资源 + 技术对接，2-4 周批准期）
+  □ 装 Isaac Sim 5.0 + UE 5.6 + Robotics Plugin
+  □ 拉 FRANKA Panda + Unitree H1 + UR5 三套 URDF
+  □ 派 spike agent 验证 UE ↔ Isaac Sim USD 互通最简 demo
+  □ 修 RenderDoc P0（已派 xiaoxuan）
+
+不再做（修订）：
+  ✗ UE 内嵌 PhysX 5 SDK（替换为 Isaac Sim 走全物理）
+  ✗ Phase 3 才接 Cosmos（前移到 Phase 1）
+  ✗ 单场景仓库 spike（改多场景同推）
+```
+
+#### 风险升级提示
+
+修订后的 Phase 1 配置是**最大野心版**：
+- 双轨架构（UE + Isaac Sim）= NVIDIA Omniverse 体系内的"专业级"做法
+- 即刻接 Cosmos = 商业故事最强
+- 多场景 = 客户面最广
+
+代价：
+- **Phase 1 工时翻倍**（4 周 → 8-10 周）
+- **3 个外部依赖前置**（Inception 审批、Isaac Sim 学习曲线、Cosmos API 配额）
+- **Plan B**：若 NVIDIA Inception 2 周内未批 / USD 双轨调通超过 4 周，回退到「Phase 1 MVP 单场景 + 单端 UE PhysX 5」，Cosmos 推迟到 Phase 2 末
+
+---
+
 ### 9.2 国产化备选：华为 Ascend + MindSpore 路线（宣讲用 Option）
 
 **动机**：国内具身公司（银河 / 智元 / 宇树 / 智源 / 国地中心）面临两个现实约束 ——
