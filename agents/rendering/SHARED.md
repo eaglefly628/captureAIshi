@@ -99,7 +99,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (from lead -- 老白 2026-05-13)
 
-- [ ] **P2: F6 在 overlay 是死键 — addon 没注册 keypress handler** (spotted by xiaoni + 用户 2026-05-13)
+- [x] **P2: F6 在 overlay 是死键 — addon 没注册 keypress handler** (spotted by xiaoni + 用户 2026-05-13, fixed (pending sha) by 小宣6 2026-05-13)
   `frame_capture.cpp:1310` 在 overlay 里画了 `[F6] 开始 survey   [F8] 开始采集   [F9] 停止` 文字提示，但全文件没有 `VK_F6` / `GetAsyncKeyState` / `reshade::register_event(input)` 之类的实际按键处理 — 三个键都是空文本。用户实测按 F6 没反应。
   Python 侧已在 bed4cd2 -> 后续 commit 加了 `POST /api/reshade/survey` + Web UI Bridge Debug 里的 "Run Pre-UI Survey" 按钮做兜底，但 in-game F6 还是想要（不用切回 Web UI）。
   **修复**: 加一个 ReShade input event handler（`reshade::addon_event::reshade_present` 之前注册的那条 callback 里 poll GetAsyncKeyState(VK_F6) 边沿触发就够了），按下时写 `fc_state.txt=surveying` 且把 survey 启动行为绑到 Python 侧（或者更直接：addon 自己写 `fc_skip_count.txt` 启动 survey-mode，但分析阶段还是 Python 的 `tools/capture/survey.py` 来做）。最简单版本就是让 F6 触发一次 `__fc_survey_start` TCP，Python 端用同一个 `run_pre_ui_survey` 入口。
@@ -299,6 +299,24 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 6. **3D 可视化器** 可以直接用 trajectory.json 里的 Position + Rotation 画相机锥体
 
 ## Changelog
+
+### [v0.3.0] (pending sha) — 小宣6
+- feat: F6 in-game trigger fires pre-UI survey -- no Alt+Tab needed
+  - addon (frame_capture.cpp on_reshade_present): runtime->is_key_pressed(0x75)
+    edge-trigger -> write <game_dir>/fc_survey_request.txt sentinel
+  - grabber: daemon watcher thread polls sentinel every 250ms, consumes it,
+    calls run_pre_ui_survey() under a non-blocking lock (double-press during
+    survey is ignored, not stacked)
+  - sentinel is cleared on setup() (stale leftovers do not auto-fire)
+  - teardown() joins the watcher thread before game shutdown
+  - feat: Web UI survey button reuses Focus Delay knob for Alt+Tab grace
+    (POST /api/reshade/survey accepts `delay` 0-30s)
+
+### [v0.3.0] (pending sha) — 小宣6
+- fix: preserve FC_EnableCapture across grabber.setup() calls
+  - was hard-coded =0 every session; user toggle in ReShade overlay never stuck
+  - now reads existing ini before write; defaults 0 only on first install
+  - unblocks: empty output_dir, survey "probe frame not received" cascade
 
 ### [v0.3.0] (pending sha) — 小宣6
 - fix: NormalBuffer.exr -> <base>_n.png preview in ReShade grabber

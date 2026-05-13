@@ -924,6 +924,30 @@ static void on_begin_render_effects(effect_runtime* runtime, command_list*, reso
 
 static void on_reshade_present(effect_runtime* runtime)
 {
+    // F6 in-game survey trigger (xiaoni P2 in agents/rendering/SHARED.md).
+    // runtime->is_key_pressed() returns the press transition only (edge-
+    // triggered) so the action fires exactly once per physical keypress.
+    // Drops a sentinel file next to the game exe; the grabber's watcher
+    // thread picks it up and invokes run_pre_ui_survey() in Python land.
+    // Survey itself is the Python tools.capture.survey workflow (cv2 diff
+    // analysis) -- the addon side just signals "user wants survey now".
+    // Runs before the enableCapturing / FPS gates because survey works
+    // even when capture is off (it transiently flips into survey mode).
+    if (runtime && runtime->is_key_pressed(0x75 /* VK_F6 */)) {
+        WCHAR exe_buf[MAX_PATH] = L"";
+        GetModuleFileNameW(nullptr, exe_buf, ARRAYSIZE(exe_buf));
+        std::filesystem::path exe_fs(exe_buf);
+        std::filesystem::path sentinel = exe_fs.parent_path() / L"fc_survey_request.txt";
+        std::ofstream sf(sentinel, std::ios::trunc);
+        if (sf) {
+            uint64_t ms = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            sf << ms << "\n";
+            reshade::log::message(reshade::log::level::info,
+                                   "FC: F6 pressed -- wrote fc_survey_request.txt");
+        }
+    }
+
     // One-shot trigger bypasses both the enable flag and the FPS gate so
     // a single __fc_capture TCP command always produces exactly one triplet.
     bool oneshot = s_oneshot_trigger.exchange(false);

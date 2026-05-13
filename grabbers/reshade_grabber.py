@@ -30,6 +30,7 @@ import logging
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -97,6 +98,11 @@ class ReShadeGrabber(FrameGrabber):
         self._last_prefix: Optional[str] = None
         self._last_paths: Dict[str, Path] = {}
         self._game_proc = None  # type: ignore  # subprocess.Popen
+        # F6 survey-trigger watcher (addon writes fc_survey_request.txt on
+        # F6 keypress; this thread polls it and invokes run_pre_ui_survey).
+        self._f6_stop = threading.Event()
+        self._f6_thread: Optional[threading.Thread] = None
+        self._survey_lock = threading.Lock()
 
     # ── lifecycle ─────────────────────────────────────────────────────
 
@@ -155,6 +161,76 @@ class ReShadeGrabber(FrameGrabber):
         # point. Trigger explicitly via POST /api/reshade/survey (or the
         # Bridge Debug "Run Pre-UI Survey" button) once you reach gameplay.
         self._log_pre_ui_hint()
+
+        # F6 watcher: addon writes <game_dir>/fc_survey_request.txt on F6
+        # press; this thread polls and runs the survey in-process so the
+        # user does not have to Alt+Tab back to the Web UI.
+        self._start_f6_watcher()
+
+    def _start_f6_watcher(self) -> None:
+        """Spawn the F6 sentinel-file poller (daemon)."""
+        if self._f6_thread is not None and self._f6_thread.is_alive():
+            return
+        self._f6_stop.clear()
+        sentinel = self.game_dir / "fc_survey_request.txt"
+        # Clear any leftover sentinel from a previous run so we do not
+        # immediately fire a stale survey.
+        try:
+            if sentinel.exists():
+                sentinel.unlink()
+        except OSError:
+            pass
+        self._f6_thread = threading.Thread(
+            target=self._f6_watcher_loop,
+            name="reshade-f6-watcher",
+            daemon=True,
+        )
+        self._f6_thread.start()
+        logger.info(
+            "[ReShadeGrabber] F6 watcher started (sentinel=%s)", sentinel)
+
+    def _f6_watcher_loop(self) -> None:
+        """Poll fc_survey_request.txt every 250ms; fire survey on touch."""
+        sentinel = self.game_dir / "fc_survey_request.txt"
+        last_mtime: Optional[float] = None
+        while not self._f6_stop.is_set():
+            try:
+                if sentinel.exists():
+                    mt = sentinel.stat().st_mtime
+                    if last_mtime is None or mt > last_mtime:
+                        last_mtime = mt
+                        # Consume the sentinel before running survey so a
+                        # double-press during the ~30s survey window does
+                        # not queue a second invocation.
+                        try:
+                            sentinel.unlink()
+                        except OSError:
+                            pass
+                        self._handle_f6_survey_request()
+            except OSError as exc:
+                logger.debug("[ReShadeGrabber] F6 watcher stat: %s", exc)
+            self._f6_stop.wait(0.25)
+        logger.info("[ReShadeGrabber] F6 watcher exited")
+
+    def _handle_f6_survey_request(self) -> None:
+        """Invoke run_pre_ui_survey under a lock so concurrent F6 presses
+        do not stack."""
+        if not self._survey_lock.acquire(blocking=False):
+            logger.info(
+                "[ReShadeGrabber] F6 received but survey already running; "
+                "ignoring")
+            return
+        try:
+            logger.info("[ReShadeGrabber] F6 survey trigger fired")
+            result = self.run_pre_ui_survey()
+            if result is not None:
+                logger.info(
+                    "[ReShadeGrabber] F6 survey done: FC_PreUISkipCount=%d",
+                    result)
+        except Exception as exc:
+            logger.warning("[ReShadeGrabber] F6 survey crashed: %s", exc)
+        finally:
+            self._survey_lock.release()
 
     def _log_pre_ui_hint(self) -> None:
         rgb_strategy = str(self.capture_profile.get("rgb_strategy", "")).lower()
@@ -321,6 +397,12 @@ class ReShadeGrabber(FrameGrabber):
             self._game_proc = None
 
     def teardown(self) -> None:
+        # Stop F6 watcher so it does not race game shutdown.
+        self._f6_stop.set()
+        if self._f6_thread is not None and self._f6_thread.is_alive():
+            self._f6_thread.join(timeout=1.0)
+        self._f6_thread = None
+
         # Terminate the game we launched (best-effort; if user closed it
         # already poll() returns non-None and we skip).
         if self._game_proc is not None and self._game_proc.poll() is None:
