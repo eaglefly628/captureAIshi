@@ -97,7 +97,61 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 | `--fov` | 90.0 | 垂直 FOV（度） |
 | `--aspect` | 1.7778 | 宽高比 |
 
-## TODO (Handoff — 2026-05-13)
+## TODO (from lead -- 老白 2026-05-13)
+
+- [ ] **P0 (今日必跑通): ReShade AOB camera control 端到端实机验证** (from 老白 2026-05-13)
+
+  **指令**: 今天必须跑通 ReShade Path B 的 AOB 路径，**做到和 RenderDoc Path A 路线功能一致**——即用 ReShade dxgi.dll 注入目标游戏后，能锁相机、走 trajectory、出 RGB+Depth+Normal 三件套。
+
+  **代码现状（已具备）**:
+  - C++ side: `3rdparty/reshade/source/captureAIshi/bridge.cpp` 8 条 `__cam_intercept_*` + 2 条 `__cam_mem_poke/peek` 路由（`4c75689` 已推）
+  - C++ side: `camera_intercept.h` 649 行 ported from RDC（NOP/PASS/CAPTURE + jmp trampoline）
+  - Python side: `drivers/game_profile.py` 全套 helper（`apply_profile` / `lock_camera` / `unlock_camera` / `capture_all` / `get_captured_addr` / `mem_poke`）
+  - Configs: `configs/hacks/batman_ak.json`（UE3, 3 intercepts, AOB 完整）+ 8 款 Tier-1 UE5 配置
+  - Frame capture: `frame_capture.cpp` 嵌入 ReShade core (`cd631a4`)；`grabbers/reshade_grabber.py` 14 unit tests 通过 (`41d7e26`)
+  - Deploy: `scripts/deploy_reshade.py --game-dir <dir>` 拷 dxgi.dll + addon + shader + 写 sidecar
+
+  **今天必做的 5 步 (Batman AK 作为 canonical 目标)**:
+
+  1. **Build ReShade dxgi.dll on Windows** — `cd 3rdparty/reshade && msbuild ReShade.sln /p:Configuration=Release /p:Platform=x64`。预期编译错误（`cd631a4` CL 自己写了"expect a couple iterations"）：FormatEnum symbol clash / `/utf-8` mismatch / winsock 双 include / stb_image_resize 重复定义 — 一个一个 fix。
+  2. **Deploy**: `python scripts/deploy_reshade.py --game-dir <Batman AK 目录> --output-dir <捕获输出>`。验证 `dxgi.dll`、`fc_output_dir.txt` sidecar 在游戏目录。
+  3. **启游戏 + bridge 连接**: 起 Batman AK，ReShade overlay 应显示 "captureAIshi Bridge"。`telnet 127.0.0.1 9998` 测 `__bridge_ping` 回 `pong`。
+  4. **AOB 端到端**:
+     ```
+     __cam_intercept_uninstall                    # clean slate
+     __cam_intercept_install_aob 33 1 cam_xyz_literal | 89 83 74 05 ... (从 batman_ak.json 抄)
+     __cam_intercept_list                          # 看 site 装上没
+     __cam_intercept_capture                       # 切 CAPTURE 模式
+     # 游戏里动一下相机让 hook 命中
+     __cam_intercept_get_capture 0                 # 拿到 rbx 值 (PlayerCameraManager+0x?)
+     __cam_intercept_nop                           # 锁住游戏写
+     __cam_mem_poke <rbx_hex> 574 f32 1000.0       # 写 X 坐标 +1000 单位 (Batman UE3 cm scale)
+     ```
+     **验收**: viewport 里相机平移可见。看不见 = 真没跑通。
+  5. **跟 Python driver 接上**: `python -c "from drivers.game_profile import apply_profile, lock_camera, capture_all, get_captured_addr, mem_poke; apply_profile('batman_ak'); ..."`。期待和手敲 TCP 命令等价。
+
+  **不收 (本周仅 AOB 路径)**:
+  - UE5 pov_ptr scanner (`ue5_scan_camera.h` 移植) → 推迟到下周
+  - Tier-2/3 游戏 → 推迟
+  - HUD toggle / timestop → 不动
+
+  **失败模式排查清单 (按概率)**:
+  - dxgi.dll build 失败 → 看 link error，多半是 stb / tinyexr 重复符号或 ws2_32 没 link
+  - dxgi.dll inject 失败 (ReShade overlay 不出) → 游戏目录有 Steam DRM `__Installer\` 拦 LoadLibrary → 试 `ReShade Loader` mode 或换 Vulkan loader
+  - `__cam_intercept_install_aob` 报 `pattern not found` → AOB 字节漂了 (游戏更新过) → 用 `__cam_intercept_install_aob ... wildcard` 备选；CE 复扫
+  - `__cam_intercept_get_capture 0` 返 `slot empty` → CAPTURE 模式装上后游戏代码没命中 → 移动相机让 UpdateCamera 跑
+  - `__cam_mem_poke` 不动 camera → rbx 不是 PlayerCameraManager 基址 → 比对 RDC Path A 拿到的 rbx 值
+  - 命令字符串拼错 → `grep -n __cam_intercept bridge.cpp drivers/game_profile.py` 对一遍
+
+  **验收 (今天结单条件)**:
+  - 实机 Batman AK + ReShade dxgi.dll: 5 步全过，viewport 相机能被 Python 控制
+  - `agents/rendering/SHARED.md` 加 CL 条目（含 sha 或 pending sha）签 xiaoxuan
+  - 如果实机有阻塞（build error 解不掉、AOB 找不到、游戏 inject 失败），把 stuck 点完整贴回 SHARED.md，老白来调度
+  - 不需要 Tier-2 游戏验证；Batman AK 一款跑通就结
+
+  **工时**: 一个工作日内必须有结果 (跑通或贴明确阻塞)
+
+  **背景**: 用户要求"reshader 跑通 renderdoc 路线一致"。RenderDoc Path A 在 03ce4a8 已 fix per-pose capture chain，trajectory 端到端通了。今天的目标是 ReShade Path B 达到同样状态。如果今天跑通，下周才轮到 PCG / unreal_pcg_robot agent 启动；跑不通则继续 hold。
 
 - [ ] **P1: ReShade Path B — UE5 pov_ptr 扫描 + mem_find/read/on/off 路由** (handoff from 小萱 2026-05-13)
 
@@ -153,46 +207,6 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
     ```
 
 ## TODO (from lead review)
-
-- [x] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, fixed 03ce4a8 by 小萱) — `drivers/trajectory_player.py:707-718` 在每个 capture pose 处发 TCP `__cam_rdc_capture` 到 bridge，**但 bridge / addon / Python 全栈都没有这个命令的 handler**。grep 结果：
-  ```
-  3rdparty/reshade/source/captureAIshi/bridge.cpp  ← 仅一行注释引用，无 route 分支
-  3rdparty/reshade/source/captureAIshi/embed_api.h ← 仅注释提及
-  drivers/ue5_console.py                            ← 0 命中
-  ```
-  Player 发完命令 → bridge 静默丢弃 → `.rdc` 文件永远不出现 → trajectory 全部回归（Batman / StackOBot 当前都跑不通）。这条线是你 9d2b8ba0 "feat(trajectory): pick capture cmd by grabber type" 引入的，但只对 ReShade 侧 `__fc_capture` 做了 wiring，RDC 侧没补。
-  
-  **修复方向（自己拍方案，三选一）**：
-  
-  (A) **Python 侧直调 grabber**（推荐，零 C++ 改动）— 把 `trajectory_player.py:707-718` 的 TCP 发送替换为 `_ws.get_active_grabber().trigger_capture()`。`RenderDocGrabber.trigger_capture()` 已存在 (`grabbers/renderdoc_grabber.py:195-229`)，链路全：native bridge → renderdoccmd triggercapture --interactive → Python API → SendInput keypress。一次性解决。ReShade 路径不变（继续 `__fc_capture`）。
-  
-  (B) **Bridge addon 加 `__cam_rdc_capture` handler** — 在 `3rdparty/reshade/source/captureAIshi/bridge.cpp` 的 router 里加分支，调 in-proc RenderDoc API 的 `TriggerCapture()`。问题：RDC 路径用的是 `renderdoc_grabber.py` 走 renderdoccmd CLI / 外部 RDC.dll，addon 上下文里没有 in-proc RenderDoc handle 可用。**不推荐**。
-  
-  (C) **退回批量模式** — 干脆禁掉 trajectory 的 per-pose 触发，回到老的 `renderdoccmd capture` 一帧一文件批跑。回归大，**不推荐**。
-  
-  **推荐 A**。`isinstance` 取代字符串比对：
-  ```python
-  from grabbers.reshade_grabber import ReShadeGrabber  # 已存在
-  if isinstance(g, ReShadeGrabber):
-      session.send("__fc_capture")
-  else:
-      g.trigger_capture()   # 含 RDC / 任何未来 grabber
-  ```
-  
-  **验收**：
-  1. Batman + RDC grabber 跑 trajectory：所有 capture pose 都产 `.rdc` 文件（之前是 0 个）
-  2. StackOBot + RDC grabber 跑 trajectory：同上
-  3. ReShade grabber + 任意游戏跑 trajectory：行为不回归（继续走 `__fc_capture`）
-  4. `grep -rn "__cam_rdc_capture" --include="*.py" --include="*.cpp"` 应 0 命中（彻底删干净，包括 comments）
-  
-  **顺手清理**（属同一 PR）：
-  - `drivers/trajectory_player.py:612, 690, 704-706` 三处 `__cam_rdc_capture` comment 全删
-  - `3rdparty/reshade/source/captureAIshi/embed_api.h:42-44` 把 `mirroring RenderDoc's __cam_rdc_capture flow` 改成 `mirroring grabber.trigger_capture() flow`
-  - `3rdparty/reshade/source/captureAIshi/bridge.cpp:273` 注释同上
-  
-  **工时估计**：1-2h（含 Batman/StackOBot 端到端回归）
-  
-  **背景**：完整 review 报告见 ad-hoc, 这是 review 列的 #1 收尾项。#2 (UI `injection_mode` 下拉 + `create_grabber()` 工厂) 和 #3 (字符串 type 检测) 一起做完更省心，但 P0 最小修复只要 A 方案那一段。
 
 - [x] **P2: depth_curve 跨域改动** (spotted by 小逆, reviewed by 小萱 2026-05-12) — 用户报告 Batman PNG 远景 city 段塌成 near-white。我在 `image_loader._normalize_depth` 加了 `depth_curve` 参数（"linear" / "gamma" / "log"），`batman_ak.json` 默认 "log"。代码在你域 (grabbers/) 里，麻烦 review 一下：(1) curve 实现是否合理（log on raw before percentile，保留 monotonic 极性）；(2) 其他 outdoor 配置（ac6 / metro_exodus / black_myth_wukong）也建议默认 "log"；(3) 字段已加到 `_schema.md`。
 
