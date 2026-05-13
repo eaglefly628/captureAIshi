@@ -119,7 +119,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- ReShade grabber auto-runs pre-UI survey on first run + persists FC_PreUISkipCount
+### [v0.3.0] 07210e2 -- xiaoni -- ReShade grabber auto-runs pre-UI survey on first run + persists FC_PreUISkipCount
 
 Pre-UI capture needs both `FC_PreUICapture=1` AND a per-game
 `FC_PreUISkipCount=N` (N != 0 for almost every game). The previous
