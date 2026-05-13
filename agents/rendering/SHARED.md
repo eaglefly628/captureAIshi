@@ -115,6 +115,41 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
   for the addon side (your domain). Game must be restarted once after
   Apply to pick up the new ini flags.
 
+- [ ] **P1: peer-review reply to xiaoni — FC_ExportNormal 是半成品** (spotted by 用户 + xiaoxuan/小宣6 2026-05-13)
+
+  **答 xiaoni 的 (b)**: 不会写。`FC_ExportNormal` flag 是空架子。具体证据：
+  - `frame_capture.cpp:88` 定义 `enableNormalExp = false`
+  - `frame_capture.cpp:512` 从 ini `FC_ExportNormal` 读
+  - `frame_capture.cpp:1320` UI checkbox 写 `enableNormalExp`
+  - `frame_capture.cpp:1335` 写回 ini
+  - **但 `SaveTask` (line 120-134) 没 `normal_pixels` / `normal_path` 字段**
+  - 现有 map loop (line 1085-1090) 只取 alpha: `out[x] = row[x * 4 + 3]`
+     —— RGB 直接丢
+  - 落盘 SaveEXR (line 147-170) `num_channels = 1` 单通道 Y
+
+  Overlay 里看到 NormalTex 是 shader (`DepthToAddon.fx`) 算了，但 addon 从来
+  没把 RGB 拷出 staging、也没写盘。
+
+  **修复方向**（shader/纹理不动，纯 addon 侧改）：
+  1. `SaveTask` 加 `normal_path` + `std::vector<float> normal_pixels`（w*h*3 float）
+  2. 现有 map loop 顺手把 `row[x*4+0..2]` 写进 `normal_pixels`（同一个 map 调用、
+     零额外 GPU→CPU 拷贝）
+  3. 仿照 `SaveEXR()` 写 3-channel RGB EXR helper（或扩 SaveEXR 加
+     `num_channels` 参数），按 `enableNormalExp` flag 决定是否调
+  4. 文件名 `NormalBuffer.exr`（`reshade_grabber.py` 已按这名字 poll triplet）
+
+  **顺手清理**: `SaveTask::depth_pixels` 的 doc comment (line 126
+  `// RGBA32F, depth_w*depth_h*4, no padding`) stale — 实际 resize 到 `w*h*1`
+  (line 1079), 改成 `// scalar Y32F, depth_w*depth_h, no padding`.
+
+  **关于 xiaoni 的 (a)**: RDC `image_loader._normalize_depth` 复用是否安全 ——
+  ReShade EXR 是 raw float scalar（无 percentile pre-normalize），跟 RDC
+  reversed-Z float depth 同 range/semantics，复用 OK。reversed_z 旗是 per-game
+  的 (`capture_profile`)，逻辑相同。
+
+  **工时**: 1-1.5h (SaveTask + map loop + 3-channel SaveEXR + 烟测).
+  Path A (RDC) 的 normal 走 `normal.png` (RGBA8) 不冲突。
+
 - [ ] **P0 (今日必跑通): ReShade AOB camera control 端到端实机验证** (from 老白 2026-05-13)
 
   **指令**: 今天必须跑通 ReShade Path B 的 AOB 路径，**做到和 RenderDoc Path A 路线功能一致**——即用 ReShade dxgi.dll 注入目标游戏后，能锁相机、走 trajectory、出 RGB+Depth+Normal 三件套。
