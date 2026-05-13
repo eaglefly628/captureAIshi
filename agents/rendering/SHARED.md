@@ -273,6 +273,14 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 ## Changelog
 
 ### [v0.3.0] (pending sha) — 小宣6
+- fix: NormalBuffer.exr -> <base>_n.png preview in ReShade grabber
+  - image_loader.py: new `_read_exr_rgb` (cv2/imageio/OpenEXR fallback, BGR->RGB)
+  - reshade_grabber.py save_frame: mirror the depth EXR->PNG block; normal
+    is already [0, 1] (shader does `* 0.5 + 0.5`), so just `*255` -> uint8
+  - filename `<base>_n.png` matches the trajectory.json `normalImg` convention
+  - addresses 用户 "EXR 我们程序显示不出来" (lightbox/gallery is uint8 only)
+
+### [v0.3.0] (pending sha) — 小宣6
 - fix: frame_capture.cpp FC_ExportNormal -- wire end-to-end
   - SaveTask: add normal_path + normal_pixels (RGB32F interleaved, w*h*3)
   - new SaveEXRRGB helper (deinterleave -> planar B/G/R, ZIP compressed)
