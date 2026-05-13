@@ -3172,6 +3172,14 @@ pollSessions();pollCaptures();
           <button class="btn" onclick="hackTestWrite()" title="Push a test pose (x+100, current yaw+45 deg) to verify the full write path">Test</button>
         </div>
 
+        <!-- Pre-UI survey: ReShade grabber only. Run once after entering 3D gameplay;
+             addon's FC_PreUISkipCount gets persisted so subsequent runs skip survey. -->
+        <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
+          <span style="color:#aaa;font-size:11px;min-width:56px" title="Pre-UI capture skip count: per-game survey (~30s) finds the right value. Get into actual 3D gameplay first.">Pre-UI:</span>
+          <button class="btn btn-accent" onclick="reshadeSurvey()" title="Run pre-UI skip survey on the running game (ReShade grabber only). Wait until you are in actual gameplay; survey will fail at menu/loading screen.">Run Pre-UI Survey</button>
+          <span id="reshadeSurveyStatus" style="flex:1;color:#888;font-family:monospace;font-size:11px;padding:3px 6px;background:#0f0f23;border:1px solid #333;border-radius:4px">(not surveyed)</span>
+        </div>
+
         <!-- Inject mode: for games that crash on renderdoccmd launch (e.g. Cyberpunk 2.x) -->
         <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
           <span style="color:#aaa;font-size:11px;min-width:56px" title="Inject bridge into already-running game process (use for Cyberpunk 2.x, REDengine -- avoids D3D12 init crash)">Inject:</span>
@@ -3456,6 +3464,33 @@ function _afterFocusDelay(fn){
   if(d <= 0){ fn(); return; }
   debugAppend('waiting '+d.toFixed(1)+'s for game focus...');
   setTimeout(fn, Math.round(d*1000));
+}
+
+function reshadeSurvey(){
+  var status = document.getElementById('reshadeSurveyStatus');
+  status.style.color = '#fc6';
+  status.textContent = 'running (~30s); keep game in 3D gameplay...';
+  debugAppend('> reshade/survey');
+  fetch('/api/reshade/survey',{method:'POST'})
+    .then(r=>r.json().then(d=>({status:r.status,body:d})))
+    .then(o=>{
+      var d = o.body;
+      if(d.ok){
+        status.style.color = '#4f4';
+        status.textContent = 'FC_PreUISkipCount='+d.recommended_skip+' persisted; game restarted';
+        debugAppend('survey ok: skip='+d.recommended_skip);
+        debugAppend(d.message||'');
+      } else {
+        status.style.color = '#f66';
+        status.textContent = 'failed: '+(d.error||'unknown');
+        debugAppend('survey FAILED: '+(d.error||'unknown'));
+      }
+    })
+    .catch(e=>{
+      status.style.color = '#f66';
+      status.textContent = 'fetch error: '+e;
+      debugAppend('survey fetch error: '+e);
+    });
 }
 
 function hackCapture(){

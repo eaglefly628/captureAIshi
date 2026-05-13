@@ -119,6 +119,28 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- pre-UI survey: manual trigger via Web UI button + /api/reshade/survey (was auto-on-setup, now too eager)
+
+User report: auto-survey in setup() ran before Batman AK reached 3D
+gameplay (publisher logos / loading screen / main menu have no DSV
+passes), every first-run returned "no recommendation" and skipped.
+Survey should be user-triggered after they confirm they're in scene.
+
+- `grabbers/reshade_grabber.py`: deleted `_maybe_run_first_run_survey`
+  auto-trigger from `setup()`; replaced with `_log_pre_ui_hint` that
+  warns if pre-UI is requested but no skip persisted; exposed
+  `run_pre_ui_survey()` as public API for explicit invocation.
+- `web/routes/reshade.py` (new): `POST /api/reshade/survey` ->
+  `grabber.run_pre_ui_survey()`. 409 if no active session or grabber
+  is not ReShade. 503 if survey returns None.
+- `web/routes/__init__.py`: register `reshade_bp`.
+- `web/templates/index.html`: new "Pre-UI: Run Pre-UI Survey" button
+  in Bridge Debug panel + `reshadeSurvey()` JS handler with status
+  pill (running / skip=N / failed:<reason>).
+- Peer-review note left in `agents/rendering/SHARED.md` P2 for xiaoxuan
+  to add real F6 keypress handler in `frame_capture.cpp` (currently
+  the `[F6] 开始 survey` overlay hint is decorative -- no handler).
+
 ### [v0.3.0] bed4cd2 -- xiaoni -- web UI: forward hack_profile_id -> args.game so capture_profile reaches grabber
 
 Diagnostic on Batman AK ReShade run: ini stayed at `FC_PreUICapture=0`
