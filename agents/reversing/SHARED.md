@@ -119,7 +119,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- ReShade grabber honours capture_profile (pre-UI / normal / depth PNG)
+### [v0.3.0] 8854614 -- xiaoni -- ReShade grabber honours capture_profile (pre-UI / normal / depth PNG)
 
 - `grabbers/reshade_grabber.py` ctor: new `capture_profile` param.
 - `_write_reshade_config`: `FC_PreUICapture=1` when rgb_strategy has
