@@ -575,6 +575,28 @@ class ReShadeGrabber(FrameGrabber):
         export_normal = "1" if normal_strategy and normal_strategy != "none" else "0"
         pre_ui_skip = self._resolve_pre_ui_skip()
 
+        # Preserve FC_EnableCapture across runs.  The addon writes back the
+        # user's overlay toggle via set_config_value, so we honour that
+        # persisted value instead of forcing OFF every setup().  Otherwise
+        # users hit the gotcha where each capture session silently starts
+        # with FC_EnableCapture=0 and no frames are produced until they
+        # re-toggle in the overlay (causes empty output dirs + survey
+        # "probe frame not received" failures).  Falls back to "0" on first
+        # install when no ini exists yet.
+        existing_enable = "0"
+        if ini_path.exists():
+            try:
+                for line in ini_path.read_text(
+                        encoding="utf-8", errors="replace").splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("FC_EnableCapture="):
+                        val = stripped.split("=", 1)[1].strip()
+                        if val in ("0", "1"):
+                            existing_enable = val
+                        break
+            except OSError:
+                pass
+
         ini_content = (
             "[GENERAL]\n"
             "EffectSearchPaths=.\\captureAIshi-shaders\\Shaders\n"
@@ -583,13 +605,13 @@ class ReShadeGrabber(FrameGrabber):
             "PerformanceMode=0\n"
             "PerformanceModeNextHotkey=0,0,0,0\n"
             "[ADDON]\n"
-            # FC_EnableCapture defaults to OFF so opening the game does not
-            # instantly start dumping ~300KB/frame * 30FPS to disk. Toggle
-            # the "Enable capturing" checkbox in ReShade overlay (Home ->
-            # Add-ons -> captureAIshi Bridge) when you actually want to
-            # record. The addon writes the toggled value back to this ini
-            # via set_config_value so it persists across sessions.
-            "FC_EnableCapture=0\n"
+            # FC_EnableCapture: preserved from prior session if the ini
+            # already has it (see existing_enable above), else defaults OFF.
+            # Toggle the "Enable capturing" checkbox in ReShade overlay
+            # (Home -> Add-ons -> captureAIshi Bridge) when you want to
+            # start recording -- the addon writes the value back via
+            # set_config_value, and the next setup() will honour it.
+            f"FC_EnableCapture={existing_enable}\n"
             "FC_ExportDepth=1\n"
             f"FC_ExportNormal={export_normal}\n"
             "FC_TargetFPS=30\n"
