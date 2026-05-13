@@ -127,8 +127,13 @@ def _build_args(data: dict) -> Namespace:
     launch_args = []
     resx = int(data.get("launch_resx", 0) or 0)
     resy = int(data.get("launch_resy", 0) or 0)
+    hack_profile_id = str(data.get("hack_profile_id", "")).strip()
+    # Forward the selected hack profile id to main._load_capture_profile so
+    # capture_profile (rgb_strategy / normal_strategy / depth_curve /
+    # pre_ui_skip_count) reaches RenderDocGrabber + ReShadeGrabber.
+    args.game = hack_profile_id or None
     _profile = _hack_profile_data(
-        str(data.get("hack_profile_id", "")),
+        hack_profile_id,
         str(data.get("target_exe", "")),
     )
     launch_arg_style = _profile.get("launch_arg_style", "unreal")

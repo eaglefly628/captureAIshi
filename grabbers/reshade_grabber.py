@@ -204,6 +204,12 @@ class ReShadeGrabber(FrameGrabber):
         """
         rgb_strategy = str(self.capture_profile.get("rgb_strategy", "")).lower()
         if "pre_ui" not in rgb_strategy:
+            logger.info(
+                "[ReShadeGrabber] survey: skipped (rgb_strategy=%r does not "
+                "request pre_ui capture; FC_PreUICapture stays 0). If you "
+                "expected pre-UI mode, check that --game / hack_profile_id "
+                "is set so capture_profile loads.",
+                rgb_strategy or "<empty>")
             return
         if self.capture_profile.get("pre_ui_skip_count") is not None:
             logger.debug(

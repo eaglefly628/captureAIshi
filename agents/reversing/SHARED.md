@@ -119,6 +119,20 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- web UI: forward hack_profile_id -> args.game so capture_profile reaches grabber
+
+Diagnostic on Batman AK ReShade run: ini stayed at `FC_PreUICapture=0`
++ `FC_ExportNormal=0` + `FC_PreUISkipCount=0`, survey never fired,
+no `[INIT] Loaded game profile 'batman_ak'` log. Root cause:
+`web/helpers.py._build_args` never set `args.game`, so
+`main._load_capture_profile` always returned `{}` for Web-UI launches.
+The 8854614 + 07210e2 fixes ship empty into the grabber from the UI.
+
+- `web/helpers.py`: `args.game = hack_profile_id or None`.
+- `grabbers/reshade_grabber.py` `_maybe_run_first_run_survey`: log the
+  silent-skip reason (was returning without any log line when
+  `rgb_strategy` did not request pre_ui).
+
 ### [v0.3.0] 07210e2 -- xiaoni -- ReShade grabber auto-runs pre-UI survey on first run + persists FC_PreUISkipCount
 
 Pre-UI capture needs both `FC_PreUICapture=1` AND a per-game
