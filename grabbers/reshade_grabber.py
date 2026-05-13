@@ -80,6 +80,7 @@ class ReShadeGrabber(FrameGrabber):
         poll_timeout_s: float = 5.0,
         poll_interval_s: float = 0.05,
         quiescence_samples: int = 2,
+        capture_profile: Optional[dict] = None,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.game_dir = Path(game_dir)
@@ -92,6 +93,7 @@ class ReShadeGrabber(FrameGrabber):
         self.poll_timeout_s = poll_timeout_s
         self.poll_interval_s = poll_interval_s
         self.quiescence_samples = max(2, int(quiescence_samples))
+        self.capture_profile = dict(capture_profile or {})
         self._last_prefix: Optional[str] = None
         self._last_paths: Dict[str, Path] = {}
         self._game_proc = None  # type: ignore  # subprocess.Popen
@@ -267,6 +269,38 @@ class ReShadeGrabber(FrameGrabber):
             saved[kind] = dst.name
             logger.debug(
                 "[ReShadeGrabber.save_frame] copy %s -> %s", src, dst)
+
+        # Depth .exr is raw float for AI training; also emit a normalised
+        # uint8 PNG preview alongside, using the same depth_curve /
+        # reversed_z as the RDC path so previews look identical.
+        depth_src = self._last_paths.get("depth")
+        if depth_src is not None and depth_src.exists() and depth_src.suffix.lower() == ".exr":
+            try:
+                from grabbers.renderdoc.image_loader import (
+                    _read_exr_red, _normalize_depth,
+                )
+                raw = _read_exr_red(depth_src)
+                if raw is not None:
+                    prof = self.capture_profile
+                    png = _normalize_depth(
+                        raw,
+                        prof.get("depth_range"),
+                        bool(prof.get("depth_reversed_z", True)),
+                        curve=str(prof.get("depth_curve", "linear")),
+                    )
+                    from PIL import Image
+                    png_path = output_dir / f"{stem_depth}.png"
+                    Image.fromarray(png).save(str(png_path))
+                    saved["depth_png"] = png_path.name
+                    logger.debug(
+                        "[ReShadeGrabber.save_frame] depth EXR -> PNG %s "
+                        "(curve=%s, reversed_z=%s)",
+                        png_path.name,
+                        prof.get("depth_curve", "linear"),
+                        prof.get("depth_reversed_z", True))
+            except Exception as exc:
+                logger.warning(
+                    "[ReShadeGrabber.save_frame] depth EXR->PNG failed: %s", exc)
         return saved
 
     # ── internals ──────────────────────────────────────────────────────
@@ -354,6 +388,15 @@ class ReShadeGrabber(FrameGrabber):
         ini_path    = self.game_dir / "unicap.ini"
         preset_path = self.game_dir / "captureAIshi-preset.ini"
 
+        # Honor capture_profile: rgb_strategy "*_pre_ui" -> FC_PreUICapture=1;
+        # any non-empty/non-"none" normal_strategy -> FC_ExportNormal=1.
+        # Addon reads these once at startup (reshade::get_config_value),
+        # so the game must be restarted for changes to take effect.
+        rgb_strategy = str(self.capture_profile.get("rgb_strategy", "")).lower()
+        pre_ui = "1" if "pre_ui" in rgb_strategy else "0"
+        normal_strategy = str(self.capture_profile.get("normal_strategy", "")).lower()
+        export_normal = "1" if normal_strategy and normal_strategy != "none" else "0"
+
         ini_content = (
             "[GENERAL]\n"
             "EffectSearchPaths=.\\captureAIshi-shaders\\Shaders\n"
@@ -370,10 +413,10 @@ class ReShadeGrabber(FrameGrabber):
             # via set_config_value so it persists across sessions.
             "FC_EnableCapture=0\n"
             "FC_ExportDepth=1\n"
-            "FC_ExportNormal=0\n"
+            f"FC_ExportNormal={export_normal}\n"
             "FC_TargetFPS=30\n"
             "FC_UsePNG=1\n"
-            "FC_PreUICapture=0\n"
+            f"FC_PreUICapture={pre_ui}\n"
         )
         preset_content = (
             "Techniques=BackBufferExport@BackBufferExport.fx,"

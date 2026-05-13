@@ -119,6 +119,19 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- ReShade grabber honours capture_profile (pre-UI / normal / depth PNG)
+
+- `grabbers/reshade_grabber.py` ctor: new `capture_profile` param.
+- `_write_reshade_config`: `FC_PreUICapture=1` when rgb_strategy has
+  `pre_ui`; `FC_ExportNormal=1` when normal_strategy non-empty/non-"none".
+- `save_frame`: after copy2, run `_read_exr_red` + `_normalize_depth`
+  (curve + reversed_z) and write `<base>_d.png` next to .exr (parity
+  with RDC path).
+- `main.py`: hoist profile load to `_load_capture_profile(args)`;
+  both renderdoc + reshade branches pass `capture_profile=`.
+- Addon reads FC_* once at startup, so the game must be restarted
+  once for new ini values to apply.
+
 ### [v0.3.0] cd631a4 -- xiaoni -- Path B "embedded" variant: bridge baked into dxgi.dll
 
 Mirrors Path A's `renderdoc/renderdoc/core/bridge/` pattern where bridge code compiles into renderdoc.dll itself. New variant: `dxgi.dll` (= ReShade64.dll renamed) directly contains TCP 9998 + GEngine scan + frame capture. No separate `.addon` file. Standalone addon path at `3rdparty/reshade_bridge/` left intact -- both build modes now coexist.

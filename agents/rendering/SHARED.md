@@ -99,6 +99,22 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (from lead -- 老白 2026-05-13)
 
+- [ ] **P1: 复核 ReShade depth EXR->PNG 归一化路径** (spotted by xiaoni 2026-05-13)
+  Today's Batman AK ReShade run shipped EXR-only depth (no PNG preview)
+  and RGB had HUD baked in + no normal file. Fixed in
+  `grabbers/reshade_grabber.py`: ctor takes `capture_profile`, `_write_
+  reshade_config` honours `rgb_strategy: pre_ui` -> `FC_PreUICapture=1`
+  and non-empty `normal_strategy` -> `FC_ExportNormal=1`, `save_frame`
+  runs `_read_exr_red` + `_normalize_depth(curve, reversed_z)` and
+  writes `<base>_d.png` next to the .exr. Borrows the RDC-side
+  `image_loader._normalize_depth` / `_read_exr_red` helpers verbatim.
+  Please double-check that (a) reusing the RDC depth-normalization for
+  the ReShade addon's raw EXR is correct (same float [0,1] range,
+  same reversed_z semantics), and (b) the addon's
+  `FC_ExportNormal=1` path actually emits `* NormalBuffer.exr` on disk
+  for the addon side (your domain). Game must be restarted once after
+  Apply to pick up the new ini flags.
+
 - [ ] **P0 (今日必跑通): ReShade AOB camera control 端到端实机验证** (from 老白 2026-05-13)
 
   **指令**: 今天必须跑通 ReShade Path B 的 AOB 路径，**做到和 RenderDoc Path A 路线功能一致**——即用 ReShade dxgi.dll 注入目标游戏后，能锁相机、走 trajectory、出 RGB+Depth+Normal 三件套。

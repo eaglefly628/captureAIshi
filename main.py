@@ -77,6 +77,23 @@ def create_driver(args):
         raise ValueError(f"Unknown driver: {args.driver}")
 
 
+def _load_capture_profile(args) -> dict:
+    """Load capture-side fields (rgb_strategy / normal_strategy / depth_curve /
+    depth_reversed_z / depth_range) from configs/hacks/<game>.json. Empty dict
+    when --game is unset or the profile is missing."""
+    game_id = getattr(args, 'game', None)
+    if not game_id:
+        return {}
+    try:
+        from drivers.game_profile import load_profile
+        prof = load_profile(game_id)
+        logging.info(f"[INIT] Loaded game profile '{game_id}': capture={prof.capture}")
+        return prof.capture
+    except FileNotFoundError:
+        logging.warning(f"[INIT] Game profile '{game_id}' not found, using auto-detect")
+        return {}
+
+
 def create_grabber(args):
     """Create frame grabber from CLI arguments."""
     logging.debug(f"[INIT] Creating grabber: type={args.grabber}, dry_run={args.dry_run}")
@@ -95,17 +112,7 @@ def create_grabber(args):
         if getattr(args, 'driver', 'manual') == 'manual':
             driver_port = None
         inject_mode = getattr(args, 'inject', False)
-        # Load per-game capture profile if --game is specified
-        capture_profile = {}
-        game_id = getattr(args, 'game', None)
-        if game_id:
-            try:
-                from drivers.game_profile import load_profile
-                prof = load_profile(game_id)
-                capture_profile = prof.capture
-                logging.info(f"[INIT] Loaded game profile '{game_id}': capture={capture_profile}")
-            except FileNotFoundError:
-                logging.warning(f"[INIT] Game profile '{game_id}' not found, using auto-detect")
+        capture_profile = _load_capture_profile(args)
         return RenderDocGrabber(
             renderdoc_path=getattr(args, 'renderdoc_path', 'renderdoccmd'),
             capture_dir=str(args.output_dir / "captures"),
@@ -132,6 +139,7 @@ def create_grabber(args):
             target_exe=target_exe,
             target_args=getattr(args, 'target_args', []),
             auto_launch=True,
+            capture_profile=_load_capture_profile(args),
         )
     elif args.grabber == "screenshot":
         from grabbers.screenshot_grabber import ScreenshotGrabber
