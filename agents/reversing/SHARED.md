@@ -119,7 +119,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- web UI: forward hack_profile_id -> args.game so capture_profile reaches grabber
+### [v0.3.0] bed4cd2 -- xiaoni -- web UI: forward hack_profile_id -> args.game so capture_profile reaches grabber
 
 Diagnostic on Batman AK ReShade run: ini stayed at `FC_PreUICapture=0`
 + `FC_ExportNormal=0` + `FC_PreUISkipCount=0`, survey never fired,
