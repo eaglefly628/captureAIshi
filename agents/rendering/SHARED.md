@@ -162,6 +162,14 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## Changelog
 
+### [v0.3.0] (pending sha) — 小萱
+- feat: ReShade Path B camera AOB intercept — parity with RDC Path A
+  - pattern_scan.h: add scan_main_module_nth (1-based Nth match)
+  - NEW camera_intercept.h (ReShade copy of RDC camera_intercept.h)
+  - bridge.cpp: include camera_intercept.h; add ascii_strtod
+  - bridge.cpp: 8 new routes: install_aob, nop, pass, list, uninstall, capture, get_capture, poke/peek
+  - bridge.cpp shutdown(): cam_intercept_uninstall_all() before thread stop
+
 ### [v0.2.0] 03ce4a8 — 小萱
 - P0 fix: trajectory_player RDC capture chain (dispatches to grabber.trigger_capture())
   - isinstance(g, ReShadeGrabber) → TCP __fc_capture; else → g.trigger_capture() direct

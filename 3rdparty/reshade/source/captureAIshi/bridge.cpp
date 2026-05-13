@@ -75,6 +75,7 @@ void bridge_log(const char* fmt, ...)
 /* ── Include subsystems (order matters: dependencies first) ──────── */
 
 #include "pattern_scan.h"
+#include "camera_intercept.h"
 #include "ue5_engine.h"
 #include "camera_path.h"
 
@@ -238,6 +239,38 @@ static float ascii_strtof(const char* s, const char** end = nullptr)
     if (neg) val = -val;
     if (end) *end = p;
     return (float)val;
+}
+
+/* Locale-independent ASCII double parser (mirror of ascii_strtof for f64). */
+static double ascii_strtod(const char* s, const char** end = nullptr)
+{
+    const char* p = s;
+    while (*p == ' ' || *p == '\t') p++;
+    bool neg = false;
+    if (*p == '+') { p++; }
+    else if (*p == '-') { neg = true; p++; }
+    double val = 0.0;
+    bool any = false;
+    while (*p >= '0' && *p <= '9') { val = val*10.0 + (*p-'0'); p++; any=true; }
+    if (*p == '.') {
+        p++;
+        double f = 0.1;
+        while (*p >= '0' && *p <= '9') { val += (*p-'0')*f; f*=0.1; p++; any=true; }
+    }
+    if (!any) { if (end) *end = s; return 0.0; }
+    if (*p == 'e' || *p == 'E') {
+        p++;
+        bool neg_exp = false;
+        if (*p == '+') p++; else if (*p == '-') { neg_exp=true; p++; }
+        int exp = 0;
+        while (*p >= '0' && *p <= '9') { exp = exp*10 + (*p-'0'); p++; }
+        double mult = 1.0;
+        for (int i = 0; i < exp; i++) mult *= 10.0;
+        if (neg_exp) val /= mult; else val *= mult;
+    }
+    if (neg) val = -val;
+    if (end) *end = p;
+    return val;
 }
 
 /* Helper: parse floats from a command string after a prefix */
@@ -497,6 +530,216 @@ static bool route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
+    /* ── Camera intercept commands ── */
+
+    if (cmd.rfind("__cam_intercept_install_aob ", 0) == 0) {
+        /* format: __cam_intercept_install_aob <size> <occurrence> <name> | <AOB hex> */
+        const char* p = cmd.c_str() + 28;
+        char* end = NULL;
+        long size = strtol(p, &end, 10);
+        if (end == p || size <= 0 || size > 64) {
+            reply(client, "error: usage __cam_intercept_install_aob <size> <occurrence> <name> | <AOB>\n");
+            return true;
+        }
+        p = end;
+        while (*p == ' ') p++;
+        long occurrence = strtol(p, &end, 10);
+        if (end == p || occurrence < 1) {
+            reply(client, "error: missing occurrence (>= 1) after size\n");
+            return true;
+        }
+        p = end;
+        while (*p == ' ') p++;
+        const char* name_start = p;
+        const char* bar = strchr(p, '|');
+        if (!bar) {
+            reply(client, "error: missing '|' separator before AOB\n");
+            return true;
+        }
+        std::string name(name_start, bar - name_start);
+        while (!name.empty() && name.back() == ' ') name.pop_back();
+        const char* aob = bar + 1;
+        while (*aob == ' ') aob++;
+        {
+            uint8_t pat_bytes[128]; char pat_mask[129];
+            int pat_len = cam_parse_aob(aob, pat_bytes, pat_mask, 128);
+            if (pat_len <= 0) {
+                reply(client, "error: malformed_aob\n");
+                return true;
+            }
+            const uint8_t* match = scan_main_module_nth(
+                pat_bytes, pat_mask, (size_t)pat_len, (int)occurrence);
+            if (!match) {
+                char buf[96];
+                snprintf(buf, sizeof(buf),
+                         "error: pattern_not_found tokens=%d occ=%ld\n",
+                         pat_len, occurrence);
+                reply(client, buf);
+                return true;
+            }
+        }
+        bool ok = cam_intercept_install_aob(aob, (size_t)size,
+                                             name.empty() ? "aob" : name.c_str(),
+                                             (int)occurrence);
+        reply(client, ok ? "ok\n" : "error: install failed (see log)\n");
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_nop") {
+        bool ok = cam_intercept_set_nop_all(true);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s sites=%zu\n",
+                 ok ? "ok" : "partial_failure", cam_intercept_count());
+        reply(client, buf);
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_pass") {
+        bool ok = cam_intercept_set_nop_all(false);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s sites=%zu\n",
+                 ok ? "ok" : "partial_failure", cam_intercept_count());
+        reply(client, buf);
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_list") {
+        reply(client, cam_intercept_list());
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_uninstall") {
+        cam_intercept_uninstall_all();
+        reply(client, "ok\n");
+        return true;
+    }
+
+    if (cmd == "__cam_intercept_capture") {
+        bool ok = cam_intercept_set_mode_all(CAM_MODE_CAPTURE);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%s sites=%zu\n",
+                 ok ? "ok" : "partial_failure", cam_intercept_count());
+        reply(client, buf);
+        return true;
+    }
+
+    if (cmd.rfind("__cam_intercept_get_capture ", 0) == 0) {
+        char* end = NULL;
+        long slot = strtol(cmd.c_str() + 28, &end, 10);
+        if (end == cmd.c_str() + 28 || slot < 0 || slot >= 16) {
+            reply(client, "error: usage __cam_intercept_get_capture <slot:0-15>\n");
+            return true;
+        }
+        uint64_t cap = cam_intercept_get_captured((int)slot);
+        char buf[64];
+        if (cap == 0) snprintf(buf, sizeof(buf), "null slot=%ld\n", slot);
+        else          snprintf(buf, sizeof(buf), "addr=0x%llX slot=%ld\n",
+                               (unsigned long long)cap, slot);
+        reply(client, buf);
+        return true;
+    }
+
+    /* Write a typed value into the camera struct.
+     * Format: __cam_mem_poke <addr_hex> <offset_hex_or_dec> <type> <value>
+     * Types:  f32, f64, i32, u32 */
+    if (cmd.rfind("__cam_mem_poke ", 0) == 0) {
+        const char* p = cmd.c_str() + 15;
+        char* end = NULL;
+        uint64_t addr = strtoull(p, &end, 16);
+        if (end == p || addr == 0) { reply(client, "error: bad addr\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        uint64_t off = 0;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+            off = strtoull(p + 2, &end, 16);
+        } else {
+            off = strtoull(p, &end, 10);
+        }
+        if (end == p) { reply(client, "error: bad offset\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        char tbuf[8] = {0};
+        int ti = 0;
+        while (*p && *p != ' ' && ti < 7) { tbuf[ti++] = *p++; }
+        while (*p == ' ') p++;
+        int type = -1;
+        if (strcmp(tbuf, "f32") == 0) type = 0;
+        else if (strcmp(tbuf, "f64") == 0) type = 1;
+        else if (strcmp(tbuf, "i32") == 0) type = 2;
+        else if (strcmp(tbuf, "u32") == 0) type = 3;
+        if (type < 0) { reply(client, "error: type must be f32|f64|i32|u32\n"); return true; }
+        uint64_t bits = 0;
+        if (type == 0) {
+            const char* fe = p;
+            float f = ascii_strtof(p, &fe);
+            end = (char*)fe;
+            uint32_t u = 0; memcpy(&u, &f, 4);
+            bits = u;
+        } else if (type == 1) {
+            const char* de = p;
+            double d = ascii_strtod(p, &de);
+            end = (char*)de;
+            memcpy(&bits, &d, 8);
+        } else if (type == 2) {
+            long v = strtol(p, &end, 10);
+            bits = (uint32_t)(int32_t)v;
+        } else {
+            unsigned long v = strtoul(p, &end, 10);
+            bits = (uint32_t)v;
+        }
+        if (end == p) { reply(client, "error: bad value\n"); return true; }
+        bool ok = cam_mem_poke(addr, off, type, bits);
+        reply(client, ok ? "ok\n" : "error: poke faulted\n");
+        return true;
+    }
+
+    /* Read a typed value from a raw address.
+     * Format: __cam_mem_peek <addr_hex> <offset_hex_or_dec> <type>
+     * Returns: value=<number> */
+    if (cmd.rfind("__cam_mem_peek ", 0) == 0) {
+        const char* p = cmd.c_str() + 15;
+        char* end = NULL;
+        uint64_t addr = strtoull(p, &end, 16);
+        if (end == p || addr == 0) { reply(client, "error: bad addr\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        uint64_t off = 0;
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+            off = strtoull(p + 2, &end, 16);
+        } else {
+            off = strtoull(p, &end, 10);
+        }
+        if (end == p) { reply(client, "error: bad offset\n"); return true; }
+        p = end;
+        while (*p == ' ') p++;
+        char tbuf[8] = {0};
+        int ti = 0;
+        while (*p && *p != ' ' && ti < 7) { tbuf[ti++] = *p++; }
+        int type = -1;
+        if (strcmp(tbuf, "f32") == 0) type = 0;
+        else if (strcmp(tbuf, "f64") == 0) type = 1;
+        else if (strcmp(tbuf, "i32") == 0) type = 2;
+        else if (strcmp(tbuf, "u32") == 0) type = 3;
+        if (type < 0) { reply(client, "error: type must be f32|f64|i32|u32\n"); return true; }
+        uint64_t bits = 0;
+        if (!cam_mem_peek(addr, off, type, &bits)) {
+            reply(client, "error: peek faulted\n");
+            return true;
+        }
+        char buf[64];
+        if (type == 0) {
+            float f; memcpy(&f, &bits, 4);
+            snprintf(buf, sizeof(buf), "value=%.6g\n", (double)f);
+        } else if (type == 1) {
+            double d; memcpy(&d, &bits, 8);
+            snprintf(buf, sizeof(buf), "value=%.6g\n", d);
+        } else {
+            snprintf(buf, sizeof(buf), "value=%d\n", (int32_t)(uint32_t)bits);
+        }
+        reply(client, buf);
+        return true;
+    }
+
     /* ── Regular UE5 console commands (pass-through to Exec) ── */
 
     /* Any command not starting with __ is a regular console command */
@@ -684,6 +927,9 @@ static void startup()
 static void shutdown()
 {
     bridge_log("Bridge shutting down...");
+
+    /* Restore all NOPped/CAPTURE sites before the DLL unloads. */
+    cam_intercept_uninstall_all();
 
     /* Stop tick thread */
     g_tick_running = false;
