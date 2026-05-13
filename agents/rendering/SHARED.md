@@ -97,6 +97,46 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 | `--fov` | 90.0 | 垂直 FOV（度） |
 | `--aspect` | 1.7778 | 宽高比 |
 
+## TODO (Handoff — 2026-05-13)
+
+- [ ] **P1: ReShade Path B — UE5 pov_ptr 扫描 + mem_find/read/on/off 路由** (handoff from 小萱 2026-05-13)
+
+  **背景**: 这个 session 已经完成 ReShade 桥的 **Tier-1 (AOB intercept)** 移植，commit `4c75689`:
+  - `pattern_scan.h` 加了 `scan_main_module_nth`
+  - 新建 `3rdparty/reshade/source/captureAIshi/camera_intercept.h` (RDC 同名文件的直接拷贝)
+  - `bridge.cpp` 加了 `ascii_strtod`、`#include "camera_intercept.h"`、8 条新路由 (install_aob / nop / pass / list / uninstall / capture / get_capture / poke / peek) + shutdown 时调 `cam_intercept_uninstall_all()`
+
+  **下一步是 UE5 path**: IGCS-GITC 类游戏 (Batman AK / AC6 / Metro / Cyberpunk DX12 vulkan 等) 走 AOB 路径 OK，但 UE5 原生游戏 (StackOBot / Hellblade 2 / Avowed / Oblivion Remastered / The Quarry / Invincible / South of Midnight) 走的是 **UE5 pov_ptr scanner** 路径——直接通过 GEngine 找 PlayerController → LocalPlayer → ViewportClient → MinimalViewInfo 链拿到 camera 内存地址，不需要 AOB。
+
+  **要做的事**:
+
+  1. **移植 `ue5_scan_camera.h`** (RDC 路径 1304 行 → ReShade 路径)
+     - 源: `renderdoc/renderdoc/core/bridge/ue5_scan_camera.h`
+     - 目标: `3rdparty/reshade/source/captureAIshi/ue5_scan_camera.h`
+     - 依赖: 已有 `ue5_engine.h` (ReShade 这边已经有了，看 bridge.cpp:78)
+     - 可能需要调整: include 顺序、`extern void bridge_log` 声明 (跟 camera_intercept.h 一样)
+
+  2. **bridge.cpp 加 4 条路由** (参考 `console_server.h` 对应分支)
+     - `__cam_mem_find` — 启动 UE5 pov_ptr 扫描线程
+     - `__cam_mem_read <addr_hex>` — 读 MinimalViewInfo (XYZ + pitch/yaw/roll + FOV)
+     - `__cam_mem_on` / `__cam_mem_off` — 启用/禁用扫描器后台 ticker
+     - 在 `console_server.h` 里 grep `__cam_mem_` 看现有实现，全部抄过来
+
+  3. **bridge.cpp `#include "ue5_scan_camera.h"`** 加到 `#include "camera_intercept.h"` 后面
+
+  4. **shutdown cleanup**: 看 `ue5_scan_camera.h` 是否有自己的 thread + state 需要 stop，仿照 `cam_intercept_uninstall_all()` 模式调用
+
+  **验收**:
+  - Batman AK + ReShade dxgi.dll: 现有 AOB 流程不回归 (`__cam_intercept_install_aob` → `__cam_intercept_capture` → `__cam_mem_poke` → `__fc_capture`)
+  - StackOBot + ReShade dxgi.dll: `__cam_mem_find` 能找到 pov_ptr，`__cam_mem_read <pov_ptr>` 返回正常 XYZ+rotation+FOV
+  - Hellblade 2 / Avowed 等 UE5.3+ 游戏验证（让小逆配合实测）
+
+  **工时估计**: 2-3h (1304 行的 ue5_scan_camera.h 是纯 Win32+pattern_scan 实现，依赖少，能直接抄；主要时间在 4 条路由 wiring + 实测调试)
+
+  **风险点**:
+  - `ue5_scan_camera.h` 可能内部包含 `ue5_scan_engine.h` 或 `ue5_scan_world.h`，先读头看看 (ReShade 这边没有这两个文件)
+  - 如果有依赖，要么补移植，要么裁剪掉非 camera 相关的部分
+
 ## TODO (from lead review)
 
 - [x] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, fixed 03ce4a8 by 小萱) — `drivers/trajectory_player.py:707-718` 在每个 capture pose 处发 TCP `__cam_rdc_capture` 到 bridge，**但 bridge / addon / Python 全栈都没有这个命令的 handler**。grep 结果：
