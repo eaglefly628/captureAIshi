@@ -115,7 +115,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
   for the addon side (your domain). Game must be restarted once after
   Apply to pick up the new ini flags.
 
-- [ ] **P1: peer-review reply to xiaoni — FC_ExportNormal 是半成品** (spotted by 用户 + xiaoxuan/小宣6 2026-05-13)
+- [x] **P1: peer-review reply to xiaoni — FC_ExportNormal 是半成品** (spotted by 用户 + xiaoxuan/小宣6 2026-05-13, fixed (pending sha) by 小宣6 2026-05-13)
 
   **答 xiaoni 的 (b)**: 不会写。`FC_ExportNormal` flag 是空架子。具体证据：
   - `frame_capture.cpp:88` 定义 `enableNormalExp = false`
@@ -271,6 +271,15 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 6. **3D 可视化器** 可以直接用 trajectory.json 里的 Position + Rotation 画相机锥体
 
 ## Changelog
+
+### [v0.3.0] (pending sha) — 小宣6
+- fix: frame_capture.cpp FC_ExportNormal -- wire end-to-end
+  - SaveTask: add normal_path + normal_pixels (RGB32F interleaved, w*h*3)
+  - new SaveEXRRGB helper (deinterleave -> planar B/G/R, ZIP compressed)
+  - two depth-harvest loops (line ~1085 + ~1194): same map pass extracts RGB
+    into normal_pixels when enableNormalExp is true (zero extra GPU->CPU)
+  - save_worker_fn: writes NormalBuffer.exr alongside DepthBuffer.exr
+  - fixed stale SaveTask::depth_pixels doc comment (RGBA32F -> scalar Y32F)
 
 ### [v0.3.0] (pending sha) — 小宣6
 - feat: ReShade Path B UE5 pov_ptr scanner — parity with RDC mem_find/read/on/off

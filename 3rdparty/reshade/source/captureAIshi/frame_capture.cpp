@@ -122,9 +122,17 @@ struct SaveTask {
     std::vector<uint8_t>  color_pixels;   // RGBA8, width*height*4, no pitch padding
     uint32_t              width = 0, height = 0;
 
-    std::filesystem::path depth_path;     // empty → skip depth
-    std::vector<float>    depth_pixels;   // RGBA32F, depth_w*depth_h*4, no padding
+    std::filesystem::path depth_path;     // empty -> skip depth
+    std::vector<float>    depth_pixels;   // scalar Y32F, depth_w*depth_h, no padding
     uint32_t              depth_w = 0, depth_h = 0;
+
+    // Normal export -- harvested from the SAME RGBA32F DepthToAddon staging
+    // texture as depth (depth in alpha, normal in RGB).  Free byte-wise:
+    // single map call, single pass over the texels.  Gated by enableNormalExp
+    // at capture time; if normal_path is empty here, worker skips the EXR
+    // write entirely.  Layout is interleaved RGB (depth_w * depth_h * 3 float).
+    std::filesystem::path normal_path;    // empty -> skip normal
+    std::vector<float>    normal_pixels;  // RGB32F interleaved, depth_w*depth_h*3
 
     // "Both" mode: optional second image holding the post-UI BackBuffer
     // (BackBufferExport_ColorTex) captured in the same frame as the pre-UI scene.
@@ -163,6 +171,52 @@ static bool SaveEXR(const float* y, int width, int height, const char* outfilena
     header.requested_pixel_types = (int*)malloc(sizeof(int));
     header.pixel_types[0]           = TINYEXR_PIXELTYPE_FLOAT;
     header.requested_pixel_types[0] = TINYEXR_PIXELTYPE_FLOAT;
+
+    const char* err = nullptr;
+    int ret = SaveEXRImageToFile(&image, &header, outfilename, &err);
+    free(header.channels);
+    free(header.pixel_types);
+    free(header.requested_pixel_types);
+    return ret == TINYEXR_SUCCESS;
+}
+
+// 3-channel RGB EXR (interleaved float input). TinyEXR wants planar input,
+// so we deinterleave into R/G/B planes here. Channel names "R", "G", "B"
+// (header sorted alphabetically by tinyexr means stored order = B,G,R, but
+// any standard EXR reader resolves by name).
+static bool SaveEXRRGB(const float* rgb, int width, int height, const char* outfilename)
+{
+    const size_t n = (size_t)width * (size_t)height;
+    std::vector<float> r_plane(n), g_plane(n), b_plane(n);
+    for (size_t i = 0; i < n; i++) {
+        r_plane[i] = rgb[i * 3 + 0];
+        g_plane[i] = rgb[i * 3 + 1];
+        b_plane[i] = rgb[i * 3 + 2];
+    }
+
+    EXRHeader header; InitEXRHeader(&header);
+    EXRImage  image;  InitEXRImage(&image);
+    image.num_channels = 3;
+
+    // EXR readers expect channels in alphabetic order on disk; for "RGB" naming
+    // that means stored as (B, G, R). Provide plane pointers in the same order.
+    float* ptrs[3] = { b_plane.data(), g_plane.data(), r_plane.data() };
+    image.images = (unsigned char**)ptrs;
+    image.width  = width;
+    image.height = height;
+
+    header.compression_type = TINYEXR_COMPRESSIONTYPE_ZIP;
+    header.num_channels = 3;
+    header.channels = (EXRChannelInfo*)malloc(3 * sizeof(EXRChannelInfo));
+    strncpy(header.channels[0].name, "B", 255);
+    strncpy(header.channels[1].name, "G", 255);
+    strncpy(header.channels[2].name, "R", 255);
+    header.pixel_types           = (int*)malloc(3 * sizeof(int));
+    header.requested_pixel_types = (int*)malloc(3 * sizeof(int));
+    for (int i = 0; i < 3; i++) {
+        header.pixel_types[i]           = TINYEXR_PIXELTYPE_FLOAT;
+        header.requested_pixel_types[i] = TINYEXR_PIXELTYPE_FLOAT;
+    }
 
     const char* err = nullptr;
     int ret = SaveEXRImageToFile(&image, &header, outfilename, &err);
@@ -263,6 +317,28 @@ static void save_worker_fn()
 
             SaveEXR(depth_src, (int)depth_w, (int)depth_h,
                     task.depth_path.u8string().c_str());
+        }
+
+        // Write normal EXR (3-channel float RGB; render thread harvested
+        // the RGB triple from the SAME DepthToAddon staging texture as depth).
+        // Resolution matches depth_w/h (same source texture).
+        if (!task.normal_path.empty() && !task.normal_pixels.empty()) {
+            const float* normal_src = task.normal_pixels.data();
+            uint32_t     normal_w   = task.depth_w;
+            uint32_t     normal_h   = task.depth_h;
+            std::vector<float> normal_resized;
+            if (g_cap_width > 0 && g_cap_height > 0 &&
+                (normal_w != g_cap_width || normal_h != g_cap_height)) {
+                normal_resized.resize((size_t)g_cap_width * g_cap_height * 3);
+                stbir_resize_float(normal_src, (int)normal_w, (int)normal_h, 0,
+                                   normal_resized.data(), (int)g_cap_width, (int)g_cap_height, 0, 3);
+                normal_src = normal_resized.data();
+                normal_w   = g_cap_width;
+                normal_h   = g_cap_height;
+            }
+
+            SaveEXRRGB(normal_src, (int)normal_w, (int)normal_h,
+                       task.normal_path.u8string().c_str());
         }
     }
 }
@@ -1075,18 +1151,33 @@ static void on_reshade_present(effect_runtime* runtime)
                 task.depth_path = save_prefix; task.depth_path += L"DepthBuffer.exr";
                 task.depth_w = drd.texture.width;
                 task.depth_h = drd.texture.height;
-                // Single-channel depth: extract alpha (scalar depth) only.
+                // Single-channel depth: extract alpha (scalar depth).
                 task.depth_pixels.resize((size_t)task.depth_w * task.depth_h);
+                // Optional: harvest RGB normal from the same RGBA32F staging
+                // texture in the same map pass. enableNormalExp gates writeout.
+                const bool want_normal = enableNormalExp;
+                if (want_normal) {
+                    task.normal_path = save_prefix; task.normal_path += L"NormalBuffer.exr";
+                    task.normal_pixels.resize((size_t)task.depth_w * task.depth_h * 3);
+                }
                 subresource_data depth_data = {};
                 if (dev->map_texture_region(sbi.depth_staging, 0, nullptr, map_access::read_only, &depth_data) && depth_data.data) {
                     const float* dsrc       = static_cast<const float*>(depth_data.data);
                     uint32_t floats_per_row = depth_data.row_pitch / sizeof(float);
-                    float* dst = task.depth_pixels.data();
+                    float* dst  = task.depth_pixels.data();
+                    float* ndst = want_normal ? task.normal_pixels.data() : nullptr;
                     for (uint32_t y = 0; y < task.depth_h; y++) {
-                        const float* row = dsrc + y * floats_per_row;
-                        float*       out = dst  + (size_t)y * task.depth_w;
-                        for (uint32_t x = 0; x < task.depth_w; x++)
+                        const float* row  = dsrc + y * floats_per_row;
+                        float*       out  = dst  + (size_t)y * task.depth_w;
+                        float*       nout = ndst ? ndst + (size_t)y * task.depth_w * 3 : nullptr;
+                        for (uint32_t x = 0; x < task.depth_w; x++) {
                             out[x] = row[x * 4 + 3];   // depth is in alpha
+                            if (nout) {
+                                nout[x * 3 + 0] = row[x * 4 + 0];  // R = normal.x
+                                nout[x * 3 + 1] = row[x * 4 + 1];  // G = normal.y
+                                nout[x * 3 + 2] = row[x * 4 + 2];  // B = normal.z
+                            }
+                        }
                     }
                     dev->unmap_texture_region(sbi.depth_staging, 0);
                 }
@@ -1183,19 +1274,34 @@ static void on_reshade_present(effect_runtime* runtime)
                 task.depth_path = save_prefix; task.depth_path += L"DepthBuffer.exr";
                 task.depth_w = drd.texture.width;
                 task.depth_h = drd.texture.height;
-                // Single-channel depth: extract alpha (scalar depth) only.
+                // Single-channel depth: extract alpha (scalar depth).
                 task.depth_pixels.resize((size_t)task.depth_w * task.depth_h);
+                // Optional: harvest RGB normal from the same RGBA32F staging
+                // texture in the same map pass. enableNormalExp gates writeout.
+                const bool want_normal = enableNormalExp;
+                if (want_normal) {
+                    task.normal_path = save_prefix; task.normal_path += L"NormalBuffer.exr";
+                    task.normal_pixels.resize((size_t)task.depth_w * task.depth_h * 3);
+                }
 
                 subresource_data depth_data = {};
                 if (dev->map_texture_region(sbi.depth_staging, 0, nullptr, map_access::read_only, &depth_data) && depth_data.data) {
                     const float* src        = static_cast<const float*>(depth_data.data);
                     uint32_t floats_per_row = depth_data.row_pitch / sizeof(float);
-                    float* dst = task.depth_pixels.data();
+                    float* dst  = task.depth_pixels.data();
+                    float* ndst = want_normal ? task.normal_pixels.data() : nullptr;
                     for (uint32_t y = 0; y < task.depth_h; y++) {
-                        const float* row = src + y * floats_per_row;
-                        float*       out = dst + (size_t)y * task.depth_w;
-                        for (uint32_t x = 0; x < task.depth_w; x++)
+                        const float* row  = src + y * floats_per_row;
+                        float*       out  = dst + (size_t)y * task.depth_w;
+                        float*       nout = ndst ? ndst + (size_t)y * task.depth_w * 3 : nullptr;
+                        for (uint32_t x = 0; x < task.depth_w; x++) {
                             out[x] = row[x * 4 + 3];   // depth is in alpha
+                            if (nout) {
+                                nout[x * 3 + 0] = row[x * 4 + 0];  // R = normal.x
+                                nout[x * 3 + 1] = row[x * 4 + 1];  // G = normal.y
+                                nout[x * 3 + 2] = row[x * 4 + 2];  // B = normal.z
+                            }
+                        }
                     }
                     dev->unmap_texture_region(sbi.depth_staging, 0);
                 }
