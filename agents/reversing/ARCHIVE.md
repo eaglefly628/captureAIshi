@@ -534,3 +534,27 @@ See git log for full details. All shipped to claudeMainBranch.
 
 ### [v0.2.0] ee9a5db -- xiaoni -- Game library trim to 6 active titles
 - `game_library.json`: 332->6 active titles; stub profiles for unreal_physics + black_myth_wukong.
+
+---
+
+## Cleared 2026-05-13 (user requested clean slate before new PCG direction)
+
+All Active TODO items cleared from SHARED.md. To recover full content:
+  git show 039e250:agents/reversing/SHARED.md
+or browse:
+  https://github.com/eaglefly628/captureAIshi/blob/039e250/agents/reversing/SHARED.md
+
+Inventory (Active TODO Open items, 10 items):
+- [P0] Path B Phase 2 build & validate end-to-end on Hellblade II
+- [P0] UpdateCamera 覆写 -- 渲染线程边界 hook (ULocalPlayer::GetViewPoint)
+- [P0] 真实 UE5 游戏端到端验证 (StackOBot)
+- [P0] Path D 逆向补全 (PC+0x100..0x800 manager ptr 扫描)
+- [P0] UUU 功能复刻 (per-node FOV / __path_play / __path_loop / __path_pause / __camera_get)
+- [P1] AC 预检脚本 (EasyAntiCheat.dll / BEService.exe)
+- [P2] CL 条目缺失 (c088120 / 43ac097)
+- [P2] __try 块内 C++ 对象析构跳过
+- [P2] Catmull-Rom 非均匀段距突变 (升 Centripetal)
+- [P2] _detect_bridge 无重试 (加 2-3 次指数退避)
+- [P2] 增强 Pause (UWorld::IsPaused 内存写入 fallback)
+Planning section cleared:
+- "Commit D (next major) -- UE 自动探测 (StackOBot 并轨)"

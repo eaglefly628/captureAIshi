@@ -117,3 +117,20 @@ API: `/api/start`, `/api/stop`, `/api/status`, `/api/config`, `/api/sessions`, `
 
 ### [v0.2.0] 01b6268 — 小由
 - 路径穿越安全修复
+
+---
+
+## Cleared 2026-05-13 (user requested clean slate before new PCG direction)
+
+All Active TODO items cleared from SHARED.md. To recover full content:
+  git show 039e250:agents/ui/SHARED.md
+or browse:
+  https://github.com/eaglefly628/captureAIshi/blob/039e250/agents/ui/SHARED.md
+
+Inventory (6 items):
+- [P0] UI 视觉重构 + PCG 模式骨架 (from 老白 2026-05-13, just dispatched, see docs/ui_pcg_redesign_plan.md)
+- [P1] a5f8859 越界修改 renderdoc_grabber.py
+- [P1] .claude/ 迁移验证
+- [P2] a5f8859 缺 CL 条目
+- [P2] path_player quaternion clamp 不完整
+- [P2] web_ui profile name 缺验证

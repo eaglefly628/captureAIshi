@@ -7,72 +7,7 @@ Current context lives here. Completed items and old CL entries move to
 
 ## Active TODO
 
-### Open items
-
-- [ ] **P0: Path B Phase 2 -- build & validate end-to-end on Hellblade II**
-  Phase 0 / 0.5 / 1 done (eb65088 / 75fb383 / Phase 1 commit). Code path
-  is in place: bridge.cpp + frame_capture embedded -> one
-  `captureAIshi_bridge.addon`; `grabbers/reshade_grabber.py` reads its
-  output; UI dropdown + main.py factory wired; `scripts/deploy_reshade.py`
-  copies binaries into game dir.
-  Outstanding before "works":
-    - Build the addon on a Windows host:
-        `cd 3rdparty/reshade_bridge/src && cmake -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Release`
-      and the ReShade core (3rdparty/reshade/) for `dxgi.dll`.
-    - Iterate on inevitable C++ compile errors from embedding (FormatEnum
-      symbol clashes, /utf-8 mismatches, MSVC /W3 warnings, etc.).
-    - `scripts/deploy_reshade.py --game-dir <hellblade2> --output-dir <out>`,
-      launch game, verify ReShade overlay shows "captureAIshi Bridge".
-    - Connect bridge driver (TCP 9998), confirm GEngine scan finds UE5
-      objects; run a short trajectory; confirm BMP+EXR triplets land.
-    - Optional polish: `__fc_capture_now` TCP command for pose-precise
-      capture (current grabber polls timer-driven output, ~33ms latency).
-  Path A unaffected throughout. Reference: 3rdparty/reshade_bridge/README.md.
-
-- [ ] **P0: UpdateCamera 覆写 -- 正确解法: 渲染线程边界 hook**
-  UpdateCamera() 每帧写回玩家摄像机位置，无法从外部争抢。正确解: hook
-  `ULocalPlayer::GetViewPoint` (virtual, vtable-hookable). GetViewPoint 在渲染
-  线程 FSceneView 构建前被调用，是数据流进渲染器的最后门。钩子直接返回
-  g_cam_override_state，完全跳过 UpdateCamera 写的 POV。vtable index 因 UE 版本
-  而异，需从 UE4SS PDB 数据或运行时扫描确定。
-
-- [ ] **P0: 真实 UE5 游戏端到端验证** — StackOBot test in progress. Bridge finds
-  GEngine/UWorld/LP/CameraManager. Next: rebuild DLL, run __cam_mem_find,
-  confirm scan fallback finds POV.
-
-- [ ] **P0: Path D 逆向补全** — pass 2 now scans PC+[0x100..0x800] for exact
-  manager ptr. On next run, log "PC+0xXXX == Path-A manager [XVAL OK]" ->
-  update k_layout_ue57.pc_pcm_start/end to that discovered offset.
-
-- [ ] **P0 (UUU 功能复刻, from 小由 2026-04-05, 老白 confirmed)**:
-  per-node FOV 支持; 播放时长控制 `__path_play <total_seconds>`;
-  Loop `__path_loop 1/0`; 暂停/恢复 `__path_pause` / `__path_resume`;
-  当前位置查询 `__camera_get`.
-
-- [ ] **P1: AC 预检脚本** — 检测 EasyAntiCheat.dll / BEService.exe。
-
-- [ ] **P2: CL 条目缺失** (spotted by 主程序员 4.7 review) — `c088120` 在
-  SHARED.md 里仍是 `(pending push)`，已 push 应填实际 sha。`43ac097`
-  完全无 CL 条目。按 versioning.md 规则补上。
-
-- [ ] **P2: __try 块内 C++ 对象析构跳过** (spotted by Gemini) — `cam_patch_write`
-  已清理（所有 C++ 析构全在 suspend 窗口外），只 `cam_seh_memcpy` 在 __try 里。
-  **待办**: 递归审计其他 __try 站点，确保全 pure-C 叶子。
-
-- [ ] **P2: Catmull-Rom 非均匀段距突变** (spotted by Gemini) — 当前 Uniform
-  Catmull-Rom 在不均匀 duration 下产生过冲。**修复**: 升级 Centripetal，将
-  chord length 或 duration 差代入切线权重。
-
-- [ ] **P2: _detect_bridge 无重试** (spotted by 主程序员) — 加 2-3 次指数退避重试。
-
-- [ ] **P2: 增强 Pause** — 加 UWorld::IsPaused 内存写入 fallback。
-
-### Commit D (next major) -- UE 自动探测 (StackOBot 并轨)
-
-- 基于 `g_cam_pov_ptr - g_camera_manager_ptr = disp32`
-- 扫 `.text` 里 `movups/movsd [reg + disp32], xmm?` 指令
-- 识别连续 3-4 条 (x/y/z/w for LWC 或 x/y/z/float) 自动装 multi-site
-- StackOBot 端到端就自动化了，无需 CE 手工
+_全部清空 2026-05-13（老白 by 用户指令）— 旧 TODO 清单 + 恢复方式见 `agents/reversing/ARCHIVE.md` 末尾 "Cleared 2026-05-13" 段。新方向 TODO 待老白下次重派。_
 
 ## Architecture Reference
 

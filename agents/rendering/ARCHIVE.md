@@ -122,3 +122,22 @@
 ### [v0.2.0] ebe4a7d — 首帧 warm-up + Fastest replay
 ### [v0.2.0] f4292f5 — Normal fmtType=12 + GBuffer 诊断日志
 ### [v0.2.0] 8c6160e — Windows stderr 死锁修复
+
+---
+
+## Cleared 2026-05-13 (user requested clean slate before new PCG direction)
+
+All Active TODO items cleared from SHARED.md. To recover full content:
+  git show 039e250:agents/rendering/SHARED.md
+or browse:
+  https://github.com/eaglefly628/captureAIshi/blob/039e250/agents/rendering/SHARED.md
+
+Inventory (TODO from lead -- 老白 2026-05-13, 5 items):
+- [P0] (今日必跑通) ReShade AOB camera control 端到端实机验证
+- [P1] 复核 ReShade depth EXR->PNG 归一化路径
+- [P1] (done by 小宣6) FC_ExportNormal 半成品修复
+- [P1] (done by 小宣6) ReShade Path B UE5 pov_ptr 扫描移植
+- [P2] F6 in-game survey trigger hotkey
+- [P2] F6 overlay 死键 — addon 没注册 keypress handler
+TODO (from lead review, 1 item):
+- [P2] (done) depth_curve 跨域改动
