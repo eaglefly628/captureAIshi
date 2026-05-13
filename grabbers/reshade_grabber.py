@@ -147,6 +147,146 @@ class ReShadeGrabber(FrameGrabber):
         if self.bridge_port:
             self._wait_for_bridge()
 
+        # First-run init: if pre-UI capture is enabled and we have no
+        # persisted FC_PreUISkipCount for this game install, run survey
+        # once against the live game, persist the result, restart the
+        # game so the addon picks up the new ini value, and continue.
+        # Subsequent setup() calls find the persisted skip and skip survey.
+        self._maybe_run_first_run_survey()
+
+    # ── Pre-UI skip persistence + first-run survey ────────────────────
+
+    def _skip_sidecar(self) -> Path:
+        """Per-game-install persistence of the surveyed FC_PreUISkipCount.
+
+        Lives in the game install dir (next to dxgi.dll) so a user moving
+        the game install carries the survey result with it; uninstalling
+        the game wipes it naturally.
+        """
+        return self.game_dir / ".captureAIshi_skip.txt"
+
+    def _read_persisted_skip(self) -> Optional[int]:
+        p = self._skip_sidecar()
+        if not p.is_file():
+            return None
+        try:
+            return int(p.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+
+    def _persist_skip(self, n: int) -> None:
+        try:
+            self._skip_sidecar().write_text(str(int(n)), encoding="utf-8")
+            logger.info("[ReShadeGrabber] persisted pre-UI skip=%d -> %s",
+                        n, self._skip_sidecar())
+        except OSError as exc:
+            logger.warning(
+                "[ReShadeGrabber] failed to persist skip count: %s", exc)
+
+    def _resolve_pre_ui_skip(self) -> int:
+        """Skip count source priority: profile > persisted sidecar > 0."""
+        v = self.capture_profile.get("pre_ui_skip_count")
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                pass
+        persisted = self._read_persisted_skip()
+        return int(persisted) if persisted is not None else 0
+
+    def _maybe_run_first_run_survey(self) -> None:
+        """One-shot pre-UI skip survey on first invocation per game install.
+
+        Skipped when:
+          - rgb_strategy doesn't request pre-UI capture (no need for skip)
+          - profile pins ``pre_ui_skip_count`` (explicit override)
+          - a previous run already persisted a value in the game-dir sidecar
+        """
+        rgb_strategy = str(self.capture_profile.get("rgb_strategy", "")).lower()
+        if "pre_ui" not in rgb_strategy:
+            return
+        if self.capture_profile.get("pre_ui_skip_count") is not None:
+            logger.debug(
+                "[ReShadeGrabber] survey: profile pins skip=%s; not surveying",
+                self.capture_profile.get("pre_ui_skip_count"))
+            return
+        persisted = self._read_persisted_skip()
+        if persisted is not None:
+            logger.info(
+                "[ReShadeGrabber] survey: persisted skip=%d found at %s; "
+                "skipping survey",
+                persisted, self._skip_sidecar())
+            return
+
+        logger.info(
+            "[ReShadeGrabber] first-run pre-UI survey starting "
+            "(no persisted skip count for this game; this can take ~30s "
+            "and requires the game to be in actual 3D gameplay, not the "
+            "main menu / loading screen)")
+        try:
+            from tools.capture.survey import run as run_survey
+        except ImportError as exc:
+            logger.warning(
+                "[ReShadeGrabber] survey unavailable (tools.capture.survey "
+                "import failed: %s); continuing with FC_PreUISkipCount=0",
+                exc)
+            return
+
+        survey_dir = self.output_dir.parent / "survey"
+        try:
+            recommended = run_survey(self.game_dir, survey_dir)
+        except Exception as exc:
+            logger.warning(
+                "[ReShadeGrabber] survey crashed: %s; continuing with "
+                "FC_PreUISkipCount=0", exc)
+            return
+
+        if recommended is None:
+            logger.warning(
+                "[ReShadeGrabber] survey returned no recommendation "
+                "(game likely not in a 3D scene yet, or opencv missing). "
+                "Move into actual gameplay and delete %s to retry on the "
+                "next session. Continuing with FC_PreUISkipCount=0.",
+                self._skip_sidecar())
+            return
+
+        self._persist_skip(int(recommended))
+        # Rewrite the ini with the new skip value, then restart the game so
+        # the addon reads it via reshade::get_config_value at startup.
+        self._write_reshade_config()
+        self._restart_game_after_survey()
+
+    def _restart_game_after_survey(self) -> None:
+        """Stop + relaunch + re-wait so the addon picks up the new ini."""
+        if not self.auto_launch:
+            logger.warning(
+                "[ReShadeGrabber] survey done but auto_launch is False; "
+                "please restart the game manually so the addon picks up "
+                "the new FC_PreUISkipCount.")
+            return
+        if self._game_proc is not None and self._game_proc.poll() is None:
+            logger.info("[ReShadeGrabber] survey: terminating game to apply "
+                        "new FC_PreUISkipCount")
+            try:
+                self._game_proc.terminate()
+                try:
+                    self._game_proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self._game_proc.kill()
+                    self._game_proc.wait(timeout=5)
+            except Exception as exc:
+                logger.warning(
+                    "[ReShadeGrabber] survey: game terminate failed: %s",
+                    exc)
+        self._game_proc = None
+        self._launch_game()
+        if self.bridge_port:
+            self._wait_for_bridge()
+        logger.info(
+            "[ReShadeGrabber] survey: game restarted with new "
+            "FC_PreUISkipCount; pre-UI capture should now produce HUD-free "
+            "RGB. Move into gameplay to start capture.")
+
     def _launch_game(self) -> None:
         if not self.target_exe:
             return
@@ -389,13 +529,17 @@ class ReShadeGrabber(FrameGrabber):
         preset_path = self.game_dir / "captureAIshi-preset.ini"
 
         # Honor capture_profile: rgb_strategy "*_pre_ui" -> FC_PreUICapture=1;
-        # any non-empty/non-"none" normal_strategy -> FC_ExportNormal=1.
-        # Addon reads these once at startup (reshade::get_config_value),
-        # so the game must be restarted for changes to take effect.
+        # any non-empty/non-"none" normal_strategy -> FC_ExportNormal=1;
+        # FC_PreUISkipCount comes from profile.pre_ui_skip_count if set,
+        # else the persisted sidecar from a previous first-run survey,
+        # else 0. Addon reads these once at startup
+        # (reshade::get_config_value), so the game must be restarted for
+        # changes to take effect.
         rgb_strategy = str(self.capture_profile.get("rgb_strategy", "")).lower()
         pre_ui = "1" if "pre_ui" in rgb_strategy else "0"
         normal_strategy = str(self.capture_profile.get("normal_strategy", "")).lower()
         export_normal = "1" if normal_strategy and normal_strategy != "none" else "0"
+        pre_ui_skip = self._resolve_pre_ui_skip()
 
         ini_content = (
             "[GENERAL]\n"
@@ -417,6 +561,7 @@ class ReShadeGrabber(FrameGrabber):
             "FC_TargetFPS=30\n"
             "FC_UsePNG=1\n"
             f"FC_PreUICapture={pre_ui}\n"
+            f"FC_PreUISkipCount={pre_ui_skip}\n"
         )
         preset_content = (
             "Techniques=BackBufferExport@BackBufferExport.fx,"

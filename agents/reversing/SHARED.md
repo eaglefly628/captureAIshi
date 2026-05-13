@@ -119,6 +119,26 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
+### [v0.3.0] (pending) -- xiaoni -- ReShade grabber auto-runs pre-UI survey on first run + persists FC_PreUISkipCount
+
+Pre-UI capture needs both `FC_PreUICapture=1` AND a per-game
+`FC_PreUISkipCount=N` (N != 0 for almost every game). The previous
+fix wired the bool flag but left N=0, so Batman AK still grabbed
+post-UI frames. New flow:
+
+- `_resolve_pre_ui_skip`: profile.pre_ui_skip_count > game-dir
+  sidecar `.captureAIshi_skip.txt` > 0.
+- `_maybe_run_first_run_survey`: when rgb_strategy contains `pre_ui`
+  and no skip is pinned/persisted, invoke `tools.capture.survey.run`
+  against the live game, persist the recommended skip to the sidecar,
+  rewrite `unicap.ini`, terminate + relaunch the game so the addon
+  picks up the new value via `reshade::get_config_value`.
+- Survey is best-effort: if the game is still at the main menu /
+  no opencv installed / survey aborts, we log clearly and continue
+  with skip=0 -- user can delete the sidecar and rerun once they
+  are in actual gameplay.
+- `_write_reshade_config` emits `FC_PreUISkipCount=<resolved>`.
+
 ### [v0.3.0] 8854614 -- xiaoni -- ReShade grabber honours capture_profile (pre-UI / normal / depth PNG)
 
 - `grabbers/reshade_grabber.py` ctor: new `capture_profile` param.
