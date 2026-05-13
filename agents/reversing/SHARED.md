@@ -119,7 +119,7 @@ load/apply/lock/unlock/uninstall. Flask: `/api/hacks/*`.
 
 Older entries live in `agents/reversing/ARCHIVE.md`.
 
-### [v0.3.0] (pending) -- xiaoni -- pre-UI survey: manual trigger via Web UI button + /api/reshade/survey (was auto-on-setup, now too eager)
+### [v0.3.0] 7b5cf0d -- xiaoni -- pre-UI survey: manual trigger via Web UI button + /api/reshade/survey (was auto-on-setup, now too eager)
 
 User report: auto-survey in setup() ran before Batman AK reached 3D
 gameplay (publisher logos / loading screen / main menu have no DSV
