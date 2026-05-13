@@ -137,6 +137,21 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
   - `ue5_scan_camera.h` 可能内部包含 `ue5_scan_engine.h` 或 `ue5_scan_world.h`，先读头看看 (ReShade 这边没有这两个文件)
   - 如果有依赖，要么补移植，要么裁剪掉非 camera 相关的部分
 
+  **推送流程 (新 session 必读)**:
+  - 不要直推 `claudeMainBranch`，sandbox 代理会 403
+  - 推到 sandbox 分配的 session 分支 (本 session 是 `claude/merge-shared-v0.2.0-SBQG5`，新 session 会换一个名字)
+  - GitHub Actions 自动合并 workflow (`.github/workflows/auto-merge-claude.yml`) 会在 ~10s 内把 `claude/**` push fast-forward 到 `claudeMainBranch`
+  - 验证: `git fetch origin claudeMainBranch && git log --oneline -1 origin/claudeMainBranch` 应等于你刚 push 的 SHA
+  - 如果 stop hook 报 "unpushed commit on claudeMainBranch"，先 fetch 一次，等 10s 让 CI 跑完再判断
+  - 完整说明见 `CLAUDE.md` "Branch Policy" section
+  - 命令模板:
+    ```bash
+    git checkout claudeMainBranch && git pull origin claudeMainBranch
+    # 干活, 提交
+    git push -u origin HEAD:claude/<sandbox-assigned-branch>
+    # CI 自动合并到 claudeMainBranch
+    ```
+
 ## TODO (from lead review)
 
 - [x] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, fixed 03ce4a8 by 小萱) — `drivers/trajectory_player.py:707-718` 在每个 capture pose 处发 TCP `__cam_rdc_capture` 到 bridge，**但 bridge / addon / Python 全栈都没有这个命令的 handler**。grep 结果：
