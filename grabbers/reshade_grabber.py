@@ -454,6 +454,27 @@ class ReShadeGrabber(FrameGrabber):
             except Exception as exc:
                 logger.warning(
                     "[ReShadeGrabber.save_frame] depth EXR->PNG failed: %s", exc)
+
+        # Normal .exr is RGB float [0, 1] (DepthToAddon.fx already remaps
+        # world-space normal to [0, 1] before storage); emit a uint8 RGB PNG
+        # preview alongside so the gallery / lightbox can display it.
+        normal_src = self._last_paths.get("normal")
+        if normal_src is not None and normal_src.exists() and normal_src.suffix.lower() == ".exr":
+            try:
+                from grabbers.renderdoc.image_loader import _read_exr_rgb
+                raw = _read_exr_rgb(normal_src)
+                if raw is not None:
+                    png = np.clip(raw * 255.0, 0, 255).astype(np.uint8)
+                    from PIL import Image
+                    png_path = output_dir / f"{stem_normal}.png"
+                    Image.fromarray(png).save(str(png_path))
+                    saved["normal_png"] = png_path.name
+                    logger.debug(
+                        "[ReShadeGrabber.save_frame] normal EXR -> PNG %s",
+                        png_path.name)
+            except Exception as exc:
+                logger.warning(
+                    "[ReShadeGrabber.save_frame] normal EXR->PNG failed: %s", exc)
         return saved
 
     # ── internals ──────────────────────────────────────────────────────

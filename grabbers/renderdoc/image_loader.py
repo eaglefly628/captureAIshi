@@ -188,6 +188,84 @@ def _read_exr_red(path: Path) -> Optional[np.ndarray]:
         return None
 
 
+def _read_exr_rgb(path: Path) -> Optional[np.ndarray]:
+    """Read RGB channels of an EXR as float32 (H, W, 3).
+
+    Mirror of ``_read_exr_red``, but returns the full RGB triple instead of
+    just the red plane.  Used to visualise the ReShade addon's
+    ``NormalBuffer.exr`` (RGB float, output of ``DepthToAddon.fx`` which
+    already remaps the world-space normal to [0, 1] before storage).
+
+    cv2 / imageio / OpenEXR fallback chain, same as ``_read_exr_red``.
+    cv2 returns BGR; we swap to RGB before returning.
+    """
+    import os as _os
+    _os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+    try:
+        import cv2
+        arr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if arr is None:
+            raise RuntimeError(
+                "cv2.imread returned None (opencv-python EXR support "
+                "is disabled unless OPENCV_IO_ENABLE_OPENEXR=1 is set "
+                "before the first 'import cv2')"
+            )
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        elif arr.shape[2] >= 3:
+            arr = arr[:, :, :3]
+            arr = arr[:, :, ::-1]  # BGR -> RGB
+        else:
+            arr = np.concatenate(
+                [arr] + [arr[:, :, :1]] * (3 - arr.shape[2]), axis=-1)
+        return arr.astype(np.float32)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"[RDOC] cv2 EXR RGB read failed ({e}), trying imageio")
+
+    try:
+        import imageio.v3 as iio
+        arr = iio.imread(str(path))
+        if arr.ndim == 2:
+            arr = np.stack([arr] * 3, axis=-1)
+        elif arr.shape[2] >= 3:
+            arr = arr[:, :, :3]
+        else:
+            arr = np.concatenate(
+                [arr] + [arr[:, :, :1]] * (3 - arr.shape[2]), axis=-1)
+        return arr.astype(np.float32)
+    except Exception as e:
+        logger.debug(
+            f"[RDOC] imageio EXR RGB read failed ({e}), trying OpenEXR")
+
+    try:
+        import OpenEXR
+        import Imath
+        f = OpenEXR.InputFile(str(path))
+        header = f.header()
+        dw = header["dataWindow"]
+        w = dw.max.x - dw.min.x + 1
+        h = dw.max.y - dw.min.y + 1
+        pt = Imath.PixelType(Imath.PixelType.FLOAT)
+        channels = header["channels"]
+        planes = []
+        for name in ("R", "G", "B"):
+            if name in channels:
+                raw = f.channel(name, pt)
+                planes.append(
+                    np.frombuffer(raw, dtype=np.float32).reshape(h, w))
+            else:
+                planes.append(np.zeros((h, w), dtype=np.float32))
+        return np.stack(planes, axis=-1).copy()
+    except Exception as e:
+        logger.error(
+            f"[RDOC] Cannot read EXR (RGB) {path}: "
+            f"install opencv-python, imageio[freeimage], or OpenEXR ({e})"
+        )
+        return None
+
+
 def _normalize_depth(
     raw: np.ndarray,
     depth_range: Optional[list],
