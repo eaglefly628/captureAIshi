@@ -43,7 +43,76 @@ static inline bool get_main_module(ModuleRegion& out)
     return true;
 }
 
-/* ── Pattern scan (mask-based) ───────────────────────────────────── */
+/* -- Readable module ranges (diagnostic helper for ue5_scan_*.h) ---
+ *
+ * UE5 modules are large (often >300 MB) and game DRM / anti-cheat can
+ * punch holes in the address space by changing page protections.  Code
+ * that scans the module needs to know which sub-ranges are actually
+ * readable; dereferencing a PAGE_NOACCESS / PAGE_GUARD address segfaults
+ * the game.
+ *
+ * Mirror of renderdoc/renderdoc/core/bridge/pattern_scan.h's helper of
+ * the same name so ue5_scan_engine.h's diagnostic logging compiles
+ * verbatim on the ReShade side.  Result is cached per (base, size) to
+ * avoid repeated VirtualQuery storms (a 300 MB module can produce
+ * 70k+ VirtualQuery calls per invocation).
+ */
+struct ReadableRange {
+    size_t offset;
+    size_t length;
+};
+
+static std::vector<ReadableRange> g_cached_ranges;
+static const uint8_t* g_cached_base = nullptr;
+static size_t         g_cached_size = 0;
+
+static inline const std::vector<ReadableRange>& get_readable_ranges(
+    const uint8_t* base, size_t size)
+{
+    if (base == g_cached_base && size == g_cached_size &&
+        !g_cached_ranges.empty())
+        return g_cached_ranges;
+
+    g_cached_ranges.clear();
+    g_cached_base = base;
+    g_cached_size = size;
+
+    const uint8_t* end = base + size;
+    const uint8_t* addr = base;
+
+    while (addr < end) {
+        MEMORY_BASIC_INFORMATION mbi = {};
+        if (VirtualQuery(addr, &mbi, sizeof(mbi)) == 0)
+            break;
+
+        const uint8_t* region_base = (const uint8_t*)mbi.BaseAddress;
+        size_t region_size = mbi.RegionSize;
+
+        const uint8_t* r_start = (region_base < base) ? base : region_base;
+        const uint8_t* r_end = region_base + region_size;
+        if (r_end > end) r_end = end;
+
+        if (mbi.State == MEM_COMMIT &&
+            (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE |
+                            PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                            PAGE_EXECUTE_WRITECOPY | PAGE_WRITECOPY)) &&
+            !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        {
+            if (r_start < r_end) {
+                ReadableRange rr;
+                rr.offset = (size_t)(r_start - base);
+                rr.length = (size_t)(r_end - r_start);
+                g_cached_ranges.push_back(rr);
+            }
+        }
+
+        addr = region_base + region_size;
+        if (addr <= region_base) break;
+    }
+    return g_cached_ranges;
+}
+
+/* -- Pattern scan (mask-based) ------------------------------------- */
 
 /*
  * Scan a memory region for a byte pattern.
