@@ -639,6 +639,90 @@ static bool route_command(SOCKET client, const std::string& cmd)
         return true;
     }
 
+    /* ── Direct camera-memory commands (UE5 pov_ptr scanner) ────────
+     * find_camera_manager + find_cam_pov + read_camera_mem live in
+     * ue5_scan_camera.h.  These four routes mirror RDC console_server.h
+     * for parity with the Path A bridge -- same semantics, same wire
+     * format. */
+
+    /* Locate FMinimalViewInfo (e.g. after map load).
+     * Holds g_cam_pov_mutex across clear+scan+set so concurrent readers
+     * never observe a cleared pointer mid-scan. */
+    if (cmd == "__cam_mem_find") {
+        bridge_log("=== __cam_mem_find: starting full camera scan ===");
+        /* Bootstrap GUObjectArray on-demand.  RDC has a startup gate
+         * sequence (console_server.h:1238) that polls until GUA is found;
+         * ReShade's lighter startup() doesn't, so the first __cam_mem_find
+         * picks up that work.  find_guobjectarray() is idempotent
+         * (returns true immediately if g_guobjectarray_found). */
+        if (!g_guobjectarray_found && !find_guobjectarray()) {
+            reply(client, "error: guobjectarray_not_found\n");
+            return true;
+        }
+        bridge_log("  LP=0x%p  World=0x%p  GEngine=0x%p",
+                   g_localplayer_ptr, g_world_ptr, g_engine_ptr);
+        bool ok;
+        {
+            std::lock_guard<std::mutex> lk(g_cam_pov_mutex);
+            g_cam_pov_ptr = nullptr;        /* force re-scan */
+            g_camera_manager_ptr = nullptr; /* re-run all paths */
+            find_camera_manager();          /* Path A: FName scan */
+            cross_validate_camera();        /* Paths B+C+D */
+            ok = find_cam_pov();
+        }
+        bridge_log("=== __cam_mem_find done: mgr=0x%p pov=0x%p ok=%d ===",
+                   g_camera_manager_ptr, g_cam_pov_ptr, (int)ok);
+        char buf[128];
+        if (ok)
+            snprintf(buf, sizeof(buf), "ok pov=0x%p\n", g_cam_pov_ptr);
+        else
+            snprintf(buf, sizeof(buf), "not_found camera_mgr=0x%p\n",
+                     g_camera_manager_ptr);
+        reply(client, buf);
+        return true;
+    }
+
+    /* Read current camera state from FMinimalViewInfo. */
+    if (cmd == "__cam_mem_read") {
+        if (!g_cam_pov_ptr && !find_cam_pov()) {
+            reply(client, "error: pov_not_found\n");
+            return true;
+        }
+        CameraMemState st;
+        if (read_camera_mem(st)) {
+            bridge_log("  cam_read: xyz=(%.1f,%.1f,%.1f) pyr=(%.2f,%.2f,%.2f) fov=%.1f",
+                       st.x, st.y, st.z, st.pitch, st.yaw, st.roll, st.fov);
+            char buf[192];
+            snprintf(buf, sizeof(buf),
+                     "x=%.4f y=%.4f z=%.4f "
+                     "pitch=%.4f yaw=%.4f roll=%.4f "
+                     "fov=%.4f\n",
+                     st.x, st.y, st.z,
+                     st.pitch, st.yaw, st.roll, st.fov);
+            reply(client, buf);
+        } else {
+            reply(client, "error: read_failed\n");
+        }
+        return true;
+    }
+
+    /* Enable per-tick camera override (write side wired in a follow-up). */
+    if (cmd == "__cam_mem_on") {
+        if (!g_cam_pov_ptr && !find_cam_pov()) {
+            reply(client, "error: pov_not_found\n");
+            return true;
+        }
+        g_camera_override = true;
+        reply(client, "ok override=on\n");
+        return true;
+    }
+
+    if (cmd == "__cam_mem_off") {
+        g_camera_override = false;
+        reply(client, "ok override=off\n");
+        return true;
+    }
+
     /* Write a typed value into the camera struct.
      * Format: __cam_mem_poke <addr_hex> <offset_hex_or_dec> <type> <value>
      * Types:  f32, f64, i32, u32 */
@@ -930,6 +1014,10 @@ static void shutdown()
 
     /* Restore all NOPped/CAPTURE sites before the DLL unloads. */
     cam_intercept_uninstall_all();
+
+    /* Disarm camera memory override so the tick thread (when write
+     * support lands) cannot fight the natural unload sequence. */
+    g_camera_override = false;
 
     /* Stop tick thread */
     g_tick_running = false;
