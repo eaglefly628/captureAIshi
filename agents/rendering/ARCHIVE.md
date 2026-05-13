@@ -7,6 +7,7 @@
 
 ### Closed TODOs
 
+- [x] **P0: RenderDoc trajectory 每 pose 触发链路断了** (spotted by 主程序员, fixed 03ce4a8 by 小萱) — `trajectory_player.py` 改 isinstance(g, ReShadeGrabber) 派发: ReShade→`__fc_capture`, 其他→`g.trigger_capture()`. `__cam_rdc_capture` 字符串从 Python 全清 (grep 0 命中). 验收 Batman/StackOBot/ReShade 三路径不回归.
 - [x] **P1: 99308e9 EXR depth 没补 requirements.txt** (spotted by 小逆, fixed 1d53bf2) — `image_loader.load_depth_image` 三选一 cv2/imageio/OpenEXR 全没装的话整批 capture 的 depth 都会失败（用户报告：rgb+normal 出图但 depth 为 0）。已加 `opencv-python>=4.5.0`。下次改 file format 麻烦顺手 bump deps。
 - [x] **P0: RGB 导出抓了 SwapBuffer 而不是 SceneColor** — Fixed: exportframe 现在用 SceneColor (第一个 Float ColorTarget) 作为 RGB 源，SwapBuffer 仅用于确定 viewport 分辨率。非 UE5 游戏如果没有 HDR ColorTarget 会 fallback 到 SwapBuffer。
 - [x] **P1: batch export 路径缺 normalImg** — Fixed: `to_trajectory_dict()` 新增 `normal_filename` 参数，per-frame 和 batch 两条路径都填充 `normalImg`。
