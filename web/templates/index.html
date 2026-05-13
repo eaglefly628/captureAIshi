@@ -3176,7 +3176,7 @@ pollSessions();pollCaptures();
              addon's FC_PreUISkipCount gets persisted so subsequent runs skip survey. -->
         <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
           <span style="color:#aaa;font-size:11px;min-width:56px" title="Pre-UI capture skip count: per-game survey (~30s) finds the right value. Get into actual 3D gameplay first.">Pre-UI:</span>
-          <button class="btn btn-accent" onclick="reshadeSurvey()" title="Run pre-UI skip survey on the running game (ReShade grabber only). Wait until you are in actual gameplay; survey will fail at menu/loading screen.">Run Pre-UI Survey</button>
+          <button class="btn btn-accent" onclick="reshadeSurvey()" title="Run pre-UI skip survey on the running game (ReShade grabber only). Wait until you are in actual gameplay; survey will fail at menu/loading screen. Uses Focus Delay so you have time to Alt+Tab back into the game before the probe fires.">Run Pre-UI Survey</button>
           <span id="reshadeSurveyStatus" style="flex:1;color:#888;font-family:monospace;font-size:11px;padding:3px 6px;background:#0f0f23;border:1px solid #333;border-radius:4px">(not surveyed)</span>
         </div>
 
@@ -3468,10 +3468,21 @@ function _afterFocusDelay(fn){
 
 function reshadeSurvey(){
   var status = document.getElementById('reshadeSurveyStatus');
+  // Reuse the Focus Delay knob (same one Capture / Play use) so the user
+  // has time to Alt+Tab back into the game before the survey probe fires.
+  var delay = focusDelay();
   status.style.color = '#fc6';
-  status.textContent = 'running (~30s); keep game in 3D gameplay...';
-  debugAppend('> reshade/survey');
-  fetch('/api/reshade/survey',{method:'POST'})
+  if(delay > 0){
+    status.textContent = 'sleeping '+delay+'s -- Alt+Tab back NOW; close menus';
+  } else {
+    status.textContent = 'running (~30s); keep game in 3D gameplay...';
+  }
+  debugAppend('> reshade/survey delay='+delay+'s');
+  fetch('/api/reshade/survey',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({delay:delay}),
+  })
     .then(r=>r.json().then(d=>({status:r.status,body:d})))
     .then(o=>{
       var d = o.body;

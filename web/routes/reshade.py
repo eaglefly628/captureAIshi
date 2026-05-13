@@ -11,8 +11,9 @@ addon learns F6, this endpoint stays useful for headless / CI flows.
 from __future__ import annotations
 
 import logging
+import time
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 bp = Blueprint("reshade", __name__)
 logger = logging.getLogger(__name__)
@@ -27,6 +28,13 @@ def reshade_survey():
     you call this from the publisher logos or main menu, the survey
     returns no recommendation and you can retry once gameplay starts.
 
+    Optional ``delay`` query/body parameter (seconds, 0-30, default 0):
+    sleep N seconds BEFORE starting the survey so the user has time to
+    Alt+Tab back into the game and close any open Web UI / overlay
+    panels.  Survey phase 1 captures the first probe frame as soon as
+    the game's next non-DSV backbuffer bind fires, so the user needs
+    that grace window to be in gameplay before the probe fires.
+
     On success: persists the recommended skip into
     ``<game_dir>/.captureAIshi_skip.txt``, rewrites unicap.ini, and
     bounces the game so the addon reads the new FC_PreUISkipCount.
@@ -36,6 +44,18 @@ def reshade_survey():
         from grabbers.reshade_grabber import ReShadeGrabber
     except ImportError as exc:
         return jsonify({"ok": False, "error": f"import: {exc}"}), 500
+
+    # Parse optional delay (seconds, clamp to [0, 30] -- 30s is plenty for
+    # any Alt+Tab + menu-close sequence).
+    delay_raw = request.values.get("delay")
+    if delay_raw is None:
+        body = request.get_json(silent=True) or {}
+        delay_raw = body.get("delay")
+    try:
+        delay_s = float(delay_raw) if delay_raw is not None else 0.0
+    except (TypeError, ValueError):
+        delay_s = 0.0
+    delay_s = max(0.0, min(30.0, delay_s))
 
     grabber = get_active_grabber()
     if grabber is None:
@@ -51,6 +71,12 @@ def reshade_survey():
                 "ReShadeGrabber; survey is ReShade-only"
             ),
         }), 409
+
+    if delay_s > 0:
+        logger.info(
+            "[/api/reshade/survey] sleeping %.1fs before survey starts "
+            "(user has window to Alt+Tab back into game)", delay_s)
+        time.sleep(delay_s)
 
     recommended = grabber.run_pre_ui_survey()
     if recommended is None:
