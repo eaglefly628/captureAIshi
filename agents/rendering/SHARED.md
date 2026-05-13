@@ -262,6 +262,29 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
     # CI 自动合并到 claudeMainBranch
     ```
 
+- [ ] **P2: F6 in-game trigger for survey capture** (handoff to 小宣6 from 用户 2026-05-13)
+
+  痛点：当前要触发一次 capture 必须 Alt+Tab 切回 Web UI 点按钮 —— 全屏游戏下打断沉浸 + 切回时机不可控。
+
+  方向：
+  1. `bridge.cpp`（已有 hotkey 钩子框架的话）或 `frame_capture.cpp` 的
+     每帧 hook 里加 `GetAsyncKeyState(VK_F6)` **边沿触发**（记上一帧的
+     按下状态，仅在 released->pressed 转换点触发，避免连发）
+  2. 触发后调 `__fc_survey_start` 内部入口（已有 TCP 命令；本地直接调
+     函数即可，不用走 socket round-trip）
+  3. Hotkey 应可配（ini key `FC_TriggerHotkey`，默认 `VK_F6=0x75`）；
+     UI checkbox "Enable In-Game Hotkey" gate 一下
+  4. 跟现有 frame_capture / fc_survey 流不冲突 —— 是新的触发源，不
+     改 capture pipeline 本身
+
+  **风险**：
+  - GetAsyncKeyState 在不获焦窗口也会返回真，可能误触发 —— 加
+     `GetForegroundWindow() == g_game_hwnd` 做 gate
+  - 某些游戏吃所有键盘（DirectInput exclusive）—— 用 RegisterHotKey 而非
+     GetAsyncKeyState 反而更稳，因为是 Win32 message queue 注入
+
+  **工时**: 1-2h（含两种实现方式择一 + UI checkbox + ini key + 烟测）
+
 ## TODO (from lead review)
 
 - [x] **P2: depth_curve 跨域改动** (spotted by 小逆, reviewed by 小萱 2026-05-12) — 用户报告 Batman PNG 远景 city 段塌成 near-white。我在 `image_loader._normalize_depth` 加了 `depth_curve` 参数（"linear" / "gamma" / "log"），`batman_ak.json` 默认 "log"。代码在你域 (grabbers/) 里，麻烦 review 一下：(1) curve 实现是否合理（log on raw before percentile，保留 monotonic 极性）；(2) 其他 outdoor 配置（ac6 / metro_exodus / black_myth_wukong）也建议默认 "log"；(3) 字段已加到 `_schema.md`。
