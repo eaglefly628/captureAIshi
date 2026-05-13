@@ -1,12 +1,19 @@
 /*
  * ue5_engine.h -- UE5 engine interface for captureAIshi bridge
  *
- * WARNING: This header contains static global state. It MUST only be
- * included from a single translation unit (console_server.h -> core.cpp).
- * Including from multiple .cpp files will create independent copies.
+ * Orchestrator header: defines the engine-wide globals, type stubs, and SEH
+ * helpers used by the implementation files included at the bottom, then
+ * provides high-level helpers (exec_console_command, HUD toggle, timestop,
+ * free-camera commands, hotsampling) layered on top.
  *
- * Locates GEngine and key engine functions via pattern scanning,
- * provides console command execution, timestop, and camera control.
+ * WARNING: This header contains static global state. It MUST only be
+ * included from a single translation unit (bridge.cpp). Including from
+ * multiple .cpp files will create independent copies.
+ *
+ * Build requirement: TU including this header MUST be compiled with /EHa
+ * (Async exception handling) so __try blocks can coexist with C++ stack
+ * objects that have destructors. ReShade.vcxproj sets /EHa explicitly for
+ * bridge.cpp via per-file AdditionalOptions.
  *
  * ASCII only (MSVC C4819 compliance).
  */
@@ -20,17 +27,20 @@
 #include <windows.h>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <atomic>
 #include <cmath>
+#include <mutex>
 
 #include "pattern_scan.h"
 
 /* Forward-declare bridge_log from bridge.cpp */
 extern void bridge_log(const char* fmt, ...);
 
-/* ── UE5 type stubs ──────────────────────────────────────────────── */
+/* -- UE5 type stubs ------------------------------------------------ */
 
 /* We only need opaque pointers; no real UE5 headers needed */
 typedef void UEngine;
@@ -38,31 +48,7 @@ typedef void UWorld;
 typedef void APlayerController;
 typedef void FOutputDevice;
 
-/* ── GEngine finder ──────────────────────────────────────────────── */
-
-/*
- * GEngine is THE god pointer in UE5. Finding it unlocks:
- *   - Console command execution (Exec)
- *   - World access (GetWorld)
- *   - Player controller access
- *   - Viewport manipulation
- *
- * Strategy (ordered by reliability):
- *
- * 1. String xref method:
- *    - Find string "r.HLOD" or "r.Streaming.PoolSize" in .rdata
- *    - Find LEA instructions referencing that string
- *    - Near those LEAs, find MOV rax,[rip+X] loading GEngine
- *    - This works because CVar registration code always loads
- *      GEngine or GConsoleManager nearby
- *
- * 2. FEngineLoop::PreInit pattern:
- *    - After engine creation, there's always:
- *      48 89 05 ?? ?? ?? ??   mov [rip+offset], rax  (store GEngine)
- *    - Followed by engine init sequence
- *
- * 3. Manual offset via env var or TCP command (fallback)
- */
+/* -- GEngine globals ----------------------------------------------- */
 
 static UEngine*          g_engine_ptr = nullptr;
 static std::atomic<bool> g_engine_found{false};
@@ -70,28 +56,168 @@ static std::atomic<bool> g_engine_found{false};
 /* Address of the GEngine global variable itself (not the pointer value) */
 static uintptr_t         g_engine_global_addr = 0;
 
-/* ── Exec function ───────────────────────────────────────────────── */
+/* -- UWorld globals (used by ue5_scan_world.h / ue5_scan_camera.h) - */
+
+/* g_world_from_gua: true when g_world_ptr was set by the GUA scan
+ * (reliable). When true, future FExec hooks would not overwrite it. */
+static void*             g_world_ptr = nullptr;
+static bool              g_world_from_gua = false;
+
+/* -- FExec typedef + globals (referenced by ue5_scan_engine.h) ----- */
+
+/* FExec::Exec signature (secondary-vtable entry on UEngine multi-inherit). */
+typedef bool (__fastcall *FExecExecFn)(
+    void* this_fexec,     /* rcx = FExec subobject (GEngine + offset) */
+    void* world,          /* rdx = UWorld* (NULL ok for most cmds) */
+    const wchar_t* cmd,   /* r8  = command string */
+    void* output_device   /* r9  = FOutputDevice& */
+);
+
+static FExecExecFn g_fexec_exec   = nullptr;
+static uintptr_t   g_fexec_offset = 0;   /* byte offset in GEngine */
+
+/* -- GUObjectArray constants --------------------------------------- */
 
 /*
- * UEngine::Exec is NOT a simple virtual call in shipped games.
- * Instead, we find and call these two alternatives:
- *
- * Option A: GEngine->Exec(UWorld*, const TCHAR*, FOutputDevice&)
- *   - Virtual function, vtable index varies per UE version
- *   - Risky: wrong index = crash
- *
- * Option B: FExec::Exec(UWorld*, const TCHAR*, FOutputDevice&)
- *   - Static/global function, can be found by pattern scan
- *   - Safer: direct call, no vtable lookup needed
- *
- * Option C: UGameplayStatics::ExecuteConsoleCommand() via ProcessEvent
- *   - Uses UE5 reflection system
- *   - Most robust but requires finding UObject::ProcessEvent
- *
- * We use Option A with validation: scan for the Exec function
- * prologue pattern and verify it looks correct before calling.
- *
- * In x64 MSVC, __thiscall uses rcx=this (same as __fastcall).
+ * GUObjectArray (FUObjectArray) is the master UObject registry.
+ * Layout (UE5, x64): see ue5_scan_engine.h header comment for details.
+ */
+#define GUOBJARRAY_OBJECTS_OFF    16
+#define GUOBJARRAY_NUMELEMS_OFF   36
+#define FUOBJECTARRAY_CHUNK_SHIFT 16
+#define FUOBJECTARRAY_CHUNK_MASK  0xFFFF
+
+/* -- UEVersionLayout (per-version memory offset table) ------------- */
+
+struct UEVersionLayout {
+    const char* name;
+
+    /* FUObjectItem */
+    int  fuobjectitem_stride;    /* 24=Shipping, 32=Dev/WithVerseVM */
+    int  fuobjectitem_obj_off;   /* offset of UObjectBase* inside item */
+
+    /* UObjectBase::ObjectFlags (32-bit EObjectFlags, 0x08 for UE4/5) */
+    int  ue_obj_flags_off;
+
+    /* FField chain (UStruct::ChildProperties walk) */
+    int  ffield_next_off;
+    int  ffield_name_off;
+    int  fprop_offset_off;
+    int  ustruct_childprops_off;
+    int  ustruct_super_off;
+
+    /* UPlayer / ULocalPlayer chain */
+    int  uplayer_pc_off;
+    int  ulp_vc_off;
+
+    /* UEngine / UGameViewportClient */
+    int  uengine_gvc_off;
+    int  ugvc_world_off;
+
+    /* FMinimalViewInfo inside FCameraCacheEntry */
+    bool fmvi_is_lwc;
+    int  fcce_pov_off;
+    int  fmvi_loc_x, fmvi_loc_y, fmvi_loc_z;
+    int  fmvi_pitch, fmvi_yaw,   fmvi_roll;
+    int  fmvi_fov;
+
+    /* FMinimalViewInfo direct offset from APlayerCameraManager base */
+    int  cam_pov_direct_off;
+
+    /* APlayerController -> APlayerCameraManager UUU-style probe */
+    int  pc_pcm_start;
+    int  pc_pcm_end;
+    int  pc_pcm_step;
+};
+
+/* UE5.7 -- VERIFIED StackOBot UE5.7 Dev */
+static const UEVersionLayout k_layout_ue57 = {
+    "UE5.7",
+    32,   0x08,
+    0x08,
+    0x18, 0x20, 0x44, 0x50, 0x40,
+    0x30, 0x78,
+    0x200, 0x78,
+    true,  0x08,
+    0x00,  0x08,  0x10,
+    0x18,  0x20,  0x28,
+    0x30,
+    0x360,
+    0x388, 0x398, 8,
+};
+
+/* UE5.3-5.6 -- INFERRED */
+static const UEVersionLayout k_layout_ue53 = {
+    "UE5.3-5.6",
+    24,   0x00,
+    0x08,
+    0x18, 0x20, 0x44, 0x50, 0x40,
+    0x30, 0x78,
+    0x200, 0x78,
+    true,  0x08,
+    0x00,  0x08,  0x10,
+    0x18,  0x20,  0x28,
+    0x30,
+    0,
+    0x2A0, 0x360, 8,
+};
+
+/* UE5.0-5.2 -- INFERRED */
+static const UEVersionLayout k_layout_ue50 = {
+    "UE5.0-5.2",
+    24,   0x00,
+    0x08,
+    0x20, 0x28, 0x4C, 0x50, 0x40,
+    0x30, 0x78,
+    0x200, 0x78,
+    true,  0x08,
+    0x00,  0x08,  0x10,
+    0x18,  0x20,  0x28,
+    0x30,
+    0,
+    0x2A0, 0x340, 8,
+};
+
+/* UE4.27 -- INFERRED */
+static const UEVersionLayout k_layout_ue427 = {
+    "UE4.27",
+    24,   0x00,
+    0x08,
+    0x20, 0x28, 0x4C, 0x50, 0x40,
+    0x30, 0x78,
+    0x200, 0x78,
+    false, 0x10,
+    0x00,  0x04,  0x08,
+    0x0C,  0x10,  0x14,
+    0x18,
+    0,
+    0x2A0, 0x2C0, 8,
+};
+
+/* Active layout -- default UE5.7; override at startup for other games */
+static const UEVersionLayout* g_ue_layout = &k_layout_ue57;
+
+/* FUObjectItem layout -- detected at runtime via GEngine cross-validation. */
+static int g_fuobjectitem_stride    = 24;
+static int g_fuobjectitem_object_off = 0;
+
+static void*              g_guobjectarray = nullptr;
+static std::atomic<bool>  g_guobjectarray_found{false};
+
+/* -- Debug break support ------------------------------------------- */
+
+/* When armed (via TCP command), bridge calls __debugbreak() at the next
+ * UWorld/LocalPlayer discovery for attach-from-debugger workflows.
+ * One-shot: auto-disarms after the first break fires. */
+static std::atomic<bool> g_debug_break_armed{false};
+
+/* -- Exec function (slim UEngine::Exec vtable path) ---------------- */
+
+/*
+ * UEngine::Exec via primary vtable.  Different from FExec::Exec above:
+ * this is the per-engine virtual call at vtable[~110-130], not the
+ * secondary-vtable FExec subobject entry.  Used by exec_console_command
+ * below when bridge_log/etc forward simple console commands.
  */
 typedef bool (__fastcall *ExecFn)(
     void* engine,         /* rcx = this (GEngine) */
@@ -102,34 +228,28 @@ typedef bool (__fastcall *ExecFn)(
 
 static ExecFn g_exec_fn = nullptr;
 
-/* ── GLog (default output device) ────────────────────────────────── */
-
-/* GLog is UE5's global log output device, needed for Exec() calls.
- * We find it the same way as GEngine: string xref scan.
- * If not found, we pass NULL (most commands still work). */
+/* GLog is UE5's global log output device.  Currently unused (passed as
+ * NULL is safe for most commands); kept for future wiring. */
 static void* g_log_ptr = nullptr;
 
-/* ── SEH-safe helpers ──────────────────────────────────────────────────
+/* -- SEH-safe helpers ----------------------------------------------
  *
- * MSVC __try / __except cannot appear in a function whose stack has any
- * C++ object with a non-trivial destructor (error C2712 under /EHsc, and
- * under ReShade's per-Config /EH-disabled setting where /EHa is not on
- * the command line).
+ * Two flavors live here:
  *
- * These helpers isolate every SEH-guarded operation into a tiny pure-C
- * style function with NO C++ destructor objects, so __try is always
- * legal regardless of how the host TU is compiled. Callers stay in
- * normal C++ land.
+ * 1. The original slim helpers (`*_ok` variants writing to out-params)
+ *    used by exec_console_command and other slim code paths.  These
+ *    isolate SEH into pure-C wrappers in case the host TU lacks /EHa.
  *
- * Path A's renderdoc/renderdoc/core/bridge/ue5_engine.h uses the same
- * pattern (see seh_read_ptr / seh_read_u32_ok there). */
+ * 2. The RDC-style helpers (`seh_read_ptr` returning uintptr_t, etc.)
+ *    used by ue5_scan_engine.h, ue5_scan_world.h, ue5_scan_camera.h.
+ *    These rely on /EHa being on for bridge.cpp (set in ReShade.vcxproj).
+ */
 
 #pragma warning(push)
 #pragma warning(disable: 4733)  /* SEH installed via try/except */
 
-/* Probe-read: returns true if dereferencing `addr` as a pointer-sized
- * value does not raise an access violation. The actual value is
- * discarded. */
+/* -- Slim *_ok helpers (used by exec_console_command) -- */
+
 static bool seh_probe_read(const void* addr)
 {
     __try {
@@ -142,7 +262,6 @@ static bool seh_probe_read(const void* addr)
     }
 }
 
-/* Read a pointer-sized value safely. Writes to *out on success. */
 static bool seh_read_ptr_ok(const void* addr, uintptr_t* out)
 {
     __try {
@@ -154,7 +273,6 @@ static bool seh_read_ptr_ok(const void* addr, uintptr_t* out)
     }
 }
 
-/* Read a single byte safely. Used for function-prologue sniffing. */
 static bool seh_read_u8_ok(const void* addr, uint8_t* out)
 {
     __try {
@@ -166,11 +284,6 @@ static bool seh_read_u8_ok(const void* addr, uint8_t* out)
     }
 }
 
-/* Call a 4-argument function pointer (UE5 FExec::Exec signature is
- * Exec(this, world, cmd, output)) inside an SEH guard. Returns true on
- * normal return, false on access violation. The function's own return
- * value is intentionally ignored -- the bridge only cares whether the
- * call survived. */
 typedef void* SehExec4Args[4];
 static bool seh_call_exec4(void* fn, void* p1, void* p2, void* p3, void* p4)
 {
@@ -185,9 +298,52 @@ static bool seh_call_exec4(void* fn, void* p1, void* p2, void* p3, void* p4)
     }
 }
 
+/* -- RDC-style helpers (used by ue5_scan_*.h) -- */
+
+/* Safely read a pointer value; returns 0 on access violation. */
+static uintptr_t seh_read_ptr(const void* addr)
+{
+    __try {
+        return *(const uintptr_t*)addr;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+/* Safely read a uint32_t with success flag; returns false on AV. */
+static bool seh_read_u32_ok(const void* addr, uint32_t* out)
+{
+    __try {
+        *out = *(const uint32_t*)addr;
+        return true;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 #pragma warning(pop)
 
-/* ── Camera struct ───────────────────────────────────────────────── */
+/* -- validate_function_ptr (forward-declared in ue5_scan_engine.h) - */
+
+/*
+ * Check that fn looks like a real x64 function entry point: low-address
+ * filter + first-byte prologue sniff.  Single body shared between the
+ * slim exec_console_command path and the scan_*.h files.
+ */
+static bool validate_function_ptr(void* fn)
+{
+    if (!fn || (uintptr_t)fn < 0x10000) return false;
+    uint8_t b0 = 0;
+    if (!seh_read_u8_ok(fn, &b0)) return false;
+    return (b0 == 0x40 || b0 == 0x48 || b0 == 0x4C ||
+            b0 == 0x41 || b0 == 0x55 || b0 == 0x53 ||
+            b0 == 0x56 || b0 == 0x57 || b0 == 0xE9 ||
+            b0 == 0xCC);
+}
+
+/* -- Camera struct ------------------------------------------------- */
 
 struct CameraState {
     float x, y, z;           /* position (UE5 units = cm) */
@@ -195,255 +351,30 @@ struct CameraState {
     float fov;               /* field of view (degrees) */
 };
 
-/* Live camera state - written by camera path playback or TCP commands */
+/* Live camera state -- written by camera path playback or TCP commands. */
 static CameraState g_camera = {0, 0, 0, 0, 0, 0, 90.0f};
 static std::atomic<bool> g_camera_override{false};
 
-/* ── Game speed ──────────────────────────────────────────────────── */
+/* -- Game speed ---------------------------------------------------- */
 
 static float g_game_speed = 1.0f;
 static std::atomic<bool> g_paused{false};
 
-/* ── Implementation ──────────────────────────────────────────────── */
+/* -- Implementation files included here ----------------------------
+ *
+ * Each file is ONLY ever included from here -- never standalone.  Include
+ * order is critical: each file depends on globals and forward decls
+ * defined above. */
+#include "ue5_scan_engine.h"   /* GEngine, GUObjectArray, FNamePool */
+#include "ue5_scan_world.h"    /* UWorld, ULocalPlayer              */
+#include "ue5_scan_camera.h"   /* PCM, cam_pov, cross-validation    */
 
-/*
- * Try to find GEngine via string cross-reference method.
+/* -- High-level helpers (slim path) --------------------------------
  *
- * UE5 always has CVars like "r.HLOD" registered at startup.
- * The CVar registration code contains a LEA to the string
- * and a nearby reference to GConsoleManager or GEngine.
- *
- * More reliably, we search for the wide string L"GEngine"
- * which appears in UE5's FName table initialization and
- * logging code. Code referencing this string will typically
- * load GEngine via mov rax, [rip+offset] within ~200 bytes.
+ * exec_console_command and friends use the primary UEngine::Exec vtable
+ * (slim approach), independent of the FExec hook machinery that the RDC
+ * path uses.  No FExec hooks are installed on the ReShade side.
  */
-static bool find_gengine_via_string_xref()
-{
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) {
-        bridge_log("ERROR: Failed to get main module info");
-        return false;
-    }
-
-    bridge_log("Game module: base=0x%p, size=%zu MB",
-               rgn.base, rgn.size / (1024 * 1024));
-
-    /*
-     * Strategy 1: Find L"ToggleDebugCamera" wide string.
-     * This string is always present in shipped UE5 games and is
-     * processed by code that accesses GEngine->GameViewport or
-     * the player controller. Nearby code loads GEngine.
-     */
-    const wchar_t* search_strings[] = {
-        L"ToggleDebugCamera",
-        L"r.Streaming.PoolSize",
-        L"GEngine",
-        L"SetViewLocation",
-    };
-
-    for (const wchar_t* search_str : search_strings) {
-        const uint8_t* str_addr = find_wstring_in_module(
-            rgn.base, rgn.size, search_str);
-
-        if (!str_addr) {
-            bridge_log("String L\"%ls\" not found, trying next...",
-                       search_str);
-            continue;
-        }
-
-        bridge_log("Found L\"%ls\" at offset 0x%llX",
-                   search_str,
-                   (unsigned long long)(str_addr - rgn.base));
-
-        /* Find all code references to this string */
-        auto xrefs = find_xrefs(rgn.base, rgn.size, (uintptr_t)str_addr);
-        bridge_log("  Found %zu cross-references", xrefs.size());
-
-        for (const uint8_t* xref : xrefs) {
-            bridge_log("  Xref at offset 0x%llX",
-                       (unsigned long long)(xref - rgn.base));
-
-            /*
-             * Search backward and forward from the xref for a
-             * MOV reg, [rip+X] pattern that loads a global pointer.
-             * GEngine is typically accessed within 512 bytes of
-             * any code that uses these strings.
-             *
-             * Pattern: 48 8B 05/0D/15/1D/25/2D/35/3D ?? ?? ?? ??
-             *          (mov r64, [rip+disp32])
-             */
-            const uint8_t* search_start = xref - 256;
-            if (search_start < rgn.base)
-                search_start = rgn.base;
-            const uint8_t* search_end = xref + 512;
-            if (search_end > rgn.base + rgn.size - 7)
-                search_end = rgn.base + rgn.size - 7;
-
-            for (const uint8_t* p = search_start; p < search_end; p++) {
-                if (p[0] != 0x48 || p[1] != 0x8B) continue;
-                /* ModRM: mod=00, rm=101 means [rip+disp32] */
-                if ((p[2] & 0xC7) != 0x05) continue;
-
-                uintptr_t resolved = resolve_rip_relative(p, 3, 7);
-
-                /* Validate: the resolved address should be in the
-                 * module's data section (.data or .bss), which is
-                 * typically in the upper portion of the image. */
-                if (resolved < (uintptr_t)rgn.base ||
-                    resolved >= (uintptr_t)(rgn.base + rgn.size))
-                    continue;
-
-                /* Read the pointer value at that address.
-                 * SEH-safe: module range can contain uncommitted pages
-                 * (DRM/AC may rewrite page protection after mapping);
-                 * a raw deref on such a page crashes the game. */
-                if (!seh_probe_read((const void*)resolved))
-                    continue;
-                void* candidate = *(void**)resolved;
-                if (!candidate) continue;
-
-                /* Basic validation: the pointer should point to
-                 * a valid-looking object (not stack, not too low).
-                 * UE5 objects are heap-allocated, typically >0x10000. */
-                if ((uintptr_t)candidate < 0x10000) continue;
-
-                /* Check if the pointed-to object has a vtable
-                 * (first 8 bytes should be a valid pointer too).
-                 * Refactored: SEH-safe read first, then C++ logic outside
-                 * __try (so std::vector / std::wstring on this stack do
-                 * not trip C2712). */
-                uintptr_t vtable = 0;
-                if (!seh_read_ptr_ok(candidate, &vtable))
-                    continue;
-                if (vtable < 0x10000)
-                    continue;
-
-                /* This looks like a valid engine pointer! */
-                g_engine_global_addr = resolved;
-                g_engine_ptr = (UEngine*)candidate;
-                g_engine_found = true;
-
-                bridge_log("GEngine FOUND via '%ls' xref!",
-                           search_str);
-                bridge_log("  Global addr: 0x%llX (offset 0x%llX)",
-                           (unsigned long long)resolved,
-                           (unsigned long long)(resolved - (uintptr_t)rgn.base));
-                bridge_log("  Pointer value: 0x%p", candidate);
-                bridge_log("  VTable: 0x%llX", (unsigned long long)vtable);
-
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-/*
- * Try to find GEngine via manual offset (env var or TCP command).
- */
-static bool find_gengine_via_offset(uintptr_t offset)
-{
-    ModuleRegion rgn;
-    if (!get_main_module(rgn)) return false;
-
-    if (offset >= rgn.size) {
-        bridge_log("ERROR: Offset 0x%llX exceeds module size",
-                   (unsigned long long)offset);
-        return false;
-    }
-
-    uintptr_t addr = (uintptr_t)rgn.base + offset;
-    /* SEH-safe: user-supplied offset may point into an uncommitted or
-     * DRM-protected page. Raw deref would kill the game process. */
-    void* candidate = NULL;
-    {
-        uintptr_t tmp = 0;
-        if (seh_read_ptr_ok((const void*)addr, &tmp)) {
-            candidate = (void*)tmp;
-        } else {
-            bridge_log("WARNING: Offset 0x%llX caused access violation",
-                       (unsigned long long)offset);
-            return false;
-        }
-    }
-
-    if (!candidate) {
-        bridge_log("WARNING: Offset 0x%llX yielded NULL/unreadable pointer",
-                   (unsigned long long)offset);
-        return false;
-    }
-
-    g_engine_global_addr = addr;
-    g_engine_ptr = (UEngine*)candidate;
-    g_engine_found = true;
-
-    bridge_log("GEngine set via offset 0x%llX -> 0x%p",
-               (unsigned long long)offset, candidate);
-    return true;
-}
-
-/*
- * Master GEngine finder: tries all methods in order.
- */
-static bool find_gengine()
-{
-    /* Method 1: env var override */
-    const char* env_offset = getenv("CAPTUREAI_GENGINE_OFFSET");
-    if (env_offset) {
-        uintptr_t offset = strtoull(env_offset, NULL, 16);
-        if (find_gengine_via_offset(offset))
-            return true;
-    }
-
-    /* Method 2: automatic string xref scan */
-    bridge_log("Starting GEngine auto-scan...");
-    if (find_gengine_via_string_xref())
-        return true;
-
-    bridge_log("WARNING: GEngine not found automatically. "
-               "Use __bridge_set_offset <hex> via TCP, "
-               "or set CAPTUREAI_GENGINE_OFFSET env var.");
-    return false;
-}
-
-/* ── Console command execution ───────────────────────────────────── */
-
-/*
- * Execute a UE5 console command via GEngine->Exec().
- *
- * When g_exec_fn is found (via pattern scan), we call it directly.
- * Otherwise, we fall back to the virtual function call through
- * the vtable at a known index.
- *
- * UE5 Exec is at different vtable indices per version:
- *   UE 5.0-5.1: ~index 114-118
- *   UE 5.2-5.3: ~index 116-120
- *   UE 5.4+:    ~index 118-122
- *
- * We validate by checking that the function at the index
- * starts with a valid prologue (push rbp / sub rsp / mov).
- */
-
-/* Validate a function pointer looks like a real function */
-static bool validate_function_ptr(void* fn)
-{
-    if (!fn || (uintptr_t)fn < 0x10000) return false;
-
-    /* Check for common x64 function prologues: 40 55, 48 89 5C, 48 83 EC,
-     * 48 8B C1, 4C 89 44, 41 56, 55, 53, etc. SEH-guarded read since fn
-     * may point at unmapped memory. */
-    uint8_t b0 = 0;
-    if (!seh_read_u8_ok(fn, &b0)) return false;
-    if (b0 == 0x40 || b0 == 0x48 || b0 == 0x4C ||
-        b0 == 0x41 || b0 == 0x55 || b0 == 0x53 ||
-        b0 == 0x56 || b0 == 0x57 || b0 == 0xE9 ||
-        b0 == 0xCC) {
-        return true;
-    }
-    return false;
-}
 
 static bool exec_console_command(const char* cmd)
 {
@@ -463,33 +394,13 @@ static bool exec_console_command(const char* cmd)
     std::vector<wchar_t> wcmd(wlen);
     MultiByteToWideChar(CP_UTF8, 0, cmd, -1, wcmd.data(), wlen);
 
-    /*
-     * Call through vtable. UEngine::Exec is a virtual function.
-     *
-     * vtable layout (simplified):
-     *   vptr -> [0]: destructor
-     *           [1]: ...
-     *           [N]: Exec(UWorld*, TCHAR*, FOutputDevice&)
-     *
-     * We try indices 110-130 and validate each looks like Exec
-     * by checking the function prologue and attempting a safe call.
-     *
-     * The Exec function signature in x64 MSVC __fastcall:
-     *   rcx = this (UEngine*)
-     *   rdx = UWorld* (NULL for global commands)
-     *   r8  = const TCHAR* (command)
-     *   r9  = FOutputDevice& (GLog or NULL)
-     */
-
     uintptr_t* vtable = *(uintptr_t**)g_engine_ptr;
     if (!vtable || (uintptr_t)vtable < 0x10000) {
         bridge_log("  ERROR: Invalid vtable pointer");
         return false;
     }
 
-    /* If we already found the Exec function, call it directly. Cached
-     * call is the hot path; SEH-guarded since vtable contents can be
-     * patched out from under us by anti-cheat. */
+    /* If we already found the Exec function, call it directly. */
     if (g_exec_fn) {
         void* cmd_ptr = (void*)wcmd.data();
         if (seh_call_exec4((void*)g_exec_fn, g_engine_ptr, NULL, cmd_ptr, g_log_ptr)) {
@@ -501,16 +412,12 @@ static bool exec_console_command(const char* cmd)
         return false;
     }
 
-    /* Probe vtable to find Exec using a safe no-op command first.
-     * "stat none" is benign: disables all stat overlays, no side effects.
-     * Only after we confirm the correct vtable index do we run the
-     * user's actual command. */
+    /* Probe vtable to find Exec using a safe no-op command first. */
     bridge_log("  Probing vtable for Exec with safe command...");
 
     const wchar_t* probe_cmd = L"stat none";
 
     for (int idx = 110; idx <= 130; idx++) {
-        /* Read vtable[idx] safely (vtable might be shorter than expected). */
         uintptr_t fn_addr = 0;
         if (!seh_read_ptr_ok(&vtable[idx], &fn_addr)) continue;
         void* fn = (void*)fn_addr;
@@ -518,15 +425,12 @@ static bool exec_console_command(const char* cmd)
 
         ExecFn try_exec = (ExecFn)fn;
 
-        /* Probe with safe command first ("stat none"). If the call AVs
-         * we skip to next index; if it returns we cache the index. */
         if (!seh_call_exec4((void*)try_exec, g_engine_ptr, NULL, (void*)probe_cmd, g_log_ptr))
             continue;
 
         g_exec_fn = try_exec;
         bridge_log("  Found Exec at vtable[%d] = 0x%p", idx, fn);
 
-        /* Now run the actual user command */
         void* cmd_ptr = (void*)wcmd.data();
         if (!seh_call_exec4((void*)g_exec_fn, g_engine_ptr, NULL, cmd_ptr, g_log_ptr)) {
             bridge_log("  ERROR: Cached Exec crashed on user command");
@@ -541,7 +445,7 @@ static bool exec_console_command(const char* cmd)
     return false;
 }
 
-/* ── Timestop / Game Speed ───────────────────────────────────────── */
+/* -- Timestop / Game Speed ----------------------------------------- */
 
 static bool set_game_speed(float speed)
 {
@@ -558,11 +462,11 @@ static bool toggle_pause()
     if (g_paused) {
         return set_game_speed(1.0f);
     } else {
-        return set_game_speed(0.0001f);  /* near-zero, not true 0 */
+        return set_game_speed(0.0001f);
     }
 }
 
-/* ── HUD Toggle ──────────────────────────────────────────────────── */
+/* -- HUD Toggle ---------------------------------------------------- */
 
 static bool g_hud_visible = true;
 
@@ -575,15 +479,12 @@ static bool toggle_hud()
     } else {
         exec_console_command("ShowHUD 0");
         exec_console_command("stat none");
-        /* Do NOT disable PostProcessing -- it affects GBuffer output
-         * (depth, normals) which we need for capture. ShowHUD 0 alone
-         * is sufficient to hide the game HUD. */
     }
     bridge_log("HUD %s", g_hud_visible ? "shown" : "hidden");
     return true;
 }
 
-/* ── Free Camera ─────────────────────────────────────────────────── */
+/* -- Free Camera --------------------------------------------------- */
 
 static bool g_debug_camera_active = false;
 
@@ -628,14 +529,12 @@ static bool set_fov(float fov)
     return exec_console_command(cmd);
 }
 
-/* ── Hotsampling (Window Resize) ─────────────────────────────────── */
+/* -- Hotsampling (Window Resize) ----------------------------------- */
 
 static bool hotsample(int width, int height)
 {
-    /* Find the game window */
     HWND game_wnd = NULL;
 
-    /* Walk all top-level windows, find one belonging to our process */
     struct FindCtx { DWORD pid; HWND result; };
     FindCtx ctx = { GetCurrentProcessId(), NULL };
 
@@ -648,7 +547,7 @@ static bool hotsample(int width, int height)
             GetWindowTextA(hwnd, title, sizeof(title));
             if (strlen(title) > 0) {
                 c->result = hwnd;
-                return FALSE;  /* stop */
+                return FALSE;
             }
         }
         return TRUE;
@@ -660,15 +559,12 @@ static bool hotsample(int width, int height)
         return false;
     }
 
-    /* Remove window borders for exact pixel dimensions */
     LONG style = GetWindowLongA(game_wnd, GWL_STYLE);
     SetWindowLongA(game_wnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME));
 
-    /* Resize */
     SetWindowPos(game_wnd, HWND_TOP, 0, 0, width, height,
                  SWP_NOMOVE | SWP_FRAMECHANGED);
 
-    /* Tell UE5 to update its rendering resolution */
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "r.SetRes %dx%d", width, height);
     exec_console_command(cmd);

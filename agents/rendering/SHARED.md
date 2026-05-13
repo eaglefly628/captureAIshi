@@ -99,7 +99,7 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 
 ## TODO (Handoff — 2026-05-13)
 
-- [ ] **P1: ReShade Path B — UE5 pov_ptr 扫描 + mem_find/read/on/off 路由** (handoff from 小萱 2026-05-13)
+- [x] **P1: ReShade Path B — UE5 pov_ptr 扫描 + mem_find/read/on/off 路由** (handoff from 小萱 2026-05-13, done by 小宣6 2026-05-13)
 
   **背景**: 这个 session 已经完成 ReShade 桥的 **Tier-1 (AOB intercept)** 移植，commit `4c75689`:
   - `pattern_scan.h` 加了 `scan_main_module_nth`
@@ -216,6 +216,13 @@ Capture 完成后，`output_dir/trajectory.json` 按以下 schema 逐帧写入�
 6. **3D 可视化器** 可以直接用 trajectory.json 里的 Position + Rotation 画相机锥体
 
 ## Changelog
+
+### [v0.3.0] (pending sha) — 小宣6
+- feat: ReShade Path B UE5 pov_ptr scanner — parity with RDC mem_find/read/on/off
+  - ue5_scan_engine.h (1230 LOC), ue5_scan_world.h (379), ue5_scan_camera.h (1304): verbatim port from RDC
+  - ue5_engine.h: orchestrator rewrite; remove duplicate find_gengine_via_*, add globals/typedefs (g_world_ptr, FExecExecFn, GUOBJARRAY consts, UEVersionLayout x4, g_guobjectarray, etc.), add seh_read_ptr/seh_read_u32_ok, keep slim exec/HUD/timestop/free-cam/hotsample helpers
+  - bridge.cpp: 4 new routes (__cam_mem_find/read/on/off); find lazily bootstraps find_guobjectarray since ReShade startup has no gate sequence
+  - bridge.cpp shutdown(): disarm g_camera_override before tick thread stop
 
 ### [v0.3.0] (pending sha) — 小萱
 - feat: ReShade Path B camera AOB intercept — parity with RDC Path A
