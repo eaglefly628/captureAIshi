@@ -2,6 +2,51 @@
 
 ## Active TODO
 
+- [ ] **P0 (本周主线): UI 视觉重构 + PCG 模式骨架** (from 老白 2026-05-13)
+
+  **完整规划**: `docs/ui_pcg_redesign_plan.md`（请先通读再动手；review 问题写回这条 TODO 下方）
+
+  **总目标**：
+  1. 先把现 capture UI 视觉提亮一档（Phase 0，~3 天）
+  2. 再加 PCG 双模式骨架（Phase A，~1 周），后端 stub 即可
+  3. Phase B/C（Unreal 启动 + 数据导出）等 ReShade AOB 跑通信号 + 老白 / unreal_pcg_robot 协同进入
+
+  **本周内只做 Phase 0 + Phase A 的 UI 部分**（共 ~10 天工时，分两个 commit 推）。
+
+  **Phase 0 验收清单（贴 before/after 截图过审才进 Phase A）**:
+  - 提亮 `:root` CSS variables（文档 §8 Phase 0 表）
+  - 全局颜色变量化（grep `#[0-9a-fA-F]{3,6}` 0 命中）
+  - spacing 4px 网格统一
+  - 三级 elevation tokens 应用到 panel/modal/lightbox/dropdown
+  - selected state 用 accent 染色（不再中性白）
+  - 现 capture 端到端跑一次确认 0 回归
+
+  **Phase A 验收清单**:
+  - Toolbar 加 `Capture | PCG` mode switch（默认 capture，记 `localStorage.uiMode`）
+  - PCG 模式左栏 cascade lv1（5 槽位） + lv2（场景模板四选一） + lv3（warehouse 细节示例）
+  - `web/routes/pcg.py` 8 个 stub routes 全 mock
+  - `cascadePanel.js` 抽离公用 cascade 行为（capture 模式同步用，0 回归）
+  - 中栏 / 右栏 / Debug Panel 不动，复用
+  - capture 模式跑一次确认 0 回归
+
+  **跨域注意**：
+  - `drivers/unreal_pcg.py` / `unreal_projects/` / `adapters/` 不在你域，**别建别动**——unreal_pcg_robot 接手
+  - `configs/pcg/*.json` schema 文档你跟 unreal_pcg_robot 配合，谁先到 SHARED.md 提合约谁主笔
+  - 任何碰 `web/routes/capture.py / hacks.py / obs.py / trajectory.py` 的改动，先在 rendering/SHARED.md 知会小萱
+
+  **工时预算**：Phase 0 ≤ 3 天，Phase A ≤ 5 天，加起来 ≤ 8 工日。超过的话停下来在 SHARED 报阻塞。
+
+  **节奏 & checkpoint**：
+  1. 读完文档后在本 TODO 下贴 review 问题（≥ 1 条，挑刺也行）
+  2. Phase 0 第一个 commit：CSS variables 替换 + elevation tokens
+  3. Phase 0 第二个 commit：颜色 / spacing audit + selected state 重做
+  4. Phase 0 完成截图过审
+  5. Phase A 第一个 commit：cascadePanel.js 抽离 + Toolbar mode switch
+  6. Phase A 第二个 commit：PCG sidebar cascade lv1/2/3 + stub routes
+  7. Phase A 完成截图过审
+
+  **CL 签名**：xiaoyu。每个 commit 都要在本 SHARED.md 加 CL 条目（按 versioning.md 规则 ≤ 10 行）。
+
 - [ ] **P1: a5f8859 越界修改 renderdoc_grabber.py** (spotted by 主程序员) — 补写 CL + 请小萱 review + 以后跨域先在 SHARED.md 提请求。
 - [ ] **P2: a5f8859 缺 CL 条目** (spotted by 主程序员) — 跨域 commit 缺 CL。
 - [ ] **P1: .claude/ 迁移验证** (from lead) — 验证 `.claude/agents/ui.md` 覆盖完整。
