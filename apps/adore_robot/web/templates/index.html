@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adore Robot — UE5 PCG Robotics Foundry (Preview)</title>
+<style>
+  :root {
+    --bg-base: #0e1018;
+    --bg-surface: #16181d;
+    --bg-elevated: #1c1f26;
+    --border: rgba(255,255,255,0.10);
+    --border-hover: rgba(251,146,60,0.40);
+    --text-primary: #f4f4f5;
+    --text-secondary: #b4b8c0;
+    --text-tertiary: #7a8088;
+    --accent: #fb923c;
+    --accent-soft: rgba(251,146,60,0.18);
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --shadow-card: 0 8px 30px rgba(0,0,0,0.40);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px; line-height: 1.5;
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(251,146,60,0.08), transparent 60%),
+      radial-gradient(ellipse at 80% 100%, rgba(110,161,255,0.04), transparent 60%),
+      var(--bg-base);
+  }
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    padding: 18px 48px;
+    display: flex; align-items: center; justify-content: space-between;
+    backdrop-filter: blur(8px);
+    background: rgba(14,16,24,0.65);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+  .brand-en { color: var(--text-tertiary); font-weight: 400; font-size: 13px; margin-left: 6px; }
+  .back-link { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
+  .back-link:hover { color: var(--text-primary); }
+
+  .hero { padding: 80px 48px 40px; max-width: 1100px; margin: 0 auto; }
+  .hero-tag {
+    display: inline-block; padding: 6px 14px; background: var(--accent-soft);
+    color: var(--accent); border-radius: 999px;
+    font-size: 12px; font-weight: 500; letter-spacing: 0.06em; margin-bottom: 24px;
+    border: 1px solid rgba(251,146,60,0.30);
+  }
+  .hero h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 14px; }
+  .hero h1 small { display: block; font-size: 18px; font-weight: 400; color: var(--text-tertiary); margin-top: 10px; }
+  .hero p { font-size: 16px; color: var(--text-secondary); max-width: 720px; }
+
+  .section { padding: 40px 48px; max-width: 1100px; margin: 0 auto; }
+  .section h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.01em; }
+  .section h2 small { display: inline-block; font-size: 12px; color: var(--text-tertiary); font-weight: 400; margin-left: 10px; letter-spacing: 0.04em; }
+
+  /* Phase roadmap */
+  .roadmap { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+  .phase {
+    padding: 20px; background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    position: relative;
+  }
+  .phase.current { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--bg-surface) 30%); }
+  .phase-tag { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: 8px; }
+  .phase.current .phase-tag { color: var(--accent); }
+  .phase h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .phase p { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 8px; }
+  .phase-eta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.04em; }
+
+  /* Scene templates */
+  .scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .scene {
+    padding: 24px; background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    transition: border-color 0.25s, transform 0.25s;
+  }
+  .scene:hover { border-color: var(--border-hover); transform: translateY(-4px); }
+  .scene-icon { width: 44px; height: 44px; border-radius: 10px; background: var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 14px; color: var(--accent); }
+  .scene h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .scene p { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px; }
+  .scene-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.04em; }
+
+  /* CTA */
+  .cta {
+    margin: 40px 48px 80px;
+    max-width: 1100px;
+    padding: 32px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    text-align: center;
+  }
+  .cta h2 { margin-bottom: 10px; }
+  .cta p { color: var(--text-secondary); margin-bottom: 24px; font-size: 14px; }
+  .cta button {
+    padding: 12px 28px;
+    background: var(--bg-elevated);
+    color: var(--text-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px; font-weight: 600;
+    cursor: not-allowed;
+  }
+
+  footer {
+    padding: 28px 48px; max-width: 1100px; margin: 0 auto;
+    border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-tertiary);
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    Adore Robot
+    <span class="brand-en">UE5 PCG Robotics Foundry</span>
+  </div>
+  <a href="http://localhost:5050" class="back-link">← 回到爱萌视觉训练中心</a>
+</div>
+
+<section class="hero">
+  <div class="hero-tag">PREVIEW · v0.0.1 · UE5.6 · PCG · ROBOTICS PLUGIN</div>
+  <h1>
+    程序化机器人训练场景工厂
+    <small>UE5 PCG · MRQ 多层 EXR · Cosmos Transfer · 训练数据格式适配</small>
+  </h1>
+  <p>为具身智能与世界模型团队批量生产 photoreal 训练场景。三类核心场景：warehouse / 客厅 / 工业一角，每类支持参数化变体生成 + 机器人 URDF 静态摆放 + Cosmos 后期 photoreal。</p>
+</section>
+
+<section class="section">
+  <h2>实施路线 <small>4-PHASE ROADMAP</small></h2>
+  <div class="roadmap">
+    <div class="phase current">
+      <div class="phase-tag">PHASE 0 · 当前</div>
+      <h3>视觉重构</h3>
+      <p>UI 配色提亮 + elevation tokens + 4px spacing 网格 + accent 染色 selected state。</p>
+      <div class="phase-eta">~3 天</div>
+    </div>
+    <div class="phase">
+      <div class="phase-tag">PHASE A · 下周</div>
+      <h3>双模式骨架</h3>
+      <p>Toolbar mode switch + PCG 左栏 cascade lv1/2/3 + 8 个 stub routes。</p>
+      <div class="phase-eta">~1 周</div>
+    </div>
+    <div class="phase">
+      <div class="phase-tag">PHASE B</div>
+      <h3>Unreal 启动桥接</h3>
+      <p>UnrealEditor-Cmd headless + 三类场景 PCG asset + MRQ 多层 EXR 输出。</p>
+      <div class="phase-eta">~1 周</div>
+    </div>
+    <div class="phase">
+      <div class="phase-tag">PHASE C</div>
+      <h3>数据适配器</h3>
+      <p>LeRobot dataset / RT-X TFDS / NVIDIA Isaac GR00T schema 三套导出器。</p>
+      <div class="phase-eta">~1 周</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>三类目标场景 <small>SCENE TEMPLATES</small></h2>
+  <div class="scenes">
+    <div class="scene">
+      <div class="scene-icon">▦</div>
+      <h3>Warehouse · 仓储</h3>
+      <p>50×50m，货架阵列 + 叉车通道。算法：BSP partition + grid spawner。资产：Quixel industrial pack。</p>
+      <div class="scene-meta">PLANNED · PHASE B</div>
+    </div>
+    <div class="scene">
+      <div class="scene-icon">⌂</div>
+      <h3>客厅 · 居家</h3>
+      <p>5×7m，沙发 + 茶几 + 电视 + 装饰。算法：Graph-based + WFC + LLM constraint。资产：Fab MetaSofa。</p>
+      <div class="scene-meta">PLANNED · PHASE B</div>
+    </div>
+    <div class="scene">
+      <div class="scene-icon">⚙</div>
+      <h3>工业一角 · Industrial</h3>
+      <p>8×8m，机床 + 工具架 + 控制台。算法：Shape grammar + cluster。资产：Fab industrial + 自建。</p>
+      <div class="scene-meta">PLANNED · PHASE B</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>机器人 URDF 支持 <small>KINEMATIC POSING ONLY</small></h2>
+  <div class="scenes">
+    <div class="scene">
+      <div class="scene-icon">⚉</div>
+      <h3>FRANKA Panda</h3>
+      <p>7 关节工业臂，桌面操作场景标杆，LeRobot dataset 主力机型。</p>
+      <div class="scene-meta">PHASE B 接入</div>
+    </div>
+    <div class="scene">
+      <div class="scene-icon">⊨</div>
+      <h3>Unitree H1</h3>
+      <p>人形双足机器人，全身关节，仓储巡检 + 客厅家务场景。</p>
+      <div class="scene-meta">PHASE B 接入</div>
+    </div>
+    <div class="scene">
+      <div class="scene-icon">⚓</div>
+      <h3>UR5</h3>
+      <p>Universal Robots 6 轴协作臂，工业一角场景主力。</p>
+      <div class="scene-meta">PHASE B 接入</div>
+    </div>
+  </div>
+</section>
+
+<div class="cta">
+  <h2>PCG 生成入口</h2>
+  <p>Phase 0 / A 实施期间，PCG 后端尚未上线。完整规划见 <code>docs/ui_pcg_redesign_plan.md</code>。</p>
+  <button disabled>Generate Scene · Coming in Phase B</button>
+</div>
+
+<footer>© 2026 爱萌科技 · Adore Robot v0.0.1-preview · Built on Unreal Engine 5.6 + NVIDIA Cosmos</footer>
+
+</body>
+</html>
