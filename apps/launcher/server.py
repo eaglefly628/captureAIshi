@@ -22,15 +22,15 @@ ROOT = Path(__file__).resolve().parents[2]
 APPS = {
     "capture": {
         "name": "captureAIshi",
-        "cmd": [sys.executable, str(ROOT / "web_ui.py")],
-        "cwd": str(ROOT),
+        "cmd": [sys.executable, str(ROOT / "apps/capture/web_ui.py")],
+        "cwd": str(ROOT / "apps/capture"),
         "port": 5000,
         "url": "http://localhost:5000",
     },
     "adore_robot": {
         "name": "Adore Robot",
         "cmd": [sys.executable, str(ROOT / "apps/adore_robot/main.py")],
-        "cwd": str(ROOT),
+        "cwd": str(ROOT / "apps/adore_robot"),
         "port": 5001,
         "url": "http://localhost:5001",
     },
@@ -96,7 +96,7 @@ _LANDING_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>爱萌视觉训练中心 — Aimeng Visual Training Hub</title>
+<title>爱萌视觉训练中心 — Aimen Visual Training Hub</title>
 <style>
   :root {
     --bg-base: #0e1018;
@@ -294,11 +294,9 @@ _LANDING_HTML = r"""<!DOCTYPE html>
   <div class="brand">
     <span class="brand-dot"></span>
     爱萌视觉训练中心
-    <span class="brand-en">Aimeng Visual Training Hub</span>
+    <span class="brand-en">Aimen Visual Training Hub</span>
   </div>
   <div class="topnav">
-    <a href="#apps">应用</a>
-    <a href="#features">能力</a>
     <a href="https://github.com/eaglefly628/captureAIshi" target="_blank">GitHub</a>
   </div>
 </div>
@@ -306,10 +304,9 @@ _LANDING_HTML = r"""<!DOCTYPE html>
 <section class="hero">
   <div class="hero-tag">v0.3.0 · POWERED BY UNREAL ENGINE 5.6 + NVIDIA COSMOS</div>
   <h1>
-    为具身智能与世界模型团队
-    <small>生产 photoreal 训练数据 · 端到端工业管线</small>
+    爱萌视觉训练中心
+    <small>为具身智能团队生产 photoreal 训练数据</small>
   </h1>
-  <p>从游戏场景捕获到 UE5 PCG 程序化场景生成，统一交付 LeRobot / RT-X / GR00T 训练数据格式。</p>
 </section>
 
 <section class="apps" id="apps">
@@ -360,34 +357,8 @@ _LANDING_HTML = r"""<!DOCTYPE html>
 
 </section>
 
-<section class="features" id="features">
-  <h2>核心能力 <small>WHAT WE BUILD</small></h2>
-  <div class="feature-grid">
-    <div class="feature">
-      <div class="feature-icon" style="color: var(--accent);">▢</div>
-      <h3>多源捕获</h3>
-      <p>RenderDoc 帧抓取 + ReShade addon 双路径，已发行游戏 + UE5 项目两线并轨。</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon" style="color: #fb923c;">◇</div>
-      <h3>UE5 PCG 工业管线</h3>
-      <p>程序化场景生成 + MRQ 多层 EXR + Cryptomatte 导出 + Cosmos Transfer photoreal 后处理。</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon" style="color: var(--success);">◆</div>
-      <h3>训练格式适配</h3>
-      <p>LeRobot dataset / RT-X TFDS / NVIDIA Isaac GR00T / robomimic HDF5 四套主流标准直出。</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon" style="color: var(--warning);">●</div>
-      <h3>机器人 URDF kinematic</h3>
-      <p>UE5.6 Robotics Plugin 支持 FRANKA Panda / Unitree H1 / UR5 静态摆放与 waypoint 演示。</p>
-    </div>
-  </div>
-</section>
-
 <footer>
-  <div>© 2026 爱萌科技 · Aimeng Tech · captureAIshi v0.3.0</div>
+  <div>© 2026 Aimen · captureAIshi v0.3.0</div>
   <div class="footer-badges">
     <span class="footer-badge">UNREAL ENGINE 5.6</span>
     <span class="footer-badge">NVIDIA COSMOS</span>

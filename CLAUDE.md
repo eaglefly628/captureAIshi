@@ -19,16 +19,42 @@ After finishing a TODO / pushing code / producing a document, call `notify("titl
 
 **Current: v0.3.0** — see `.claude/rules/versioning.md` for rules, `CHANGELOG.md` for history.
 
-## Architecture
+## Repo Layout (post 2026-05-14 monorepo split)
+
+```
+captureAIshi/                    ← 仓不改名
+├── apps/
+│   ├── launcher/                ← 爱萌视觉训练中心 landing (port 5050)
+│   ├── capture/                 ← captureAIshi pipeline (port 5000) ★主入口此处
+│   │   ├── web_ui.py main.py demo.py
+│   │   ├── core/ drivers/ grabbers/ recorders/ ui_hiders/ utils/
+│   │   ├── web/ configs/ tests/ patches/ demo/
+│   │   ├── pytest.ini Dockerfile VERSION
+│   │   └── requirements-demo.txt
+│   └── adore_robot/             ← UE5 PCG (port 5001, preview stub)
+├── 3rdparty/ renderdoc/ uuuaobcapture/    ← vendor, 顶层共享
+├── scripts/ tools/                          ← 顶层共享脚本
+├── agents/                                  ← agent 工作板 (跨 app)
+├── docs/                                    ← 共享文档
+├── .claude/                                 ← agent 定义 + 规则
+├── .github/                                 ← CI
+└── CLAUDE.md README.md requirements.txt pyproject.toml
+```
+
+启动入口：`python apps/launcher/server.py` 拉起所有；或直接 `python apps/capture/web_ui.py`。
+
+## Capture Architecture (apps/capture/)
 
 Pipeline for capturing RGB + Depth + Normal from published games:
 
-1. **Core** (`core/`) — Pure Python path generation (waypoints, snake path, cone rotation, tangent smoothing). Engine-agnostic.
-2. **Drivers** (`drivers/`) — Camera control adapters. Each driver connects to a game via its specific protocol (UE5 console TCP, Unity BepInEx socket, Cheat Engine memory, manual).
-3. **Grabbers** (`grabbers/`) — Frame capture. RenderDoc replay API for RGB+Depth+Normal, screenshot fallback.
-4. **Recorders** (`recorders/`) — Optional gameplay video capture. `OBSRecorder` drives OBS Studio over WebSocket v5; `NullRecorder` is the no-op fallback when video is disabled. Output lands as `video.mp4` + `video_metadata.json` (with pose timestamps for trajectory alignment) next to `trajectory.json`.
-5. **Web UI** (`web_ui.py` + `web/templates/`) — Flask + pywebview desktop GUI. Capture controls, log viewer, image gallery, 3D waypoint visualizer.
-6. **Utils** (`utils/`) — Shared utilities (coordinate system conversions, etc.).
+1. **Core** (`apps/capture/core/`) — Pure Python path generation (waypoints, snake path, cone rotation, tangent smoothing). Engine-agnostic.
+2. **Drivers** (`apps/capture/drivers/`) — Camera control adapters. Each driver connects to a game via its specific protocol (UE5 console TCP, Unity BepInEx socket, Cheat Engine memory, manual).
+3. **Grabbers** (`apps/capture/grabbers/`) — Frame capture. RenderDoc replay API for RGB+Depth+Normal, screenshot fallback.
+4. **Recorders** (`apps/capture/recorders/`) — Optional gameplay video capture. `OBSRecorder` drives OBS Studio over WebSocket v5; `NullRecorder` is the no-op fallback when video is disabled.
+5. **Web UI** (`apps/capture/web_ui.py` + `apps/capture/web/templates/`) — Flask + pywebview desktop GUI. Capture controls, log viewer, image gallery, 3D waypoint visualizer.
+6. **Utils** (`apps/capture/utils/`) — Shared utilities (coordinate system conversions, etc.).
+
+`web_ui.py` 启动时 `os.chdir(__file__.parent)`，所有相对路径(`configs/...` / `web/templates/` / `output/...`)以 `apps/capture/` 为锚点。launcher subprocess 也用 `cwd=apps/capture/` 双保险。
 
 ### Startup order
 
@@ -41,7 +67,7 @@ driver.__exit__()        # 5. Disconnect
 grabber.teardown()       # 6. Cleanup
 ```
 
-The grabber MUST launch and confirm the game is running BEFORE the driver attempts to connect. Enforced in `main.py` Step 6/7.
+The grabber MUST launch and confirm the game is running BEFORE the driver attempts to connect. Enforced in `apps/capture/main.py` Step 6/7.
 
 ### Error handling
 

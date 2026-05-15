@@ -12,6 +12,15 @@ import os
 import subprocess
 import sys
 import webbrowser
+from pathlib import Path
+
+# Anchor cwd to this script's directory so all relative paths inside the
+# capture app (e.g. configs/camera_paths.json, web/templates/, output/)
+# resolve identically whether launched directly or via apps/launcher
+# subprocess.Popen. Must happen before any Flask init or module-level
+# Path("configs/...") usage.
+_HERE = Path(__file__).resolve().parent
+os.chdir(_HERE)
 
 # opencv-python disables EXR by default (security policy since OpenCV
 # 4.5; cv2.imread on a .exr silently returns None without it). Set
@@ -87,7 +96,7 @@ def _ensure_exr_loader() -> None:
             sys.path, sys.executable, e,
         )
 
-app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
+app = Flask(__name__, template_folder=str(_HERE / "web/templates"), static_folder=str(_HERE / "web/static"))
 
 for _bp in ALL_BLUEPRINTS:
     app.register_blueprint(_bp)
