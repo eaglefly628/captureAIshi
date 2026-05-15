@@ -64,6 +64,9 @@ apps/adore_robot/
 
 ## 规矩
 
+- **写入范围严格限制在 `apps/adore_robot/` 目录树**。其他路径（`apps/capture/`、`apps/launcher/`、`3rdparty/`、`.claude/`、根目录文件等）仅可 read 当作 reference，**不要写、不要改**。
+  - 唯一例外：你自己的 `agents/<role>/SHARED.md` + `agents/<role>/ARCHIVE.md`（工作板必须维护，CL 必须更）。
+  - 跨域请求（要老白改 `.claude/` rule、要 xiaoyu 改 capture web、要 xiaoxuan 配 MRQ 下游）一律以 P0/P1 形式写到对方 SHARED.md TODO，不要直接动他们的文件。
 - ASCII only in `Source/**/*.{h,cpp}`、shader、`*.Build.cs`、`*.Target.cs`
 - PCG graph 不强制 ASCII（.uasset 是二进制）但路径、metadata JSON 用 ASCII
 - 任何 plugin 启用改动都在 `AdoreRobot.uproject` 里走 Plugins[] 数组，不要单独动 ini
