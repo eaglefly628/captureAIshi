@@ -80,7 +80,11 @@
 
 ## Changelog
 
-### [v0.3.2] (pending push) -- xiaoxu
+### [v0.3.2.1] <pending> -- xiaoxu
+- agents/unreal/SHARED.md: 回填 v0.3.2 CL SHA (`(pending push)` -> `cfdb7c4`) 满足 versioning 规则
+- agents/STATUS.md: xiaoxu 行更新 ~50% + 标 P1 已 push + peer review 结论
+
+### [v0.3.2] cfdb7c4 -- xiaoxu
 - docs/ue58_engine_notes_xiaoxu.md: 11 节引擎侧精读 (Python/MRQ/Substrate/Lumen/Robotics/USD/PCG交接面/WP/LLM/其他/采纳前置)
 - docs/batch_scene_gen_architecture.md: §1 UI 选 Web (Flask 5001) + §2 后端管线 + scene_spec schema + 子进程协议 + §3 NL→PCG (Claude SDK tool use + prompt caching) + §4 依赖清单
 - agents/unreal/SHARED.md: 标 Step 1-4 done; 加 P0 Robotics Plugin 红字 + Plan A/B/C 给老白
