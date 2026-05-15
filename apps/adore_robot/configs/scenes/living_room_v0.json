@@ -1,0 +1,43 @@
+{
+  "scene_id": "living_room_v0",
+  "scene_type": "living_room",
+  "size_m": [5, 7, 3],
+  "algorithm": "graph+wfc",
+  "pcg_asset": "Content/PCG/LivingRoom/PG_LivingRoom_v0",
+  "asset_packs": ["Fab_MetaSofa", "Megascans_DecorPack"],
+  "asset_pack_index": [
+    "sofa", "coffee_table", "side_table", "chair",
+    "floor_lamp", "table_lamp", "ceiling_pendant",
+    "rug", "plant", "bookshelf", "tv_unit",
+    "wall_art", "clutter_small"
+  ],
+  "target_instance_count": 80,
+  "frame_count": 30,
+  "variants": 5,
+  "pcg_params": {
+    "furniture_density": 0.55,
+    "sofa_style": "sectional",
+    "decor_variety": 5,
+    "clutter_level": 0.3,
+    "rug_present": true,
+    "lighting_preset": "indoor_tungsten",
+    "seed": 0
+  },
+  "camera_trajectory": {
+    "preset": "orbit",
+    "params": {"radius_m": 3.5, "height_m": 1.6, "tilt_deg": -10}
+  },
+  "thumbnail_camera": {
+    "pos": [2.5, -0.5, 1.6],
+    "look_at": [2.5, 3.5, 1.0],
+    "fov_v_deg": 60,
+    "near_far_m": [0.1, 30]
+  },
+  "urdf_robot": {
+    "model": "franka_panda",
+    "spawn_xyz": [2.5, 3.5, 0],
+    "kinematic_pose": "reach"
+  },
+  "mrq_preset": "MRQ_MultiPassEXR",
+  "contract_ref": "apps/adore_robot/docs/pcg_param_contract.md#12-living-room"
+}

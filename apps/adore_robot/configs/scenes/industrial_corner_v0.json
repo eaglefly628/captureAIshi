@@ -1,0 +1,41 @@
+{
+  "scene_id": "industrial_corner_v0",
+  "scene_type": "industrial_corner",
+  "size_m": [8, 8, 4],
+  "algorithm": "grammar",
+  "pcg_asset": "Content/PCG/IndustrialCorner/PG_IndustrialCorner_v0",
+  "asset_packs": ["Fab_IndustrialMachines", "Custom_Toolboard"],
+  "asset_pack_index": [
+    "machine", "workbench", "toolboard", "tool_small",
+    "pipe", "cable_reel", "crate", "conduit", "fume_hood"
+  ],
+  "target_instance_count": 120,
+  "frame_count": 30,
+  "variants": 5,
+  "pcg_params": {
+    "machine_count": 2,
+    "toolboard_density": 0.7,
+    "pipe_complexity": 3,
+    "oil_stain_amount": 0.25,
+    "crate_count": 3,
+    "lighting_preset": "indoor_tungsten",
+    "seed": 0
+  },
+  "camera_trajectory": {
+    "preset": "snake",
+    "params": {"path_height_m": 1.4, "step_m": 0.5}
+  },
+  "thumbnail_camera": {
+    "pos": [0.8, 0.8, 1.7],
+    "look_at": [6.5, 6.5, 1.0],
+    "fov_v_deg": 60,
+    "near_far_m": [0.1, 40]
+  },
+  "urdf_robot": {
+    "model": "ur5",
+    "spawn_xyz": [4, 4, 0],
+    "kinematic_pose": "mid_grasp"
+  },
+  "mrq_preset": "MRQ_MultiPassEXR",
+  "contract_ref": "apps/adore_robot/docs/pcg_param_contract.md#13-industrial-corner"
+}
