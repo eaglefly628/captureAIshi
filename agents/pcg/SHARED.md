@@ -2,82 +2,64 @@
 
 ## Active TODO
 
-### [v0.3.2] P1 from xiaoxu -- NL→PCG 链路需要你这边的 contract 产出 (2026-05-15)
+### [v0.3.2] P1 from xiaoxu -- NL→PCG 链路 contract 产出 (2026-05-15)
 
-我 (`xiaoxu`) 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3 / §4 里 sketch 了 NL→PCG agent loop。链路落地前以下六件事都卡在你这边，按你原 Step 2/3 TODO 顺手交付即可：
+xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
+列了六件 NL→PCG 链路阻塞项，全部由本轮 `pcg_param_contract.md` 覆盖：
 
-- [ ] **公开参数表** -- `pcg_param_contract.md` §1 三场景每个 PCG graph 暴露参数的 (name / type / range / default / 物理含义)。我的 batch UI 表单 + Claude tool input_schema 都从这表派生。
-- [ ] **OverrideParams key 命名约定** -- Python `unreal.PCGComponent.SetGraphParameter(...)` (或实际 method 名，等 5.8 stub diff 出来) 用的 string key 是不是就是参数表的列名？若有 GUID 映射或 namespace，明确写出来。
-- [ ] **Few-shot prompt 内容** -- `pcg_param_contract.md` §4 给 3-5 对 (user_text -> delta JSON) 示例。LLM 要靠这个学习语义（"密一点" -> shelf_density +0.2 之类）。
-- [ ] **资产 pack 索引** -- 每场景能用的 mesh 类型清单（warehouse: shelf/forklift/pallet/box/drum，**没有 car / human**），写到 `pcg_param_contract.md` 末尾。LLM 看到这个才不会瞎指挥。
-- [ ] **Thumbnail viewpoint** -- 每场景固定一个第 0 帧相机位 (pos + look_at + fov_v)，加到 `configs/scenes/<scene>_v0.json` 的 `thumbnail_camera` 节。NL agent loop 看一致角度判断是否符合要求。
-- [ ] **(spotted by xiaoxu)** Nanite + translucent 不兼容 -- PCG asset checklist 加约束：translucent material 不能挂 Nanite mesh（不可见）；改用 opacity-masked。来源: `ue58_engine_notes_xiaoxu.md` §4，事实见 preview doc §4。
-
-不阻塞你 Step 1/2/3/4 的原计划，是同一份 `pcg_param_contract.md` 顺手把这六件事覆盖到即可。
-
-
+- [x] **公开参数表** -- `pcg_param_contract.md` §1 三场景表完整 (name/type/range/default/物理含义 + 校验 + 隐式参数)
+- [x] **OverrideParams key 命名约定** -- §2 定: ASCII snake_case = 参数表 name 列字面值，无前缀/无 GUID/无命名空间。Python method 真名等 xiaoxu 装 5.8 后回填
+- [x] **Few-shot prompt 内容** -- §4.2 五个示例 (单参数 / 多参数 / 超 range clamp / asset 不在 pack / 隐式参数 refuse)
+- [x] **资产 pack 索引** -- §3 三场景 mesh 类别清单，"没有"项明列
+- [x] **Thumbnail viewpoint** -- 三场景 `<scene>_v0.json` 已加 `thumbnail_camera` (pos / look_at / fov_v_deg / near_far_m)
+- [x] **(spotted by xiaoxu)** Nanite + translucent 不兼容 -- contract §5 PCG Asset Checklist 收编
 
 ### [v0.3.2] P0 batch scene gen 调研 + 架构 (from 老白, 2026-05-15)
 
-**xiaoxu 同步在做引擎侧调研 + 批量 UI + NL 驱动 PCG 的架构 sketch (见 `agents/unreal/SHARED.md`)。你这边平行做 PCG 侧的调研 + 参数契约设计。本轮也只做调研 + 设计，不写 production PCG graph。**
+#### Step 1: 摸 UE5.8 Preview 的 PCG 改动 -- DONE
+- [x] 读 `apps/adore_robot/docs/ue58_preview_capabilities.md` (subagent 已产出，无需 WebSearch)
+- [x] 整理 `apps/adore_robot/docs/ue58_pcg_notes_xiaohuan.md` (6 节: DAG / Python API / Mega Lights+Substrate / Mesh Terrain / 不赌项 / 最小依赖)
 
-#### Step 1: 摸 UE5.8 Preview 的 PCG 改动
-- [ ] 先读 `apps/adore_robot/docs/ue58_preview_capabilities.md`（老白这边 research subagent 拉的，未到时自己用 WebSearch 补）
-- [ ] 重点关注以下子项，整理成 `apps/adore_robot/docs/ue58_pcg_notes_xiaohuan.md`:
-  - 5.8 新增 PCG 节点（哪些用得上）
-  - PCG Biome Core indoor 模板更新
-  - Hierarchical Generation Grid / Partition Actor 性能改动
-  - PCG runtime generation 状态（5.8 是否可用，决定后续是否 cook 时跑还是 runtime 生）
-  - PCG + Geometry Script interop 改动
-  - PCG Python API 进度（决定 NL → PCG 是否可行）
+#### Step 2: PCG graph 参数暴露契约 -- DONE
+- [x] `apps/adore_robot/docs/pcg_param_contract.md` 写完 (§1 三场景参数表 / §2 override key 约定 / §3 资产 pack 索引 / §4 NL prompt template / §5 Asset Checklist / §6 thumbnail / §7 接口契约小结)
 
-#### Step 2: PCG graph 参数暴露契约（核心）
+#### Step 3: NL prompt 模板 -- DONE
+- [x] 并入 contract §4 (System prompt 三段 + 5 个 few-shot + 失败处理表 + server validate)
 
-xiaoxu 那边做的 NL → PCG 链路需要 PCG graph 暴露**可被外部 set 的参数**。你定义"哪些参数暴露、什么类型、合理范围"。
-- [ ] 产出文档 `apps/adore_robot/docs/pcg_param_contract.md`，每个场景一节，每节包含：
-  - **公开参数表** (示例 warehouse)：
-    | 参数名 | 类型 | 范围 | 默认 | 影响 |
-    |---|---|---|---|---|
-    | `shelf_density` | float | 0.2 - 1.0 | 0.7 | 货架在 BSP 切分后的填充率 |
-    | `alley_width_m` | float | 1.5 - 4.0 | 2.4 | 叉车通道宽度 |
-    | `forklift_count` | int | 0 - 5 | 1 | 叉车摆放数量 |
-    | `prop_variety` | int | 1 - 5 | 3 | 货物种类数（pallets/boxes/drums...）|
-    | `lighting_preset` | enum | warehouse_sodium / cool_white / mixed | warehouse_sodium | 灯光氛围 |
-    | `seed` | int | any | 0 | 随机种子 |
-  - **实现方式**：PCG graph 用 `Get Param Data` 节点读 PCG Component 的 `OverrideParams`，每个 param 对应一个 UPROPERTY EditAnywhere
-  - **校验规则**：哪些组合不合法（比如 alley_width > size_m[0] / 4）
-  - **隐式参数**：你内部用但不暴露给 LLM 的（节点连接、噪声 octave 等）
-
-#### Step 3: NL prompt 模板（给 xiaoxu 参考）
-
-LLM 收到用户文本后要输出严格 JSON delta，你这边以 PCG 专家身份起草 prompt template：
-- [ ] 在 `pcg_param_contract.md` 续写 §4 "NL Prompt Template"，包含：
-  - **System prompt 草稿**：给 LLM 解释每个参数物理含义、合理组合、典型 use case
-  - **Few-shot 示例**：用户说"warehouse 货架密一点" → LLM 应该输出 `{"shelf_density": 0.9, "prop_variety": 4}`
-  - **失败处理**：用户要求做不到时（"加 100 台叉车"超 forklift_count 上限）LLM 该怎么 graceful degrade
-  - **资产 pack 索引**：如果 LLM 提到 "汽车" 但 warehouse asset pack 没汽车 mesh，LLM 该怎么响应
-
-#### Step 4: 三场景 spec 定稿
-- [ ] 把 `agents/pcg/refs/scene_specs.md` 的三场景草稿 review + 改成最终版，落到 `apps/adore_robot/configs/scenes/` 下 3 个 JSON 文件（warehouse_v0.json / living_room_v0.json / industrial_corner_v0.json）
-- [ ] 跟 xiaoxu 对齐 schema（他要据此设计 batch UI 表单）
+#### Step 4: 三场景 spec 定稿 -- DONE
+- [x] `apps/adore_robot/configs/scenes/warehouse_v0.json`
+- [x] `apps/adore_robot/configs/scenes/living_room_v0.json`
+- [x] `apps/adore_robot/configs/scenes/industrial_corner_v0.json`
+- [ ] **跟 xiaoxu 对齐 schema** -- 他装 5.8 dry-run 之后再校对，本期 unblock
 
 #### Verification
-- [ ] 两份 doc + 三份 scene spec JSON 在 PR 里
-- [ ] CL 条目 ≤ 10 行，遵守 `.claude/rules/versioning.md`
-- [ ] 不动 `Source/` / `Plugins/` / `Config/`（那是 xiaoxu 的）
+- [x] 两份 doc + 三份 scene spec JSON 在 commit 里
+- [x] CL 条目 ≤ 10 行
+- [x] 未动 `Source/` / `Plugins/` / `Config/`（xiaoxu 的）
+
+### [v0.3.2] 等 xiaoxu 装 5.8 后回填 (单点依赖)
+
+- [ ] **PCGComponent Python method 真名** -- 等 `help(unreal.PCGComponent)` dump，回填 `pcg_param_contract.md` §2 placeholder (当前两个 hypothesis: `set_graph_parameter` / `override_param`)。回填前 contract 的 key 名 + value 类型 + range 仍然有效，不阻塞 xiaoxu batch UI 表单 + tool input_schema 派生
 
 ## Boundary & Handoff
 
-- **依赖 xiaoxu**: custom UPCGSettings 节点实现、PCG Component param override 怎么从外部 Python set
-- **依赖 xiaoxu**: MRQ preset，渲染时 PCG 必须 Generate-on-Demand 跑完再开 MRQ
-- **下游 xiaoxuan**: multi-layer EXR 是最终交付物，PCG 这边只管 scene 准备好
+- **依赖 xiaoxu**: `UAdoreRobotPCGParams` UCLASS in `AdoreRobotPCG` plugin，UPROPERTY EditAnywhere 对应 contract §1 公开参数；PCG graph 引用此 class 作为 OverrideParams
+- **依赖 xiaoxu**: MRQ preset 触发时 PCG `Generate on Demand` 跑完再开 render（cook-time，不上 runtime generation）
+- **下游 xiaoxuan**: multi-layer EXR 终交付，PCG 只管 scene 准备好；Substrate + Mega Lights + Nanite+translucent 约束（contract §5）影响 normal/depth pass 一致性，已落 contract
 
 ## Reference 速查
 
 详见 `agents/pcg/refs/`:
-- `cheatsheet_pcg_graph.md` -- PCG 核心节点 + 数据流模板
-- `scene_specs.md` -- warehouse / 客厅 / 工业一角 spec 模板（本轮要 review + 定稿）
+- `cheatsheet_pcg_graph.md` -- PCG 核心节点 + 数据流模板（5.6/5.7 节点集，5.8 兼容）
+- `scene_specs.md` -- 三场景 spec 草稿（本轮已 review + 定稿到 `apps/adore_robot/configs/scenes/`）
 
 ## Changelog
 
-_暂无，等首批 PR_
+### [v0.3.2] e484db1 -- xiaohuan
+- apps/adore_robot/docs/ue58_pcg_notes_xiaohuan.md: 5.8 PCG 调研 (Step 1) -- DAG eval / Python API / Mega Lights / Nanite+translucent
+- apps/adore_robot/docs/pcg_param_contract.md: PCG 参数契约 (Step 2/3) -- 三场景参数表 + override key 约定 + 5 few-shot + 资产 pack 索引 + Asset Checklist
+- apps/adore_robot/configs/scenes/warehouse_v0.json: warehouse spec + thumbnail_camera + pcg_params 默认值
+- apps/adore_robot/configs/scenes/living_room_v0.json: living_room spec + thumbnail_camera + pcg_params 默认值
+- apps/adore_robot/configs/scenes/industrial_corner_v0.json: industrial_corner spec + thumbnail_camera + pcg_params 默认值
+- 覆盖 P1 from xiaoxu 全部 6 项 (公开参数表 / override key / few-shot / asset pack / thumbnail viewpoint / Nanite+translucent)
+- 单点依赖 xiaoxu 装 5.8 后回填 PCGComponent Python method 真名 (contract §2 placeholder)

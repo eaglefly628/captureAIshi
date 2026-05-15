@@ -1,0 +1,41 @@
+{
+  "scene_id": "warehouse_v0",
+  "scene_type": "warehouse",
+  "size_m": [50, 50, 8],
+  "algorithm": "bsp",
+  "pcg_asset": "Content/PCG/Warehouse/PG_Warehouse_v0",
+  "asset_packs": ["Quixel_Industrial"],
+  "asset_pack_index": [
+    "shelf", "forklift", "pallet", "box", "drum",
+    "concrete_floor", "wall_panel", "sodium_lamp", "cool_lamp"
+  ],
+  "target_instance_count": 2500,
+  "frame_count": 30,
+  "variants": 5,
+  "pcg_params": {
+    "shelf_density": 0.7,
+    "alley_width_m": 2.4,
+    "forklift_count": 1,
+    "prop_variety": 3,
+    "pallet_load_factor": 0.6,
+    "lighting_preset": "warehouse_sodium",
+    "seed": 0
+  },
+  "camera_trajectory": {
+    "preset": "corridor_walk",
+    "params": {"speed_m_s": 1.2, "height_m": 1.6, "lookahead_m": 5.0}
+  },
+  "thumbnail_camera": {
+    "pos": [25.0, 3.0, 1.6],
+    "look_at": [25.0, 45.0, 1.6],
+    "fov_v_deg": 60,
+    "near_far_m": [0.1, 100]
+  },
+  "urdf_robot": {
+    "model": "unitree_h1",
+    "spawn_xyz": [25, 25, 0],
+    "kinematic_pose": "rest"
+  },
+  "mrq_preset": "MRQ_MultiPassEXR",
+  "contract_ref": "apps/adore_robot/docs/pcg_param_contract.md#11-warehouse"
+}
