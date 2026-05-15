@@ -33,18 +33,34 @@
     "version": "0.2.0",
     "configurations": [
       {
-        "name": "Web UI",
+        "name": "Launcher (root main.py)",
         "type": "debugpy",
         "request": "launch",
-        "program": "${workspaceFolder}/web_ui.py",
+        "program": "${workspaceFolder}/main.py",
         "console": "integratedTerminal",
         "cwd": "${workspaceFolder}"
+      },
+      {
+        "name": "Web UI (capture)",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/apps/capture/web_ui.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/apps/capture"
+      },
+      {
+        "name": "Desktop App (capture)",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/apps/capture/desktop_app.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/apps/capture"
       },
       {
         "name": "CLI - Dry Run",
         "type": "debugpy",
         "request": "launch",
-        "program": "${workspaceFolder}/main.py",
+        "program": "${workspaceFolder}/apps/capture/main.py",
         "args": [
           "--driver", "manual",
           "--grabber", "none",
@@ -55,13 +71,13 @@
           "--verbose"
         ],
         "console": "integratedTerminal",
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/apps/capture"
       },
       {
         "name": "CLI - UE5 Capture",
         "type": "debugpy",
         "request": "launch",
-        "program": "${workspaceFolder}/main.py",
+        "program": "${workspaceFolder}/apps/capture/main.py",
         "args": [
           "--driver", "ue5",
           "--driver-port", "9998",
@@ -72,7 +88,7 @@
           "--verbose"
         ],
         "console": "integratedTerminal",
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/apps/capture"
       }
     ]
   },
