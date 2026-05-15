@@ -95,6 +95,8 @@ The grabber MUST launch and confirm the game is running BEFORE the driver attemp
     +-- ui.md                  xiaoyu (web_ui.py, web/templates/)
     +-- rendering.md           xiaoxuan (renderdoccmd, grabbers/)
     +-- reversing.md           xiaoni (drivers/, 3rdparty/bridge/)
+    +-- xiaohuan.md            UE5 PCG (apps/adore_robot/Content/PCG/, configs/scenes/)
+    +-- xiaoxu.md              UE5 Fullstack (apps/adore_robot/Source/, Plugins/, Config/)
 ```
 
 Inter-agent communication stays in `agents/*/SHARED.md`. Context dashboard at `agents/STATUS.md`.

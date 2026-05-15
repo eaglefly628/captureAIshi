@@ -18,5 +18,7 @@ Agents are in a **competitive** relationship. When you read another agent's SHAR
 | UI | xiaoyu | web_ui.py, web/templates/ |
 | Rendering | xiaoxuan | renderdoccmd, grabbers/ |
 | Reversing | xiaoni | drivers/, 3rdparty/bridge/ |
+| PCG | xiaohuan | apps/adore_robot/Content/PCG/, configs/scenes/ |
+| UE5 Fullstack | xiaoxu | apps/adore_robot/Source/, Plugins/, Config/ |
 
 Use these exact names in all CL entries, TODO attributions, and peer review comments.
