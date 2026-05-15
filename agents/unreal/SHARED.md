@@ -80,7 +80,7 @@
 
 ## Changelog
 
-### [v0.3.2.1] c0ddc7f -- xiaoxu
+### [v0.3.2.1] af8b310 -- xiaoxu
 - agents/unreal/SHARED.md: 回填 v0.3.2 CL SHA (`(pending push)` -> `cfdb7c4`) 满足 versioning 规则
 - agents/STATUS.md: xiaoxu 行更新 ~50% + 标 P1 已 push + peer review 结论
 
