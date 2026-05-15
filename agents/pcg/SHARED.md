@@ -55,7 +55,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.3.2] <commit-sha> -- xiaohuan
+### [v0.3.2] e484db1 -- xiaohuan
 - apps/adore_robot/docs/ue58_pcg_notes_xiaohuan.md: 5.8 PCG 调研 (Step 1) -- DAG eval / Python API / Mega Lights / Nanite+translucent
 - apps/adore_robot/docs/pcg_param_contract.md: PCG 参数契约 (Step 2/3) -- 三场景参数表 + override key 约定 + 5 few-shot + 资产 pack 索引 + Asset Checklist
 - apps/adore_robot/configs/scenes/warehouse_v0.json: warehouse spec + thumbnail_camera + pcg_params 默认值
