@@ -51,11 +51,17 @@
 
 #### Open (本期不做，下个 session 接力)
 
-- [ ] **P0 (spotted by xiaoxu, escalate to 老白): Robotics Plugin 5.8 公开源缺失** -- `xiaoxu.md` 写的 "UE5.6 Robotics Plugin Beta" 在 `ue58_preview_capabilities.md` 标 `[no data]`，无 Epic 官方源佐证。三个备案：
-  - Plan A: [URLab](https://github.com/URLab-Sim/UnrealRoboticsLab) (活跃，MuJoCo-in-UE，5.7+)
-  - Plan B: [URoboSim](https://github.com/urobosim/URoboSim) (IAI 维护)
-  - Plan C: 自撸 minimal URDF parser + kinematic posing BP（只 kinematic 不接物理，最可控）
-  我倾向 C（理由见 `ue58_engine_notes_xiaoxu.md` §5）。装完 UE5.8 Preview 第一件事打开 Plugin Manager 搜 "Robot/URDF/Articulation" 实证；若确认无官方，写 `docs/robotics_plugin_decision.md` 给老白选择题。
+- [ ] **P0 (老白 2026-05-15 决策): Robotics Poser 接口抽象 -- ABC 三方案都要接** -- 你原本想锁 Plan C，老白拍：**A/B/C 都做接口支持，调通可以延后**。本期落地要求：
+  - 写 `docs/robotics_poser_interface.md`，定义两层抽象：
+    1. **UE5 侧 `IRobotPoser` 接口** (C++ `UInterface` 或纯 BP interface)，方法清单至少含：`LoadURDF(path) -> RobotHandle`、`GetJointNames(handle) -> [name]`、`GetJointLimits(handle, name) -> (lo, hi)`、`SetJointState(handle, {name: angle})`、`GetLinkTransform(handle, link_name) -> FTransform`、`SpawnInLevel(handle, world_transform) -> AActor*`、`DestroyHandle(handle)`。
+    2. **Python 侧 `RobotPoserBase` 抽象** (`apps/adore_robot/robotics/base.py`)，方法对齐 UE 侧，由 `unreal.py` bridge 调具体 implementation。Python 侧多一个 factory: `make_poser(backend: Literal["urlab","urobosim","minimal"]) -> RobotPoserBase`。
+  - 三个 concrete adapter **都建空壳类 + docstring 说明映射策略**（本期不实现）：
+    - `RobotPoser_URLab` (wraps URLab plugin's API)
+    - `RobotPoser_URoboSim` (wraps URoboSim's classes)
+    - `RobotPoser_Minimal` (自撸 URDF parser + kinematic posing BP)
+  - `RobotHandle` 不绑死任何 plugin native 类型，用 `int` ID 或 `FGuid`，三 backend 各自维护 ID → 内部对象映射。三方案之间能 hot-swap，scene_spec JSON 加 `robotics_backend` 字段选 backend。
+  - 调通顺序老白这边的想法：C 最小代价先跑 demo → A 物理仿真补 → B 兜底。但**接口定下来三个都不许漏方法**，否则后期切 backend 要返工。
+  - 装完 UE5.8 Preview 第一件事仍是 Plugin Manager 搜 "Robot/URDF/Articulation" 实证有无官方，结果回写 `docs/robotics_poser_interface.md` §0；如果官方真出现了，加 Plan D 接口包一层。
 - [ ] **P1: UE5.8 Preview 装机 + `unreal.py` stub diff (5.7 vs 5.8)** -- 见 engine notes §1 / §11 操作序列。是 v0.3.3 实现窗口的前置门。
 - [ ] **P1: MRQ_MultiPassEXR.uasset 在 5.8 Preview 重存 + commandlet 最小命令实证** -- 见 engine notes §2。
 - [ ] **P2: Mega Lights + Lumen Medium A/B test plan** -- 见 engine notes §4。
