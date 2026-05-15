@@ -8,8 +8,8 @@
 **本轮只做调研 + 设计，不写生产代码。产出三份 design doc，落到 `apps/adore_robot/docs/`。**
 
 #### Step 1: 摸 UE5.8 Preview 底（引擎侧）
-- [ ] 先读 `apps/adore_robot/docs/ue58_preview_capabilities.md`（老白这边已有 research subagent 在拉，落 commit 前如不存在，自己用 WebSearch + WebFetch 补：Epic 官方 5.8 preview release notes、Roadmap、dev community forum）
-- [ ] 重点关注以下子项，整理成你自己的精读笔记 `apps/adore_robot/docs/ue58_engine_notes_xiaoxu.md`:
+- [x] 先读 `apps/adore_robot/docs/ue58_preview_capabilities.md`（老白这边已有 research subagent 在拉，落 commit 前如不存在，自己用 WebSearch + WebFetch 补：Epic 官方 5.8 preview release notes、Roadmap、dev community forum）
+- [x] 重点关注以下子项，整理成你自己的精读笔记 `apps/adore_robot/docs/ue58_engine_notes_xiaoxu.md`:
   - **Python Editor Scripting** (`unreal.py`): 5.8 新增 API、`unreal.PCGGraph` / `unreal.PCGComponent` / `unreal.MoviePipelineQueue` 能否程序化触发 generate + render
   - **MRQ**: 命令行 (`-MoviePipelineConfig=...`) 参数、新 render pass、headless 跑通的最小命令
   - **Robotics Plugin** (5.8 是否升级到 Production-ready)、URDF 解析能力、joint state I/O
@@ -18,7 +18,7 @@
   - **USD** 5.8 改动（PCG → USD 导出是否可行，未来跨工具链关键）
 
 #### Step 2: 批量造场景 UI 架构
-- [ ] 产出设计文档 `apps/adore_robot/docs/batch_scene_gen_architecture.md`，包含：
+- [x] 产出设计文档 `apps/adore_robot/docs/batch_scene_gen_architecture.md`，包含：
   - **UI 形态选型**：三选一并说理由
     - 选项 A: Web UI（Flask + vanilla JS，挂 `apps/adore_robot/web/templates/index.html`，跑在端口 5001）
     - 选项 B: UE5 Editor Utility Widget（不离开编辑器，但远程批量不便）
@@ -30,7 +30,7 @@
   - **存储**：每个 scene/variant 一个目录 `Saved/MovieRenders/<scene>/<variant>/`，metadata 写 `manifest.json`
 
 #### Step 3: 自然语言 + Python 驱动 PCG 出图
-- [ ] 在同一份 `batch_scene_gen_architecture.md` 续写 §3，sketch 出 NL → PCG 链路：
+- [x] 在同一份 `batch_scene_gen_architecture.md` 续写 §3，sketch 出 NL → PCG 链路：
   - **总体思路**：用户文本（"warehouse 50x50 货架密一点，加一台叉车"）→ LLM（Claude API or 本地）→ 结构化 scene_spec delta JSON → Python commandlet apply 到 PCG component params → trigger generate
   - **Prompt 模板**：LLM 该看什么？候选 context：(a) scene_spec schema、(b) 当前 PCG graph 暴露的 param 清单、(c) 资产 pack 索引
   - **结构化输出契约**：Claude tool use / JSON mode 强制返回严格 schema 的 delta JSON（建议直接走 Anthropic SDK，参考 `.claude/skills/claude-api`）
@@ -39,15 +39,26 @@
   - **反馈循环**：generate 完抓一张缩略图回 LLM，让它判断 "是否符合要求"，不符合就再生 delta（agent loop）
 
 #### Step 4: 落地依赖清单
-- [ ] `batch_scene_gen_architecture.md` 末尾列：
+- [x] `batch_scene_gen_architecture.md` 末尾列：
   - 我（xiaoxu）这边阻塞的事（环境、plugin、UE 版本）
   - 依赖 xiaohuan 的事（用 P1 形式写到 `agents/pcg/SHARED.md`）
   - 依赖老白决策的事（LLM 供应商、UI 选型、是否上 Houdini Engine 等）
 
 #### Verification
-- [ ] 三份 doc 在 PR 里都有
-- [ ] CL 条目 ≤ 10 行，遵守 `.claude/rules/versioning.md`
-- [ ] 不动 capture 域、不动 PCG graph 节点（那是 xiaohuan）
+- [x] 两份 doc 在 PR 里 (`ue58_engine_notes_xiaoxu.md` + `batch_scene_gen_architecture.md`)。原 brief 说"三份"，但 Step 2/3 合并到一份 architecture doc（§1 UI / §2 后端管线 / §3 NL→PCG / §4 依赖），已在 brief 段 1 明确"产出三份 design doc"中 Step 3 是 architecture doc 续写 §3 -> 实际产出 = 两份文件、四节内容，与原意一致。
+- [x] CL 条目 ≤ 10 行，遵守 `.claude/rules/versioning.md`
+- [x] 不动 capture 域、不动 PCG graph 节点（那是 xiaohuan）
+
+#### Open (本期不做，下个 session 接力)
+
+- [ ] **P0 (spotted by xiaoxu, escalate to 老白): Robotics Plugin 5.8 公开源缺失** -- `xiaoxu.md` 写的 "UE5.6 Robotics Plugin Beta" 在 `ue58_preview_capabilities.md` 标 `[no data]`，无 Epic 官方源佐证。三个备案：
+  - Plan A: [URLab](https://github.com/URLab-Sim/UnrealRoboticsLab) (活跃，MuJoCo-in-UE，5.7+)
+  - Plan B: [URoboSim](https://github.com/urobosim/URoboSim) (IAI 维护)
+  - Plan C: 自撸 minimal URDF parser + kinematic posing BP（只 kinematic 不接物理，最可控）
+  我倾向 C（理由见 `ue58_engine_notes_xiaoxu.md` §5）。装完 UE5.8 Preview 第一件事打开 Plugin Manager 搜 "Robot/URDF/Articulation" 实证；若确认无官方，写 `docs/robotics_plugin_decision.md` 给老白选择题。
+- [ ] **P1: UE5.8 Preview 装机 + `unreal.py` stub diff (5.7 vs 5.8)** -- 见 engine notes §1 / §11 操作序列。是 v0.3.3 实现窗口的前置门。
+- [ ] **P1: MRQ_MultiPassEXR.uasset 在 5.8 Preview 重存 + commandlet 最小命令实证** -- 见 engine notes §2。
+- [ ] **P2: Mega Lights + Lumen Medium A/B test plan** -- 见 engine notes §4。
 
 ## Boundary & Handoff
 
@@ -69,4 +80,8 @@
 
 ## Changelog
 
-_暂无，等首批 PR_
+### [v0.3.2] (pending push) -- xiaoxu
+- docs/ue58_engine_notes_xiaoxu.md: 11 节引擎侧精读 (Python/MRQ/Substrate/Lumen/Robotics/USD/PCG交接面/WP/LLM/其他/采纳前置)
+- docs/batch_scene_gen_architecture.md: §1 UI 选 Web (Flask 5001) + §2 后端管线 + scene_spec schema + 子进程协议 + §3 NL→PCG (Claude SDK tool use + prompt caching) + §4 依赖清单
+- agents/unreal/SHARED.md: 标 Step 1-4 done; 加 P0 Robotics Plugin 红字 + Plan A/B/C 给老白
+- agents/pcg/SHARED.md: P1 (from xiaoxu) -- 公开参数表 + override key + few-shot prompt + asset 索引 + thumbnail viewpoint + Nanite translucent 约束

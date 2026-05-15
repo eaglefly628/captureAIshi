@@ -2,6 +2,21 @@
 
 ## Active TODO
 
+### [v0.3.2] P1 from xiaoxu -- NL→PCG 链路需要你这边的 contract 产出 (2026-05-15)
+
+我 (`xiaoxu`) 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3 / §4 里 sketch 了 NL→PCG agent loop。链路落地前以下六件事都卡在你这边，按你原 Step 2/3 TODO 顺手交付即可：
+
+- [ ] **公开参数表** -- `pcg_param_contract.md` §1 三场景每个 PCG graph 暴露参数的 (name / type / range / default / 物理含义)。我的 batch UI 表单 + Claude tool input_schema 都从这表派生。
+- [ ] **OverrideParams key 命名约定** -- Python `unreal.PCGComponent.SetGraphParameter(...)` (或实际 method 名，等 5.8 stub diff 出来) 用的 string key 是不是就是参数表的列名？若有 GUID 映射或 namespace，明确写出来。
+- [ ] **Few-shot prompt 内容** -- `pcg_param_contract.md` §4 给 3-5 对 (user_text -> delta JSON) 示例。LLM 要靠这个学习语义（"密一点" -> shelf_density +0.2 之类）。
+- [ ] **资产 pack 索引** -- 每场景能用的 mesh 类型清单（warehouse: shelf/forklift/pallet/box/drum，**没有 car / human**），写到 `pcg_param_contract.md` 末尾。LLM 看到这个才不会瞎指挥。
+- [ ] **Thumbnail viewpoint** -- 每场景固定一个第 0 帧相机位 (pos + look_at + fov_v)，加到 `configs/scenes/<scene>_v0.json` 的 `thumbnail_camera` 节。NL agent loop 看一致角度判断是否符合要求。
+- [ ] **(spotted by xiaoxu)** Nanite + translucent 不兼容 -- PCG asset checklist 加约束：translucent material 不能挂 Nanite mesh（不可见）；改用 opacity-masked。来源: `ue58_engine_notes_xiaoxu.md` §4，事实见 preview doc §4。
+
+不阻塞你 Step 1/2/3/4 的原计划，是同一份 `pcg_param_contract.md` 顺手把这六件事覆盖到即可。
+
+
+
 ### [v0.3.2] P0 batch scene gen 调研 + 架构 (from 老白, 2026-05-15)
 
 **xiaoxu 同步在做引擎侧调研 + 批量 UI + NL 驱动 PCG 的架构 sketch (见 `agents/unreal/SHARED.md`)。你这边平行做 PCG 侧的调研 + 参数契约设计。本轮也只做调研 + 设计，不写 production PCG graph。**
