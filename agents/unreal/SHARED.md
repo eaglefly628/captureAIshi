@@ -2,13 +2,52 @@
 
 ## Active TODO
 
-_新设岗位 2026-05-15（老白）。首批 P0 待派。_
+### [v0.3.2] P0 batch scene gen 调研 + 架构 (from 老白, 2026-05-15)
 
-候选起步任务（老白未最终决定，先列着）：
-- [ ] **P0: `apps/adore_robot/unreal_projects/AdoreRobot.uproject` scaffold** -- UE5.6 空工程 + 必备 plugin (PCG / PCG Geometry Script Interop / Geometry Script / Modeling Tools / Mass Entity / Robotics Plugin)。建好 Source/AdoreRobot/AdoreRobot.{Build.cs,Target.cs}
-- [ ] **P0: MRQ multi-pass preset** -- `Config/MovieRender/MRQ_MultiPassEXR.uasset`：Deferred + Object Identifier + World Normal + Scene Depth + GBuffer A + multi-layer EXR 输出 + SS=8 TS=4 + deterministic CVars (motion blur / auto-exposure off)。验证 1 帧能跑通
-- [ ] **P1: Robotics Plugin URDF import 验证** -- import FRANKA Panda + 写一段 BP 改 joint，确认 kinematic posing 通路
-- [ ] **P2: custom UPCGSettings 模板** -- 给 xiaohuan 留一个 `Plugins/AdoreRobotPCG/Source/AdoreRobotPCG/Public/PCGSettings_Example.h` 样板，下次 xiaohuan 提需求时按这个模板写
+**任务大三段**：UE5.8 调研 → 批量造场景 UI 架构 → 自然语言 + Python 驱动 PCG。
+**本轮只做调研 + 设计，不写生产代码。产出三份 design doc，落到 `apps/adore_robot/docs/`。**
+
+#### Step 1: 摸 UE5.8 Preview 底（引擎侧）
+- [ ] 先读 `apps/adore_robot/docs/ue58_preview_capabilities.md`（老白这边已有 research subagent 在拉，落 commit 前如不存在，自己用 WebSearch + WebFetch 补：Epic 官方 5.8 preview release notes、Roadmap、dev community forum）
+- [ ] 重点关注以下子项，整理成你自己的精读笔记 `apps/adore_robot/docs/ue58_engine_notes_xiaoxu.md`:
+  - **Python Editor Scripting** (`unreal.py`): 5.8 新增 API、`unreal.PCGGraph` / `unreal.PCGComponent` / `unreal.MoviePipelineQueue` 能否程序化触发 generate + render
+  - **MRQ**: 命令行 (`-MoviePipelineConfig=...`) 参数、新 render pass、headless 跑通的最小命令
+  - **Robotics Plugin** (5.8 是否升级到 Production-ready)、URDF 解析能力、joint state I/O
+  - **Substrate** 状态（5.8 是否默认开）
+  - **PCG runtime generation** 进度（决定我们是 editor-only 烤还是 runtime 现生）
+  - **USD** 5.8 改动（PCG → USD 导出是否可行，未来跨工具链关键）
+
+#### Step 2: 批量造场景 UI 架构
+- [ ] 产出设计文档 `apps/adore_robot/docs/batch_scene_gen_architecture.md`，包含：
+  - **UI 形态选型**：三选一并说理由
+    - 选项 A: Web UI（Flask + vanilla JS，挂 `apps/adore_robot/web/templates/index.html`，跑在端口 5001）
+    - 选项 B: UE5 Editor Utility Widget（不离开编辑器，但远程批量不便）
+    - 选项 C: CLI only（最简单，但用户摸不到）
+  - **后端管线**：UI → POST `/api/scene/generate` (scene_spec JSON) → `apps/adore_robot/main.py` 扩展 → spawn `UnrealEditor-Cmd.exe` + Python commandlet → 触发 PCG generate + MRQ render → 回写 EXR 路径
+  - **scene_spec JSON schema**：参考 `agents/pcg/refs/scene_specs.md`，跟 xiaohuan 对齐
+  - **任务队列**：批量需要排队 + 并发上限（同时一个 UE Editor 实例）+ 失败重试
+  - **进度回传**：UE 子进程 stdout → 后端 SSE / WebSocket → 前端进度条
+  - **存储**：每个 scene/variant 一个目录 `Saved/MovieRenders/<scene>/<variant>/`，metadata 写 `manifest.json`
+
+#### Step 3: 自然语言 + Python 驱动 PCG 出图
+- [ ] 在同一份 `batch_scene_gen_architecture.md` 续写 §3，sketch 出 NL → PCG 链路：
+  - **总体思路**：用户文本（"warehouse 50x50 货架密一点，加一台叉车"）→ LLM（Claude API or 本地）→ 结构化 scene_spec delta JSON → Python commandlet apply 到 PCG component params → trigger generate
+  - **Prompt 模板**：LLM 该看什么？候选 context：(a) scene_spec schema、(b) 当前 PCG graph 暴露的 param 清单、(c) 资产 pack 索引
+  - **结构化输出契约**：Claude tool use / JSON mode 强制返回严格 schema 的 delta JSON（建议直接走 Anthropic SDK，参考 `.claude/skills/claude-api`）
+  - **Python 落地**：`unreal.py` API 接收 delta，找到 PCG component，set params，call `Generate(true)`
+  - **PCG graph 那边要暴露什么参数**：这是 xiaohuan 的活，你列需求清单写到 `agents/pcg/SHARED.md` TODO 里给他
+  - **反馈循环**：generate 完抓一张缩略图回 LLM，让它判断 "是否符合要求"，不符合就再生 delta（agent loop）
+
+#### Step 4: 落地依赖清单
+- [ ] `batch_scene_gen_architecture.md` 末尾列：
+  - 我（xiaoxu）这边阻塞的事（环境、plugin、UE 版本）
+  - 依赖 xiaohuan 的事（用 P1 形式写到 `agents/pcg/SHARED.md`）
+  - 依赖老白决策的事（LLM 供应商、UI 选型、是否上 Houdini Engine 等）
+
+#### Verification
+- [ ] 三份 doc 在 PR 里都有
+- [ ] CL 条目 ≤ 10 行，遵守 `.claude/rules/versioning.md`
+- [ ] 不动 capture 域、不动 PCG graph 节点（那是 xiaohuan）
 
 ## Boundary & Handoff
 
@@ -21,6 +60,12 @@ _新设岗位 2026-05-15（老白）。首批 P0 待派。_
 详见 `agents/unreal/refs/`:
 - `cheatsheet_mrq.md` -- MRQ multi-pass EXR 配置 + deterministic CVars
 - `cheatsheet_custom_pcg_node.md` -- UPCGSettings 子类样板
+
+外部参考（按需 WebFetch）：
+- UE5.8 release notes / preview blog（subagent 调研产物 `docs/ue58_preview_capabilities.md`）
+- Python Editor Scripting API: https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/
+- MRQ CLI 文档: https://dev.epicgames.com/documentation/en-us/unreal-engine/cinematic-rendering-from-the-command-line-in-unreal-engine
+- Anthropic SDK Python: 见 `.claude/skills/claude-api`
 
 ## Changelog
 
