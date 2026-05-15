@@ -24,7 +24,7 @@ import shutil
 import sys
 from pathlib import Path
 
-REPO_ROOT     = Path(__file__).resolve().parent.parent
+REPO_ROOT     = Path(__file__).resolve().parents[3]
 DEFAULT_DXGI  = REPO_ROOT / "3rdparty" / "reshade" / "bin" / "x64" / "Release" / "ReShade64.dll"
 DEFAULT_ADDON = REPO_ROOT / "3rdparty" / "reshade_bridge" / "captureAIshi_bridge.addon"
 SHADERS_DIR   = REPO_ROOT / "3rdparty" / "reshade_bridge" / "shaders"

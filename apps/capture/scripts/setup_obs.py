@@ -29,7 +29,8 @@ from typing import Optional
 
 logger = logging.getLogger("setup_obs")
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CAPTURE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INSTALL_DIR = REPO_ROOT / "3rdparty" / "obs-studio"
 GITHUB_LATEST = "https://api.github.com/repos/obsproject/obs-studio/releases/latest"
 INSTALLER_PATTERN = "Full-Installer-x64.exe"
@@ -184,7 +185,7 @@ def configure_websocket(port: int = 4455, password: Optional[str] = None) -> str
 
 def persist_password_to_config(password: str) -> None:
     """Update configs/obs.json with the generated password."""
-    target = REPO_ROOT / "configs" / "obs.json"
+    target = CAPTURE_ROOT / "configs" / "obs.json"
     try:
         cfg = json.loads(target.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
