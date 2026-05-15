@@ -46,8 +46,7 @@ def resolve_renderdoccmd(user_path: str) -> str:
 
     Search order:
       1. User-provided path (if it's a valid file or in PATH)
-      2. Sibling 'renderdoc' directory relative to project root
-         (e.g. ../renderdoc/x64/Development/renderdoccmd.exe)
+      2. Vendor tree at <repo>/3rdparty/renderdoc/x64/{Development,Release}/
       3. Common install locations (Windows Program Files)
     """
     exe_name = "renderdoccmd.exe" if sys.platform == "win32" else "renderdoccmd"
@@ -60,22 +59,20 @@ def resolve_renderdoccmd(user_path: str) -> str:
         logger.debug(f"renderdoccmd: found in PATH: {resolved}")
         return resolved
 
-    # Search relative to project root (parent of this file's package parent)
-    project_root = Path(__file__).resolve().parent.parent.parent
-    search_roots = [project_root, project_root.parent]
+    # apps/capture/grabbers/renderdoc/paths.py -> parents[4] = repo root
+    repo_root = Path(__file__).resolve().parents[4]
     relative_candidates = [
-        Path("renderdoc") / "x64" / "Development" / exe_name,
-        Path("renderdoc") / "x64" / "Release" / exe_name,
-        Path("renderdoc") / "build" / "bin" / exe_name,
-        Path("renderdoc") / "bin" / exe_name,
+        Path("3rdparty/renderdoc/x64/Development") / exe_name,
+        Path("3rdparty/renderdoc/x64/Release") / exe_name,
+        Path("3rdparty/renderdoc/build/bin") / exe_name,
+        Path("3rdparty/renderdoc/bin") / exe_name,
     ]
-    for root in search_roots:
-        for candidate in relative_candidates:
-            full = root / candidate
-            if full.is_file():
-                found = str(full)
-                logger.info(f"renderdoccmd: auto-discovered at {found}")
-                return found
+    for candidate in relative_candidates:
+        full = repo_root / candidate
+        if full.is_file():
+            found = str(full)
+            logger.info(f"renderdoccmd: auto-discovered at {found}")
+            return found
 
     if sys.platform == "win32":
         for prog_dir in [Path("C:/Program Files"), Path("C:/Program Files (x86)")]:
@@ -86,9 +83,8 @@ def resolve_renderdoccmd(user_path: str) -> str:
                     logger.info(f"renderdoccmd: found in system install: {found}")
                     return found
 
-    searched = ", ".join(str(r) for r in search_roots)
     raise FileNotFoundError(
-        f"renderdoccmd not found. Searched: PATH, {searched}/renderdoc/..., "
+        f"renderdoccmd not found. Searched: PATH, {repo_root}/3rdparty/renderdoc/..., "
         f"Program Files. Set full path in UI or add to PATH."
     )
 
@@ -139,25 +135,23 @@ def find_renderdoc_dirs():
     Returns ``(pyd_dir, dll_dir)`` or ``(None, None)`` if not found.
     """
     pyd_name = "renderdoc.pyd" if sys.platform == "win32" else "renderdoc.so"
-    project_root = Path(__file__).resolve().parent.parent.parent
-    search_roots = [project_root, project_root.parent]
+    repo_root = Path(__file__).resolve().parents[4]
     candidates = [
-        Path("renderdoc") / "x64" / "Development" / "pymodules",
-        Path("renderdoc") / "x64" / "Release" / "pymodules",
-        Path("renderdoc") / "build" / "lib" / "pymodules",
+        Path("3rdparty/renderdoc/x64/Development/pymodules"),
+        Path("3rdparty/renderdoc/x64/Release/pymodules"),
+        Path("3rdparty/renderdoc/build/lib/pymodules"),
     ]
-    for root in search_roots:
-        for candidate in candidates:
-            pyd_dir = root / candidate
-            pyd_file = pyd_dir / pyd_name
-            if pyd_file.is_file():
-                dll_dir = pyd_dir.parent
-                logger.debug(f"[RDOC] Found {pyd_name} at {pyd_dir}, DLLs at {dll_dir}")
-                return pyd_dir, dll_dir
+    for candidate in candidates:
+        pyd_dir = repo_root / candidate
+        pyd_file = pyd_dir / pyd_name
+        if pyd_file.is_file():
+            dll_dir = pyd_dir.parent
+            logger.debug(f"[RDOC] Found {pyd_name} at {pyd_dir}, DLLs at {dll_dir}")
+            return pyd_dir, dll_dir
 
     logger.error(
         f"[RDOC] renderdoc Python bindings ({pyd_name}) not found. "
         f"Build 'pyrenderdoc_module' in Visual Studio. "
-        f"Searched: {', '.join(str(r) for r in search_roots)}"
+        f"Searched: {repo_root}/3rdparty/renderdoc/..."
     )
     return None, None

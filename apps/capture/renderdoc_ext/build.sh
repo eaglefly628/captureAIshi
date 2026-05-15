@@ -32,10 +32,10 @@ for arg in "$@"; do
     esac
 done
 
-# Check submodule
-if [ ! -f "renderdoc/renderdoc/api/app/renderdoc_app.h" ]; then
-    echo "Initializing RenderDoc submodule..."
-    git submodule update --init renderdoc
+# Check vendor tree (RenderDoc upstream lives at <repo>/3rdparty/renderdoc/)
+if [ ! -f "../../3rdparty/renderdoc/renderdoc/api/app/renderdoc_app.h" ]; then
+    echo "ERROR: RenderDoc vendor tree missing at <repo>/3rdparty/renderdoc/" >&2
+    exit 1
 fi
 
 # Clean
@@ -52,7 +52,7 @@ echo "Configuring..."
 cmake ../renderdoc_ext \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_RENDERDOC_FROM_SOURCE=$FROM_SOURCE \
-    -DRENDERDOC_SOURCE_DIR="$(pwd)/../renderdoc"
+    -DRENDERDOC_SOURCE_DIR="$(pwd)/../../../3rdparty/renderdoc"
 
 # Build
 echo "Building..."

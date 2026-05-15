@@ -37,40 +37,40 @@ call :section "3rdparty/bridge/src/pattern_scan.h" "AOB pattern scanner: Boyer-M
 type 3rdparty\bridge\src\pattern_scan.h >> %OUT%
 echo. >> %OUT%
 
-:: ---- REFERENCE TREE: renderdoc/renderdoc/core/bridge/ (NOT compiled by CMake) ----
+:: ---- REFERENCE TREE: 3rdparty/renderdoc/renderdoc/core/bridge/ (NOT compiled by CMake) ----
 
 call :header "REFERENCE TREE (renderdoc/renderdoc/core/bridge/)" "Rewritten by xiaoni -- not yet integrated into CMake. Reviewed for bugs below."
 
-call :section "renderdoc/renderdoc/core/bridge/camera_intercept.h" "IGCS-style AOB patch: VirtualProtect+memcpy NOP, SuspendThread/ResumeThread, SEH memcpy, 16-site cap."
-type renderdoc\renderdoc\core\bridge\camera_intercept.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/camera_intercept.h" "IGCS-style AOB patch: VirtualProtect+memcpy NOP, SuspendThread/ResumeThread, SEH memcpy, 16-site cap."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\camera_intercept.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/console_server.h" "Reference TCP server: ClientSlot struct, cmd_queue ring buffer, CAS slot claim, camera override mutex, WSA lifecycle."
-type renderdoc\renderdoc\core\bridge\console_server.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/console_server.h" "Reference TCP server: ClientSlot struct, cmd_queue ring buffer, CAS slot claim, camera override mutex, WSA lifecycle."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\console_server.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/camera_path.h" "Reference CameraPath with mutable mutex, stop_unlocked() helper, play/stop/toggle_pause lock."
-type renderdoc\renderdoc\core\bridge\camera_path.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/camera_path.h" "Reference CameraPath with mutable mutex, stop_unlocked() helper, play/stop/toggle_pause lock."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\camera_path.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/ue5_exec_hook.h" "UE5 exec hook: cmd_queue SPSC ring buffer, CAS slot-claim fix (has producer-ordering bug -- see known issues)."
-type renderdoc\renderdoc\core\bridge\ue5_exec_hook.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/ue5_exec_hook.h" "UE5 exec hook: cmd_queue SPSC ring buffer, CAS slot-claim fix (has producer-ordering bug -- see known issues)."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\ue5_exec_hook.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/ue5_scan_engine.h" "GEngine scan: string-xref walk, SEH-guarded reads, seh_read_ptr helper."
-type renderdoc\renderdoc\core\bridge\ue5_scan_engine.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/ue5_scan_engine.h" "GEngine scan: string-xref walk, SEH-guarded reads, seh_read_ptr helper."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\ue5_scan_engine.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/ue5_scan_camera.h" "Camera struct scan: FField chain walk, seh_read_u32_ok, offset discovery."
-type renderdoc\renderdoc\core\bridge\ue5_scan_camera.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/ue5_scan_camera.h" "Camera struct scan: FField chain walk, seh_read_u32_ok, offset discovery."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\ue5_scan_camera.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/ue5_engine.h" "Reference UE5 engine structs and type definitions."
-type renderdoc\renderdoc\core\bridge\ue5_engine.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/ue5_engine.h" "Reference UE5 engine structs and type definitions."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\ue5_engine.h >> %OUT%
 echo. >> %OUT%
 
-call :section "renderdoc/renderdoc/core/bridge/pattern_scan.h" "Reference pattern scanner."
-type renderdoc\renderdoc\core\bridge\pattern_scan.h >> %OUT%
+call :section "3rdparty/renderdoc/renderdoc/core/bridge/pattern_scan.h" "Reference pattern scanner."
+type ..\..\3rdparty\renderdoc\renderdoc\core\bridge\pattern_scan.h >> %OUT%
 echo. >> %OUT%
 
 :: ---- PYTHON DRIVERS ----

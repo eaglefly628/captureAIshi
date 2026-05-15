@@ -112,6 +112,17 @@ _全部清空 2026-05-13（老白 by 用户指令）— 旧 TODO 清单 + 恢复
 
 ## Changelog
 
+### [v0.3.1] (pending sha) — 老白 (lead)
+- refactor(root): vendor `renderdoc/` -> `3rdparty/renderdoc/` (overlay tree at `renderdoc/core/bridge/` moves with it -- xiaoni's camera_intercept/console_server/ue5_*.h stay intact)
+- feat(root): `main.py` at repo root forwards to `apps/launcher/server.py` via runpy
+- fix(grabbers/renderdoc/paths.py): repo_root via `parents[4]`, search candidates rewritten to `3rdparty/renderdoc/x64/{Development,Release}/...` -- the post-monorepo apps/capture/.. fallback was broken
+- fix(renderdoc_ext/build.sh): vendor probe `../../3rdparty/renderdoc/renderdoc/api/app/renderdoc_app.h`, cmake `-DRENDERDOC_SOURCE_DIR=$(pwd)/../../../3rdparty/renderdoc` (from build/ cwd); dropped fake `git submodule update --init renderdoc` (was never a real submodule)
+- fix(renderdoc_ext/CMakeLists.txt): `RENDERDOC_SOURCE_DIR` -> `../../../3rdparty/renderdoc`, include base -> `../../../3rdparty` so `#include "renderdoc/renderdoc/api/..."` still resolves
+- fix(extract_for_review.bat): `renderdoc\renderdoc\core\bridge\` -> `..\..\3rdparty\renderdoc\renderdoc\core\bridge\` (run from apps/capture/)
+- fix(.gitignore + captureAIshi.code-workspace): build-artifact patterns and file/search exclude `renderdoc/` -> `3rdparty/renderdoc/`
+- docs(CLAUDE.md): repo-layout block + 启动入口 line updated to reflect new tree
+- v0.3.1 patch -- internal path refactor, no inter-agent contract change
+
 ### [v0.3.0] (pending sha) — 小宣6
 - feat: F6 in-game trigger fires pre-UI survey -- no Alt+Tab needed
   - addon (frame_capture.cpp on_reshade_present): runtime->is_key_pressed(0x75)

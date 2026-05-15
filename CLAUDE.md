@@ -32,16 +32,15 @@ captureAIshi/                    ← 仓不改名
 │   │   ├── pytest.ini Dockerfile VERSION
 │   │   └── requirements-demo.txt
 │   └── adore_robot/             ← UE5 PCG (port 5001, preview stub)
-├── 3rdparty/ renderdoc/ uuuaobcapture/    ← vendor, 顶层共享
-├── scripts/ tools/                          ← 顶层共享脚本
-├── agents/                                  ← agent 工作板 (跨 app)
-├── docs/                                    ← 共享文档
-├── .claude/                                 ← agent 定义 + 规则
-├── .github/                                 ← CI
-└── CLAUDE.md README.md requirements.txt pyproject.toml
+├── 3rdparty/                   ← vendor (bridge/ renderdoc/ reshade/ reshade_bridge/)
+├── uuuaobcapture/              ← IGCS AOB research (offline reference, not imported)
+├── agents/                     ← agent 工作板 (跨 app)
+├── wp-stack/                   ← WordPress deploy stack (independent)
+├── .claude/ .github/ .vscode/  ← config
+└── main.py CLAUDE.md README.md requirements.txt pyproject.toml uv.lock captureAIshi.code-workspace
 ```
 
-启动入口：`python apps/launcher/server.py` 拉起所有；或直接 `python apps/capture/web_ui.py`。
+启动入口：根目录 `python main.py` (转发到 `apps/launcher/server.py`)；或直接 `python apps/capture/web_ui.py`。
 
 ## Capture Architecture (apps/capture/)
 

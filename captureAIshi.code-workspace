@@ -13,10 +13,10 @@
       "**/__pycache__": true,
       "**/*.pyc": true,
       ".venv": true,
-      "renderdoc": true
+      "3rdparty/renderdoc": true
     },
     "search.exclude": {
-      "renderdoc/**": true,
+      "3rdparty/renderdoc/**": true,
       ".venv/**": true
     },
     "editor.fontSize": 13,

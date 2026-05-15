@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Standalone RenderDoc replay worker.
 
-This script runs as a separate process to avoid module name conflicts
-(the project has a 'renderdoc/' source directory that shadows the
-renderdoc Python module). It loads a .rdc capture file, extracts the
-backbuffer (RGB) and depth buffer, and saves them as numpy .npy files.
+This script runs as a separate process so the renderdoc.pyd Python
+bindings (loaded from 3rdparty/renderdoc/x64/.../pymodules/) get a
+clean interpreter with their DLL search path set up before import.
+It loads a .rdc capture file, extracts the backbuffer (RGB) and depth
+buffer, and saves them as numpy .npy files.
 
 Usage:
     python _rdoc_replay_worker.py <rdc_file> <output_dir> [--dll-dir <path>]

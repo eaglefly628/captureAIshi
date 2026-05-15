@@ -31,12 +31,12 @@ CLAUDE.local.md
 .claude/settings.local.json
 
 # RenderDoc build artifacts (source is tracked, build output is not)
-renderdoc/x64/
-renderdoc/Win32/
-renderdoc/*.sdf
-renderdoc/*.suo
-renderdoc/*.user
-renderdoc/.vs/
+3rdparty/renderdoc/x64/
+3rdparty/renderdoc/Win32/
+3rdparty/renderdoc/*.sdf
+3rdparty/renderdoc/*.suo
+3rdparty/renderdoc/*.user
+3rdparty/renderdoc/.vs/
 
 # Third-party tool binaries (tracked via README only)
 3rdparty/uuu/*.exe

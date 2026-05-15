@@ -12,8 +12,8 @@ option(BUILD_RENDERDOC_FROM_SOURCE "Build RenderDoc replay library from source" 
 
 # ── RenderDoc paths ─────────────────────────────────────────────────────────
 
-# Root of the RenderDoc source tree (submodule)
-set(RENDERDOC_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../renderdoc"
+# Root of the RenderDoc source tree (vendor at <repo>/3rdparty/renderdoc/)
+set(RENDERDOC_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../3rdparty/renderdoc"
     CACHE PATH "Path to RenderDoc source")
 
 # Include paths — we only need the API headers for compilation
@@ -22,8 +22,7 @@ set(RENDERDOC_API_DIR "${RENDERDOC_SOURCE_DIR}/renderdoc/api")
 if(NOT EXISTS "${RENDERDOC_API_DIR}/app/renderdoc_app.h")
     message(FATAL_ERROR
         "RenderDoc API headers not found at ${RENDERDOC_API_DIR}.\n"
-        "Make sure the renderdoc git submodule is initialized:\n"
-        "  git submodule update --init")
+        "Vendor tree expected at <repo>/3rdparty/renderdoc/")
 endif()
 
 # ── Find RenderDoc library ──────────────────────────────────────────────────
@@ -77,7 +76,7 @@ elseif(UNIX)
 endif()
 
 target_include_directories(captureai_bridge PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/..  # for "renderdoc/renderdoc/api/..." includes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../3rdparty  # for "renderdoc/renderdoc/api/..." includes
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
