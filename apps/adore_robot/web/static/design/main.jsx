@@ -336,7 +336,6 @@ function App() {
               <div className="vp-stat"><span className="k">tris</span><span className="v">~{Math.round((118 + params.shelf_density * 240 + params.forklift_count * 30) * 1000).toLocaleString()}</span></div>
               <div className="vp-stat"><span className="k">lumen</span><span className="v">on</span><span className="k">·</span><span className="v">path-tracer ready</span></div>
             </div>
-            <Compass />
           </div>
           <Timeline currentStage={runStatus} stageProgress={stageProgress} runtimeS={runtimeMs} />
         </div>
