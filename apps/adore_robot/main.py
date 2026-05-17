@@ -112,6 +112,11 @@ def _short_key(env: str) -> str:
 
 
 @app.route("/")
+def design_view():
+    return render_template("design.html")
+
+
+@app.route("/3d")
 def demo_view():
     provider = auto_detect_provider()
     return render_template(
@@ -432,9 +437,10 @@ def main():
     port = int(os.environ.get("PORT", 5001))
     provider = auto_detect_provider()
     print(f"[adore_robot] serving on http://127.0.0.1:{port}")
-    print(f"[adore_robot]   demo view: /")
-    print(f"[adore_robot]   dev view:  /dev  (MCP -> {MCP_URL})")
-    print(f"[adore_robot]   debug:     /api/debug/last")
+    print(f"[adore_robot]   design view: /          (operator console, mock-driven for now)")
+    print(f"[adore_robot]   3d demo:     /3d        (three.js viewport + real LLM)")
+    print(f"[adore_robot]   dev MCP:     /dev       (MCP bridge -> {MCP_URL})")
+    print(f"[adore_robot]   debug:       /api/debug/last")
     print(f"[adore_robot]   LLM provider: {provider}"
           f"{' (offline keyword fallback)' if provider == 'keyword' else ''}")
     print(f"[adore_robot]   DEEPSEEK_API_KEY:  {_short_key('DEEPSEEK_API_KEY')}")

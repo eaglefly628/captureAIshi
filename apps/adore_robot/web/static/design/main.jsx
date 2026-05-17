@@ -1,0 +1,372 @@
+// app.jsx — main orchestrator
+
+const { useState, useEffect, useRef, useCallback } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "scene": "warehouse",
+  "robot": "franka_panda"
+}/*EDITMODE-END*/;
+
+function nowStamp() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
+// Stage durations (ms) — compressed from 33 minutes
+const STAGE_DURATIONS = {
+  parse: 1500,
+  dispatch: 100, // per call, multiplied by N
+  generate: 2200,
+  render: 4500,
+  package: 1200,
+};
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const scene = tweaks.scene;
+  const robot = tweaks.robot;
+
+  const [messages, setMessages] = useState([]);
+  const [params, setParams] = useState({ ...DEFAULT_PARAMS });
+  const [runStatus, setRunStatus] = useState('idle');
+  const [stageProgress, setStageProgress] = useState(0);
+  const [runtimeMs, setRuntimeMs] = useState(0);
+  const [toolCalls, setToolCalls] = useState([]);
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [flashKey, setFlashKey] = useState(null);
+  const [rightTab, setRightTab] = useState('params');
+  const [dataset, setDataset] = useState(null);
+  const [mrqSubdir, setMrqSubdir] = useState('warehouse/v0_demo');
+
+  const busyRef = useRef(false);
+  const animFrameRef = useRef(null);
+
+  const updateParam = useCallback((key, value, flash = false) => {
+    setParams(prev => ({ ...prev, [key]: value }));
+    if (flash) {
+      setFlashKey(key);
+      setTimeout(() => setFlashKey(prev => prev === key ? null : prev), 900);
+    }
+  }, []);
+
+  // Detect intended scene from a prompt
+  function inferScene(text) {
+    if (/客厅|living|sofa|杯|cup/i.test(text)) return 'livingroom';
+    if (/工厂|factory|流水|conveyor|工位|扳手|wrench/i.test(text)) return 'factory';
+    if (/仓库|warehouse|货架|shelf|叉车|forklift/i.test(text)) return 'warehouse';
+    return null;
+  }
+
+  // ─── The orchestrated pipeline run ───────────────────────────────────────
+  const runPipeline = useCallback(async (userText) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+
+    // Reset
+    setDataset(null);
+    setCurrentFrame(0);
+    setRuntimeMs(0);
+    const startedAt = performance.now();
+    const tickRuntime = () => {
+      setRuntimeMs(performance.now() - startedAt);
+      animFrameRef.current = requestAnimationFrame(tickRuntime);
+    };
+    animFrameRef.current = requestAnimationFrame(tickRuntime);
+
+    // 1) Append user message
+    setMessages(prev => [...prev, { role: 'user', text: userText, ts: nowStamp() }]);
+
+    // Maybe change scene
+    const inferred = inferScene(userText);
+    if (inferred && inferred !== scene) {
+      setTweak('scene', inferred);
+    }
+    const effectiveScene = inferred || scene;
+
+    // Pick canned response
+    const resp = chooseResponse(userText, effectiveScene);
+
+    // 2) Insert assistant message stub (thinking)
+    const assistantIdx = await new Promise(r => {
+      setMessages(prev => {
+        r(prev.length);
+        return [...prev, {
+          role: 'assistant', text: '解析中…',
+          actions: resp.calls.map(c => ({ ...c, status: 'pending' })),
+          thinking: true, ts: nowStamp()
+        }];
+      });
+    });
+
+    // PARSE stage
+    setRunStatus('parse');
+    setToolCalls(resp.calls.map(c => ({ ...c, status: 'pending' })));
+    await animateProgress(setStageProgress, STAGE_DURATIONS.parse);
+
+    // Replace assistant text with narrate
+    setMessages(prev => prev.map((m, i) => i === assistantIdx
+      ? { ...m, text: resp.narrate, thinking: false }
+      : m));
+
+    // DISPATCH stage
+    setRunStatus('dispatch');
+    setStageProgress(0);
+    const callTotal = resp.calls.length;
+    // execute calls one by one
+    for (let i = 0; i < callTotal; i++) {
+      const tc = resp.calls[i];
+
+      // mark this call as running
+      setToolCalls(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'running' } : c));
+      setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+        ? { ...m, actions: m.actions.map((a, ai) => ai === i ? { ...a, status: 'running' } : a) }
+        : m));
+
+      // Apply effect of the call
+      applyToolCallSideEffects(tc, {
+        updateParam, setTweak, setMrqSubdir, setRightTab,
+      });
+
+      await sleep(220 + Math.random() * 120);
+
+      // mark done
+      setToolCalls(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'done' } : c));
+      setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+        ? { ...m, actions: m.actions.map((a, ai) => ai === i ? { ...a, status: 'done' } : a) }
+        : m));
+
+      setStageProgress((i + 1) / callTotal);
+    }
+
+    // GENERATE stage
+    setRunStatus('generate');
+    setStageProgress(0);
+    // auto-switch right tab to viewport-relevant params (already there) — but show generation through scene anim
+    await animateProgress(setStageProgress, STAGE_DURATIONS.generate);
+
+    // Only render if a trigger_mrq_render was in the calls
+    const willRender = resp.calls.some(c => c.name === 'trigger_mrq_render');
+
+    if (willRender) {
+      // RENDER stage
+      setRunStatus('render');
+      setStageProgress(0);
+      setRightTab('render');
+      const frameCount = params.frame_count;
+      const dur = STAGE_DURATIONS.render;
+      const startR = performance.now();
+      while (performance.now() - startR < dur) {
+        const t = Math.min(1, (performance.now() - startR) / dur);
+        setStageProgress(t);
+        setCurrentFrame(Math.round(t * frameCount));
+        await sleep(80);
+      }
+      setStageProgress(1);
+      setCurrentFrame(frameCount);
+
+      // PACKAGE stage
+      setRunStatus('package');
+      setStageProgress(0);
+      await animateProgress(setStageProgress, STAGE_DURATIONS.package);
+
+      // DONE
+      const subdir = (resp.calls.find(c => c.name === 'trigger_mrq_render') || {}).args?.subdir || 'warehouse/v0_demo';
+      const ds = {
+        path: subdir,
+        parquet: `${subdir.replace('/', '_')}.parquet`,
+        parquetSize: '184 KB',
+        video: `${subdir.replace('/', '_')}.mp4`,
+        videoSize: '12.4 MB',
+        exrs: frameCount,
+        exrSize: `${(frameCount * 8.2).toFixed(1)} MB`,
+        size: `${(frameCount * 8.2 + 12.4 + 0.18).toFixed(1)} MB`,
+      };
+      setDataset(ds);
+      setMessages(prev => prev.map((m, i) => i === assistantIdx
+        ? { ...m, dataset: ds }
+        : m));
+      setRunStatus('done');
+    } else {
+      // No render — just done
+      setRunStatus('done');
+    }
+
+    setStageProgress(1);
+    cancelAnimationFrame(animFrameRef.current);
+    busyRef.current = false;
+  }, [scene, params.frame_count, setTweak, updateParam]);
+
+  // Cleanup
+  useEffect(() => () => cancelAnimationFrame(animFrameRef.current), []);
+
+  // Refresh right-tab to params after render done if user not interacting
+  // (kept simple — they can click)
+
+  // Right panel
+  const rightTabs = (
+    <div className="panel-hd">
+      <div className={`tab ${rightTab === 'params' ? 'active' : ''}`} onClick={() => setRightTab('params')}>
+        <span>Parameters</span><span className="count">21</span>
+      </div>
+      <div className={`tab ${rightTab === 'toolcalls' ? 'active' : ''}`} onClick={() => setRightTab('toolcalls')}>
+        <span>Tool Calls</span><span className="count">{toolCalls.length}</span>
+      </div>
+      <div className={`tab ${rightTab === 'render' ? 'active' : ''}`} onClick={() => setRightTab('render')}>
+        <span>Render</span>
+        <span className="count">{currentFrame}/{params.frame_count}</span>
+      </div>
+    </div>
+  );
+
+  const generating = runStatus === 'generate';
+  const projectName = SCENES[scene]?.label || 'Project';
+  const jobName = `${scene}/${mrqSubdir.split('/')[1] || 'v0_demo'}`;
+
+  return (
+    <>
+      <div className="app">
+        <TopBar projectName="adore-data" jobName={`${scene} · ${mrqSubdir.split('/')[1] || 'v0_demo'}`}
+          runStatus={runStatus} runtimeS={runtimeMs} />
+
+        {/* LEFT: Chat */}
+        <ChatPanel
+          messages={messages}
+          onSend={runPipeline}
+          busy={runStatus !== 'idle' && runStatus !== 'done'}
+          scene={scene}
+        />
+
+        {/* CENTER: Viewport + timeline */}
+        <div className="center-wrap" style={{ gridArea: 'center' }}>
+          <div className="viewport-hd">
+            <div className="vp-title">
+              <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-3)', fontSize: 11 }}>VIEWPORT</span>
+              <span>·</span>
+              <span>{SCENES[scene].label}</span>
+              <span className={`vp-pill ${generating ? 'gen' : 'live'}`}>
+                {generating ? '◈ PCG generating' : runStatus === 'render' ? '◉ MRQ rendering' : '● live'}
+              </span>
+            </div>
+            <span className="vp-spacer" />
+            <span className="vp-pill">{params.resolution}</span>
+            <div className="vp-mode">
+              <button className="vp-mode-btn active">ISO</button>
+              <button className="vp-mode-btn">PERSP</button>
+              <button className="vp-mode-btn">TOP</button>
+            </div>
+          </div>
+          <div className="viewport-stage">
+            <div className="viewport-grid" />
+            <Scene
+              params={params}
+              scene={scene}
+              robot={robot}
+              generating={generating}
+              generateProgress={generating ? stageProgress : 1}
+            />
+            <div className="viewport-overlay">
+              <div className="vp-stat"><span className="k">scene</span><span className="v">{scene}</span></div>
+              <div className="vp-stat"><span className="k">robot</span><span className="v">{ROBOTS[robot].label}</span><span className="k">·</span><span className="v">{ROBOTS[robot].dof} DoF</span></div>
+              <div className="vp-stat"><span className="k">room</span><span className="v">{params.room_w_m.toFixed(1)} × {params.room_l_m.toFixed(1)} × {params.ceiling_h_m.toFixed(1)} m</span></div>
+            </div>
+            <div className="viewport-overlay right">
+              <div className="vp-stat"><span className="k">tris</span><span className="v">~{Math.round((118 + params.shelf_density * 240 + params.forklift_count * 30) * 1000).toLocaleString()}</span></div>
+              <div className="vp-stat"><span className="k">lumen</span><span className="v">on</span><span className="k">·</span><span className="v">path-tracer ready</span></div>
+            </div>
+            <Compass />
+          </div>
+          <Timeline currentStage={runStatus} stageProgress={stageProgress} runtimeS={runtimeMs} />
+        </div>
+
+        {/* RIGHT: Parameters / Tool Calls / Render */}
+        <div className="panel right" style={{ gridArea: 'right' }}>
+          {rightTabs}
+          <div className="panel-body">
+            {rightTab === 'params' && (
+              <ParametersPanel
+                params={params}
+                setParam={(k, v) => updateParam(k, v, false)}
+                flashKey={flashKey} />
+            )}
+            {rightTab === 'toolcalls' && (
+              <ToolCallsPanel toolCalls={toolCalls} />
+            )}
+            {rightTab === 'render' && (
+              <RenderPanel
+                params={params}
+                frameCount={params.frame_count}
+                currentFrame={currentFrame}
+                renderActive={runStatus === 'render'}
+                mrqJobs={{ subdir: mrqSubdir }}
+              />
+            )}
+          </div>
+        </div>
+
+        <StatusBar runStatus={runStatus} runtimeS={runtimeMs} params={params} dataset={dataset} />
+      </div>
+
+      <TweaksPanel>
+        <TweakSection label="Scene & Robot" />
+        <TweakRadio label="场景"
+          value={tweaks.scene}
+          options={['warehouse', 'livingroom', 'factory']}
+          onChange={(v) => setTweak('scene', v)} />
+        <TweakSelect label="机器人"
+          value={tweaks.robot}
+          options={[
+            { value: 'franka_panda', label: 'FRANKA Panda (7-DoF arm)' },
+            { value: 'unitree_h1', label: 'Unitree H1 (humanoid)' },
+            { value: 'ur5', label: 'UR5 (6-DoF arm)' },
+          ]}
+          onChange={(v) => setTweak('robot', v)} />
+      </TweaksPanel>
+    </>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function animateProgress(setter, ms) {
+  const start = performance.now();
+  while (performance.now() - start < ms) {
+    const t = Math.min(1, (performance.now() - start) / ms);
+    setter(t);
+    await sleep(50);
+  }
+  setter(1);
+}
+
+function applyToolCallSideEffects(tc, { updateParam, setTweak, setMrqSubdir, setRightTab }) {
+  const { name, args } = tc;
+  if (name === 'load_scene') {
+    if (args.scene) setTweak('scene', args.scene);
+    return;
+  }
+  if (name === 'spawn_robot') {
+    const r = args.urdf || args.robot;
+    if (r === 'franka_panda' || r === 'unitree_h1' || r === 'ur5') setTweak('robot', r);
+    return;
+  }
+  if (name === 'trigger_generate') {
+    // no-op; handled by stage transition
+    return;
+  }
+  if (name === 'trigger_mrq_render') {
+    if (args.subdir) setMrqSubdir(args.subdir);
+    return;
+  }
+  // set_<key>(value)
+  const key = toolCallToParamKey(name);
+  if (key) {
+    const val = args.value !== undefined ? args.value : args[key];
+    if (val !== undefined) updateParam(key, val, true);
+  }
+}
+
+// ─── Render ─────────────────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
