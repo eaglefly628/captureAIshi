@@ -24,7 +24,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "deepseek": {
         "kind": "openai",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-chat",
         "env": "DEEPSEEK_API_KEY",
     },
     "qwen": {
