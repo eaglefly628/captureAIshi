@@ -69,7 +69,14 @@ function StatusBar({ runStatus, runtimeS, params, dataset }) {
 }
 
 // ─── Chat / Composer ─────────────────────────────────────────────────────────
-function ChatPanel({ messages, onSend, busy, scene }) {
+const FREE_SUGGESTIONS = [
+  '你是什么模型',
+  '5 + 3 等于多少?',
+  '介绍一下 PCG 是什么',
+  '总结一下这个项目能干嘛',
+];
+
+function ChatPanel({ messages, onSend, busy, scene, chatMode, setChatMode }) {
   const [text, setText] = useState('');
   const historyRef = useRef(null);
 
@@ -92,7 +99,8 @@ function ChatPanel({ messages, onSend, busy, scene }) {
     }
   };
 
-  const suggs = (SUGGESTIONS[scene] || SUGGESTIONS.warehouse);
+  const isFree = chatMode === 'free';
+  const suggs = isFree ? FREE_SUGGESTIONS : (SUGGESTIONS[scene] || SUGGESTIONS.warehouse);
 
   return (
     <div className="panel chat">
@@ -101,6 +109,12 @@ function ChatPanel({ messages, onSend, busy, scene }) {
           <span>Console</span>
           <span className="count">{messages.length}</span>
         </div>
+        <div className="vp-mode" style={{ marginLeft: 4 }}>
+          <button className={`vp-mode-btn ${!isFree ? 'active' : ''}`}
+                  onClick={() => setChatMode && setChatMode('scene')}>场景</button>
+          <button className={`vp-mode-btn ${isFree ? 'active' : ''}`}
+                  onClick={() => setChatMode && setChatMode('free')}>自由</button>
+        </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-4)', fontFamily: 'var(--mono)' }}>
           job_4271
         </div>
@@ -108,9 +122,18 @@ function ChatPanel({ messages, onSend, busy, scene }) {
       <div className="chat-history" ref={historyRef}>
         {messages.length === 0 ? (
           <div className="empty">
-            <div className="em-title">还没有任务</div>
-            <div>用自然语言描述一个场景，</div>
-            <div>系统会调 PCG + MRQ 出图。</div>
+            <div className="em-title">{isFree ? '自由聊天' : '还没有任务'}</div>
+            {isFree ? (
+              <>
+                <div>裸调 LLM, 无 system prompt 无 tool.</div>
+                <div>用来验真模型 / 闲聊.</div>
+              </>
+            ) : (
+              <>
+                <div>用自然语言描述一个场景，</div>
+                <div>系统会调 PCG + MRQ 出图。</div>
+              </>
+            )}
           </div>
         ) : messages.map((m, i) => (
           <Msg key={i} m={m} />
@@ -119,7 +142,9 @@ function ChatPanel({ messages, onSend, busy, scene }) {
       <div className="composer">
         <div className="composer-frame">
           <textarea
-            placeholder="例如：warehouse 仓库, 货架满一点, 放 2 台叉车, FRANKA 摆抓箱姿势"
+            placeholder={isFree
+              ? '例: 你是什么模型? 用一句话介绍一下 DeepSeek'
+              : '例如：warehouse 仓库, 货架满一点, 放 2 台叉车, FRANKA 摆抓箱姿势'}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
@@ -166,7 +191,12 @@ function Msg({ m }) {
         <span style={{ opacity: 0.6 }}>{m.ts || '—'}</span>
         {m.thinking && <span className="dot-loader"><span /><span /><span /></span>}
       </div>
-      <div className="msg-body">{m.text}</div>
+      <div className="msg-body" style={{ whiteSpace: 'pre-wrap' }}>{m.text}</div>
+      {m.meta && (
+        <div style={{ fontSize: 10.5, color: 'var(--text-4)', fontFamily: 'var(--mono)', marginTop: 2 }}>
+          {m.meta}
+        </div>
+      )}
       {m.actions && m.actions.length > 0 && (
         <div className="msg-actions">
           {m.actions.map((a, i) => (
@@ -439,7 +469,8 @@ function RenderPanel({ params, frameCount, currentFrame, renderActive, mrqJobs }
 }
 
 function LayerTile({ layer, active, frame }) {
-  // Synthesize a tiny preview SVG specific to the AOV kind
+  // Synthesize a tiny preview SVG specific to the AOV kind.
+  // Mock previews always rendered so the gallery is never empty.
   const previews = {
     final: <FinalPreview />,
     normal: <NormalPreview />,
@@ -447,11 +478,11 @@ function LayerTile({ layer, active, frame }) {
     objid: <ObjIdPreview />,
     gbuffer: <GBufferPreview />,
   };
-  const hasOutput = frame > 0;
+  const hasFrames = frame > 0;
   return (
     <div className={`layer-tile ${active ? 'rendering' : ''}`}>
-      <div className="lt-thumb" style={{ background: hasOutput ? 'transparent' : 'var(--surface-3)' }}>
-        {hasOutput && previews[layer.key]}
+      <div className="lt-thumb" style={{ background: 'transparent' }}>
+        {previews[layer.key]}
         {active && <div className="scanline" />}
       </div>
       <div className="lt-meta">
@@ -459,7 +490,7 @@ function LayerTile({ layer, active, frame }) {
           <span className="swatch" style={{ background: layer.color }} />
           {layer.name}
         </span>
-        <span className="sz">{hasOutput ? `EXR16 · ${frame}f` : 'EXR16'}</span>
+        <span className="sz">{hasFrames ? `EXR16 · ${frame}f` : 'EXR16 · preview'}</span>
       </div>
     </div>
   );

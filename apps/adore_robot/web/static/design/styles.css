@@ -1062,3 +1062,60 @@ button, input, textarea, select { font-family: inherit; }
 
 /* Focus ring helper */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ─── Tweaks panel dark theme override (capture brand) ───────────────────── */
+.twk-panel {
+  background: rgba(20, 22, 26, 0.93) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border-strong) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset,
+              0 12px 40px rgba(0,0,0,0.65) !important;
+}
+.twk-panel * { color: var(--text); }
+.twk-hd b { color: var(--text) !important; font-size: 12px; }
+.twk-x { color: var(--text-3) !important; }
+.twk-x:hover { background: var(--surface-3) !important; color: var(--text) !important; }
+.twk-lbl { color: var(--text-2) !important; }
+.twk-lbl > span:first-child { color: var(--text) !important; }
+.twk-val { color: var(--text-3) !important; }
+.twk-sect { color: var(--text-4) !important; }
+.twk-field {
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+.twk-field:focus {
+  border-color: var(--accent) !important;
+  background: var(--surface-3) !important;
+}
+select.twk-field {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%23898d96' d='M0 0h10L5 6z'/></svg>") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 8px center !important;
+}
+.twk-seg {
+  background: var(--surface-sunken) !important;
+  border: 1px solid var(--border) !important;
+}
+.twk-seg-thumb {
+  background: var(--accent) !important;
+  box-shadow: 0 1px 4px rgba(91, 138, 240, 0.4) !important;
+}
+.twk-seg button {
+  color: var(--text-3) !important;
+}
+.twk-seg button[aria-checked="true"],
+.twk-seg button.is-on {
+  color: white !important;
+}
+.twk-slider {
+  background: var(--surface-3) !important;
+}
+.twk-slider::-webkit-slider-thumb {
+  background: var(--accent) !important;
+  border-color: var(--accent-strong) !important;
+}
+.twk-slider::-moz-range-thumb {
+  background: var(--accent) !important;
+  border-color: var(--accent-strong) !important;
+}

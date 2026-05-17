@@ -37,6 +37,7 @@ function App() {
   const [rightTab, setRightTab] = useState('params');
   const [dataset, setDataset] = useState(null);
   const [mrqSubdir, setMrqSubdir] = useState('warehouse/v0_demo');
+  const [chatMode, setChatMode] = useState('scene');
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -212,6 +213,38 @@ function App() {
     busyRef.current = false;
   }, [scene, params.frame_count, setTweak, updateParam]);
 
+  // ─── Free-chat path (no pipeline, no tool_calls; raw LLM reply) ──────────
+  const freeChat = useCallback(async (userText) => {
+    setMessages(prev => [...prev, { role: 'user', text: userText, ts: nowStamp() }]);
+    const idx = await new Promise(r => {
+      setMessages(prev => {
+        r(prev.length);
+        return [...prev, { role: 'assistant', text: '思考中…', thinking: true, ts: nowStamp() }];
+      });
+    });
+    const hist = messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.text)
+      .slice(-10)
+      .map(m => ({ role: m.role, content: m.text }));
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: userText, mode: 'free', history: hist }),
+      });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || 'free chat failed');
+      const meta = `${data.provider}/${data.model} · ${data.elapsed_ms}ms`;
+      setMessages(prev => prev.map((m, i) => i === idx
+        ? { ...m, text: data.text || '(空响应)', thinking: false, meta }
+        : m));
+    } catch (err) {
+      setMessages(prev => prev.map((m, i) => i === idx
+        ? { ...m, text: `调用失败: ${err.message}`, thinking: false }
+        : m));
+    }
+  }, [messages]);
+
   // Cleanup
   useEffect(() => () => cancelAnimationFrame(animFrameRef.current), []);
 
@@ -247,9 +280,11 @@ function App() {
         {/* LEFT: Chat */}
         <ChatPanel
           messages={messages}
-          onSend={runPipeline}
+          onSend={(t) => chatMode === 'free' ? freeChat(t) : runPipeline(t)}
           busy={runStatus !== 'idle' && runStatus !== 'done'}
           scene={scene}
+          chatMode={chatMode}
+          setChatMode={setChatMode}
         />
 
         {/* CENTER: Viewport + timeline */}
@@ -270,13 +305,16 @@ function App() {
               <button className="vp-mode-btn">PERSP</button>
               <button className="vp-mode-btn">TOP</button>
             </div>
-            <a className="top-btn"
+            <a className="vp-mode-btn"
                href="/3d"
                target="_blank"
                rel="noopener"
-               style={{ marginLeft: 8, textDecoration: 'none', height: 24, padding: '0 10px',
-                        fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)',
-                        background: 'var(--accent-softer)', borderColor: 'var(--accent-soft)' }}>
+               style={{ marginLeft: 6, textDecoration: 'none',
+                        color: 'var(--accent)',
+                        background: 'var(--accent-soft)',
+                        border: '1px solid var(--accent-soft)',
+                        fontWeight: 600,
+                        display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               3D ↗
             </a>
           </div>
