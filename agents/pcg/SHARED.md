@@ -41,6 +41,22 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 - [ ] **PCGComponent Python method 真名** -- 等 `help(unreal.PCGComponent)` dump，回填 `pcg_param_contract.md` §2 placeholder (当前两个 hypothesis: `set_graph_parameter` / `override_param`)。回填前 contract 的 key 名 + value 类型 + range 仍然有效，不阻塞 xiaoxu batch UI 表单 + tool input_schema 派生
 
+### [v0.3.3] P1 from xiaoxu via 老白 (方向 B 拍板, 2026-05-16): contract -> AICallable 映射
+
+老白拍板**方向 B = 全面拥抱 UE5.8 MCP**，ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。xiaoxu 会写 `UPCGAdoreToolset : UToolsetDefinition`，把你 contract §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))`。**你的 contract 内容不变，只需新增一节映射表**：
+
+- [ ] `pcg_param_contract.md` 加 §8 "AICallable Method 映射" -- 给每个公开参数列出 (param key / 类型 / 期望的 C++ 方法名 / 期望的 JSON Schema 字段名)。例:
+  | param key | type | UFUNCTION name | AI tool schema name |
+  |---|---|---|---|
+  | `shelf_density` | float | `SetShelfDensity(float Value)` | `set_shelf_density` |
+  | `forklift_count` | int | `SetForkliftCount(int32 Value)` | `set_forklift_count` |
+  | `lighting_preset` | enum | `SetLightingPreset(EAdoreLighting Preset)` | `set_lighting_preset` |
+  - 三场景全列。
+  - enum 参数顺便给出对应的 `UENUM` 字面值清单（让 xiaoxu 知道枚举类怎么定义）。
+  - 标注每个参数 set 后是否需要 implicit re-generate，还是要 LLM 显式调 `trigger_generate()`（建议显式，agent loop 控制力更强）。
+- [ ] §4 NL prompt few-shot 顺手补一条 MCP 风格示例：用户文本 -> 多个 MCP tool call 序列（不再是单个 delta JSON），让 LLM 学会"先 set 几个参数再调 generate"的模式。
+- [ ] 其他 contract 内容 (§1-§7) 不变，三场景 JSON spec 不变。
+
 ## Boundary & Handoff
 
 - **依赖 xiaoxu**: `UAdoreRobotPCGParams` UCLASS in `AdoreRobotPCG` plugin，UPROPERTY EditAnywhere 对应 contract §1 公开参数；PCG graph 引用此 class 作为 OverrideParams

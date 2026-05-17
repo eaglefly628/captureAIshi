@@ -51,6 +51,18 @@
 
 #### Open (本期不做，下个 session 接力)
 
+- [ ] **P0 (老白 2026-05-16 决策, v0.3.3): 架构方向 B -- 全面拥抱 UE5.8 MCP** -- ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。你原 `batch_scene_gen_architecture.md` 的 Flask + subprocess + commandlet 路线**主体作废**，下面这套替代：
+  - **UE = MCP Server**: 装 `AIAssistant` + `ToolsetRegistry` + `ModelContextProtocol` + `AllToolsets` plugins，`bAutoStartServer=true`，监听 `http://localhost:8000/mcp`。
+  - **写 `UPCGAdoreToolset : UToolsetDefinition`**（plugin 路径 `apps/adore_robot/unreal_projects/AdoreRobot/Plugins/AdoreRobotPCG/`），把 xiaohuan `pcg_param_contract.md` §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))` 方法，函数名对齐 contract key（snake_case）。例: `void SetShelfDensity(float Value)`、`void SetForkliftCount(int32 Value)`、`void TriggerGenerate()`、`void TriggerMRQRender(FString PresetName)`、`FString GetThumbnailPath()`。反射自动出 JSON Schema，零手写。
+  - **批量 headless render 路径**: 先**实证 MCP 能否驱动 commandlet/unattended cooking** -- 这是 ref doc 没明说的。两条 fallback：
+    - Plan B-1: Editor 进程长驻 + MCP 跑批量（一次启动多个 job 序列调用），可行就用
+    - Plan B-2: 批量保留 subprocess + commandlet（不通过 MCP），交互探索走 MCP -- 退化成方向 C 混合架构
+    实证结果回写 `batch_scene_gen_architecture_v2.md` §1。
+  - **LLM provider 抽象**（与方向 B 联动，老白同步决策）: 默认 **DeepSeek-V3.2**（OpenAI 兼容，tool calling 稳，比 Claude Sonnet 4.6 便宜约 10x），同时支持 Anthropic / Qwen3-Max / GLM-4.6 切换。写 `apps/adore_robot/llm/factory.py`：`make_llm_client(provider: Literal["deepseek","anthropic","qwen","glm","kimi","doubao"]) -> BaseClient`。所有 client 暴露统一 `chat_with_tools(...)` 接口。多模态（thumbnail 反馈循环 v0.4）默认 **Qwen-VL-Max**。
+  - **重写 `batch_scene_gen_architecture_v2.md`** 取代 v1，结构：§0 决策摘要（方向 B + DeepSeek 默认）/ §1 MCP 拓扑 + Plan B-1/B-2 实证结果 / §2 `UPCGAdoreToolset` 方法清单（1:1 派生自 xiaohuan contract）/ §3 LLM provider 抽象 + few-shot 复用 / §4 Web UI 退化为 thin shell（仅展示 job/thumbnail，所有 PCG 操作走 MCP）/ §5 依赖清单更新。
+  - **不删 v1 doc**，保留对照；在 v1 头部加一行 `> SUPERSEDED by batch_scene_gen_architecture_v2.md (老白 2026-05-16 决策方向 B)`。
+  - **xiaohuan 那边请求**: 在 `agents/pcg/SHARED.md` 加 P1，让他出"contract param -> AICallable method 名"映射表，你照表写 UFUNCTION 签名。
+
 - [ ] **P0 (老白 2026-05-15 决策): Robotics Poser 接口抽象 -- ABC 三方案都要接** -- 你原本想锁 Plan C，老白拍：**A/B/C 都做接口支持，调通可以延后**。本期落地要求：
   - 写 `docs/robotics_poser_interface.md`，定义两层抽象：
     1. **UE5 侧 `IRobotPoser` 接口** (C++ `UInterface` 或纯 BP interface)，方法清单至少含：`LoadURDF(path) -> RobotHandle`、`GetJointNames(handle) -> [name]`、`GetJointLimits(handle, name) -> (lo, hi)`、`SetJointState(handle, {name: angle})`、`GetLinkTransform(handle, link_name) -> FTransform`、`SpawnInLevel(handle, world_transform) -> AActor*`、`DestroyHandle(handle)`。
