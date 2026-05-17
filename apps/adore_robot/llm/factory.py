@@ -24,7 +24,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "deepseek": {
         "kind": "openai",
         "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "env": "DEEPSEEK_API_KEY",
     },
     "qwen": {
@@ -107,7 +107,7 @@ def make_llm_client(
     api_key = api_key or os.environ.get(cfg["env"])
     if not api_key:
         raise RuntimeError(f"missing API key: set env {cfg['env']} or pass api_key=")
-    chosen_model = model or cfg["model"]
+    chosen_model = model or os.environ.get("ADORE_LLM_MODEL") or cfg["model"]
     if cfg["kind"] == "openai":
         return OpenAICompatClient(
             base_url=cfg["base_url"],
