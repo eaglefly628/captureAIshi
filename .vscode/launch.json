@@ -2,36 +2,52 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Desktop GUI",
+            "name": "Adore Robot (UE5.8 MCP Bridge)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/desktop_app.py",
-            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/apps/adore_robot/main.py",
+            "cwd": "${workspaceFolder}/apps/adore_robot",
             "console": "integratedTerminal"
         },
         {
-            "name": "CLI Dry Run",
+            "name": "Launcher (port 5050)",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Capture: Desktop GUI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/capture/desktop_app.py",
+            "cwd": "${workspaceFolder}/apps/capture",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Capture: Web UI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/capture/web_ui.py",
+            "cwd": "${workspaceFolder}/apps/capture",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Capture: CLI Dry Run",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/capture/main.py",
             "args": ["--driver", "manual", "--dry-run"],
-            "cwd": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}/apps/capture",
             "console": "integratedTerminal"
         },
         {
-            "name": "Web UI",
+            "name": "Capture: Web UI (Demo Mode)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/web_ui.py",
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Web UI (Demo Mode)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/web_ui.py",
-            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/apps/capture/web_ui.py",
+            "cwd": "${workspaceFolder}/apps/capture",
             "console": "integratedTerminal",
             "env": {
                 "DEMOAISHI": "1",
