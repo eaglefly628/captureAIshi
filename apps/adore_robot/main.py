@@ -189,7 +189,7 @@ def api_chat():
         result = client.chat_with_tools(
             messages=[Message(role="user", content=user_msg)],
             tools=[UPDATE_SCENE_TOOL],
-            tool_choice={"name": UPDATE_SCENE_TOOL.name},
+            tool_choice="auto",
             system=SYSTEM_PROMPT,
             max_tokens=512,
         )
@@ -231,6 +231,53 @@ def api_chat():
             "arguments": tc.arguments,
         } if tc else None,
         "text": result.text,
+    })
+
+
+@app.route("/api/chat/ping", methods=["POST"])
+def api_chat_ping():
+    """Bare LLM call -- no tool, no system prompt, no scene context.
+    Verifies the LLM is actually live and returns its self-description."""
+    body = request.get_json(silent=True) or {}
+    text = (body.get("text") or "你是什么模型? 用一句中文回答.").strip()
+
+    provider_resolved = auto_detect_provider()
+    _log("PING-IN", f"provider={provider_resolved}", f"text={text!r}")
+
+    try:
+        client = make_llm_client()
+    except RuntimeError as e:
+        return jsonify({"ok": False, "error": str(e)}), 503
+
+    t0 = time.time()
+    try:
+        result = client.chat_with_tools(
+            messages=[Message(role="user", content=text)],
+            tools=None,
+            tool_choice=None,
+            system=None,
+            max_tokens=200,
+        )
+    except Exception as e:
+        elapsed_ms = int((time.time() - t0) * 1000)
+        _log("PING-ERR", f"{type(e).__name__}: {e}", f"elapsed={elapsed_ms}ms")
+        return jsonify({
+            "ok": False,
+            "error": f"{type(e).__name__}: {e}",
+            "provider": provider_resolved,
+        }), 502
+    elapsed_ms = int((time.time() - t0) * 1000)
+    _log("PING-OUT", f"provider={provider_resolved}",
+         f"model={getattr(client, 'model', '?')}", f"elapsed={elapsed_ms}ms",
+         f"text={(result.text or '')[:120]!r}")
+
+    return jsonify({
+        "ok": True,
+        "provider": provider_resolved,
+        "model": getattr(client, "model", "unknown"),
+        "elapsed_ms": elapsed_ms,
+        "text": result.text,
+        "question": text,
     })
 
 
