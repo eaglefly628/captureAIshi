@@ -24,7 +24,7 @@ function IsoBox({
   top = '#D9E1EB',
   left = '#A8B5C5',
   right = '#7E8DA0',
-  stroke = 'rgba(20, 30, 45, 0.32)',
+  stroke = 'rgba(255, 255, 255, 0.18)',
   strokeWidth = 0.6,
 }) {
   const A = iso(x, y, z);
@@ -144,10 +144,10 @@ function FrankaArm({ x, y }) {
         top="#E8EBEF" left="#B0B5BD" right="#7C828B" />
       {/* gripper */}
       <IsoBox x={x + 0.5} y={y - 0.1} z={0.75} w={0.18} d={0.15} h={0.1}
-        top="#2E5C8A" left="#1F4670" right="#143052" />
+        top="#5b8af0" left="#3a6ec8" right="#1f4a8a" />
       {/* base accent ring */}
       <ellipse cx={iso(x, y, 0.42).x} cy={iso(x, y, 0.42).y} rx={9} ry={4}
-        fill="none" stroke="#2E5C8A" strokeWidth={1.2} strokeDasharray="2 2" opacity={0.5} />
+        fill="none" stroke="#5b8af0" strokeWidth={1.2} strokeDasharray="2 2" opacity={0.5} />
     </g>
   );
 }
@@ -174,7 +174,7 @@ function UnitreeH1({ x, y }) {
         top="#1F2A38" left="#141A24" right="#0A0F17" />
       {/* visor */}
       <IsoBox x={x - 0.12} y={y + 0.07} z={1.38} w={0.24} d={0.04} h={0.08}
-        top="#2E5C8A" left="#1F4670" right="#143052" />
+        top="#5b8af0" left="#3a6ec8" right="#1f4a8a" />
     </g>
   );
 }
@@ -187,19 +187,19 @@ function UR5({ x, y }) {
         top="#2F3845" left="#1B2230" right="#0E141E" />
       {/* first joint */}
       <IsoBox x={x - 0.15} y={y - 0.15} z={0.9} w={0.3} d={0.3} h={0.25}
-        top="#4178B2" left="#2E5C8A" right="#1F4670" />
+        top="#7ba3f7" left="#5b8af0" right="#3a6ec8" />
       {/* link 1 */}
       <IsoBox x={x - 0.1} y={y - 0.1} z={1.15} w={0.2} d={0.2} h={0.55}
         top="#E8EBEF" left="#B0B5BD" right="#7C828B" />
       {/* elbow */}
       <IsoBox x={x - 0.12} y={y - 0.12} z={1.7} w={0.25} d={0.6} h={0.15}
-        top="#4178B2" left="#2E5C8A" right="#1F4670" />
+        top="#7ba3f7" left="#5b8af0" right="#3a6ec8" />
       {/* forearm forward */}
       <IsoBox x={x - 0.08} y={y + 0.4} z={1.55} w={0.18} d={0.18} h={0.15}
         top="#E8EBEF" left="#B0B5BD" right="#7C828B" />
       {/* gripper */}
       <IsoBox x={x - 0.1} y={y + 0.4} z={1.4} w={0.2} d={0.18} h={0.15}
-        top="#1F4670" left="#143052" right="#0A1F36" />
+        top="#3a6ec8" left="#1f4a8a" right="#0A1F36" />
     </g>
   );
 }

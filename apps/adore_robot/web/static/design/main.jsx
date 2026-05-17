@@ -83,20 +83,36 @@ function App() {
     }
     const effectiveScene = inferred || scene;
 
-    // Pick canned response
-    const resp = chooseResponse(userText, effectiveScene);
-
-    // 2) Insert assistant message stub (thinking)
+    // 2) Insert assistant thinking stub immediately (so user sees activity)
     const assistantIdx = await new Promise(r => {
       setMessages(prev => {
         r(prev.length);
         return [...prev, {
-          role: 'assistant', text: '解析中…',
-          actions: resp.calls.map(c => ({ ...c, status: 'pending' })),
+          role: 'assistant', text: '思考中…',
+          actions: [],
           thinking: true, ts: nowStamp()
         }];
       });
     });
+
+    // 2b) Real LLM call (DeepSeek-V3.2 via Flask /api/chat). Returns one
+    // update_scene tool_call with pcg_params delta + rationale. We expand
+    // the delta into per-param actions so the pipeline animation still
+    // shows the granular tool_call stream the design promises.
+    let resp;
+    try {
+      const realCalls = await callRealChat(userText, effectiveScene, params);
+      resp = realCalls;
+    } catch (err) {
+      console.error('[chat] real LLM failed, fallback to canned:', err);
+      resp = chooseResponse(userText, effectiveScene);
+      resp.narrate = `(后端调用失败: ${err.message}, fallback to canned) ` + resp.narrate;
+    }
+
+    // refresh the stub with discovered actions
+    setMessages(prev => prev.map((m, i) => i === assistantIdx
+      ? { ...m, actions: resp.calls.map(c => ({ ...c, status: 'pending' })) }
+      : m));
 
     // PARSE stage
     setRunStatus('parse');
@@ -323,6 +339,51 @@ function App() {
       </TweaksPanel>
     </>
   );
+}
+
+// ─── Real LLM call to /api/chat ─────────────────────────────────────────────
+// Returns design-compatible {narrate, calls[]} shape so the rest of the
+// pipeline code (animation, side-effects) keeps working. Backend returns a
+// single update_scene tool_call; we expand its pcg_params into per-key
+// actions for visual continuity with the design's tool_call stream.
+async function callRealChat(userText, scene, currentParams) {
+  const r = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: userText,
+      mode: 'scene',
+      current_spec: { scene_id: scene, pcg_params: currentParams },
+    }),
+  });
+  const data = await r.json();
+  if (!data.ok) {
+    throw new Error(data.error || 'chat failed');
+  }
+  const tc = data.tool_call;
+  if (!tc) {
+    return { narrate: data.text || '(模型未返回工具调用)', calls: [] };
+  }
+  const args = tc.arguments || {};
+  const pcgParams = args.pcg_params || {};
+  const rationale = args.rationale || '';
+
+  // Expand per-param into individual set_<key> calls so the timeline shows N steps
+  const calls = [];
+  if (args.scene_id && args.scene_id !== scene) {
+    calls.push({ name: 'load_scene', args: { scene: args.scene_id } });
+  }
+  for (const [k, v] of Object.entries(pcgParams)) {
+    calls.push({ name: `set_${k}`, args: { value: v } });
+  }
+  if (calls.length === 0) {
+    calls.push({ name: 'no_op', args: {} });
+  } else {
+    calls.push({ name: 'trigger_generate', args: {} });
+  }
+
+  const narrate = `${rationale}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms`;
+  return { narrate, calls };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

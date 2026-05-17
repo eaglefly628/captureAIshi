@@ -482,7 +482,7 @@ function FinalPreview() {
       <rect x="100" y="40" width="22" height="35" fill="#A8915E" stroke="#6E5E48" strokeWidth="0.5" />
       <rect x="125" y="38" width="22" height="37" fill="#B59E80" stroke="#6E5E48" strokeWidth="0.5" />
       <rect x="74" y="50" width="12" height="25" fill="#2F3845" />
-      <circle cx="80" cy="48" r="2" fill="#2E5C8A" />
+      <circle cx="80" cy="48" r="2" fill="#5b8af0" />
     </svg>
   );
 }
@@ -527,7 +527,7 @@ function ObjIdPreview() {
       <rect x="100" y="40" width="22" height="35" fill="#FFB347" />
       <rect x="125" y="38" width="22" height="37" fill="#FFB347" />
       <rect x="74" y="50" width="12" height="25" fill="#5BE89A" />
-      <rect x="78" y="46" width="3" height="3" fill="#2E5C8A" />
+      <rect x="78" y="46" width="3" height="3" fill="#5b8af0" />
     </svg>
   );
 }
