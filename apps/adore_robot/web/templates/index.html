@@ -3,118 +3,96 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Adore Robot — UE5 PCG Robotics Foundry (Preview)</title>
+<title>Adore Robot — UE5.8 MCP Bridge</title>
 <style>
   :root {
-    --bg-base: #0e1018;
-    --bg-surface: #16181d;
-    --bg-elevated: #1c1f26;
-    --border: rgba(255,255,255,0.10);
-    --border-hover: rgba(251,146,60,0.40);
-    --text-primary: #f4f4f5;
-    --text-secondary: #b4b8c0;
-    --text-tertiary: #7a8088;
-    --accent: #fb923c;
-    --accent-soft: rgba(251,146,60,0.18);
+    --bg-base: #0e1018; --bg-surface: #16181d; --bg-elevated: #1c1f26;
+    --border: rgba(255,255,255,0.10); --border-hover: rgba(251,146,60,0.40);
+    --text-primary: #f4f4f5; --text-secondary: #b4b8c0; --text-tertiary: #7a8088;
+    --accent: #fb923c; --accent-soft: rgba(251,146,60,0.18);
+    --ok: #4ade80; --err: #f87171; --warn: #fbbf24;
     --radius-md: 10px;
-    --radius-lg: 16px;
-    --shadow-card: 0 8px 30px rgba(0,0,0,0.40);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
-    background: var(--bg-base);
-    color: var(--text-primary);
+    background: var(--bg-base); color: var(--text-primary);
     font-family: 'Inter', -apple-system, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 15px; line-height: 1.5;
-    min-height: 100vh;
-    background:
-      radial-gradient(ellipse at 20% 0%, rgba(251,146,60,0.08), transparent 60%),
-      radial-gradient(ellipse at 80% 100%, rgba(110,161,255,0.04), transparent 60%),
-      var(--bg-base);
+    font-size: 14px; line-height: 1.5; min-height: 100vh;
+    background: radial-gradient(ellipse at 20% 0%, rgba(251,146,60,0.06), transparent 60%), var(--bg-base);
   }
+  code, pre, .mono { font-family: ui-monospace, SF Mono, Menlo, Consolas, monospace; }
   .topbar {
-    position: sticky; top: 0; z-index: 10;
-    padding: 18px 48px;
+    position: sticky; top: 0; z-index: 10; padding: 14px 32px;
     display: flex; align-items: center; justify-content: space-between;
-    backdrop-filter: blur(8px);
-    background: rgba(14,16,24,0.65);
+    backdrop-filter: blur(8px); background: rgba(14,16,24,0.75);
     border-bottom: 1px solid var(--border);
   }
-  .brand { display: flex; align-items: center; gap: 12px; font-weight: 600; }
-  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
-  .brand-en { color: var(--text-tertiary); font-weight: 400; font-size: 13px; margin-left: 6px; }
-  .back-link { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
-  .back-link:hover { color: var(--text-primary); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .brand-en { color: var(--text-tertiary); font-weight: 400; font-size: 12px; margin-left: 4px; }
+  .conn { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+  .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); transition: background 0.2s; }
+  .conn.ok .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .conn.err .dot { background: var(--err); box-shadow: 0 0 8px var(--err); }
+  .conn .url { color: var(--text-tertiary); }
+  .conn button { padding: 4px 10px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .conn button:hover { border-color: var(--border-hover); color: var(--text-primary); }
 
-  .hero { padding: 80px 48px 40px; max-width: 1100px; margin: 0 auto; }
-  .hero-tag {
-    display: inline-block; padding: 6px 14px; background: var(--accent-soft);
-    color: var(--accent); border-radius: 999px;
-    font-size: 12px; font-weight: 500; letter-spacing: 0.06em; margin-bottom: 24px;
-    border: 1px solid rgba(251,146,60,0.30);
+  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 50px); }
+  .sidebar { border-right: 1px solid var(--border); background: var(--bg-surface); display: flex; flex-direction: column; min-height: 0; }
+  .sidebar header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .sidebar header h2 { font-size: 12px; letter-spacing: 0.08em; color: var(--text-tertiary); font-weight: 600; }
+  .sidebar header .count { font-size: 11px; color: var(--text-tertiary); }
+  .sidebar .search { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .sidebar .search input { width: 100%; background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-primary); padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+  .sidebar .search input:focus { outline: none; border-color: var(--border-hover); }
+  .tools { flex: 1; overflow-y: auto; padding: 6px 0; }
+  .tool {
+    padding: 9px 18px; cursor: pointer; border-left: 2px solid transparent;
+    font-size: 13px; font-family: ui-monospace, SF Mono, Menlo, Consolas, monospace;
+    color: var(--text-secondary); transition: background 0.12s;
   }
-  .hero h1 { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 14px; }
-  .hero h1 small { display: block; font-size: 18px; font-weight: 400; color: var(--text-tertiary); margin-top: 10px; }
-  .hero p { font-size: 16px; color: var(--text-secondary); max-width: 720px; }
+  .tool:hover { background: rgba(255,255,255,0.03); color: var(--text-primary); }
+  .tool.active { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
+  .tool .desc { display: block; font-size: 11px; font-family: 'Inter', sans-serif; color: var(--text-tertiary); margin-top: 3px; line-height: 1.4; }
+  .empty { padding: 40px 18px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
 
-  .section { padding: 40px 48px; max-width: 1100px; margin: 0 auto; }
-  .section h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.01em; }
-  .section h2 small { display: inline-block; font-size: 12px; color: var(--text-tertiary); font-weight: 400; margin-left: 10px; letter-spacing: 0.04em; }
+  .main { padding: 24px 32px; overflow-y: auto; }
+  .main h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; font-family: ui-monospace, SF Mono, Menlo, Consolas, monospace; }
+  .main .desc { color: var(--text-secondary); font-size: 13px; margin-bottom: 20px; }
+  .main .empty-state { padding: 80px 0; text-align: center; color: var(--text-tertiary); }
+  .main .empty-state .big { font-size: 36px; margin-bottom: 14px; opacity: 0.4; }
 
-  /* Phase roadmap */
-  .roadmap { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
-  .phase {
-    padding: 20px; background: var(--bg-surface);
-    border: 1px solid var(--border); border-radius: var(--radius-md);
-    position: relative;
+  .panel { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: 16px; overflow: hidden; }
+  .panel header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.06em; font-weight: 600; }
+  .panel .body { padding: 14px 16px; }
+  .panel pre { background: var(--bg-base); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; color: var(--text-secondary); overflow-x: auto; max-height: 320px; overflow-y: auto; }
+  textarea.args {
+    width: 100%; min-height: 120px; background: var(--bg-base); border: 1px solid var(--border);
+    color: var(--text-primary); padding: 10px 12px; border-radius: 6px; font-size: 12px;
+    font-family: ui-monospace, SF Mono, Menlo, Consolas, monospace; resize: vertical;
   }
-  .phase.current { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--bg-surface) 30%); }
-  .phase-tag { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: 8px; }
-  .phase.current .phase-tag { color: var(--accent); }
-  .phase h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
-  .phase p { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 8px; }
-  .phase-eta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.04em; }
+  textarea.args:focus { outline: none; border-color: var(--border-hover); }
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  button.go {
+    padding: 8px 18px; background: var(--accent); color: #1a0e00; border: none;
+    border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  button.go:hover { filter: brightness(1.1); }
+  button.go:disabled { background: var(--bg-elevated); color: var(--text-tertiary); cursor: not-allowed; }
+  .ms { color: var(--text-tertiary); font-size: 11px; font-family: ui-monospace, monospace; }
+  .err-text { color: var(--err); font-size: 12px; }
 
-  /* Scene templates */
-  .scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
-  .scene {
-    padding: 24px; background: var(--bg-surface);
-    border: 1px solid var(--border); border-radius: var(--radius-md);
-    transition: border-color 0.25s, transform 0.25s;
-  }
-  .scene:hover { border-color: var(--border-hover); transform: translateY(-4px); }
-  .scene-icon { width: 44px; height: 44px; border-radius: 10px; background: var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 14px; color: var(--accent); }
-  .scene h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-  .scene p { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px; }
-  .scene-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.04em; }
-
-  /* CTA */
-  .cta {
-    margin: 40px 48px 80px;
-    max-width: 1100px;
-    padding: 32px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    text-align: center;
-  }
-  .cta h2 { margin-bottom: 10px; }
-  .cta p { color: var(--text-secondary); margin-bottom: 24px; font-size: 14px; }
-  .cta button {
-    padding: 12px 28px;
-    background: var(--bg-elevated);
-    color: var(--text-tertiary);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    font-size: 14px; font-weight: 600;
-    cursor: not-allowed;
-  }
-
-  footer {
-    padding: 28px 48px; max-width: 1100px; margin: 0 auto;
-    border-top: 1px solid var(--border);
-    font-size: 12px; color: var(--text-tertiary);
-  }
+  .history { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .history header { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.06em; font-weight: 600; display: flex; justify-content: space-between; }
+  .hist-item { padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; display: flex; gap: 12px; align-items: center; }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-item .when { color: var(--text-tertiary); font-family: ui-monospace, monospace; min-width: 68px; }
+  .hist-item .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; }
+  .hist-item.ok .badge { background: rgba(74,222,128,0.15); color: var(--ok); }
+  .hist-item.err .badge { background: rgba(248,113,113,0.15); color: var(--err); }
+  .hist-item .name { font-family: ui-monospace, monospace; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-item .ms { min-width: 50px; text-align: right; }
 </style>
 </head>
 <body>
@@ -123,105 +101,191 @@
   <div class="brand">
     <span class="brand-dot"></span>
     Adore Robot
-    <span class="brand-en">UE5 PCG Robotics Foundry</span>
+    <span class="brand-en">UE5.8 MCP Bridge</span>
   </div>
-  <a href="http://localhost:5050" class="back-link">← 回到爱萌视觉训练中心</a>
+  <div class="conn" id="conn">
+    <span class="dot"></span>
+    <span id="conn-text">checking...</span>
+    <span class="url mono" id="conn-url">{{ mcp_url }}</span>
+    <button onclick="checkConn()">refresh</button>
+  </div>
 </div>
 
-<section class="hero">
-  <div class="hero-tag">PREVIEW · v0.0.1 · UE5.6 · PCG · ROBOTICS PLUGIN</div>
-  <h1>
-    程序化机器人训练场景工厂
-    <small>UE5 PCG · MRQ 多层 EXR · Cosmos Transfer · 训练数据格式适配</small>
-  </h1>
-  <p>为具身智能与世界模型团队批量生产 photoreal 训练场景。三类核心场景：warehouse / 客厅 / 工业一角，每类支持参数化变体生成 + 机器人 URDF 静态摆放 + Cosmos 后期 photoreal。</p>
-</section>
+<div class="layout">
+  <aside class="sidebar">
+    <header>
+      <h2>TOOLS</h2>
+      <span class="count" id="tool-count">—</span>
+    </header>
+    <div class="search">
+      <input type="text" id="filter" placeholder="filter by name or description..." oninput="renderTools()">
+    </div>
+    <div class="tools" id="tools">
+      <div class="empty">connect to UE MCP first</div>
+    </div>
+  </aside>
 
-<section class="section">
-  <h2>实施路线 <small>4-PHASE ROADMAP</small></h2>
-  <div class="roadmap">
-    <div class="phase current">
-      <div class="phase-tag">PHASE 0 · 当前</div>
-      <h3>视觉重构</h3>
-      <p>UI 配色提亮 + elevation tokens + 4px spacing 网格 + accent 染色 selected state。</p>
-      <div class="phase-eta">~3 天</div>
+  <main class="main">
+    <div id="empty-main" class="empty-state">
+      <div class="big">▶</div>
+      <div>选一个 tool 开始<br><span style="font-size:12px;opacity:0.6">先确保 UE5.8 Editor 启动了 MCP server</span></div>
     </div>
-    <div class="phase">
-      <div class="phase-tag">PHASE A · 下周</div>
-      <h3>双模式骨架</h3>
-      <p>Toolbar mode switch + PCG 左栏 cascade lv1/2/3 + 8 个 stub routes。</p>
-      <div class="phase-eta">~1 周</div>
-    </div>
-    <div class="phase">
-      <div class="phase-tag">PHASE B</div>
-      <h3>Unreal 启动桥接</h3>
-      <p>UnrealEditor-Cmd headless + 三类场景 PCG asset + MRQ 多层 EXR 输出。</p>
-      <div class="phase-eta">~1 周</div>
-    </div>
-    <div class="phase">
-      <div class="phase-tag">PHASE C</div>
-      <h3>数据适配器</h3>
-      <p>LeRobot dataset / RT-X TFDS / NVIDIA Isaac GR00T schema 三套导出器。</p>
-      <div class="phase-eta">~1 周</div>
-    </div>
-  </div>
-</section>
 
-<section class="section">
-  <h2>三类目标场景 <small>SCENE TEMPLATES</small></h2>
-  <div class="scenes">
-    <div class="scene">
-      <div class="scene-icon">▦</div>
-      <h3>Warehouse · 仓储</h3>
-      <p>50×50m，货架阵列 + 叉车通道。算法：BSP partition + grid spawner。资产：Quixel industrial pack。</p>
-      <div class="scene-meta">PLANNED · PHASE B</div>
-    </div>
-    <div class="scene">
-      <div class="scene-icon">⌂</div>
-      <h3>客厅 · 居家</h3>
-      <p>5×7m，沙发 + 茶几 + 电视 + 装饰。算法：Graph-based + WFC + LLM constraint。资产：Fab MetaSofa。</p>
-      <div class="scene-meta">PLANNED · PHASE B</div>
-    </div>
-    <div class="scene">
-      <div class="scene-icon">⚙</div>
-      <h3>工业一角 · Industrial</h3>
-      <p>8×8m，机床 + 工具架 + 控制台。算法：Shape grammar + cluster。资产：Fab industrial + 自建。</p>
-      <div class="scene-meta">PLANNED · PHASE B</div>
-    </div>
-  </div>
-</section>
+    <div id="tool-view" style="display:none">
+      <h1 id="t-name">—</h1>
+      <div class="desc" id="t-desc">—</div>
 
-<section class="section">
-  <h2>机器人 URDF 支持 <small>KINEMATIC POSING ONLY</small></h2>
-  <div class="scenes">
-    <div class="scene">
-      <div class="scene-icon">⚉</div>
-      <h3>FRANKA Panda</h3>
-      <p>7 关节工业臂，桌面操作场景标杆，LeRobot dataset 主力机型。</p>
-      <div class="scene-meta">PHASE B 接入</div>
-    </div>
-    <div class="scene">
-      <div class="scene-icon">⊨</div>
-      <h3>Unitree H1</h3>
-      <p>人形双足机器人，全身关节，仓储巡检 + 客厅家务场景。</p>
-      <div class="scene-meta">PHASE B 接入</div>
-    </div>
-    <div class="scene">
-      <div class="scene-icon">⚓</div>
-      <h3>UR5</h3>
-      <p>Universal Robots 6 轴协作臂，工业一角场景主力。</p>
-      <div class="scene-meta">PHASE B 接入</div>
-    </div>
-  </div>
-</section>
+      <div class="panel">
+        <header><span>INPUT SCHEMA</span></header>
+        <div class="body"><pre id="t-schema">—</pre></div>
+      </div>
 
-<div class="cta">
-  <h2>PCG 生成入口</h2>
-  <p>Phase 0 / A 实施期间，PCG 后端尚未上线。完整规划见 <code>docs/ui_pcg_redesign_plan.md</code>。</p>
-  <button disabled>Generate Scene · Coming in Phase B</button>
+      <div class="panel">
+        <header><span>ARGUMENTS (JSON)</span></header>
+        <div class="body">
+          <textarea class="args" id="t-args" spellcheck="false">{}</textarea>
+          <div style="margin-top:10px" class="toolbar">
+            <button class="go" id="go-btn" onclick="callTool()">Call</button>
+            <span class="ms" id="call-ms"></span>
+            <span class="err-text" id="call-err"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <header><span>RESPONSE</span><span class="ms" id="resp-meta"></span></header>
+        <div class="body"><pre id="t-resp">no calls yet</pre></div>
+      </div>
+    </div>
+
+    <div class="history" style="margin-top:24px">
+      <header><span>CALL HISTORY</span><span class="ms" id="hist-count">0</span></header>
+      <div id="hist"></div>
+    </div>
+  </main>
 </div>
 
-<footer>© 2026 Aimen · Adore Robot v0.0.1-preview · Built on Unreal Engine 5.6 + NVIDIA Cosmos</footer>
+<script>
+let tools = [];
+let active = null;
+const history = [];
+
+async function checkConn() {
+  const el = document.getElementById('conn');
+  const text = document.getElementById('conn-text');
+  el.className = 'conn';
+  text.textContent = 'checking...';
+  try {
+    const r = await fetch('/api/mcp/status');
+    const j = await r.json();
+    if (j.ok) {
+      el.className = 'conn ok';
+      text.textContent = 'connected · session ' + (j.session_id || '?').slice(0, 8);
+      loadTools();
+    } else {
+      el.className = 'conn err';
+      text.textContent = j.error || 'unreachable';
+    }
+  } catch (e) {
+    el.className = 'conn err';
+    text.textContent = 'fetch error: ' + e.message;
+  }
+}
+
+async function loadTools() {
+  try {
+    const r = await fetch('/api/mcp/tools');
+    const j = await r.json();
+    if (j.ok) {
+      tools = j.tools || [];
+      document.getElementById('tool-count').textContent = tools.length;
+      renderTools();
+    } else {
+      document.getElementById('tools').innerHTML = '<div class="empty">' + (j.error || 'failed') + '</div>';
+    }
+  } catch (e) {
+    document.getElementById('tools').innerHTML = '<div class="empty">fetch error: ' + e.message + '</div>';
+  }
+}
+
+function renderTools() {
+  const q = document.getElementById('filter').value.toLowerCase().trim();
+  const filtered = tools.filter(t => !q || (t.name || '').toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+  const box = document.getElementById('tools');
+  if (filtered.length === 0) {
+    box.innerHTML = '<div class="empty">no tools' + (q ? ' match' : '') + '</div>';
+    return;
+  }
+  box.innerHTML = filtered.map(t => {
+    const isActive = active && active.name === t.name;
+    return `<div class="tool ${isActive ? 'active' : ''}" onclick="selectTool('${escapeAttr(t.name)}')">${escapeHtml(t.name)}${t.description ? `<span class="desc">${escapeHtml(t.description.slice(0,120))}</span>` : ''}</div>`;
+  }).join('');
+}
+
+function selectTool(name) {
+  active = tools.find(t => t.name === name);
+  if (!active) return;
+  document.getElementById('empty-main').style.display = 'none';
+  document.getElementById('tool-view').style.display = '';
+  document.getElementById('t-name').textContent = active.name;
+  document.getElementById('t-desc').textContent = active.description || '(no description)';
+  document.getElementById('t-schema').textContent = JSON.stringify(active.inputSchema || {}, null, 2);
+  document.getElementById('t-args').value = '{}';
+  document.getElementById('t-resp').textContent = 'no calls yet';
+  document.getElementById('resp-meta').textContent = '';
+  document.getElementById('call-err').textContent = '';
+  document.getElementById('call-ms').textContent = '';
+  renderTools();
+}
+
+async function callTool() {
+  if (!active) return;
+  const btn = document.getElementById('go-btn');
+  const errEl = document.getElementById('call-err');
+  const msEl = document.getElementById('call-ms');
+  const respEl = document.getElementById('t-resp');
+  const metaEl = document.getElementById('resp-meta');
+  errEl.textContent = '';
+  let args;
+  try { args = JSON.parse(document.getElementById('t-args').value || '{}'); }
+  catch (e) { errEl.textContent = 'invalid JSON: ' + e.message; return; }
+  btn.disabled = true;
+  msEl.textContent = '';
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/mcp/call', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: active.name, arguments: args })
+    });
+    const j = await r.json();
+    const dt = Math.round(performance.now() - t0);
+    msEl.textContent = dt + 'ms';
+    metaEl.textContent = dt + 'ms · ' + (j.ok ? 'ok' : 'error');
+    respEl.textContent = JSON.stringify(j.ok ? j.result : { error: j.error }, null, 2);
+    pushHistory({ name: active.name, ok: j.ok, ms: dt });
+  } catch (e) {
+    errEl.textContent = 'fetch error: ' + e.message;
+    pushHistory({ name: active.name, ok: false, ms: Math.round(performance.now() - t0) });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function pushHistory(item) {
+  item.t = new Date().toLocaleTimeString();
+  history.unshift(item);
+  if (history.length > 50) history.pop();
+  document.getElementById('hist-count').textContent = history.length;
+  document.getElementById('hist').innerHTML = history.map(h =>
+    `<div class="hist-item ${h.ok ? 'ok' : 'err'}"><span class="when">${h.t}</span><span class="badge">${h.ok ? 'OK' : 'ERR'}</span><span class="name">${escapeHtml(h.name)}</span><span class="ms">${h.ms}ms</span></div>`
+  ).join('');
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
+
+checkConn();
+</script>
 
 </body>
 </html>
