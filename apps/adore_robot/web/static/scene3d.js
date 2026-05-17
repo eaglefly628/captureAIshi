@@ -39,7 +39,7 @@ export class SceneStage {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0a0c12);
-    this.scene.fog = new THREE.Fog(0x0a0c12, 30, 90);
+    this.scene.fog = new THREE.Fog(0x0a0c12, 50, 140);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(this.renderer), 0.04).texture;
@@ -81,7 +81,20 @@ export class SceneStage {
     } else {
       this.thumbnailMarker.visible = false;
     }
+
+    this._setDefaultIsoCamera(sceneType, sceneCfg);
     return this._instanceCount;
+  }
+
+  _setDefaultIsoCamera(sceneType, sceneCfg) {
+    const scale = sceneType === 'warehouse' ? 0.5 : 1;
+    const sx = (sceneCfg.size_m && sceneCfg.size_m[0] || 10) * scale;
+    const sz = (sceneCfg.size_m && sceneCfg.size_m[1] || 10) * scale;
+    const maxDim = Math.max(sx, sz);
+    const dist = maxDim * 0.85;
+    this.controls.target.set(0, 0.6, 0);
+    this.camera.position.set(dist * 0.55, dist * 0.95, dist * 0.55);
+    this.controls._syncFromCamera();
   }
 
   flyThumbnailCamera(sceneCfg) {
@@ -126,7 +139,7 @@ export class SceneStage {
     this.scene.background = new THREE.Color(cfg.sky).lerp(new THREE.Color(0x000000), 0.65);
   }
 
-  _addFloorWalls(sizeX, sizeZ, ceilingHeight, floorColor, wallColor, ceilingColor, accentColor) {
+  _addFloorWalls(sizeX, sizeZ, wallHeight, floorColor, wallColor, _ceilingColorIgnored, accentColor) {
     const halfX = sizeX / 2;
     const halfZ = sizeZ / 2;
 
@@ -150,6 +163,7 @@ export class SceneStage {
       }
     }
 
+    const lowWallH = Math.min(wallHeight, 1.2);
     const wallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.92, metalness: 0.02 });
     const wallThick = 0.18;
     for (const [x, z, w, d] of [
@@ -158,20 +172,12 @@ export class SceneStage {
       [-halfX, 0, wallThick, sizeZ],
       [ halfX, 0, wallThick, sizeZ],
     ]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, ceilingHeight, d), wallMat);
-      wall.position.set(x, ceilingHeight / 2, z);
-      wall.castShadow = false;
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, lowWallH, d), wallMat);
+      wall.position.set(x, lowWallH / 2, z);
+      wall.castShadow = true;
       wall.receiveShadow = true;
       this.sceneGroup.add(wall);
     }
-
-    const ceiling = new THREE.Mesh(
-      new THREE.PlaneGeometry(sizeX, sizeZ),
-      new THREE.MeshStandardMaterial({ color: ceilingColor, roughness: 0.95, side: THREE.DoubleSide })
-    );
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.y = ceilingHeight;
-    this.sceneGroup.add(ceiling);
   }
 
   _buildWarehouse(p, cfg) {
