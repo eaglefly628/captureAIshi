@@ -1,8 +1,9 @@
 """Adore Robot -- UE5 PCG robot training scene foundry.
 
-Flask app on :5001. Two views:
+Flask app on :5001. Three views:
 
-  /        customer-facing demo (three.js + NL chat + scripted batch)
+  /        ADORE operator console (claude design, SVG iso viewport)
+  /3d      Three.js interactive 3D viewport (show-and-tell demo)
   /dev     developer MCP bridge (老白 v0.3.3 #4)
 
 Setup (real MCP):

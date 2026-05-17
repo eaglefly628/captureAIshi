@@ -270,6 +270,15 @@ function App() {
               <button className="vp-mode-btn">PERSP</button>
               <button className="vp-mode-btn">TOP</button>
             </div>
+            <a className="top-btn"
+               href="/3d"
+               target="_blank"
+               rel="noopener"
+               style={{ marginLeft: 8, textDecoration: 'none', height: 24, padding: '0 10px',
+                        fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)',
+                        background: 'var(--accent-softer)', borderColor: 'var(--accent-soft)' }}>
+              3D ↗
+            </a>
           </div>
           <div className="viewport-stage">
             <div className="viewport-grid" />
