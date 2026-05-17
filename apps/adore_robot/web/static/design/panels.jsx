@@ -4,6 +4,7 @@ const { useState, useEffect, useRef } = React;
 
 // ─── Top bar ─────────────────────────────────────────────────────────────────
 function TopBar({ projectName, jobName, runStatus, runtimeS }) {
+  const demoMode = (window.__BOOT__ && window.__BOOT__.demo_mode);
   return (
     <div className="topbar">
       <div className="brand">
@@ -15,10 +16,21 @@ function TopBar({ projectName, jobName, runStatus, runtimeS }) {
         <span className="sep">/</span>
         <span className="active">{jobName}</span>
       </div>
+      {demoMode && (
+        <span style={{
+          fontFamily: 'var(--mono)', fontSize: 10.5, fontWeight: 700,
+          letterSpacing: '0.1em', padding: '3px 9px', borderRadius: 3,
+          background: 'var(--warn-soft)', color: 'var(--warn)',
+          border: '1px solid var(--warn)',
+          marginLeft: 4,
+        }}>DEMO</span>
+      )}
       <div className="topbar-spacer" />
       <button className="top-btn">
         <span style={{opacity: 0.6}}>UE5.8</span>
-        <span style={{ color: 'var(--ok)' }}>● connected</span>
+        <span style={{ color: demoMode ? 'var(--text-4)' : 'var(--ok)' }}>
+          {demoMode ? '◌ mock' : '● connected'}
+        </span>
       </button>
       <button className="top-btn">
         <span style={{opacity: 0.6}}>MCP</span>
