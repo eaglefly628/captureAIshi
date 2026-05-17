@@ -67,6 +67,10 @@ RANGES = {
     "pipe_complexity": (1, 5),
     "oil_stain_amount": (0.0, 0.8),
     "crate_count": (0, 6),
+    "room_w_m": (8.0, 40.0),
+    "room_l_m": (8.0, 60.0),
+    "ceiling_h_m": (3.0, 9.0),
+    "worker_count": (0, 8),
 }
 
 
@@ -189,15 +193,33 @@ class KeywordFallbackClient(BaseLLMClient):
         elif light_intent == "default":
             delta["lighting_preset"] = LIGHTING_DEFAULT.get(scene_id, "warehouse_sodium")
 
-        num_match = re.search(r"(\d+)\s*(?:台|个|只|份)", user_text)
-        if num_match:
-            n = int(num_match.group(1))
-            if "forklift" in user_text or "叉车" in user_text:
-                delta["forklift_count"] = _clamp("forklift_count", n)
-            elif "machine" in user_text or "机器" in user_text:
-                delta["machine_count"] = _clamp("machine_count", n)
-            elif "crate" in user_text or "工具箱" in user_text or "板箱" in user_text:
-                delta["crate_count"] = _clamp("crate_count", n)
+        # Per-noun count extraction: each count param looks for "N <unit>? <noun>"
+        # in its own neighborhood, so '加 2 个工人, 4 台叉车' resolves cleanly to
+        # worker_count=2 + forklift_count=4 instead of fighting over the first N.
+        for pat, key in [
+            (r"(\d+)\s*(?:个|名|位)?\s*(?:工人|人员|操作员|worker)", "worker_count"),
+            (r"(\d+)\s*(?:台|辆)?\s*(?:叉车|forklift)",             "forklift_count"),
+            (r"(\d+)\s*(?:台)?\s*(?:机器|machine)",                  "machine_count"),
+            (r"(\d+)\s*(?:个|只)?\s*(?:工具箱|板箱|箱|crate)",        "crate_count"),
+        ]:
+            m = re.search(pat, user_text)
+            if m:
+                delta[key] = _clamp(key, int(m.group(1)))
+
+        # room dimensions: "30 米宽 / 40 米长 / 4 米层高"
+        for pat, key in [
+            (r"(\d+(?:\.\d+)?)\s*(?:米|m)?\s*宽", "room_w_m"),
+            (r"(\d+(?:\.\d+)?)\s*(?:米|m)?\s*长", "room_l_m"),
+            (r"层高\s*(\d+(?:\.\d+)?)",            "ceiling_h_m"),
+        ]:
+            m = re.search(pat, user_text)
+            if m:
+                delta[key] = _clamp(key, float(m.group(1)))
+        # "30×40" / "30x40" sizing
+        sz_match = re.search(r"(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)", user_text)
+        if sz_match:
+            delta["room_w_m"] = _clamp("room_w_m", float(sz_match.group(1)))
+            delta["room_l_m"] = _clamp("room_l_m", float(sz_match.group(2)))
 
         rationale_parts = []
         if intents:

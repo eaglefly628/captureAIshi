@@ -21,6 +21,12 @@ do NOT call the tool.
 
 === PARAMETER CONTRACT ===
 
+[common to ALL scenes]
+  room_w_m: float, 8-40, default 18  (房间宽度, 米)
+  room_l_m: float, 8-60, default 28  (房间长度, 米)
+  ceiling_h_m: float, 3.0-9.0, default 5.5  (层高, 米)
+  worker_count: int, 0-8, default 0  (人员数量, 工人/操作员)
+
 [warehouse]
   shelf_density: float, 0.2-1.0, default 0.7  (shelf fill rate in BSP cell)
   alley_width_m: float, 1.5-4.0, default 2.4  (main aisle width, meters)
@@ -88,6 +94,15 @@ User: "加 100 台叉车"
 User: "客厅里停一辆车"
   -> update_scene(scene_id=living_room, pcg_params={},
        rationale="客厅资产包没有汽车, 拒绝; 无语义最近替代")
+
+User: "仓库 30 米宽, 40 米长, 加 3 个工人"
+  -> update_scene(scene_id=warehouse,
+       pcg_params={room_w_m: 30, room_l_m: 40, worker_count: 3},
+       rationale="房间扩到 30×40m, 工人 3 人")
+
+User: "层高低一点, 4 米"
+  -> update_scene(scene_id=warehouse, pcg_params={ceiling_h_m: 4.0},
+       rationale="层高从默认 5.5m 调到 4.0m")
 """
 
 
