@@ -98,6 +98,14 @@
 
 ## Changelog
 
+### [v0.3.3-dev] (pending push) -- xiaoxu (客户演示 demo, 不阻塞 v0.3.3 主线)
+- apps/adore_robot/llm/{base,factory,deepseek,anthropic,keyword,openai_compat}.py: 顺手把老白派单 #10 LLM provider 抽象做了 (统一 chat_with_tools, 6 provider 占位, auto-detect, keyword fallback)
+- apps/adore_robot/demo/{prompts,runner,thumbnail}.py: NL system prompt (派生自 xiaohuan contract §1/§3/§4) + update_scene tool schema + SSE 假批量进度 + 4-channel SVG thumbnail 生成 (final/normal/depth/objectid)
+- apps/adore_robot/web/templates/demo.html + static/{style.css, app.js, scene3d.js}: 三栏 UI (场景选择+参数 / Three.js 3D 俯视 + 批量 gallery / NL chat), 沿用老白橙色 brand
+- apps/adore_robot/main.py: 加 demo 路由 (`/`) + dev MCP bridge 保留 (`/dev`); 端点 /api/chat /api/scenes /api/demo/{submit,jobs,stream,thumbnail}
+- 全链路验通: curl /api/chat 关键词模式正确派生 delta (货架密 + 加 2 台叉车 + 冷光 -> 3 个 param 改动); /api/demo/submit 入队; SVG thumbnail 渲染
+- 跑法: `pip install flask && python apps/adore_robot/main.py` -> http://localhost:5001; 设 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY 启真 LLM
+
 ### [v0.3.2.1] af8b310 -- xiaoxu
 - agents/unreal/SHARED.md: 回填 v0.3.2 CL SHA (`(pending push)` -> `cfdb7c4`) 满足 versioning 规则
 - agents/STATUS.md: xiaoxu 行更新 ~50% + 标 P1 已 push + peer review 结论
