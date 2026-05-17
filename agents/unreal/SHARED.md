@@ -98,7 +98,7 @@
 
 ## Changelog
 
-### [v0.3.3] (pending sha) -- 老白
+### [v0.3.3] becd41b -- 老白
 - apps/adore_robot/mcp_client.py: `_rpc` 加 `_retry` budget, 防 404 -> reinit -> 再 404 死循环 (peer review xiaoxu 的 04e3aac MCP plumbing)
 - apps/adore_robot/llm/{__init__,base,openai_compat,anthropic_adapter,factory}.py: stdlib urllib 多 provider 抽象, 7 个 provider (deepseek 默认 + qwen/qwen-vl/glm/kimi/doubao/anthropic), 统一 `chat_with_tools(messages, tools, tool_choice, system, ...)` 接口, Anthropic 默认开 prompt cache
 - apps/adore_robot/docs/batch_scene_gen_architecture_v2.md: 方向 B 完整设计 7 节 (决策摘要 / MCP 拓扑 + Plan B-1/B-2 / UPCGAdoreToolset 方法清单 21+6 / LLM factory 集成 / Web UI thin shell / 依赖清单 / 实施顺序 + 开放问题)
