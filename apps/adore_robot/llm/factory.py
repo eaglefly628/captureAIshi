@@ -72,10 +72,22 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 
 def auto_detect_provider() -> str:
     """Pick first provider whose API key is present, else 'keyword' fallback."""
+    debug = os.environ.get("ADORE_LLM_DEBUG", "1") != "0"
     for name in ("deepseek", "qwen", "glm", "kimi", "doubao", "anthropic"):
-        env = PROVIDERS[name].get("env")
-        if env and os.environ.get(env):
+        env_name = PROVIDERS[name].get("env")
+        if not env_name:
+            continue
+        val = os.environ.get(env_name)
+        if debug:
+            shown = (val[:7] + "..." + val[-4:]) if val and len(val) >= 12 else repr(val)
+            print(f"[auto_detect] try {name}: env={env_name!r} value={shown}",
+                  flush=True)
+        if val:
+            if debug:
+                print(f"[auto_detect] -> selected {name}", flush=True)
             return name
+    if debug:
+        print("[auto_detect] -> no API key found, fallback to keyword", flush=True)
     return "keyword"
 
 
