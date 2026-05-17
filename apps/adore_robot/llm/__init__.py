@@ -1,17 +1,30 @@
 """LLM provider abstraction for adore_robot.
 
-老白 v0.3.3 派单 #10: make_llm_client(provider) -> BaseClient unified
-chat_with_tools interface. Default DeepSeek-V3.2 (OpenAI compat, ~10x
-cheaper than Sonnet 4.6). Fallback to keyword matcher when no API key.
+Default provider: deepseek (V3.2, OpenAI-compatible, ~10x cheaper than Claude
+Sonnet 4.6 with stable tool calling). Switchable via env or factory arg to
+anthropic / qwen / glm / kimi / doubao.
+
+Usage:
+    from llm import make_llm_client, Message, ToolDef
+    client = make_llm_client("deepseek")  # or "anthropic", etc.
+    resp = client.chat_with_tools(
+        messages=[Message(role="user", content="set shelf density to 0.9")],
+        tools=[ToolDef(name="set_shelf_density", description="...", input_schema={...})],
+        system="You are a PCG parameter editor.",
+    )
+    for tc in resp.tool_calls:
+        print(tc.name, tc.arguments)
 """
 
-from .base import BaseLLMClient, ToolCall, ToolSpec
-from .factory import make_llm_client, detect_available_provider
+from .base import BaseLLMClient, ChatResponse, Message, ToolCall, ToolDef
+from .factory import PROVIDERS, make_llm_client
 
 __all__ = [
     "BaseLLMClient",
+    "ChatResponse",
+    "Message",
+    "PROVIDERS",
     "ToolCall",
-    "ToolSpec",
+    "ToolDef",
     "make_llm_client",
-    "detect_available_provider",
 ]

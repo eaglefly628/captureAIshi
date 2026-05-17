@@ -1,11 +1,12 @@
 """System prompt + tool schema for the NL -> scene_spec delta call.
 
 Derived from apps/adore_robot/docs/pcg_param_contract.md sections 1, 3, 4.
+Uses 老白 v0.3.3 BaseLLMClient interface (ToolDef + Message).
 """
 
 from __future__ import annotations
 
-from llm.base import ToolSpec
+from llm.base import ToolDef
 
 SYSTEM_PROMPT = """You are the PCG scene parameter editor for an embodied-AI training data foundry.
 
@@ -87,7 +88,7 @@ User: "客厅里停一辆车"
 """
 
 
-UPDATE_SCENE_TOOL = ToolSpec(
+UPDATE_SCENE_TOOL = ToolDef(
     name="update_scene",
     description="Mutate the PCG scene spec. Always call this exactly once.",
     input_schema={

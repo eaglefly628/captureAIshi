@@ -30,7 +30,8 @@ from mcp_client import UnrealMCPClient
 from demo.prompts import SYSTEM_PROMPT, UPDATE_SCENE_TOOL
 from demo.runner import DemoJobRegistry
 from demo.thumbnail import render_thumbnail_svg
-from llm import detect_available_provider, make_llm_client
+from llm import Message, make_llm_client
+from llm.factory import auto_detect_provider
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATES = ROOT / "web" / "templates"
@@ -68,7 +69,7 @@ SCENES = _load_scenes()
 
 @app.route("/")
 def demo_view():
-    provider = detect_available_provider()
+    provider = auto_detect_provider()
     return render_template(
         "demo.html",
         scenes=SCENES,
@@ -91,7 +92,7 @@ def status():
         "phase": "demo+mcp-bridge",
         "mcp_url": MCP_URL,
         "mcp_session_id": mcp.session_id,
-        "llm_provider": detect_available_provider(),
+        "llm_provider": auto_detect_provider(),
     })
 
 
@@ -120,27 +121,30 @@ def api_chat():
         f'user request: {text}'
     )
 
+    import time
+    t0 = time.time()
     try:
         result = client.chat_with_tools(
-            system=SYSTEM_PROMPT,
-            user=user_msg,
+            messages=[Message(role="user", content=user_msg)],
             tools=[UPDATE_SCENE_TOOL],
-            force_tool=UPDATE_SCENE_TOOL.name,
+            tool_choice={"name": UPDATE_SCENE_TOOL.name},
+            system=SYSTEM_PROMPT,
             max_tokens=512,
         )
     except Exception as e:
         return jsonify({
             "ok": False,
             "error": f"{type(e).__name__}: {e}",
-            "provider": client.provider,
+            "provider": provider_override or auto_detect_provider(),
         }), 502
+    elapsed_ms = int((time.time() - t0) * 1000)
 
     tc = result.tool_calls[0] if result.tool_calls else None
     return jsonify({
         "ok": True,
-        "provider": result.provider,
-        "model": result.model,
-        "elapsed_ms": result.elapsed_ms,
+        "provider": provider_override or auto_detect_provider(),
+        "model": getattr(client, "model", "unknown"),
+        "elapsed_ms": elapsed_ms,
         "tool_call": {
             "name": tc.name,
             "arguments": tc.arguments,
@@ -265,7 +269,7 @@ def mcp_call():
 
 def main():
     port = int(os.environ.get("PORT", 5001))
-    provider = detect_available_provider()
+    provider = auto_detect_provider()
     print(f"[adore_robot] serving on http://127.0.0.1:{port}")
     print(f"[adore_robot]   demo view: /")
     print(f"[adore_robot]   dev view:  /dev  (MCP -> {MCP_URL})")

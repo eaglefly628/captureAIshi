@@ -1,45 +1,61 @@
-"""Provider-neutral LLM client interface."""
+"""Provider-agnostic dataclasses + ABC.
+
+Schema notes:
+- `Message.content` is str for plain text turns, or list[dict] for
+  multi-block (tool_use / tool_result) turns. Providers normalize on send.
+- `ToolDef.input_schema` is a strict JSON Schema; same shape works for
+  Anthropic tools[] and OpenAI tools[].function.parameters.
+- `ChatResponse.tool_calls` is empty when the model only returned text.
+"""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
-class ToolSpec:
+class Message:
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | list[dict]
+    tool_call_id: str | None = None
+    name: str | None = None
+
+
+@dataclass
+class ToolDef:
     name: str
     description: str
-    input_schema: dict[str, Any]
+    input_schema: dict
 
 
 @dataclass
 class ToolCall:
+    id: str
     name: str
-    arguments: dict[str, Any]
-    rationale: str = ""
+    arguments: dict
 
 
 @dataclass
-class ChatResult:
-    provider: str
-    model: str
+class ChatResponse:
+    text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
-    text: str = ""
-    elapsed_ms: int = 0
-    raw: dict[str, Any] = field(default_factory=dict)
+    finish_reason: str = "stop"
+    usage: dict = field(default_factory=dict)
+    raw: Any = None
 
 
-class BaseLLMClient:
-    provider: str = "base"
-    model: str = ""
-
+class BaseLLMClient(ABC):
+    @abstractmethod
     def chat_with_tools(
         self,
-        system: str,
-        user: str,
-        tools: list[ToolSpec],
-        force_tool: str | None = None,
+        messages: list[Message],
+        tools: list[ToolDef] | None = None,
+        tool_choice: str | dict | None = None,
         max_tokens: int = 1024,
-    ) -> ChatResult:
-        raise NotImplementedError
+        temperature: float | None = None,
+        system: str | None = None,
+    ) -> ChatResponse:
+        """Single-turn chat. tool_choice: None | "auto" | "required" | {"name": str}."""
+        ...

@@ -1,8 +1,12 @@
-"""Offline keyword fallback: heuristic NL -> tool_call mapping.
+"""Offline keyword fallback for demo / sandboxed environments.
 
-Activated when no provider API key is detected. Allows demo to run
-without internet / API costs. Pattern: lookup table of (regex -> param
-delta) per scene_id. Returns same ChatResult shape as real providers.
+Implements the same BaseLLMClient interface used by deepseek / anthropic
+adapters so the demo runs identically with or without an API key. Picks
+intents off the latest user message via regex and emits a single
+update_scene-shaped tool call.
+
+Triggered automatically via factory.auto_detect_provider() when no
+provider API key env var is set.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 import re
 import time
 
-from .base import BaseLLMClient, ChatResult, ToolCall, ToolSpec
+from .base import BaseLLMClient, ChatResponse, Message, ToolCall, ToolDef
 
 LIGHTING_WARM = {
     "warehouse": "mixed",
@@ -72,7 +76,8 @@ def _clamp(name: str, val):
         return val
     if isinstance(val, int):
         return max(int(lo), min(int(hi), val))
-    return max(lo, min(hi, float(val)))
+    rounded = round(max(lo, min(hi, float(val))), 4)
+    return rounded
 
 
 def _match_intents(text: str) -> list[str]:
@@ -111,36 +116,57 @@ def _apply_delta(scene_id: str, current: dict, intents: list[str]) -> dict:
     return delta
 
 
+def _last_user_text(messages: list[Message]) -> str:
+    for m in reversed(messages):
+        if m.role == "user":
+            if isinstance(m.content, str):
+                return m.content
+            if isinstance(m.content, list):
+                return " ".join(
+                    blk.get("text", "") for blk in m.content
+                    if isinstance(blk, dict) and blk.get("type") == "text"
+                )
+    return ""
+
+
+def _extract_current_spec(text: str) -> tuple[str, dict]:
+    scene_id = "warehouse"
+    current: dict = {}
+    m = re.search(r'scene_id[\s:"]+(\w+)', text)
+    if m:
+        scene_id = m.group(1)
+    try:
+        import json as _json
+        spec_match = re.search(r"current_spec[^{]*({.*?})(?=\n|$)", text, re.DOTALL)
+        if spec_match:
+            current = _json.loads(spec_match.group(1)).get("pcg_params", {})
+    except Exception:
+        pass
+    return scene_id, current
+
+
 class KeywordFallbackClient(BaseLLMClient):
-    provider = "keyword"
-    model = "offline-heuristic-v1"
+    """No-network heuristic adapter. Same shape as deepseek/anthropic clients."""
+
+    def __init__(self, model: str = "offline-heuristic-v1"):
+        self.model = model
 
     def chat_with_tools(
         self,
-        system: str,
-        user: str,
-        tools: list[ToolSpec],
-        force_tool: str | None = None,
+        messages: list[Message],
+        tools: list[ToolDef] | None = None,
+        tool_choice: str | dict | None = None,
         max_tokens: int = 1024,
-    ) -> ChatResult:
+        temperature: float | None = None,
+        system: str | None = None,
+    ) -> ChatResponse:
         t0 = time.time()
-
-        match = re.search(r'scene_id["\s:=]+(\w+)', user)
-        scene_id = match.group(1) if match else "warehouse"
-
-        current = {}
-        try:
-            import json as _json
-            cur_match = re.search(r"current_spec[^{]*({.*?})(?=\n|$)", user, re.DOTALL)
-            if cur_match:
-                current = _json.loads(cur_match.group(1)).get("pcg_params", {})
-        except Exception:
-            pass
-
-        intents = _match_intents(user)
+        user_text = _last_user_text(messages)
+        scene_id, current = _extract_current_spec(user_text)
+        intents = _match_intents(user_text)
         delta = _apply_delta(scene_id, current, intents)
 
-        light_intent = _lighting_intent(user)
+        light_intent = _lighting_intent(user_text)
         if light_intent == "warm":
             delta["lighting_preset"] = LIGHTING_WARM.get(scene_id, "mixed")
         elif light_intent == "cool":
@@ -148,14 +174,14 @@ class KeywordFallbackClient(BaseLLMClient):
         elif light_intent == "default":
             delta["lighting_preset"] = LIGHTING_DEFAULT.get(scene_id, "warehouse_sodium")
 
-        num_match = re.search(r"(\d+)\s*(?:台|个|只|份)", user)
+        num_match = re.search(r"(\d+)\s*(?:台|个|只|份)", user_text)
         if num_match:
             n = int(num_match.group(1))
-            if "forklift" in user or "叉车" in user:
+            if "forklift" in user_text or "叉车" in user_text:
                 delta["forklift_count"] = _clamp("forklift_count", n)
-            elif "machine" in user or "机器" in user:
+            elif "machine" in user_text or "机器" in user_text:
                 delta["machine_count"] = _clamp("machine_count", n)
-            elif "crate" in user or "工具箱" in user or "板箱" in user:
+            elif "crate" in user_text or "工具箱" in user_text or "板箱" in user_text:
                 delta["crate_count"] = _clamp("crate_count", n)
 
         rationale_parts = []
@@ -164,20 +190,25 @@ class KeywordFallbackClient(BaseLLMClient):
         if light_intent:
             rationale_parts.append(f"lighting: {light_intent}")
         if not delta:
-            rationale_parts.append("no actionable keyword matched; spec unchanged")
+            rationale_parts.append("无可匹配关键词, 参数未变更")
+        rationale = "; ".join(rationale_parts) + " [keyword fallback]"
 
-        tool_name = force_tool or (tools[0].name if tools else "update_scene")
+        tool_name = "update_scene"
+        if isinstance(tool_choice, dict) and tool_choice.get("name"):
+            tool_name = tool_choice["name"]
+        elif tools:
+            tool_name = tools[0].name
+
         args = {
             "scene_id": scene_id,
             "pcg_params": delta,
-            "rationale": "; ".join(rationale_parts) + " [keyword fallback]",
+            "rationale": rationale,
         }
-
-        return ChatResult(
-            provider=self.provider,
-            model=self.model,
-            tool_calls=[ToolCall(name=tool_name, arguments=args, rationale=args["rationale"])],
+        elapsed = int((time.time() - t0) * 1000)
+        return ChatResponse(
             text="",
-            elapsed_ms=int((time.time() - t0) * 1000),
+            tool_calls=[ToolCall(id=f"kw-{int(time.time() * 1000)}", name=tool_name, arguments=args)],
+            finish_reason="tool_use",
+            usage={"elapsed_ms": elapsed},
             raw={"intents": intents, "lighting": light_intent},
         )
