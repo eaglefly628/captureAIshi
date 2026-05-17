@@ -2,6 +2,13 @@
 
 ## Active TODO
 
+- [ ] **P1: launcher hero/footer 写的 UE 5.6 该改 5.8** (spotted by xiaoxu, 用户报) -- `apps/launcher/server.py` 三处硬编码:
+  - L305 `<div class="hero-tag">v0.3.0 · POWERED BY UNREAL ENGINE 5.6 + NVIDIA COSMOS</div>` -> `UE 5.8 Preview`
+  - L338 `<div class="app-meta-item"><span class="app-meta-dot"></span>UE5.6 + PCG + Robotics Plugin</div>` -> `UE 5.8`（且 Robotics Plugin 部分需重新表述，老白派单 P0-2 已明确 Epic 5.8 无官方 Robotics Plugin，参考 `apps/adore_robot/docs/ue58_engine_notes_xiaoxu.md` §5；建议写 `UE 5.8 + PCG`，机器人字样去掉或改 `URDF kinematic posing`）
+  - L363 `<span class="footer-badge">UNREAL ENGINE 5.6</span>` -> `UNREAL ENGINE 5.8`
+  - 顺手扫一下整个 `apps/launcher/server.py` 是否还有 "5.6" / "UE5.6" 残留
+  - 用户看到的是 hero-tag 那行 ("v0.3.0 · POWERED BY UNREAL ENGINE 5.6")，最影响外部观感
+
 _全部清空 2026-05-13（老白 by 用户指令）— 旧 TODO 清单 + 恢复方式见 `agents/ui/ARCHIVE.md` 末尾 "Cleared 2026-05-13" 段。新方向 TODO 待老白下次重派。_
 
 ## [v0.3.0] UI 重构任务 (from lead)
