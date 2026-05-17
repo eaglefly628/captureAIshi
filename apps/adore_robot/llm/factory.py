@@ -23,7 +23,7 @@ from .openai_compat import OpenAICompatClient
 PROVIDERS: dict[str, dict[str, Any]] = {
     "deepseek": {
         "kind": "openai",
-        "base_url": "https://api.deepseek.com/v1",
+        "base_url": "https://api.deepseek.com",
         "model": "deepseek-v4-flash",
         "env": "DEEPSEEK_API_KEY",
     },
