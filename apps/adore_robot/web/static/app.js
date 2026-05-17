@@ -226,25 +226,32 @@ async function sendChat() {
   appendMsg('user', '你', txt);
   const thinking = appendMsg('ai', `AI · ${boot.llm_provider}`, '思考中...', { thinking: true });
 
+  const payload = {
+    text: txt,
+    current_spec: { scene_id: state.sceneType, pcg_params: state.params },
+  };
+  console.log('[chat] POST /api/chat', payload);
+  const t0 = performance.now();
+
   try {
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: txt,
-        current_spec: {
-          scene_id: state.sceneType,
-          pcg_params: state.params,
-        },
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
+    const dt = Math.round(performance.now() - t0);
+    console.log(`[chat] response in ${dt}ms`, data);
     thinking.remove();
 
     if (!data.ok) {
-      appendMsg('ai', `AI · ${boot.llm_provider}`,
+      console.error('[chat] error response', data);
+      appendMsg('ai', `AI · ${data.provider || boot.llm_provider}`,
         `调用失败: ${data.error || 'unknown'}`, { error: true });
       return;
+    }
+    if (data.provider === 'keyword') {
+      console.warn('[chat] running in KEYWORD fallback mode -- DEEPSEEK_API_KEY or ANTHROPIC_API_KEY not set');
     }
 
     const tc = data.tool_call;

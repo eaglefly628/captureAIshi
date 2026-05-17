@@ -20,8 +20,12 @@ Setup (demo only, no UE):
 
 from __future__ import annotations
 
+import collections
 import json
 import os
+import sys
+import time
+import traceback
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
@@ -65,6 +69,18 @@ def _load_scenes() -> dict[str, dict]:
 
 
 SCENES = _load_scenes()
+
+CHAT_LOG: collections.deque = collections.deque(maxlen=50)
+
+
+def _log(tag: str, *parts):
+    line = f"[{time.strftime('%H:%M:%S')}] [{tag}] " + " ".join(str(p) for p in parts)
+    print(line, flush=True)
+
+
+def _short_key(env: str) -> str:
+    v = os.environ.get(env, "")
+    return f"{v[:7]}...{v[-4:]}" if len(v) >= 12 else "(unset)"
 
 
 @app.route("/")
@@ -110,9 +126,28 @@ def api_chat():
         return jsonify({"ok": False, "error": "missing 'text'"}), 400
 
     provider_override = body.get("provider")
+    provider_resolved = provider_override or auto_detect_provider()
+    _log("CHAT-IN", f"provider={provider_resolved}", f"scene={current_spec.get('scene_id')}",
+         f"text={text!r}")
+
+    log_entry: dict = {
+        "ts": time.strftime("%H:%M:%S"),
+        "text": text,
+        "scene_id": current_spec.get("scene_id"),
+        "provider": provider_resolved,
+        "key_fingerprint": (
+            _short_key("DEEPSEEK_API_KEY") if provider_resolved == "deepseek"
+            else _short_key("ANTHROPIC_API_KEY") if provider_resolved == "anthropic"
+            else "n/a (offline)"
+        ),
+    }
+
     try:
         client = make_llm_client(provider_override)
     except RuntimeError as e:
+        _log("CHAT-ERR", "make_llm_client RuntimeError:", e)
+        log_entry["error"] = str(e)
+        CHAT_LOG.appendleft(log_entry)
         return jsonify({"ok": False, "error": str(e)}), 503
 
     user_msg = (
@@ -121,7 +156,6 @@ def api_chat():
         f'user request: {text}'
     )
 
-    import time
     t0 = time.time()
     try:
         result = client.chat_with_tools(
@@ -132,17 +166,36 @@ def api_chat():
             max_tokens=512,
         )
     except Exception as e:
+        elapsed_ms = int((time.time() - t0) * 1000)
+        tb = traceback.format_exc(limit=2)
+        _log("CHAT-ERR", f"{type(e).__name__}: {e}", f"elapsed={elapsed_ms}ms")
+        print(tb, file=sys.stderr, flush=True)
+        log_entry.update({"error": f"{type(e).__name__}: {e}", "elapsed_ms": elapsed_ms})
+        CHAT_LOG.appendleft(log_entry)
         return jsonify({
             "ok": False,
             "error": f"{type(e).__name__}: {e}",
-            "provider": provider_override or auto_detect_provider(),
+            "provider": provider_resolved,
         }), 502
     elapsed_ms = int((time.time() - t0) * 1000)
 
     tc = result.tool_calls[0] if result.tool_calls else None
+    args_preview = json.dumps(tc.arguments if tc else {}, ensure_ascii=False)[:300]
+    _log("CHAT-OUT", f"provider={provider_resolved}",
+         f"model={getattr(client, 'model', '?')}", f"elapsed={elapsed_ms}ms",
+         f"tool={tc.name if tc else None}", f"args={args_preview}")
+
+    log_entry.update({
+        "elapsed_ms": elapsed_ms,
+        "model": getattr(client, "model", "?"),
+        "tool_call": {"name": tc.name, "arguments": tc.arguments} if tc else None,
+        "text": result.text,
+    })
+    CHAT_LOG.appendleft(log_entry)
+
     return jsonify({
         "ok": True,
-        "provider": provider_override or auto_detect_provider(),
+        "provider": provider_resolved,
         "model": getattr(client, "model", "unknown"),
         "elapsed_ms": elapsed_ms,
         "tool_call": {
@@ -150,6 +203,20 @@ def api_chat():
             "arguments": tc.arguments,
         } if tc else None,
         "text": result.text,
+    })
+
+
+@app.route("/api/debug/last")
+def api_debug_last():
+    n = int(request.args.get("n", 10))
+    return jsonify({
+        "ok": True,
+        "llm_provider": auto_detect_provider(),
+        "key_fingerprints": {
+            "DEEPSEEK_API_KEY": _short_key("DEEPSEEK_API_KEY"),
+            "ANTHROPIC_API_KEY": _short_key("ANTHROPIC_API_KEY"),
+        },
+        "recent_chats": list(CHAT_LOG)[:n],
     })
 
 
@@ -273,9 +340,13 @@ def main():
     print(f"[adore_robot] serving on http://127.0.0.1:{port}")
     print(f"[adore_robot]   demo view: /")
     print(f"[adore_robot]   dev view:  /dev  (MCP -> {MCP_URL})")
+    print(f"[adore_robot]   debug:     /api/debug/last")
     print(f"[adore_robot]   LLM provider: {provider}"
           f"{' (offline keyword fallback)' if provider == 'keyword' else ''}")
+    print(f"[adore_robot]   DEEPSEEK_API_KEY:  {_short_key('DEEPSEEK_API_KEY')}")
+    print(f"[adore_robot]   ANTHROPIC_API_KEY: {_short_key('ANTHROPIC_API_KEY')}")
     print(f"[adore_robot]   scenes loaded: {list(SCENES.keys()) or '(none)'}")
+    print(f"[adore_robot] ----- chat events will be logged below -----")
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
 
 
