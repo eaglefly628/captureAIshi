@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ADORE · 3D 场景预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="{{ url_for('static', filename='design/styles.css') }}" />
+<style>
+  body { overflow: hidden; }
+  .view3d-shell {
+    display: grid;
+    grid-template-rows: 44px 1fr;
+    height: 100vh;
+    width: 100vw;
+    background: var(--bg);
+  }
+  .view3d-stage {
+    position: relative;
+    min-height: 0;
+    background:
+      radial-gradient(ellipse at 50% 30%, #14181e 0%, var(--bg-dim) 70%);
+  }
+  .view3d-stage canvas { width: 100%; height: 100%; display: block; }
+  .view3d-overlay {
+    position: absolute;
+    top: 12px; left: 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    pointer-events: none;
+  }
+  .view3d-overlay .vp-stat {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 4px 8px;
+    background: rgba(20, 22, 26, 0.78);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    display: flex; gap: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+  .view3d-overlay .vp-stat .k { color: var(--text-4); }
+  .view3d-overlay .vp-stat .v { color: var(--text); font-weight: 500; }
+  .view3d-hint {
+    position: absolute;
+    bottom: 14px; right: 16px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-3);
+    background: rgba(20, 22, 26, 0.78);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: var(--r-sm);
+    pointer-events: none;
+    max-width: 60vw;
+    line-height: 1.5;
+  }
+  .view3d-hint b { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="view3d-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div class="brand-name">ADORE</div>
+    </div>
+    <div class="crumb">
+      <span>adore-data</span>
+      <span class="sep">/</span>
+      <span class="active" id="crumb-scene">3D 预览</span>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="vp-mode" id="scene-toggle">
+      <button class="vp-mode-btn active" data-scene="warehouse">仓库</button>
+      <button class="vp-mode-btn" data-scene="living_room">客厅</button>
+      <button class="vp-mode-btn" data-scene="industrial_corner">工业</button>
+    </div>
+    <a class="top-btn" href="/" style="text-decoration:none;">
+      <span>←</span><span>回到控制台</span>
+    </a>
+  </header>
+
+  <div class="view3d-stage">
+    <canvas id="viewport"></canvas>
+    <div class="view3d-overlay">
+      <div class="vp-stat"><span class="k">scene</span><span class="v" id="ov-scene">warehouse</span></div>
+      <div class="vp-stat"><span class="k">instances</span><span class="v" id="ov-count">0</span></div>
+      <div class="vp-stat"><span class="k">renderer</span><span class="v">Three.js r158 · PBR + IBL</span></div>
+    </div>
+    <div class="view3d-hint">
+      左键 旋转 · 滚轮 缩放 · 中键 平移 · <b>右键长按 + WASD 飞行</b> · Shift 加速 · Q/E 升降 · F 复位
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import { SceneStage } from "{{ url_for('static', filename='scene3d.js') }}";
+
+const SCENES = {{ scenes | tojson }};
+const canvas = document.getElementById('viewport');
+const stage = new SceneStage(canvas);
+
+let currentScene = 'warehouse';
+
+function buildScene(sceneType) {
+  const cfg = SCENES[sceneType] || {};
+  const params = cfg.pcg_params || {};
+  const cfgWithType = { ...cfg, scene_type: sceneType };
+  const count = stage.setScene(sceneType, params, cfgWithType);
+  document.getElementById('ov-count').textContent = count;
+  document.getElementById('ov-scene').textContent = sceneType;
+  document.getElementById('crumb-scene').textContent =
+    sceneType === 'warehouse' ? '仓库 / warehouse'
+    : sceneType === 'living_room' ? '客厅 / living_room'
+    : '工业 / industrial_corner';
+  setTimeout(() => stage.flyThumbnailCamera(cfgWithType), 200);
+}
+
+buildScene(currentScene);
+
+document.querySelectorAll('#scene-toggle .vp-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const s = btn.dataset.scene;
+    if (s === currentScene) return;
+    currentScene = s;
+    document.querySelectorAll('#scene-toggle .vp-mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.scene === s);
+    });
+    buildScene(s);
+  });
+});
+</script>
+
+</body>
+</html>

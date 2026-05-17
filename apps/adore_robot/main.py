@@ -118,15 +118,8 @@ def design_view():
 
 
 @app.route("/3d")
-def demo_view():
-    provider = auto_detect_provider()
-    return render_template(
-        "demo.html",
-        scenes=SCENES,
-        mcp_url=MCP_URL,
-        llm_provider=provider,
-        offline_mode=(provider == "keyword"),
-    )
+def view3d():
+    return render_template("view3d.html", scenes=SCENES)
 
 
 @app.route("/dev")
