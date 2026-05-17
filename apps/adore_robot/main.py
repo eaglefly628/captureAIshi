@@ -28,6 +28,34 @@ import time
 import traceback
 from pathlib import Path
 
+
+def _load_dotenv():
+    """Minimal .env loader -- no external dependency.
+
+    Reads apps/adore_robot/.env if present and sets KEY=VALUE pairs into
+    os.environ. Real shell env vars always win (we never overwrite). The
+    .env file is gitignored, so keys never reach the repo.
+    """
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    loaded = []
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+            loaded.append(key)
+    if loaded:
+        print(f"[adore_robot] .env loaded: {', '.join(loaded)}", flush=True)
+
+
+_load_dotenv()
+
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from mcp_client import UnrealMCPClient

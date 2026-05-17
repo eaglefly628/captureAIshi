@@ -1,0 +1,12 @@
+# Local-only env file for API keys etc.
+# Never committed -- see apps/adore_robot/.env.example for template.
+.env
+.env.local
+*.env
+
+# Job state persistence
+jobs.jsonl
+
+# Python
+__pycache__/
+*.pyc
