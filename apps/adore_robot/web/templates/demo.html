@@ -96,8 +96,16 @@
   <aside class="col right">
     <div class="chat-wrap">
       <div class="chat-head">
-        <h3>自然语言场景编辑</h3>
-        <p>用中文描述你想要的场景，AI 会调用 update_scene 工具修改参数。</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <div>
+            <h3 id="chat-title">自然语言场景编辑</h3>
+            <p id="chat-sub">用中文描述你想要的场景，AI 会调用 update_scene 工具修改参数。</p>
+          </div>
+          <div class="mode-toggle" style="display:flex;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:2px;">
+            <button class="mode-btn active" id="mode-scene" data-mode="scene" style="padding:5px 10px;background:var(--accent-soft);color:var(--accent);border:none;border-radius:4px;font-size:11px;cursor:pointer;">场景编辑</button>
+            <button class="mode-btn" id="mode-free" data-mode="free" style="padding:5px 10px;background:transparent;color:var(--text-tertiary);border:none;border-radius:4px;font-size:11px;cursor:pointer;">自由对话</button>
+          </div>
+        </div>
       </div>
       <div class="messages" id="messages">
         <div class="msg ai">

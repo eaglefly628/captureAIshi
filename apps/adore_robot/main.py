@@ -150,13 +150,15 @@ def api_chat():
     body = request.get_json(silent=True) or {}
     text = (body.get("text") or "").strip()
     current_spec = body.get("current_spec") or {}
+    mode = (body.get("mode") or "scene").lower()
+    history = body.get("history") or []
     if not text:
         return jsonify({"ok": False, "error": "missing 'text'"}), 400
 
     provider_override = body.get("provider")
     provider_resolved = provider_override or auto_detect_provider()
-    _log("CHAT-IN", f"provider={provider_resolved}", f"scene={current_spec.get('scene_id')}",
-         f"text={text!r}")
+    _log("CHAT-IN", f"provider={provider_resolved}", f"mode={mode}",
+         f"scene={current_spec.get('scene_id')}", f"text={text!r}")
 
     log_entry: dict = {
         "ts": time.strftime("%H:%M:%S"),
@@ -178,21 +180,38 @@ def api_chat():
         CHAT_LOG.appendleft(log_entry)
         return jsonify({"ok": False, "error": str(e)}), 503
 
-    user_msg = (
-        f'current_spec: {json.dumps(current_spec, ensure_ascii=False)}\n'
-        f'scene_id: {current_spec.get("scene_id", "warehouse")}\n\n'
-        f'user request: {text}'
-    )
-
-    t0 = time.time()
-    try:
-        result = client.chat_with_tools(
+    if mode == "free":
+        messages: list = []
+        for h in history[-10:]:
+            role = h.get("role")
+            content = h.get("content")
+            if role in ("user", "assistant") and content:
+                messages.append(Message(role=role, content=str(content)))
+        messages.append(Message(role="user", content=text))
+        chat_kwargs = dict(
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            system=None,
+            max_tokens=600,
+        )
+    else:
+        user_msg = (
+            f'current_spec: {json.dumps(current_spec, ensure_ascii=False)}\n'
+            f'scene_id: {current_spec.get("scene_id", "warehouse")}\n\n'
+            f'user request: {text}'
+        )
+        chat_kwargs = dict(
             messages=[Message(role="user", content=user_msg)],
             tools=[UPDATE_SCENE_TOOL],
             tool_choice="auto",
             system=SYSTEM_PROMPT,
             max_tokens=512,
         )
+
+    t0 = time.time()
+    try:
+        result = client.chat_with_tools(**chat_kwargs)
     except Exception as e:
         elapsed_ms = int((time.time() - t0) * 1000)
         tb = traceback.format_exc(limit=2)

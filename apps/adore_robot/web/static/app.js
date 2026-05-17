@@ -66,6 +66,13 @@ const state = {
   jobs: new Map(),
   activeStreams: new Set(),
   stage: null,
+  chatMode: 'scene',
+  freeHistory: [],
+};
+
+const SUGGESTIONS_BY_MODE = {
+  scene: ['货架密一点', '加两台叉车', '切冷色调灯光', '货物种类多些'],
+  free:  ['你是什么模型', '5+3=?', '介绍一下 PCG 是什么', '总结这个项目能做什么'],
 };
 
 const boot = window.__BOOT__ || { scenes: {}, llm_provider: 'keyword' };
@@ -103,10 +110,8 @@ function init() {
       sendChat();
     }
   });
-  $$('.suggestion').forEach(b => b.addEventListener('click', () => {
-    $('#chat-text').value = b.textContent;
-    sendChat();
-  }));
+  $$('.mode-btn').forEach(b => b.addEventListener('click', () => switchChatMode(b.dataset.mode)));
+  renderSuggestions();
   $('#btn-batch').addEventListener('click', () => submitBatch(5));
   $('#btn-clear').addEventListener('click', clearGallery);
 }
@@ -217,20 +222,57 @@ function setLabel(key, label) {
   if (el) el.textContent = label;
 }
 
+function switchChatMode(mode) {
+  state.chatMode = mode;
+  $$('.mode-btn').forEach(b => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.style.background = on ? 'var(--accent-soft)' : 'transparent';
+    b.style.color = on ? 'var(--accent)' : 'var(--text-tertiary)';
+  });
+  if (mode === 'free') {
+    $('#chat-title').textContent = '自由对话模式';
+    $('#chat-sub').textContent = '裸调 LLM, 无 system prompt 无 tool. 用来验真模型 / 闲聊 / 测试 provider 切换.';
+    $('#chat-text').placeholder = '例：你是什么模型？ / 5+3=?';
+  } else {
+    $('#chat-title').textContent = '自然语言场景编辑';
+    $('#chat-sub').textContent = '用中文描述你想要的场景，AI 会调用 update_scene 工具修改参数。';
+    $('#chat-text').placeholder = '例：仓库再多放几台叉车，灯光偏冷一点';
+  }
+  renderSuggestions();
+}
+
+function renderSuggestions() {
+  const root = $('#suggestions');
+  if (!root) return;
+  root.innerHTML = '';
+  for (const s of SUGGESTIONS_BY_MODE[state.chatMode] || []) {
+    const b = el('button', { class: 'suggestion' }, s);
+    b.addEventListener('click', () => {
+      $('#chat-text').value = s;
+      sendChat();
+    });
+    root.appendChild(b);
+  }
+}
+
 async function sendChat() {
   const txt = $('#chat-text').value.trim();
   if (!txt) return;
   $('#chat-text').value = '';
   $('#chat-send').disabled = true;
 
-  appendMsg('user', '你', txt);
+  const modeBadge = state.chatMode === 'free' ? '自由' : '场景';
+  appendMsg('user', `你 · ${modeBadge}`, txt);
   const thinking = appendMsg('ai', `AI · ${boot.llm_provider}`, '思考中...', { thinking: true });
 
   const payload = {
     text: txt,
+    mode: state.chatMode,
     current_spec: { scene_id: state.sceneType, pcg_params: state.params },
+    history: state.chatMode === 'free' ? state.freeHistory.slice(-10) : [],
   };
-  console.log('[chat] POST /api/chat', payload);
+  console.log(`[chat:${state.chatMode}] POST /api/chat`, payload);
   const t0 = performance.now();
 
   try {
@@ -256,8 +298,15 @@ async function sendChat() {
 
     const tc = data.tool_call;
     if (!tc) {
-      appendMsg('ai', `AI · ${data.provider}`,
-        '模型未返回工具调用 (text only): ' + (data.text || ''));
+      const elapsed = data.elapsed_ms || 0;
+      const responseText = data.text || '(空响应)';
+      appendMsg('ai', `AI · ${data.provider} · ${data.model}`,
+        responseText.replace(/\n/g, '<br>'),
+        { metaText: `text mode · ${elapsed}ms` });
+      if (state.chatMode === 'free') {
+        state.freeHistory.push({ role: 'user', content: txt });
+        state.freeHistory.push({ role: 'assistant', content: responseText });
+      }
       return;
     }
 

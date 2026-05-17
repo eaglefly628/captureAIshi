@@ -162,6 +162,21 @@ class KeywordFallbackClient(BaseLLMClient):
     ) -> ChatResponse:
         t0 = time.time()
         user_text = _last_user_text(messages)
+
+        if not tools:
+            elapsed = int((time.time() - t0) * 1000)
+            return ChatResponse(
+                text=(
+                    "[offline keyword fallback] 当前未配置真 LLM (DEEPSEEK_API_KEY 未设). "
+                    "自由对话需要真模型. 请在 cmd 设 set DEEPSEEK_API_KEY=... 后重启, "
+                    "或在 apps/adore_robot/.env 里填好 key.\n\n"
+                    f"你刚才说: {user_text!r}"
+                ),
+                tool_calls=[],
+                finish_reason="stop",
+                usage={"elapsed_ms": elapsed},
+                raw={"mode": "free", "fallback": True},
+            )
         scene_id, current = _extract_current_spec(user_text)
         intents = _match_intents(user_text)
         delta = _apply_delta(scene_id, current, intents)
