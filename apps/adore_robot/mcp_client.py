@@ -54,16 +54,16 @@ class UnrealMCPClient:
         except json.JSONDecodeError:
             return status, resp_headers, {"raw": raw}
 
-    def _rpc(self, method: str, params: dict | None = None) -> dict:
+    def _rpc(self, method: str, params: dict | None = None, _retry: bool = True) -> dict:
         with self._lock:
             req_id = self._next_id
             self._next_id += 1
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
         status, headers, data = self._post(payload)
-        if status == 404 and self._session_id:
+        if status == 404 and self._session_id and _retry:
             self._session_id = None
             self.initialize()
-            return self._rpc(method, params)
+            return self._rpc(method, params, _retry=False)
         if status >= 400:
             raise RuntimeError(f"MCP error {status}: {data}")
         if isinstance(data, dict) and "error" in data and data["error"]:

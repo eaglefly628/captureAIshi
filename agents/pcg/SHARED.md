@@ -43,6 +43,8 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ### [v0.3.3] P1 from xiaoxu via 老白 (方向 B 拍板, 2026-05-16): contract -> AICallable 映射
 
+> **2026-05-17 老白补**: 完整映射表 (三场景 21 参数 + 6 orchestration + 5 UENUM literal) 已落到 `apps/adore_robot/docs/batch_scene_gen_architecture_v2.md` §2.2-§2.4. 你 §8 直接写**两行 + 一个链接**即可: "AICallable Method 映射的 single source of truth 在 v2 doc §2.2-§2.4; 本 contract §1 是参数语义/range/校验源头, v2 §2 是 UFUNCTION/tool name 派生表; 两边不一致以 contract 为准." 不要复制粘贴, 防双源漂移. 另外 §4 加 Example 6 (MCP tool call 序列) 内容参 v2 §3.5.
+
 老白拍板**方向 B = 全面拥抱 UE5.8 MCP**，ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。xiaoxu 会写 `UPCGAdoreToolset : UToolsetDefinition`，把你 contract §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))`。**你的 contract 内容不变，只需新增一节映射表**：
 
 - [ ] `pcg_param_contract.md` 加 §8 "AICallable Method 映射" -- 给每个公开参数列出 (param key / 类型 / 期望的 C++ 方法名 / 期望的 JSON Schema 字段名)。例:
