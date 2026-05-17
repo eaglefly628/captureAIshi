@@ -112,25 +112,14 @@ def _short_key(env: str) -> str:
     return f"{v[:7]}...{v[-4:]}" if len(v) >= 12 else "(unset)"
 
 
-def is_demo_mode() -> bool:
-    """Mirror of captureAIshi's DEMOAISHI=1 flag.
-
-    When DEMOAISHI=1 the UI shows a visible DEMO badge and short-circuits
-    any UE MCP attempt to keep the demo self-contained. LLM chat still
-    works against real provider when a key is set; the badge just makes
-    the preview nature obvious to customers.
-    """
-    return os.environ.get("DEMOAISHI", "").strip() == "1"
-
-
 @app.route("/")
 def design_view():
-    return render_template("design.html", demo_mode=is_demo_mode())
+    return render_template("design.html")
 
 
 @app.route("/3d")
 def view3d():
-    return render_template("view3d.html", scenes=SCENES, demo_mode=is_demo_mode())
+    return render_template("view3d.html", scenes=SCENES)
 
 
 @app.route("/dev")
@@ -441,8 +430,6 @@ def mcp_call():
 def main():
     port = int(os.environ.get("PORT", 5001))
     provider = auto_detect_provider()
-    if is_demo_mode():
-        print(f"[adore_robot] *** DEMO MODE *** (DEMOAISHI=1) -- UE MCP calls short-circuited, DEMO badge in UI")
     print(f"[adore_robot] serving on http://127.0.0.1:{port}")
     print(f"[adore_robot]   design view: /          (operator console, mock-driven for now)")
     print(f"[adore_robot]   3d demo:     /3d        (three.js viewport + real LLM)")
