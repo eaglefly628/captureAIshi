@@ -51,15 +51,23 @@
 
 #### Open (本期不做，下个 session 接力)
 
-- [ ] **P0 (老白 await confirm, 2026-05-17): v0.3.3 UPCGAdoreToolset C++ plugin 可能不需要了**
+- [ ] **P0 (老白 await confirm, 2026-05-17): v0.3.3 UPCGAdoreToolset C++ plugin 不需要写 -- 实证完整**
   xiaoxu 当天实机验通 UE5.8 MCP 后**重大发现**: 5.8 内置 `ObjectTools` 已经能
   `set_properties(pcg_component, '{"shelf_density":0.9,"forklift_count":2}')`
   改 PCG Component 任意 UPROPERTY override; 内置 `ProgrammaticToolset.execute_tool_script`
   能跑 Python 沙盒一次串完 `find_actors -> set_properties -> Generate -> capture_image`,
   把 LLM 的 N 个 round trip 压成 1 个. **完整验证日志 + 41 toolset inventory +
-  35 工具 schema + 架构 trade-off 表** 在 `apps/adore_robot/docs/ue58_mcp_validation_log.md`.
-  实证: `get_current_level` 返回 `/Temp/Untitled_1` 全链路通; `ProgrammaticToolset`
-  load 成功 + SSE `notifications/tools/list_changed` 正确推送.
+  35 工具 schema + 架构 trade-off 表 + 端到端实证** 在
+  `apps/adore_robot/docs/ue58_mcp_validation_log.md`.
+  **2026-05-17 闭环实证** (validation log §6 全 [x]):
+   - `SceneTools.get_current_level` -> `/Temp/Untitled_1` (handshake+dispatch+marshal 通)
+   - `ProgrammaticToolset` load 成功, SSE `notifications/tools/list_changed` 正确 push
+   - PCG Volume actor 拖入 level -> `get_properties` 拿到嵌套 `pCGComponent` refPath
+   - PCGComponent `list_properties` 返 35+ UPROPERTY (seed/graphInstance/generationTrigger 等)
+   - `set_properties(pcg_component, '{"seed":99999}')` 返 success
+   - `get_properties` 读回 99999, UE Editor Details panel 实时显示 Seed=99999
+   - **=> set_properties 反射写 PCG UPROPERTY 实证通过.** `graphInstance.OverrideParams`
+     走同样反射机制, 21 param contract 完全可达.
   - **拟变更**: v2 §2.5 plugin skeleton + 21 UFUNCTION wrap **跳过**, 改用
     `ObjectTools` + `ProgrammaticToolset` + `apps/adore_robot/main.py` server-side
     validate (拿 demo/prompts.py contract 做 range/enum 校验, 比 UE 端 native
