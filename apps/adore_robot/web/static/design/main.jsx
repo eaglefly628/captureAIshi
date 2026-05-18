@@ -96,7 +96,7 @@ function App() {
       });
     });
 
-    // 2b) Real LLM call (DeepSeek-V3.2 via Flask /api/chat). Returns one
+    // 2b) Real LLM call (DeepSeek-V4-Flash via Flask /api/chat). Returns one
     // update_scene tool_call with pcg_params delta + rationale. We expand
     // the delta into per-param actions so the pipeline animation still
     // shows the granular tool_call stream the design promises.

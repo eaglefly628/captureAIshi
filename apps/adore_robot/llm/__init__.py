@@ -1,6 +1,6 @@
 """LLM provider abstraction for adore_robot.
 
-Default provider: deepseek (V3.2, OpenAI-compatible, ~10x cheaper than Claude
+Default provider: deepseek (V4-Flash, OpenAI-compatible, ~10x cheaper than Claude
 Sonnet 4.6 with stable tool calling). Switchable via env or factory arg to
 anthropic / qwen / glm / kimi / doubao.
 

@@ -151,7 +151,7 @@ function ChatPanel({ messages, onSend, busy, scene, chatMode, setChatMode }) {
             disabled={busy}
           />
           <div className="composer-bar">
-            <span className="model-chip"><b>DeepSeek</b>-V3.2</span>
+            <span className="model-chip"><b>DeepSeek</b>-V4-Flash</span>
             <span className="cost">~$0.0001/call</span>
             <span className="grow" />
             <span className="kbd">⌘↵</span>

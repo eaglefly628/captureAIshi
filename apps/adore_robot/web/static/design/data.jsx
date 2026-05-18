@@ -209,7 +209,7 @@ function toolCallToParamKey(name) {
 }
 
 const PIPELINE_STAGES = [
-  { id: 'parse',    t: 'T+0s',   name: 'Parse',     sub: 'DeepSeek-V3.2',     icon: '◔' },
+  { id: 'parse',    t: 'T+0s',   name: 'Parse',     sub: 'DeepSeek-V4-Flash',     icon: '◔' },
   { id: 'dispatch', t: 'T+2s',   name: 'Dispatch',  sub: 'MCP → UE',          icon: '↗' },
   { id: 'generate', t: 'T+2.5s', name: 'Generate',  sub: 'PCG · spawn',       icon: '◈' },
   { id: 'render',   t: 'T+8s',   name: 'Render',    sub: 'MRQ · 30f EXR',     icon: '◉' },

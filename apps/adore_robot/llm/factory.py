@@ -1,7 +1,7 @@
 """Provider factory.
 
 Defaults match v0.3.3 direction-B decision (老白 2026-05-16):
-- Text reasoning / NL->tool: deepseek (V3.2, OpenAI-compatible).
+- Text reasoning / NL->tool: deepseek (V4-Flash, OpenAI-compatible).
 - Multimodal (thumbnail feedback loop, v0.4): qwen-vl-max via qwen kind.
 - Premium fallback: anthropic (claude-sonnet-4-6).
 
