@@ -1,5 +1,15 @@
 # Batch Scene Generation Architecture (xiaoxu)
 
+> **SUPERSEDED by `batch_scene_gen_architecture_v2.md`** (老白 2026-05-16 决策方向 B = 全面拥抱 UE5.8 MCP).
+> v1 的 Flask + subprocess + commandlet + Anthropic SDK 直调链路主体作废。
+> 保留本文档作对照参考：Web UI 形态选型 (§1)、scene_spec JSON schema (§2.3)、
+> 任务队列设计 (§2)、prompt 缓存策略 (§3.Anthropic SDK 段) 仍可参考。
+> 新的拓扑：UE = MCP Server (:8000/mcp), `UPCGAdoreToolset:UToolsetDefinition`
+> 反射出工具, LLM provider 抽象 (apps/adore_robot/llm/factory.py) 默认 DeepSeek-V4-Flash。
+> Web UI 退化为 thin shell (仅展示 job/thumbnail, 所有 PCG 操作经 MCP)。
+
+---
+
 Audience: 老白审 + xiaohuan 对齐 + xiaoxuan 知会下游。Author: xiaoxu, 2026-05-15.
 
 目标: 三类室内场景 x 5 variant x 30 frame = 450 帧 multi-layer EXR，由 web UI 或自然语言驱动 PCG generate + MRQ render。本文是**设计**，不是实现。

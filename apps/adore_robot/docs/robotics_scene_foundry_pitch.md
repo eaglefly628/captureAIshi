@@ -166,7 +166,7 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 | 管线阶段 | 选型 | 成熟度 | 与机器人相关性 |
 |---------|------|--------|----------------|
 | NL → Task Spec | LLM + 自研 schema | **DIY** | 核心 IP |
-| 室内 PCG | UE 5.6+ PCG + 自研 biome | Production | 房间/工厂模板需新做 |
+| 室内 PCG | UE 5.8+ PCG + 自研 biome | Production | 房间/工厂模板需新做 |
 | 资产库 | Fab + AI 3D (Tripo3D, Meshy) | Production | 家具/工具/杂物 |
 | 机器人模型 | URDF (FRANKA, UR5, Boston Dynamics) | Production | 学术 + 工业标准 |
 | 物理引擎 | UE 内置 PhysX 5 | Production | 与 Isaac Sim 同源 |
@@ -205,7 +205,7 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 **目标**：仓库一角 + FRANKA Panda 抓箱子 → 端到端出 Cosmos-ready 数据
 
 **Week 1 — 静态场景 + 机器人导入**
-- UE 5.6 + Robotics Plugin Suite + PhysX 5
+- UE 5.8 + URDF kinematic poser (see ue58_engine_notes_xiaoxu.md §5) + PhysX 5
 - 3m × 3m 仓库一角（货架 × 2 + 工作台 + 光照）
 - FRANKA Panda URDF 导入 + Articulation 物理验证
 - 3 类箱子（红/绿/蓝，3 种尺寸）
@@ -345,7 +345,7 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 
 | 周 | 内容 |
 |---|------|
-| 1 | NVIDIA Inception 申请 + Isaac Sim 环境搭建 + UE 5.6 + Robotics Plugin |
+| 1 | NVIDIA Inception 申请 + Isaac Sim 环境搭建 + UE 5.8 + URDF kinematic poser |
 | 2 | UE 三类场景 PCG 缩水模板（warehouse / 客厅 / 工业一角）|
 | 3 | FRANKA Panda 在 Isaac Sim 跑 manipulation + USD 导出场景到 UE |
 | 4 | UE ↔ Isaac Sim USD 同步管线 + Sequencer 编排联动 |
@@ -361,7 +361,7 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 ```
 本周必做（无依赖）：
   □ 提 NVIDIA Inception 申请（Cosmos GPU 资源 + 技术对接，2-4 周批准期）
-  □ 装 Isaac Sim 5.0 + UE 5.6 + Robotics Plugin
+  □ 装 Isaac Sim 5.0 + UE 5.8 + URDF kinematic poser
   □ 拉 FRANKA Panda + Unitree H1 + UR5 三套 URDF
   □ 派 spike agent 验证 UE ↔ Isaac Sim USD 互通最简 demo
   □ 修 RenderDoc P0（已派 xiaoxuan）
@@ -441,7 +441,7 @@ Cosmos Transfer 吃的「**structured conditioning**」格式 = 我们 UE5 MRQ �
 
 | 周 | 内容 |
 |---|------|
-| 1 | NVIDIA Inception 申请 + UE 5.6 + Robotics Plugin + Cosmos API 接入 |
+| 1 | NVIDIA Inception 申请 + UE 5.8 + URDF kinematic poser + Cosmos API 接入 |
 | 2 | 三类场景 PCG 缩水模板（warehouse / 客厅 / 工业一角） |
 | 3 | URDF kinematic posing（FRANKA Panda + Unitree H1 + UR5 静态摆放） |
 | 4 | MRQ 多层 EXR 批量出图 + Cosmos Transfer photoreal video 端到端 |
@@ -455,7 +455,7 @@ Isaac Sim 暂不接，省 3-4 周工时和一条学习曲线。客户要物理�
 ```
 本周必做：
   □ 提 NVIDIA Inception（Cosmos GPU + Robotics Plugin 资源）
-  □ UE 5.6 + Robotics Plugin（仅 URDF import + kinematic posing 用）
+  □ UE 5.8 + URDF kinematic poser（仅 URDF import + kinematic posing 用）
   □ 拉 FRANKA / H1 / UR5 URDF
   □ 调研三套下游数据格式 spec：LeRobot (HuggingFace) / RT-X (TFDS) / GR00T (NVIDIA)
   □ 找 2-3 个真客户聊「你们要什么格式」(Physical Intelligence / 1X / 银河通用 / NVIDIA Isaac team)
@@ -541,7 +541,7 @@ PPT 中提及的话术建议：
 四件事并行：
 
 1. **修 P0**（已派 xiaoxuan）— 1-2h
-2. **装 UE 5.6 + Robotics Plugin Suite** — 1 天
+2. **装 UE 5.8 + URDF kinematic poser (see ue58_engine_notes_xiaoxu.md §5)** — 1 天
 3. **拉 FRANKA Panda URDF + 1 货架 + 3 箱子资产**（Fab 找现成） — 2-3h
 4. **派一个 agent 跑 spike**：上面三件凑 30 秒抓取动画 → MRQ 出 1 帧 4D + 关节角 + 接触事件 — 3 天
 
@@ -598,7 +598,7 @@ PPT 中提及的话术建议：
 | 世界基础模型 | World Foundation Model | NVIDIA Cosmos 等，输入条件 → 视频/未来帧 |
 | 真到虚差距 | Sim2Real Gap | 仿真训练 vs 真实部署的性能差异 |
 | 影片渲染队列 | MRQ (Movie Render Queue) | UE 内置高质量批产渲染工具 |
-| 程序化内容生成 | PCG | UE 5.6+ 节点图驱动的场景生成框架 |
+| 程序化内容生成 | PCG | UE 5.8+ 节点图驱动的场景生成框架 |
 | 物理引擎 | PhysX 5 | NVIDIA 物理引擎，与 Isaac Sim 同源，UE 内置 |
 | 神经网络引擎 | NNE | UE 内置 ONNX 推理引擎 |
 | 标志性人物 | MetaHuman | Epic 高保真数字人系统 |

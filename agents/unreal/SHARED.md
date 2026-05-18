@@ -51,7 +51,19 @@
 
 #### Open (本期不做，下个 session 接力)
 
-- [ ] **P0 (老白 2026-05-15 决策): Robotics Poser 接口抽象 -- ABC 三方案都要接** -- 你原本想锁 Plan C，老白拍：**A/B/C 都做接口支持，调通可以延后**。本期落地要求：
+- [x] **P0 (老白 2026-05-16 决策, v0.3.3): 架构方向 B -- 全面拥抱 UE5.8 MCP** **[done by 老白 2026-05-17]** -- 老白 直接出了 `apps/adore_robot/docs/batch_scene_gen_architecture_v2.md` (~410 行, 7 节) 顶替, v1 已加 SUPERSEDED 头. v2 §2.2 全表是 `UPCGAdoreToolset` 方法 1:1 映射 (warehouse/living_room/industrial 21 + orchestration 6 + 5 个 UENUM literal 列表). LLM provider 抽象在 `apps/adore_robot/llm/` (factory + base + openai_compat + anthropic_adapter), 7 个 provider, deepseek 默认. **xiaoxu 接力即可开工**: §1.3 Plan B-1 验证 + §2.5 plugin skeleton + 1 个 trivial UFUNCTION smoke. -- ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。你原 `batch_scene_gen_architecture.md` 的 Flask + subprocess + commandlet 路线**主体作废**，下面这套替代：
+  - **UE = MCP Server**: 装 `AIAssistant` + `ToolsetRegistry` + `ModelContextProtocol` + `AllToolsets` plugins，`bAutoStartServer=true`，监听 `http://localhost:8000/mcp`。
+  - **写 `UPCGAdoreToolset : UToolsetDefinition`**（plugin 路径 `apps/adore_robot/unreal_projects/AdoreRobot/Plugins/AdoreRobotPCG/`），把 xiaohuan `pcg_param_contract.md` §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))` 方法，函数名对齐 contract key（snake_case）。例: `void SetShelfDensity(float Value)`、`void SetForkliftCount(int32 Value)`、`void TriggerGenerate()`、`void TriggerMRQRender(FString PresetName)`、`FString GetThumbnailPath()`。反射自动出 JSON Schema，零手写。
+  - **批量 headless render 路径**: 先**实证 MCP 能否驱动 commandlet/unattended cooking** -- 这是 ref doc 没明说的。两条 fallback：
+    - Plan B-1: Editor 进程长驻 + MCP 跑批量（一次启动多个 job 序列调用），可行就用
+    - Plan B-2: 批量保留 subprocess + commandlet（不通过 MCP），交互探索走 MCP -- 退化成方向 C 混合架构
+    实证结果回写 `batch_scene_gen_architecture_v2.md` §1。
+  - **LLM provider 抽象**（与方向 B 联动，老白同步决策）: 默认 **DeepSeek-V3.2**（OpenAI 兼容，tool calling 稳，比 Claude Sonnet 4.6 便宜约 10x），同时支持 Anthropic / Qwen3-Max / GLM-4.6 切换。写 `apps/adore_robot/llm/factory.py`：`make_llm_client(provider: Literal["deepseek","anthropic","qwen","glm","kimi","doubao"]) -> BaseClient`。所有 client 暴露统一 `chat_with_tools(...)` 接口。多模态（thumbnail 反馈循环 v0.4）默认 **Qwen-VL-Max**。
+  - **重写 `batch_scene_gen_architecture_v2.md`** 取代 v1，结构：§0 决策摘要（方向 B + DeepSeek 默认）/ §1 MCP 拓扑 + Plan B-1/B-2 实证结果 / §2 `UPCGAdoreToolset` 方法清单（1:1 派生自 xiaohuan contract）/ §3 LLM provider 抽象 + few-shot 复用 / §4 Web UI 退化为 thin shell（仅展示 job/thumbnail，所有 PCG 操作走 MCP）/ §5 依赖清单更新。
+  - **不删 v1 doc**，保留对照；在 v1 头部加一行 `> SUPERSEDED by batch_scene_gen_architecture_v2.md (老白 2026-05-16 决策方向 B)`。
+  - **xiaohuan 那边请求**: 在 `agents/pcg/SHARED.md` 加 P1，让他出"contract param -> AICallable method 名"映射表，你照表写 UFUNCTION 签名。
+
+- [x] **P0 (老白 2026-05-15 决策): Robotics Poser 接口抽象 -- ABC 三方案都要接** **[doc done by 老白 2026-05-17 `docs/robotics_poser_interface.md` ~330 行]** -- §0 Plan D (Epic 官方) 占位待 xiaoxu UE5.8 plugin manager verify; §1 `IRobotPoserInterface` UInterface + 7 method + `FRobotHandle/FJointLimits` USTRUCT + `EAdoreRoboticsBackend` UENUM; §2 Python `RobotPoserBase` + factory + 3 adapter docstring shell (minimal/urlab/urobosim); §3 老白拍 Plan C (Minimal) 先实现, A/B/D 留接口零代码; §4 deferred 列表; §5 边界 + 失败模式. xiaoxu 接力: §0 verify, §1.2 .h 落地到 `Plugins/AdoreRobotPCG/Source/AdoreRobotPCG/Public/RobotPoserInterface.h`, `apps/adore_robot/robotics/` 5 文件 skeleton, `RobotPoser_Minimal` 第一刀. -- 你原本想锁 Plan C，老白拍：**A/B/C 都做接口支持，调通可以延后**。本期落地要求：
   - 写 `docs/robotics_poser_interface.md`，定义两层抽象：
     1. **UE5 侧 `IRobotPoser` 接口** (C++ `UInterface` 或纯 BP interface)，方法清单至少含：`LoadURDF(path) -> RobotHandle`、`GetJointNames(handle) -> [name]`、`GetJointLimits(handle, name) -> (lo, hi)`、`SetJointState(handle, {name: angle})`、`GetLinkTransform(handle, link_name) -> FTransform`、`SpawnInLevel(handle, world_transform) -> AActor*`、`DestroyHandle(handle)`。
     2. **Python 侧 `RobotPoserBase` 抽象** (`apps/adore_robot/robotics/base.py`)，方法对齐 UE 侧，由 `unreal.py` bridge 调具体 implementation。Python 侧多一个 factory: `make_poser(backend: Literal["urlab","urobosim","minimal"]) -> RobotPoserBase`。
@@ -95,6 +107,23 @@
 - Anthropic SDK Python: 见 `.claude/skills/claude-api`
 
 ## Changelog
+
+### [v0.3.3-dev] (pending push) -- xiaoxu (客户演示 demo, 适配老白 v0.3.3 LLM 接口)
+- apps/adore_robot/llm/keyword.py: offline 关键词 fallback 适配老白 BaseLLMClient (Message/ToolDef/ChatResponse 接口), 加进 factory 作 'keyword' provider 不需 API key
+- apps/adore_robot/demo/{prompts,runner,thumbnail}.py: NL system prompt (派生自 xiaohuan contract §1/§3/§4 + 5 few-shot) + update_scene ToolDef + SSE 假批量进度 + 4-channel SVG thumbnail (final/normal/depth/objectid)
+- apps/adore_robot/web/templates/demo.html + static/{style.css, app.js, scene3d.js}: 三栏客户演示 UI (场景选择+参数 / Three.js 3D 俯视 + 批量 gallery / NL chat), 沿用老白橙色 brand, Three.js r158 via CDN
+- apps/adore_robot/main.py: 加 demo 路由 `/` + dev MCP bridge 保留 `/dev`; 端点 /api/chat /api/scenes /api/demo/{submit,jobs,stream,thumbnail}; 适配老白 chat_with_tools(messages, tools, tool_choice, system) 接口
+- 全链路验通: curl /api/chat keyword 模式正确派生 (货架密 + 加 2 台叉车 + 冷光 -> 3 个 param); /api/demo/submit 入队 SSE; SVG thumbnail 渲染
+- 跑法: `pip install flask && python apps/adore_robot/main.py` -> http://localhost:5001; 设 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY 启真 LLM, 否则 keyword fallback
+
+### [v0.3.3] becd41b -- 老白
+- apps/adore_robot/mcp_client.py: `_rpc` 加 `_retry` budget, 防 404 -> reinit -> 再 404 死循环 (peer review xiaoxu 的 04e3aac MCP plumbing)
+- apps/adore_robot/llm/{__init__,base,openai_compat,anthropic_adapter,factory}.py: stdlib urllib 多 provider 抽象, 7 个 provider (deepseek 默认 + qwen/qwen-vl/glm/kimi/doubao/anthropic), 统一 `chat_with_tools(messages, tools, tool_choice, system, ...)` 接口, Anthropic 默认开 prompt cache
+- apps/adore_robot/docs/batch_scene_gen_architecture_v2.md: 方向 B 完整设计 7 节 (决策摘要 / MCP 拓扑 + Plan B-1/B-2 / UPCGAdoreToolset 方法清单 21+6 / LLM factory 集成 / Web UI thin shell / 依赖清单 / 实施顺序 + 开放问题)
+- apps/adore_robot/docs/batch_scene_gen_architecture.md: 头加 SUPERSEDED 块, v1 保留对照参考
+- apps/adore_robot/docs/robotics_poser_interface.md: A/B/C/D 全接口化设计 (UE C++ IRobotPoserInterface + Python RobotPoserBase + 4 backend tag + scene_spec.robotics_backend 字段); 老白拍 Plan C 先实现, A/B 留 docstring shell, D 待 verify
+- agents/STATUS.md: 老白行更新 ~60% / 2026-05-17 + xiaoxu 接力清单
+- agents/unreal/SHARED.md: 标 P0 方向B + P0 Robotics Poser 全 done; 后续 xiaoxu 接力是 plugin .h 落地 + robotics/ skeleton + Plan B-1 验证
 
 ### [v0.3.2.1] af8b310 -- xiaoxu
 - agents/unreal/SHARED.md: 回填 v0.3.2 CL SHA (`(pending push)` -> `cfdb7c4`) 满足 versioning 规则

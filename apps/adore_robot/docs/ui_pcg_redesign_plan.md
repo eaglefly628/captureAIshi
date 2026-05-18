@@ -121,7 +121,7 @@ class UnrealPCGDriver:
         ...
 
     def start(self) -> subprocess.Popen:
-        # UE 5.6 + Robotics Plugin + 我们的 PCG asset
+        # UE 5.8 + URDF kinematic poser + 我们的 PCG asset
         cmd = [
             self.ue_root / "Engine/Binaries/Win64/UnrealEditor-Cmd.exe",
             str(self.project),
@@ -272,7 +272,7 @@ adapters/
 
 - [ ] `drivers/unreal_pcg.py`: `UnrealPCGDriver.start/stop/parse_progress`
 - [ ] `configs/pcg/warehouse_50x50.json`: 第一个真实模板（先 mock 参数，后接 PCG asset）
-- [ ] `unreal_projects/RobotFoundry/`: 起个空 UE 5.6 工程 + 1 个 PCG graph stub
+- [ ] `unreal_projects/RobotFoundry/`: 起个空 UE 5.8 工程 + 1 个 PCG graph stub
 - [ ] `unreal_projects/RobotFoundry/Content/Python/run_pcg_headless.py`: UE 内 Python 入口
 - [ ] **验证**: UI 点 Generate → UE-Cmd 启 headless → 出空 `.uasset` + 假 thumbnail，UI 进度条到 100%
 
@@ -290,7 +290,7 @@ adapters/
 |---|---|
 | `index.html` 单文件已 4200 行，再加 PCG 撑到 6000+ 不可维护 | Phase A 把 PCG 部分独立成 `web/templates/pcg_partial.html`，用 Jinja `{% include %}` |
 | Toolbar mode 切换可能误伤 capture 用户肌肉记忆 | 默认进站记 `localStorage.uiMode = 'capture'`，老用户 0 感知 |
-| UE 5.6 Robotics Plugin 不稳 / 没装 | `drivers/unreal_pcg.py` 启动失败时退回 `pcg --dry-run` 模式，UI 用假帧推流，离线开发可继续 |
+| UE 5.8 URDF poser 未到位 (Epic 无官方 Robotics Plugin, 参 ue58_engine_notes §5) | `drivers/unreal_pcg.py` 启动失败时退回 `pcg --dry-run` 模式，UI 用假帧推流，离线开发可继续 |
 | 三套 schema 实施差异大，工作量爆 | Phase C 先打通 LeRobot 一套（最热门），RT-X / GR00T 占位即可 |
 | PCG 模式跟 capture 模式 state 互相污染 | `_capture_state` / `_pcg_state` 物理隔离，session id 加前缀 `cap-` / `pcg-` |
 

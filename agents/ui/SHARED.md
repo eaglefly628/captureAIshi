@@ -2,6 +2,21 @@
 
 ## Active TODO
 
+- [ ] **P1: launcher 启动 captureAIshi 默认 demo 模式 (复选框)** (from 用户 via xiaoxu) -- 启动按钮旁边加个 click box "Demo 模式" (默认勾上), 勾上时 launcher spawn capture 子进程注入 `DEMOAISHI=1`. 用户表述: "captureAIshi 这个版本默认以demo 方式运行 / 或者有个 click box". 落点:
+  - `apps/launcher/server.py` 的 capture card (大约 L314-L327) 在 `app-launch` 按钮上方加 `<label><input type="checkbox" id="demo-toggle-capture" checked> Demo 模式</label>` (深色 capture brand checkbox 样式自己写)
+  - 前端 `launchApp('capture', btn)` JS (大约 L300+) 改成读 checkbox 状态, POST body 加 `{demo: bool}`
+  - 后端 `POST /api/launch/<app>` handler (大约 L60-90 的 launch 函数, 调 `subprocess.Popen(cfg["cmd"], cwd=cfg["cwd"])`) 改成: 读 request.json 的 `demo` 字段, 如果 True 注入 env={**os.environ, "DEMOAISHI": "1", "DEMOAISHI_SCENARIO": "batman_ak"} 传给 Popen
+  - `DEMOAISHI` env 机制详情见 `apps/capture/web/demo.py` is_demo_mode() + Dockerfile 第 10-11 行
+  - adore_robot 暂时**不需要** demo 复选框 (adore_robot 当前整体就是 mock 状态; 等真接 UE MCP 后再加)
+  - 顺便可以把启动 captureAIshi 的按钮文字改成"启动 captureAIshi · Demo" 更直观
+
+- [ ] **P1: launcher hero/footer 写的 UE 5.6 该改 5.8** (spotted by xiaoxu, 用户报) -- `apps/launcher/server.py` 三处硬编码:
+  - L305 `<div class="hero-tag">v0.3.0 · POWERED BY UNREAL ENGINE 5.6 + NVIDIA COSMOS</div>` -> `UE 5.8 Preview`
+  - L338 `<div class="app-meta-item"><span class="app-meta-dot"></span>UE5.6 + PCG + Robotics Plugin</div>` -> `UE 5.8`（且 Robotics Plugin 部分需重新表述，老白派单 P0-2 已明确 Epic 5.8 无官方 Robotics Plugin，参考 `apps/adore_robot/docs/ue58_engine_notes_xiaoxu.md` §5；建议写 `UE 5.8 + PCG`，机器人字样去掉或改 `URDF kinematic posing`）
+  - L363 `<span class="footer-badge">UNREAL ENGINE 5.6</span>` -> `UNREAL ENGINE 5.8`
+  - 顺手扫一下整个 `apps/launcher/server.py` 是否还有 "5.6" / "UE5.6" 残留
+  - 用户看到的是 hero-tag 那行 ("v0.3.0 · POWERED BY UNREAL ENGINE 5.6")，最影响外部观感
+
 _全部清空 2026-05-13（老白 by 用户指令）— 旧 TODO 清单 + 恢复方式见 `agents/ui/ARCHIVE.md` 末尾 "Cleared 2026-05-13" 段。新方向 TODO 待老白下次重派。_
 
 ## [v0.3.0] UI 重构任务 (from lead)
