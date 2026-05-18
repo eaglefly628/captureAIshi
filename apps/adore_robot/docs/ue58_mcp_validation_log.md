@@ -304,8 +304,47 @@ single-digit calls per minute).
       Every PCG knob reachable via reflection -- nested struct
       (`graphInstance.OverrideParams.<param>`) follows the same
       mechanism. **C++ UPCGAdoreToolset plugin is no longer required.**
-- [ ] Update `apps/adore_robot/mcp_client.py` to auto-load the 3 ★★★
+- [x] Update `apps/adore_robot/mcp_client.py` to auto-load the 3 ★★★
       toolsets on connect, so `/dev` and future `/api/chat` see them
       directly without LLM having to issue `load_toolset` first.
-- [ ] Write old白-confirm P1 (see `agents/unreal/SHARED.md` -- already
-      filed) before sinking time into the obsolete C++ plugin path.
+      **DONE 2026-05-17 (Plan A)**:
+      - `DEFAULT_TOOLSETS` = EditorApp + ObjectTools + SceneTools +
+        ProgrammaticToolset.
+      - `auto_load_toolsets()` idempotent via `_loaded_toolsets` set;
+        cache reset on 404 session expiry.
+      - `_parse_sse_or_json()` handles UE 5.8's `event: message\ndata: {...}`
+        SSE wire format (it's not always plain JSON like the spec docs).
+      - `_unwrap()` peels off the `result.content[0].text` JSON-string
+        envelope. ObjectTools.get_properties / list_properties double-
+        wrap (text is JSON of `{"returnValue": "<JSON-string>"}`), so
+        we inner-parse when returnValue is a string.
+      - PCG helpers: `get_selected_actors`, `list_actor_properties`,
+        `get_actor_properties`, `set_actor_properties`,
+        `find_pcg_component_refpath` (selection-first + Programmatic
+        Python find_all fallback), `apply_pcg_delta` (auto_load + find +
+        set in one call).
+- [x] Plan-A `/api/chat` MCP relay wired. **DONE 2026-05-17**:
+      When chat is in `scene` mode and LLM emits update_scene tool_call
+      with non-empty `pcg_params`, `_try_mcp_relay()` pushes the delta
+      through to UE Editor via ObjectTools.set_properties. Frontend
+      `callRealChat` surfaces the relay status as a narrate suffix:
+      `· ✓ MCP -> UE: PCGComponent_0 updated` (or `· ◌ MCP skipped (reason)`).
+      Gracefully no-ops with `{ok:false, skipped:true, reason:...}` when
+      UE MCP is down, sandbox-tested.
+- [x] New endpoints for the / (design) and /dev panels:
+      - `POST /api/mcp/apply_pcg {pcg_params: {...}}` -- direct apply,
+        bypasses LLM (slider drags can push directly).
+      - `POST /api/mcp/auto_load` -- manually trigger bulk toolset load.
+      - `POST|GET /api/mcp/probe_graph` -- Plan-B exploration: finds
+        the selected PCG actor, drills into graphInstance, lists its
+        schema, returns interesting `override*/param*/graph*` field
+        values so we can map the 21-param contract to the UPCGGraphInstance
+        property paths without guessing.
+      - `/api/mcp/status` now also returns `loaded_toolsets` array.
+- [ ] Plan-B graphInstance OverrideParams structure -- waiting on user
+      to drop a PCG Volume with a Graph asset assigned (current test
+      Volume has no graph), then hit `/api/mcp/probe_graph` and we
+      capture the layout here. Endpoint code is ready and tested
+      against MCP-down gracefully.
+- [x] Write 老白-confirm P0 (see `agents/unreal/SHARED.md`) -- 实证完整,
+      pending green-light.

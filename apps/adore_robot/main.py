@@ -239,6 +239,19 @@ def api_chat():
     })
     CHAT_LOG.appendleft(log_entry)
 
+    # ── MCP relay (scene mode only) ─────────────────────────────────────
+    # When the LLM emits an update_scene tool_call with a non-empty
+    # pcg_params delta, push it through to a live UE Editor via MCP.
+    # Gracefully no-ops with a structured reason when UE is unreachable
+    # (sandbox demo, MCP server not started, etc).
+    mcp_relay = None
+    if (mode == "scene" and tc and isinstance(tc.arguments, dict)
+            and tc.arguments.get("pcg_params")):
+        pcg_params = tc.arguments["pcg_params"]
+        mcp_relay = _try_mcp_relay(pcg_params)
+        _log("MCP-RELAY", f"ok={mcp_relay.get('ok')}",
+             f"target={mcp_relay.get('pcg_component') or mcp_relay.get('reason') or '?'}")
+
     return jsonify({
         "ok": True,
         "provider": provider_resolved,
@@ -249,7 +262,100 @@ def api_chat():
             "arguments": tc.arguments,
         } if tc else None,
         "text": result.text,
+        "mcp_relay": mcp_relay,
     })
+
+
+def _try_mcp_relay(pcg_params: dict) -> dict:
+    """Push a pcg_params delta to live UE Editor via MCP. Always returns
+    a dict (no exceptions escape) so the chat endpoint always replies."""
+    try:
+        return mcp.apply_pcg_delta(pcg_params)
+    except ConnectionError as e:
+        return {"ok": False, "skipped": True,
+                "reason": "UE MCP server unreachable",
+                "detail": str(e),
+                "hint": "start UE Editor + run `ModelContextProtocol.StartServer`"}
+    except RuntimeError as e:
+        return {"ok": False, "skipped": False,
+                "reason": str(e),
+                "hint": ("select a PCG Volume in UE Editor or drop one into the level"
+                         if "no PCG actor" in str(e) else None)}
+    except Exception as e:
+        return {"ok": False, "skipped": False,
+                "reason": f"{type(e).__name__}: {e}"}
+
+
+@app.route("/api/mcp/apply_pcg", methods=["POST"])
+def api_mcp_apply_pcg():
+    """Direct apply endpoint -- POST {"pcg_params": {...}} bypasses the
+    LLM, useful for the right-panel param sliders to push directly to
+    UE without going through chat."""
+    body = request.get_json(silent=True) or {}
+    params = body.get("pcg_params") or {}
+    if not params:
+        return jsonify({"ok": False, "error": "missing 'pcg_params'"}), 400
+    return jsonify(_try_mcp_relay(params))
+
+
+@app.route("/api/mcp/probe_graph", methods=["POST", "GET"])
+def api_mcp_probe_graph():
+    """Plan-B exploration endpoint: drill into the selected PCG actor's
+    graphInstance to surface the OverrideParams / GraphParameters struct
+    layout so we know how to address the 21 exposed contract params.
+    Returns the raw list_properties dump for graphInstance plus any
+    nested OverrideParams payload we can resolve."""
+    try:
+        mcp.auto_load_toolsets()
+        pcg_ref = mcp.find_pcg_component_refpath()
+        # get graphInstance refPath
+        gi_field = mcp.get_actor_properties(pcg_ref, ["graphInstance"])
+        gi_obj = gi_field.get("graphInstance") if isinstance(gi_field, dict) else None
+        gi_ref = gi_obj.get("refPath") if isinstance(gi_obj, dict) else None
+        if not gi_ref:
+            return jsonify({
+                "ok": True,
+                "pcg_component": pcg_ref,
+                "graph_instance": None,
+                "note": "PCG Component has no graphInstance -- assign a PCG Graph asset to the Volume in Details panel first",
+            })
+        gi_schema = mcp.list_actor_properties(gi_ref)
+        # Try to also read the actual values of fields most likely to hold
+        # the 21 contract params (UPCGGraphInstance commonly exposes Graph
+        # asset ref + ParametersOverrides / OverrideParameters / Overrides).
+        candidate_fields = []
+        if isinstance(gi_schema, dict):
+            for k in gi_schema:
+                lk = k.lower()
+                if any(s in lk for s in ("override", "param", "graph")):
+                    candidate_fields.append(k)
+        gi_values = mcp.get_actor_properties(gi_ref, candidate_fields) if candidate_fields else {}
+        return jsonify({
+            "ok": True,
+            "pcg_component": pcg_ref,
+            "graph_instance": gi_ref,
+            "graph_instance_schema": gi_schema,
+            "interesting_fields": candidate_fields,
+            "interesting_values": gi_values,
+        })
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True, "reason": str(e)}), 503
+    except RuntimeError as e:
+        return jsonify({"ok": False, "reason": str(e)}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/api/mcp/auto_load", methods=["POST"])
+def api_mcp_auto_load():
+    """Manually trigger the 4 default toolset loads. Useful for /dev
+    bridge after UE restart."""
+    try:
+        return jsonify({"ok": True, **mcp.auto_load_toolsets()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
 @app.route("/api/chat/ping", methods=["POST"])
@@ -391,7 +497,12 @@ def api_demo_thumbnail(scene_id):
 def mcp_status():
     try:
         mcp.ensure_session()
-        return jsonify({"ok": True, "session_id": mcp.session_id, "url": MCP_URL})
+        return jsonify({
+            "ok": True,
+            "session_id": mcp.session_id,
+            "url": MCP_URL,
+            "loaded_toolsets": mcp.loaded_toolsets,
+        })
     except ConnectionError as e:
         return jsonify({"ok": False, "error": str(e), "url": MCP_URL}), 503
     except Exception as e:
