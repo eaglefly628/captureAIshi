@@ -239,12 +239,46 @@ single-digit calls per minute).
 
 ## §6 Next steps before claiming validation done
 
-- [ ] Smoke-call `SceneTools.get_current_level` from raw curl -- confirms
-      the tool call path end-to-end, not just discovery.
-- [ ] Load `programmatic.ProgrammaticToolset`, check whether the Python
+- [x] Smoke-call `SceneTools.get_current_level` from raw curl -- confirms
+      the tool call path end-to-end, not just discovery. **DONE 2026-05-17**:
+      ```
+      Request:  tools/call name=toolset_registry.toolsets.core.scene.SceneTools.get_current_level args={}
+      Response: 200 SSE event: message
+                {"jsonrpc":"2.0","id":20,"result":{"content":[{"type":"text",
+                  "text":"{\"returnValue\":\"/Temp/Untitled_1\"}"}]}}
+      ```
+      `/Temp/Untitled_1` is the placeholder name UE uses when no .umap is
+      loaded -- this is the empty default-level state of a fresh
+      `IAMRobot.uproject` open. Marshaling string-encoded JSON inside
+      `content[0].text` is the MCP-standard return wrapper for tools that
+      return a primitive/struct; we'll need to JSON.parse the inner text
+      in `mcp_client.py` to surface the real value to callers.
+- [x] Load `programmatic.ProgrammaticToolset`, check whether the Python
       sandbox can chain `find_actors` -> `set_properties` -> `Generate()`
       in one call. If yes, our `/api/chat` can pass a single Python
-      snippet to MCP instead of N round trips.
+      snippet to MCP instead of N round trips. **DONE 2026-05-17**:
+      load returned 2 tools.
+
+      Tool 1: `execute_tool_script(script)` -- "Execute a Python script
+      against the toolset APIs. Use this to batch..." This is the
+      single-call orchestrator. A whole scene-spec apply becomes one
+      MCP call carrying a Python string. Pseudocode for our PCG path:
+      ```python
+      # passed as `script` arg in execute_tool_script
+      pcg = scene.find_actors(tag='PCG_Warehouse')[0]
+      pcg_comp = object.get_class(pcg)  # get UPCGComponent ref
+      object.set_properties(pcg_comp, '{"shelf_density":0.9,"forklift_count":2}')
+      pcg_comp.Generate(True)
+      return scene.get_current_level()
+      ```
+
+      Tool 2: `get_execution_environment()` -- returns sandbox details
+      (available imports, helpers). Call this once to understand the
+      exact API surface inside the script context. (Not yet done.)
+
+      SSE side-channel observed: `notifications/tools/list_changed`
+      pushed on the message stream during load_toolset, confirming
+      the lazy-discovery push side of the protocol works as documented.
 - [ ] Test `ObjectTools.set_properties` against a real PCGComponent in
       IAMRobot (need: open a level with PCG actor first, then chain).
 - [ ] Update `apps/adore_robot/mcp_client.py` to auto-load the 3 ★★★

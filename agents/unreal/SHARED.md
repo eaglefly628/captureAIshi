@@ -51,6 +51,28 @@
 
 #### Open (本期不做，下个 session 接力)
 
+- [ ] **P0 (老白 await confirm, 2026-05-17): v0.3.3 UPCGAdoreToolset C++ plugin 可能不需要了**
+  xiaoxu 当天实机验通 UE5.8 MCP 后**重大发现**: 5.8 内置 `ObjectTools` 已经能
+  `set_properties(pcg_component, '{"shelf_density":0.9,"forklift_count":2}')`
+  改 PCG Component 任意 UPROPERTY override; 内置 `ProgrammaticToolset.execute_tool_script`
+  能跑 Python 沙盒一次串完 `find_actors -> set_properties -> Generate -> capture_image`,
+  把 LLM 的 N 个 round trip 压成 1 个. **完整验证日志 + 41 toolset inventory +
+  35 工具 schema + 架构 trade-off 表** 在 `apps/adore_robot/docs/ue58_mcp_validation_log.md`.
+  实证: `get_current_level` 返回 `/Temp/Untitled_1` 全链路通; `ProgrammaticToolset`
+  load 成功 + SSE `notifications/tools/list_changed` 正确推送.
+  - **拟变更**: v2 §2.5 plugin skeleton + 21 UFUNCTION wrap **跳过**, 改用
+    `ObjectTools` + `ProgrammaticToolset` + `apps/adore_robot/main.py` server-side
+    validate (拿 demo/prompts.py contract 做 range/enum 校验, 比 UE 端 native
+    bounds 灵活, 新参数 prompt edit 即可, 不用重编 plugin)
+  - **保留**: v2 §2.2 21-param mapping 表 -- 它现在变成 LLM prompt 的参数 contract
+    清单 / server-side validate 的 ground truth, **不**变成 C++ 函数签名
+  - 省: ~2-3 天 C++ + Build.cs + cook + 5.8 Preview ABI 适配
+  - **请老白回 yes / no / 折中** (如保留 plugin skeleton 但不写 21 UFUNCTION,
+    给 v0.4 留 reflection-cost 优化口)
+  - 在他拍板前 xiaoxu 不动 C++ plugin 分支, 只继续 ObjectTools 路径的 server
+    端 wiring (改 `apps/adore_robot/main.py` `/api/chat` 在 LLM 出 update_scene
+    tool_call 后转 MCP `execute_tool_script` Python 一次性下发)
+
 - [x] **P0 (老白 2026-05-16 决策, v0.3.3): 架构方向 B -- 全面拥抱 UE5.8 MCP** **[done by 老白 2026-05-17]** -- 老白 直接出了 `apps/adore_robot/docs/batch_scene_gen_architecture_v2.md` (~410 行, 7 节) 顶替, v1 已加 SUPERSEDED 头. v2 §2.2 全表是 `UPCGAdoreToolset` 方法 1:1 映射 (warehouse/living_room/industrial 21 + orchestration 6 + 5 个 UENUM literal 列表). LLM provider 抽象在 `apps/adore_robot/llm/` (factory + base + openai_compat + anthropic_adapter), 7 个 provider, deepseek 默认. **xiaoxu 接力即可开工**: §1.3 Plan B-1 验证 + §2.5 plugin skeleton + 1 个 trivial UFUNCTION smoke. -- ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。你原 `batch_scene_gen_architecture.md` 的 Flask + subprocess + commandlet 路线**主体作废**，下面这套替代：
   - **UE = MCP Server**: 装 `AIAssistant` + `ToolsetRegistry` + `ModelContextProtocol` + `AllToolsets` plugins，`bAutoStartServer=true`，监听 `http://localhost:8000/mcp`。
   - **写 `UPCGAdoreToolset : UToolsetDefinition`**（plugin 路径 `apps/adore_robot/unreal_projects/AdoreRobot/Plugins/AdoreRobotPCG/`），把 xiaohuan `pcg_param_contract.md` §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))` 方法，函数名对齐 contract key（snake_case）。例: `void SetShelfDensity(float Value)`、`void SetForkliftCount(int32 Value)`、`void TriggerGenerate()`、`void TriggerMRQRender(FString PresetName)`、`FString GetThumbnailPath()`。反射自动出 JSON Schema，零手写。
