@@ -5,7 +5,7 @@
 > 保留本文档作对照参考：Web UI 形态选型 (§1)、scene_spec JSON schema (§2.3)、
 > 任务队列设计 (§2)、prompt 缓存策略 (§3.Anthropic SDK 段) 仍可参考。
 > 新的拓扑：UE = MCP Server (:8000/mcp), `UPCGAdoreToolset:UToolsetDefinition`
-> 反射出工具, LLM provider 抽象 (apps/adore_robot/llm/factory.py) 默认 DeepSeek-V3.2。
+> 反射出工具, LLM provider 抽象 (apps/adore_robot/llm/factory.py) 默认 DeepSeek-V4-Flash。
 > Web UI 退化为 thin shell (仅展示 job/thumbnail, 所有 PCG 操作经 MCP)。
 
 ---
