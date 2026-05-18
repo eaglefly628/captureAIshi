@@ -37,6 +37,15 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 - [x] CL 条目 ≤ 10 行
 - [x] 未动 `Source/` / `Plugins/` / `Config/`（xiaoxu 的）
 
+### [v0.3.2] Robotics Backend 字段补丁 (老白 2026-05-15 P0 反向影响) -- DONE
+
+老白 commit `5f1cfa2c` 把 xiaoxu Plan C only 改为 A/B/C 三方案接口支持，scene_spec JSON 需新增 `robotics_backend` 字段。本轮直接补：
+
+- [x] 三场景 `<scene>_v0.json` 加 `robotics_backend: "minimal"` + `robotics_backend_compatible: ["minimal","urlab","urobosim"]`
+- [x] `pcg_param_contract.md` 加 §7 Robotics Backend 字段 (5 节: schema / LLM 是否能切 / UI 要求 / server validate / 与 OverrideParams 关系)
+- [x] 旧 §7 "与 xiaoxu 的接口契约（小结）" 重编号到 §8，加 item 7 引用 §7 + §7.3
+- [x] **写 P1 到 `agents/unreal/SHARED.md`** -- "batch UI 必须清晰表达多 backend 支持" 7 条 (selector / status badge / `/api/scenes` 字段 / 默认 minimal / NL 不暴露 / scene JSON 已就位 / 表单区块位置)，承接老白原话 "UI 界面能清晰表达出我们的多个接口支持样子"
+
 ### [v0.3.2] 等 xiaoxu 装 5.8 后回填 (单点依赖)
 
 - [ ] **PCGComponent Python method 真名** -- 等 `help(unreal.PCGComponent)` dump，回填 `pcg_param_contract.md` §2 placeholder (当前两个 hypothesis: `set_graph_parameter` / `override_param`)。回填前 contract 的 key 名 + value 类型 + range 仍然有效，不阻塞 xiaoxu batch UI 表单 + tool input_schema 派生
@@ -54,6 +63,13 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 - `scene_specs.md` -- 三场景 spec 草稿（本轮已 review + 定稿到 `apps/adore_robot/configs/scenes/`）
 
 ## Changelog
+
+### [v0.3.2] <commit-sha> -- xiaohuan (robotics_backend 补丁)
+- apps/adore_robot/configs/scenes/{warehouse,living_room,industrial_corner}_v0.json: 加 `robotics_backend: "minimal"` + `robotics_backend_compatible` 数组
+- apps/adore_robot/docs/pcg_param_contract.md §7: 新增 Robotics Backend 字段定义 (schema / LLM 不暴露 / UI 要求 / server validate / 与 PCG OverrideParams 关系)
+- apps/adore_robot/docs/pcg_param_contract.md §8: 旧 §7 接口契约小结重编号 + 加 item 7 引用 §7.3
+- agents/unreal/SHARED.md: 写 P1 to xiaoxu -- batch UI 多 backend 显式表达 7 条要求 (承接老白 "UI 界面能清晰表达出多接口支持样子")
+- 老白 commit 5f1cfa2c 反向影响落地完毕，xiaoxu 接 P0 时 schema 已对齐
 
 ### [v0.3.2] e484db1 -- xiaohuan
 - apps/adore_robot/docs/ue58_pcg_notes_xiaohuan.md: 5.8 PCG 调研 (Step 1) -- DAG eval / Python API / Mega Lights / Nanite+translucent

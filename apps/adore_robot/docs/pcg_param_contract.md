@@ -341,7 +341,57 @@ batch UI gallery 都看这个角度判断 "fit user request?"。固定的好处�
 
 ---
 
-## §7 与 xiaoxu 的接口契约（小结）
+## §7 Robotics Backend 字段（v0.3.2 增补，老白 2026-05-15 P0）
+
+来源: commit `5f1cfa2c` 把 xiaoxu 原想的 Plan C only 改为 **A/B/C 三方案
+都要接口支持**。本节是 scene_spec JSON 端的 schema 增补；UE5 `IRobotPoser`
+接口 + Python `RobotPoserBase` 抽象由 xiaoxu 落
+`docs/robotics_poser_interface.md`。
+
+### 7.1 Scene JSON 增补字段
+
+```json
+"robotics_backend": "minimal",
+"robotics_backend_compatible": ["minimal", "urlab", "urobosim"]
+```
+
+- `robotics_backend` (string, enum) — 该 variant 实际用的 backend。
+  允许值: `"minimal"` / `"urlab"` / `"urobosim"`。默认 `"minimal"`
+  （老白意见: C 最小代价先跑 demo）。
+- `robotics_backend_compatible` (array<string>) — 该 scene 的 robot
+  model 已知能跑的 backend 列表。`urdf_robot.model` 在某 backend 下不
+  支持时该 backend 不进列表。本期三场景 robot model（unitree_h1 /
+  franka_panda / ur5）三 backend 理论都支持 → 默认全 3 项。
+
+### 7.2 LLM 是否能切 backend
+
+**本期不暴露给 LLM**。NL prompt template (§4) 不带 `robotics_backend`
+字段——切 backend 是开发期 debugging 行为，不是用户自然语言意图。
+UI 端做 manual selector，server validate 后 set。LLM 拿到的 base_spec
+照原样回吐 `robotics_backend`，不允许动它。
+
+### 7.3 UI 端要求（写到 xiaoxu agents/unreal/SHARED.md P1）
+
+详见我提的 P1：UI 必须把 3 个 backend 显式列出 + status badge
+（wired / stub / experimental），不允许藏菜单或单选 disable。
+
+### 7.4 Server-side validate
+
+| 检查 | 不通过的后果 |
+|---|---|
+| `robotics_backend` ∈ {minimal, urlab, urobosim} | reject job |
+| `robotics_backend` ∈ `robotics_backend_compatible` | reject job |
+| LLM 试图修改 `robotics_backend` | server merge 时丢弃此键 + log warning |
+
+### 7.5 与 §2 OverrideParams 的关系
+
+`robotics_backend` **不进 PCG OverrideParams**——它影响 robot 怎么 spawn
+（xiaoxu 的 `IRobotPoser`）而非 PCG graph 内部生成。PCG 摆 mesh 完成
+后，scene assembly 阶段读 `robotics_backend` 调对应 poser。
+
+---
+
+## §8 与 xiaoxu 的接口契约（小结）
 
 xiaoxu 那边消费本 doc 的具体点：
 
@@ -353,6 +403,7 @@ xiaoxu 那边消费本 doc 的具体点：
 4. **NL system prompt 三段** ← §4.1/4.2/4.3。
 5. **UPCGSettings UCLASS UPROPERTY 集合** ← §1 表，类型一对一。
 6. **OverrideParams set 方法真名** ← xiaoxu 装 5.8 后回填 §2。
+7. **Robotics backend UI selector + status badge** ← §7.3，UI 必须 3 个 backend 都显式列出（wired / stub / experimental），不允许藏菜单。Server validate 见 §7.4。
 
 下游对齐：
 - **xiaoxuan**：本 doc 不直接给他，但 §5 Substrate + Nanite + Mega

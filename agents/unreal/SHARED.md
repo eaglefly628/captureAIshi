@@ -62,6 +62,16 @@
   - `RobotHandle` 不绑死任何 plugin native 类型，用 `int` ID 或 `FGuid`，三 backend 各自维护 ID → 内部对象映射。三方案之间能 hot-swap，scene_spec JSON 加 `robotics_backend` 字段选 backend。
   - 调通顺序老白这边的想法：C 最小代价先跑 demo → A 物理仿真补 → B 兜底。但**接口定下来三个都不许漏方法**，否则后期切 backend 要返工。
   - 装完 UE5.8 Preview 第一件事仍是 Plugin Manager 搜 "Robot/URDF/Articulation" 实证有无官方，结果回写 `docs/robotics_poser_interface.md` §0；如果官方真出现了，加 Plan D 接口包一层。
+- [ ] **P1 (from xiaohuan, 老白 2026-05-15 user directive): batch UI 必须清晰表达多 backend 支持** -- 老白原话："要在 UI 界面能清晰表达出我们的多个接口支持样子"。配合 P0 Robotics Poser 接口抽象，UI 端硬性要求：
+  1. **每个 scene 表单都有 backend selector**，三 backend (`minimal` / `urlab` / `urobosim`) 全部显式列出（radio 或 segmented control，不允许藏 dropdown 也不允许只显示当前选中那个）
+  2. **每个 backend 选项后挂 status badge**：`wired` (调通) / `stub` (空壳，本期 docstring only) / `experimental` (URLab/URoboSim 第三方未验) -- 让用户一眼看到"支持但未实现"和"已可用"的区别
+  3. **`/api/scenes` 响应增加 `robotics_backends_available` 字段**，结构 `[{id, status, description, doc_ref}]`，来源 `docs/robotics_poser_interface.md` 或 hardcoded list；前端从此 endpoint 派生 selector，不写死
+  4. **默认选 `minimal`**（老白意见：C 最小代价先跑 demo），但 UI 不要 disable 其他两个，stub 状态下点选要允许（server 端 validate 时返回 "backend stub, falling back to minimal + reason"，不直接 reject）
+  5. **NL chat 入口不暴露 backend 切换** -- 这是开发期 manual 选择，LLM 不动 `robotics_backend` 键 (见 `pcg_param_contract.md` §7.2)
+  6. **scene_spec JSON 已加字段** -- 三场景 `<scene>_v0.json` 现有 `robotics_backend: "minimal"` + `robotics_backend_compatible: ["minimal","urlab","urobosim"]`（commit e484db1 + 本轮补丁，无需你这边再加）
+  7. UI 形态层面，参考 `batch_scene_gen_architecture.md` §1 选 A (Web UI)，backend selector 是 scene 表单的一个区块（建议放最顶头，跟 scene type 并列），不混进 `pcg_params` 区块（语义不同）
+
+  契约文档 cross-ref: `apps/adore_robot/docs/pcg_param_contract.md` §7 (Robotics Backend 字段 schema + validate 规则)。
 - [ ] **P1: UE5.8 Preview 装机 + `unreal.py` stub diff (5.7 vs 5.8)** -- 见 engine notes §1 / §11 操作序列。是 v0.3.3 实现窗口的前置门。
 - [ ] **P1: MRQ_MultiPassEXR.uasset 在 5.8 Preview 重存 + commandlet 最小命令实证** -- 见 engine notes §2。
 - [ ] **P2: Mega Lights + Lumen Medium A/B test plan** -- 见 engine notes §4。

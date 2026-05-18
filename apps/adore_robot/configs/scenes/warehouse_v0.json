@@ -36,6 +36,8 @@
     "spawn_xyz": [25, 25, 0],
     "kinematic_pose": "rest"
   },
+  "robotics_backend": "minimal",
+  "robotics_backend_compatible": ["minimal", "urlab", "urobosim"],
   "mrq_preset": "MRQ_MultiPassEXR",
   "contract_ref": "apps/adore_robot/docs/pcg_param_contract.md#11-warehouse"
 }
