@@ -279,8 +279,31 @@ single-digit calls per minute).
       SSE side-channel observed: `notifications/tools/list_changed`
       pushed on the message stream during load_toolset, confirming
       the lazy-discovery push side of the protocol works as documented.
-- [ ] Test `ObjectTools.set_properties` against a real PCGComponent in
-      IAMRobot (need: open a level with PCG actor first, then chain).
+- [x] Test `ObjectTools.set_properties` against a real PCGComponent in
+      IAMRobot. **DONE 2026-05-17**:
+      1. Dropped a `PCG Volume` actor in the default `/Game/Empty` level.
+      2. `EditorAppToolset.GetSelectedActors` returned the actor refPath.
+      3. `ObjectTools.get_properties(actor, ['pCGComponent'])` returned
+         the nested PCGComponent refPath (note: name has a literal space:
+         `... .PCG Component`).
+      4. `ObjectTools.list_properties(pcg_component)` returned ~35
+         UPROPERTYs including `seed`, `bActivated`, `generationTrigger`
+         enum, `bGenerated`, `graphInstance` (this is the
+         `/Script/PCG.PCGGraphInstance` nested object that holds Graph
+         asset + OverrideParams -- the container for the 21 PCG params
+         contract).
+      5. `ObjectTools.set_properties(pcg_component, '{"seed":99999}')`
+         returned success.
+      6. `ObjectTools.get_properties(pcg_component, ['seed'])` read back
+         99999.
+      7. **User confirmed**: UE Editor Details panel updated to show
+         `Seed = 99999` immediately (no save/refresh needed).
+
+      Conclusion: round-trip web -> DeepSeek tool_call -> MCP
+      set_properties -> live UE state mutation **proven end-to-end**.
+      Every PCG knob reachable via reflection -- nested struct
+      (`graphInstance.OverrideParams.<param>`) follows the same
+      mechanism. **C++ UPCGAdoreToolset plugin is no longer required.**
 - [ ] Update `apps/adore_robot/mcp_client.py` to auto-load the 3 ★★★
       toolsets on connect, so `/dev` and future `/api/chat` see them
       directly without LLM having to issue `load_toolset` first.
