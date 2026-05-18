@@ -428,7 +428,21 @@ async function callRealChat(userText, scene, currentParams) {
     calls.push({ name: 'trigger_generate', args: {} });
   }
 
-  const narrate = `${rationale}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms`;
+  // MCP relay status -- appended to narrate so user can see whether the
+  // chat actually changed UE Editor state, vs sat at the LLM layer.
+  let relayLine = '';
+  const relay = data.mcp_relay;
+  if (relay) {
+    if (relay.ok) {
+      const target = (relay.pcg_component || '').split('.').pop() || '?';
+      relayLine = `  ·  ✓ MCP -> UE: ${target} updated`;
+    } else if (relay.skipped) {
+      relayLine = `  ·  ◌ MCP skipped (${relay.reason})`;
+    } else {
+      relayLine = `  ·  ✗ MCP error: ${relay.reason}`;
+    }
+  }
+  const narrate = `${rationale}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms${relayLine}`;
   return { narrate, calls };
 }
 
