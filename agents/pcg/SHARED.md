@@ -64,7 +64,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.3.2] <commit-sha> -- xiaohuan (robotics_backend 补丁)
+### [v0.3.2] 9a77993 -- xiaohuan (robotics_backend 补丁)
 - apps/adore_robot/configs/scenes/{warehouse,living_room,industrial_corner}_v0.json: 加 `robotics_backend: "minimal"` + `robotics_backend_compatible` 数组
 - apps/adore_robot/docs/pcg_param_contract.md §7: 新增 Robotics Backend 字段定义 (schema / LLM 不暴露 / UI 要求 / server validate / 与 PCG OverrideParams 关系)
 - apps/adore_robot/docs/pcg_param_contract.md §8: 旧 §7 接口契约小结重编号 + 加 item 7 引用 §7.3
