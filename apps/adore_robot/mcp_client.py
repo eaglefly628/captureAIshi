@@ -34,7 +34,7 @@ DEFAULT_TOOLSETS = [
 class UnrealMCPClient:
     PROTOCOL_VERSION = "2025-11-25"
 
-    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 60.0):
+    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 120.0):
         self.url = url
         parsed = urllib.parse.urlparse(url)
         self._host = parsed.hostname or "127.0.0.1"
@@ -91,6 +91,15 @@ class UnrealMCPClient:
 
         try:
             return _do()
+        except TimeoutError as e:
+            # UE Game Thread Spike held the connection too long. Distinct
+            # from disconnect -- log as WARN, caller may retry.
+            self._close_conn()
+            raise TimeoutError(
+                f"MCP server timed out after {self.timeout}s -- UE Game Thread "
+                f"likely Spiked on a heavy tool call (load_toolset / Generate). "
+                f"Either bump UnrealMCPClient(timeout=...) or retry."
+            ) from e
         except (http.client.BadStatusLine,
                 http.client.RemoteDisconnected,
                 http.client.HTTPException,
@@ -104,12 +113,14 @@ class UnrealMCPClient:
             except (http.client.HTTPException, OSError) as e2:
                 self._close_conn()
                 raise ConnectionError(
-                    f"cannot reach MCP server at {self.url}: {e2}"
+                    f"cannot reach MCP server at {self.url}: {e2} -- "
+                    f"server may have crashed (check UE for assertion log)"
                 ) from e2
         except OSError as e:
             self._close_conn()
             raise ConnectionError(
-                f"cannot reach MCP server at {self.url}: {e}"
+                f"cannot reach MCP server at {self.url}: {e} -- "
+                f"server may have crashed or not started"
             ) from e
 
     @staticmethod
