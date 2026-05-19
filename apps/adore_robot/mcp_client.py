@@ -15,11 +15,11 @@ PCG flow (proven 2026-05-17, see docs/ue58_mcp_validation_log.md):
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from typing import Any
 
 
@@ -36,39 +36,81 @@ class UnrealMCPClient:
 
     def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 30.0):
         self.url = url
+        parsed = urllib.parse.urlparse(url)
+        self._host = parsed.hostname or "127.0.0.1"
+        self._port = parsed.port or 80
+        self._path = parsed.path or "/mcp"
         self.timeout = timeout
         self._session_id: str | None = None
         self._next_id = 1
         self._lock = threading.Lock()
         self._loaded_toolsets: set[str] = set()
+        # Persistent http.client.HTTPConnection -- reused across all POSTs so
+        # the underlying TCP socket survives across RPCs. urllib opens a new
+        # socket per request, which UE 5.8 Preview's ModelContextProtocol
+        # HttpServer hates (HttpConnection state machine asserts on rapid
+        # new connections). curl works because it reuses connections;
+        # http.client.HTTPConnection matches that behaviour.
+        self._conn: http.client.HTTPConnection | None = None
+
+    def _ensure_conn(self) -> http.client.HTTPConnection:
+        if self._conn is None:
+            self._conn = http.client.HTTPConnection(
+                self._host, self._port, timeout=self.timeout
+            )
+        return self._conn
+
+    def _close_conn(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
 
     def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, str]:
         body = json.dumps(payload).encode("utf-8")
-        # NOTE: do NOT send `Connection: close` here -- forcing the UE 5.8
-        # MCP server to close the TCP socket mid-load_toolset triggered
-        # wil::ResultException rethrows in the AI plugin (user crashed UE
-        # 2026-05-17). Accept that each tool call takes ~15s due to the
-        # server's keep-alive timeout instead. auto_load_toolsets adds a
-        # 0.5s gap between loads to give the Python sandbox time to digest.
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "Content-Length": str(len(body)),
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         if extra_headers:
             headers.update(extra_headers)
-        req = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
+
+        def _do() -> tuple[int, dict, str]:
+            conn = self._ensure_conn()
+            conn.request("POST", self._path, body=body, headers=headers)
+            resp = conn.getresponse()
+            status = resp.status
+            resp_headers = {k: v for k, v in resp.getheaders()}
+            raw = resp.read().decode("utf-8", "replace")
+            return status, resp_headers, raw
+
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                status = resp.status
-                resp_headers = dict(resp.headers)
-                raw = resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), e.read().decode("utf-8", "replace")
-        except urllib.error.URLError as e:
-            raise ConnectionError(f"cannot reach MCP server at {self.url}: {e.reason}") from e
-        return status, resp_headers, raw
+            return _do()
+        except (http.client.BadStatusLine,
+                http.client.RemoteDisconnected,
+                http.client.HTTPException,
+                ConnectionResetError,
+                BrokenPipeError) as e:
+            # Server closed the socket between RPCs (e.g. keep-alive
+            # timeout). Reopen and retry once.
+            self._close_conn()
+            try:
+                return _do()
+            except (http.client.HTTPException, OSError) as e2:
+                self._close_conn()
+                raise ConnectionError(
+                    f"cannot reach MCP server at {self.url}: {e2}"
+                ) from e2
+        except OSError as e:
+            self._close_conn()
+            raise ConnectionError(
+                f"cannot reach MCP server at {self.url}: {e}"
+            ) from e
 
     @staticmethod
     def _parse_sse_or_json(raw: str) -> dict:

@@ -43,6 +43,7 @@ def banner(title: str) -> None:
 
 def main() -> int:
     url = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8000/mcp")
+    skip_autoload = "--no-autoload" in sys.argv
     client = UnrealMCPClient(url=url)
 
     banner("Step 1: handshake")
@@ -56,9 +57,14 @@ def main() -> int:
         print("hint: start UE Editor + ` -> ModelContextProtocol.StartServer")
         return 1
 
-    banner("Step 2: auto-load default toolsets")
-    load = client.auto_load_toolsets()
-    print(json.dumps(load, indent=2, ensure_ascii=False))
+    if skip_autoload:
+        banner("Step 2: SKIPPED (--no-autoload flag set)")
+        print("Assuming toolsets already loaded in a prior curl/probe run.")
+        print("If get_properties later fails 'tool not found', drop the flag.")
+    else:
+        banner("Step 2: auto-load default toolsets")
+        load = client.auto_load_toolsets()
+        print(json.dumps(load, indent=2, ensure_ascii=False))
 
     banner("Step 3: get_current_level (sanity smoke)")
     print(client.get_current_level())
