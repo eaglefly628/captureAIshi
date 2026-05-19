@@ -188,9 +188,10 @@ class UnrealMCPClient:
         # POST arrives back-to-back with subsequent tool calls -- crashes
         # UE. Skip it. The tools/call methods work without the explicit
         # initialized notification on this server.
-        # Brief settle delay so UE finishes any post-init bookkeeping
-        # before our first real RPC arrives.
-        time.sleep(0.8)
+        # Brief settle so UE finishes post-init bookkeeping before our
+        # first real RPC. 0.2s is plenty in practice (was 0.8 originally,
+        # over-conservative).
+        time.sleep(0.2)
         return data.get("result", {}) if isinstance(data, dict) else {}
 
     def ensure_session(self) -> None:
@@ -245,7 +246,7 @@ class UnrealMCPClient:
         return self._unwrap(self.call_tool(name, arguments))
 
     def auto_load_toolsets(self, names: list[str] | None = None,
-                           gap_seconds: float = 0.5) -> dict:
+                           gap_seconds: float = 0.1) -> dict:
         """Load default 4 core toolsets if not already loaded this session.
 
         Workarounds for UE 5.8 Preview ModelContextProtocol plugin bugs:
