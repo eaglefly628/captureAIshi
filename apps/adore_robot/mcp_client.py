@@ -88,7 +88,30 @@ class UnrealMCPClient:
             resp = conn.getresponse()
             status = resp.status
             resp_headers = {k: v for k, v in resp.getheaders()}
-            raw = resp.read().decode("utf-8", "replace")
+            ctype = (resp_headers.get("Content-Type")
+                     or resp_headers.get("content-type") or "")
+            if "event-stream" in ctype.lower():
+                # UE 5.8 returns SSE without closing the connection -- a
+                # plain resp.read() would block until the server's idle
+                # timeout (~15s) even though the event arrived in <1ms.
+                # Read line-by-line, return as soon as we see a complete
+                # event (data: ... \n\n).
+                lines: list[str] = []
+                seen_data = False
+                while True:
+                    line_b = resp.readline()
+                    if not line_b:
+                        break  # EOF
+                    line = line_b.decode("utf-8", "replace")
+                    lines.append(line)
+                    stripped = line.rstrip("\r\n")
+                    if stripped.startswith("data:"):
+                        seen_data = True
+                    elif stripped == "" and seen_data:
+                        break
+                raw = "".join(lines)
+            else:
+                raw = resp.read().decode("utf-8", "replace")
             return status, resp_headers, raw
 
         try:
