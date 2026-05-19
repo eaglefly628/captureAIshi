@@ -50,23 +50,21 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 - [ ] **PCGComponent Python method 真名** -- 等 `help(unreal.PCGComponent)` dump，回填 `pcg_param_contract.md` §2 placeholder (当前两个 hypothesis: `set_graph_parameter` / `override_param`)。回填前 contract 的 key 名 + value 类型 + range 仍然有效，不阻塞 xiaoxu batch UI 表单 + tool input_schema 派生
 
-### [v0.3.3] P1 from xiaoxu via 老白 (方向 B 拍板, 2026-05-16): contract -> AICallable 映射
+### [v0.3.3] P1 from xiaoxu via 老白 (方向 B 拍板, 2026-05-16): contract -> AICallable 映射 -- DONE
 
-> **2026-05-17 老白补**: 完整映射表 (三场景 21 参数 + 6 orchestration + 5 UENUM literal) 已落到 `apps/adore_robot/docs/batch_scene_gen_architecture_v2.md` §2.2-§2.4. 你 §8 直接写**两行 + 一个链接**即可: "AICallable Method 映射的 single source of truth 在 v2 doc §2.2-§2.4; 本 contract §1 是参数语义/range/校验源头, v2 §2 是 UFUNCTION/tool name 派生表; 两边不一致以 contract 为准." 不要复制粘贴, 防双源漂移. 另外 §4 加 Example 6 (MCP tool call 序列) 内容参 v2 §3.5.
+> **2026-05-17 老白补**: 完整映射表已落到 `batch_scene_gen_architecture_v2.md` §2.2-§2.4. 我 §9 写**两行 + 链接 + 边界规则**，不复制粘贴防双源漂移. §4 加 Example 6 (MCP tool call 序列).
 
-老白拍板**方向 B = 全面拥抱 UE5.8 MCP**，ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。xiaoxu 会写 `UPCGAdoreToolset : UToolsetDefinition`，把你 contract §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))`。**你的 contract 内容不变，只需新增一节映射表**：
+- [x] `pcg_param_contract.md` 加 §9 "AICallable Method 映射 (pointer)" -- 两行 + v2 doc §2.2-§2.4 链接 + 边界规则 (contract = 语义源头 / v2 = UFUNCTION 派生表 / 不一致以 contract 为准)
+- [x] §4.2 加 Example 6 -- MCP tool call 序列 (user 输入 -> 4 个 tool call: set_shelf_density / set_forklift_count / trigger_generate / trigger_mrq_render)，附 v1/v2 共存说明
+- [x] 其他 contract 内容 (§1-§7) 不变，三场景 JSON spec 不变
 
-- [ ] `pcg_param_contract.md` 加 §8 "AICallable Method 映射" -- 给每个公开参数列出 (param key / 类型 / 期望的 C++ 方法名 / 期望的 JSON Schema 字段名)。例:
-  | param key | type | UFUNCTION name | AI tool schema name |
-  |---|---|---|---|
-  | `shelf_density` | float | `SetShelfDensity(float Value)` | `set_shelf_density` |
-  | `forklift_count` | int | `SetForkliftCount(int32 Value)` | `set_forklift_count` |
-  | `lighting_preset` | enum | `SetLightingPreset(EAdoreLighting Preset)` | `set_lighting_preset` |
-  - 三场景全列。
-  - enum 参数顺便给出对应的 `UENUM` 字面值清单（让 xiaoxu 知道枚举类怎么定义）。
-  - 标注每个参数 set 后是否需要 implicit re-generate，还是要 LLM 显式调 `trigger_generate()`（建议显式，agent loop 控制力更强）。
-- [ ] §4 NL prompt few-shot 顺手补一条 MCP 风格示例：用户文本 -> 多个 MCP tool call 序列（不再是单个 delta JSON），让 LLM 学会"先 set 几个参数再调 generate"的模式。
-- [ ] 其他 contract 内容 (§1-§7) 不变，三场景 JSON spec 不变。
+### [v0.3.3] PG_Warehouse_v0 graph design (xiaoxu 接力交付物 - sandbox 无 UE Editor 出不了 .uasset) -- DONE
+
+老白原文 "让 21-param 全跑通"。sandbox 无 UE 无法直接产 `.uasset` 二进制，交付节点级设计文档让 xiaoxu 机械翻译。
+
+- [x] `apps/adore_robot/docs/pg_warehouse_graph_design.md` -- 11 个参数 (7 warehouse + 4 common) 到 8 个 Stage 的节点接入点 + 拓扑 + edge case + Nanite/HISM/ISM 选型 + xiaoxu UE Editor 落地 checklist (7 步)
+- [x] **drift 收编**: `pcg_param_contract.md` 新增 §1.0 "Common to ALL scenes" -- room_w_m (8-40) / room_l_m (8-60) / ceiling_h_m (3-9) / worker_count (0-8). 消掉 demo/prompts.py 与 contract 的 single-source 不一致 (commit d45a3af3 引入 drift)
+- [ ] **PG_LivingRoom_v0 + PG_IndustrialCorner_v0 design doc** -- 等 PG_Warehouse 在 UE Editor 跑通后再写 (pattern generalize)，**下轮接力**
 
 ## Boundary & Handoff
 
@@ -81,6 +79,14 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 - `scene_specs.md` -- 三场景 spec 草稿（本轮已 review + 定稿到 `apps/adore_robot/configs/scenes/`）
 
 ## Changelog
+
+### [v0.3.3] <commit-sha> -- xiaohuan (PG_Warehouse design + AICallable pointer + drift fix)
+- apps/adore_robot/docs/pg_warehouse_graph_design.md: 11 参数 (7 warehouse + 4 common) -> 8 Stage 节点拓扑 + edge case + Nanite/HISM 选型 + xiaoxu UE Editor 7 步 checklist
+- apps/adore_robot/docs/pcg_param_contract.md §9: AICallable Method 映射 pointer (两行 + v2 doc §2.2-§2.4 链接 + 边界规则, 不复制粘贴防漂移)
+- apps/adore_robot/docs/pcg_param_contract.md §1.0: 新增 Common to ALL scenes (room_w_m / room_l_m / ceiling_h_m / worker_count) 收编 commit d45a3af3 drift
+- apps/adore_robot/docs/pcg_param_contract.md §4.2 Example 6: MCP tool call 序列 (4 tool call demo: set + generate + render) + v1/v2 共存说明
+- xiaoxu 接 21-param 全跑通: design doc 是机械翻译指南 + plugin UCLASS UPROPERTY 名字直接对齐 §1.0+§1.1, .uasset 仍需 UE Editor 落地
+- PG_LivingRoom / PG_IndustrialCorner design 下轮 (pattern generalize 自 PG_Warehouse 跑通后)
 
 ### [v0.3.2] 9a77993 -- xiaohuan (robotics_backend 补丁)
 - apps/adore_robot/configs/scenes/{warehouse,living_room,industrial_corner}_v0.json: 加 `robotics_backend: "minimal"` + `robotics_backend_compatible` 数组

@@ -14,6 +14,35 @@ xiaoxu 的 batch_scene_gen_architecture.md §2.3 + §3 直接消费这里。
 所有 name 为 plain ASCII snake_case，**直接当 PCG OverrideParams key
 用**（见 §2）。enum 值同样 ASCII。
 
+### 1.0 Common to ALL scenes (drift 收编 from `demo/prompts.py`, 2026-05-17)
+
+xiaoxu 在 commit `d45a3af3` 把 4 个房间/工人参数暴露给 LLM 但只落到了
+`apps/adore_robot/demo/prompts.py` SYSTEM_PROMPT 和 `llm/keyword.py`
+RANGES，没进本 contract。本节收编为 contract source of truth；demo
+代码与本节不一致时以本节为准。
+
+| 参数 | 类型 | 范围 | 默认 | 物理含义 |
+|---|---|---|---|---|
+| `room_w_m` | float | 8 - 40 | (per scene) | 房间 X 方向宽度（米）|
+| `room_l_m` | float | 8 - 60 | (per scene) | 房间 Y 方向长度（米）|
+| `ceiling_h_m` | float | 3 - 9 | (per scene) | 层高（米），灯具悬挂位 = `ceiling_h_m - 0.2` |
+| `worker_count` | int | 0 - 8 | 0 | 蓝领工人散点数量，spawn 在 alley 不阻 robot 路径 |
+
+**默认值由 scene 决定**: warehouse [50, 50, 8] / living_room [5, 7, 3] /
+industrial_corner [8, 8, 4]（与现 `<scene>_v0.json` 的 `size_m` 字段一致）。
+LLM 调 `set_room_w_m` 等 setter 时覆盖默认。
+
+**校验规则**:
+- `room_w_m * room_l_m >= 64`（最小 8x8m，否则 PCG 摆不下 shelf/sofa）
+- `ceiling_h_m > 2.5`（机器人通过 + Mega Light 悬挂余量）
+- `worker_count` 不影响 robot spawn（worker 与 robot 用 `Difference` 节点
+  互斥，graph design `pg_warehouse_graph_design.md` §8 已处理）
+
+**接 PG_*_v0 graph 节点**: room_* 进 Stage 1 Bounds，worker_count 进
+Stage 7 Density Filter。详见 `pg_warehouse_graph_design.md` §1 表。
+
+---
+
 ### 1.1 Warehouse (`scene_id=warehouse`)
 
 | 参数 | 类型 | 范围 | 默认 | 物理含义 |
@@ -282,6 +311,22 @@ Example 5 — implicit param attempt (refuse):
                   user-tunable; only alley_width_m affects spacing
                   visibly."
   }
+
+Example 6 — MCP tool call sequence (v0.3.3 方向 B):
+  User: "warehouse 货架密一点, 加 2 台叉车, 然后出图"
+  Assistant tool calls (in order):
+    1. set_shelf_density({"value": 0.9})
+    2. set_forklift_count({"value": 2})
+    3. trigger_generate({})
+    4. trigger_mrq_render({"preset_name": "MRQ_MultiPassEXR",
+                            "output_subdir": "warehouse/v0_2"})
+  Rationale: "Two param sets + one generate + one render in a single turn.
+              Saves one regenerate cycle vs setting each param separately."
+
+  Note: v0.3.2 single-delta form (Examples 1-5) and v0.3.3 MCP tool-call
+  form (Example 6) coexist. v1 (Flask + commandlet) consumes delta;
+  v2 (UE MCP server) consumes tool calls. Same param semantics; LLM
+  picks the actuator per system prompt configuration.
 ```
 
 ### 4.3 System prompt 段 3 — Asset Index
@@ -410,3 +455,22 @@ xiaoxu 那边消费本 doc 的具体点：
   Lights 约束影响他 MRQ 输出的 normal/depth pass 一致性。
 - **老白决策点**：LLM 模型选定 (Claude 4.6 Sonnet)、UI 形态 (Web)，
   都在 batch_scene_gen_architecture §4 里已建议，本 doc 不再重复。
+
+---
+
+## §9 AICallable Method 映射 (v0.3.3 方向 B, pointer)
+
+完整 UFUNCTION / MCP tool name / UENUM literal 映射表的 **single source of
+truth** 在 `apps/adore_robot/docs/batch_scene_gen_architecture_v2.md`
+**§2.2-§2.4**（老白 2026-05-17 落地）。
+
+边界：
+- **本 contract §1** = 参数语义 / range / 校验源头
+- **v2 doc §2** = UFUNCTION 签名 / MCP tool name / UENUM literal 派生表
+- **两边不一致以本 contract 为准**
+
+不复制粘贴到这里以免双源漂移。xiaoxu 写 `UPCGAdoreToolset` 时照 v2 §2
+落方法签名；本 contract §1 任何 range / 类型 / enum 字面值变更必须同步
+更新 v2 §2 + 相关 UENUM 定义。
+
+MCP tool call 序列示例见 §4.2 Example 6。
