@@ -286,7 +286,8 @@ class UnrealMCPClient:
         return self._unwrap(self.call_tool(name, arguments))
 
     def auto_load_toolsets(self, names: list[str] | None = None,
-                           gap_seconds: float = 0.1) -> dict:
+                           gap_seconds: float = 0.1,
+                           progress_cb=None) -> dict:
         """Load default 4 core toolsets if not already loaded this session.
 
         Workarounds for UE 5.8 Preview ModelContextProtocol plugin bugs:
@@ -297,33 +298,47 @@ class UnrealMCPClient:
           manual curl tests survived because they ran tools/list first.
         - Small gap (default 0.5s) between successive load_toolset calls.
         """
+        names = names or DEFAULT_TOOLSETS
+        total = 1 + len(names)  # prime + N loads
+        def _emit(phase: str, idx: int, name: str, status: str) -> None:
+            if progress_cb is None:
+                return
+            try:
+                progress_cb({"phase": phase, "current": idx, "total": total,
+                             "toolset": name, "status": status})
+            except Exception:
+                pass
+
         self.ensure_session()
-        # State-prime: cheap tools/list call that we don't care about the
-        # result of, just to nudge UE's HttpConnection state machine into
-        # the right state before we send tool dispatches.
+        _emit("prime", 0, "tools/list", "running")
         try:
             self._rpc("tools/list")
-        except Exception:
-            pass  # if even prime fails, the real load_toolset below will fail
-                  # with a real error message
-        names = names or DEFAULT_TOOLSETS
+            _emit("prime", 1, "tools/list", "done")
+        except Exception as e:
+            _emit("prime", 1, "tools/list", f"warn: {e}")
+
         loaded = []
         skipped = []
         failed = []
         first = True
-        for n in names:
+        for i, n in enumerate(names):
+            step_idx = 1 + i  # 1-based after prime
             if n in self._loaded_toolsets:
                 skipped.append(n)
+                _emit("skipped", step_idx + 1, n, "done")
                 continue
             if not first and gap_seconds > 0:
                 time.sleep(gap_seconds)
             first = False
+            _emit("loading", step_idx, n, "running")
             try:
                 self.call_tool("load_toolset", {"toolset_name": n})
                 self._loaded_toolsets.add(n)
                 loaded.append(n)
+                _emit("loading", step_idx + 1, n, "done")
             except Exception as e:
                 failed.append({"toolset": n, "error": f"{type(e).__name__}: {e}"})
+                _emit("loading", step_idx + 1, n, f"error: {e}")
         return {"loaded": loaded, "skipped": skipped, "failed": failed,
                 "total_loaded": len(self._loaded_toolsets)}
 

@@ -25,6 +25,7 @@ import collections
 import json
 import os
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -81,6 +82,84 @@ app = Flask(
 )
 mcp = UnrealMCPClient(url=MCP_URL)
 jobs = DemoJobRegistry()
+
+
+# ── MCP init progress (real-time progress bar source) ───────────────────
+# UI polls /api/mcp/init to know which toolset is loading right now.
+INIT_PROGRESS: dict = {
+    "started": False,
+    "done": False,
+    "ok": None,
+    "phase": "idle",
+    "toolset": "",
+    "current": 0,
+    "total": 5,  # 1 handshake + 1 prime + 4 toolsets (typical)
+    "steps": [],
+    "started_at": 0.0,
+    "elapsed_ms": 0,
+    "error": None,
+}
+_init_lock = threading.Lock()
+
+
+def _init_reset() -> None:
+    INIT_PROGRESS.update({
+        "started": True, "done": False, "ok": None,
+        "phase": "handshake", "toolset": "",
+        "current": 0, "total": 5,
+        "steps": [], "started_at": time.time(),
+        "elapsed_ms": 0, "error": None,
+    })
+
+
+def _init_step(phase: str, current: int, total: int, toolset: str,
+               status: str) -> None:
+    INIT_PROGRESS["phase"] = phase
+    INIT_PROGRESS["toolset"] = toolset
+    INIT_PROGRESS["current"] = current
+    INIT_PROGRESS["total"] = total
+    INIT_PROGRESS["elapsed_ms"] = int((time.time() - INIT_PROGRESS["started_at"]) * 1000)
+    INIT_PROGRESS["steps"].append({
+        "phase": phase, "toolset": toolset, "status": status,
+        "at_ms": INIT_PROGRESS["elapsed_ms"],
+    })
+
+
+def _run_init() -> None:
+    try:
+        mcp.initialize()
+        _init_step("handshake", 1, 5, "session", "done")
+
+        def cb(ev: dict) -> None:
+            total = 1 + (ev.get("total") or 4)  # +1 for handshake
+            _init_step(ev.get("phase", "loading"),
+                       1 + (ev.get("current") or 0),
+                       total,
+                       ev.get("toolset", ""),
+                       ev.get("status", "running"))
+
+        mcp.auto_load_toolsets(progress_cb=cb)
+        INIT_PROGRESS["done"] = True
+        INIT_PROGRESS["ok"] = True
+        INIT_PROGRESS["phase"] = "ready"
+        INIT_PROGRESS["elapsed_ms"] = int((time.time() - INIT_PROGRESS["started_at"]) * 1000)
+    except Exception as e:
+        INIT_PROGRESS["done"] = True
+        INIT_PROGRESS["ok"] = False
+        INIT_PROGRESS["phase"] = "error"
+        INIT_PROGRESS["error"] = f"{type(e).__name__}: {e}"
+
+
+def _kick_init(force: bool = False) -> None:
+    """Idempotent kick: start init thread if not running. force=True
+    re-runs even if a previous run succeeded (e.g. UE was restarted)."""
+    with _init_lock:
+        if INIT_PROGRESS["started"] and not INIT_PROGRESS["done"]:
+            return
+        if INIT_PROGRESS["done"] and INIT_PROGRESS["ok"] and not force:
+            return
+        _init_reset()
+        threading.Thread(target=_run_init, daemon=True).start()
 
 
 def _load_scenes() -> dict[str, dict]:
@@ -358,6 +437,16 @@ def api_mcp_auto_load():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
+@app.route("/api/mcp/init", methods=["GET", "POST"])
+def api_mcp_init():
+    """UI progress feed. GET returns current state. POST kicks init
+    (idempotent; pass {"force":true} to re-init after UE restart)."""
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        _kick_init(force=bool(body.get("force")))
+    return jsonify(INIT_PROGRESS)
+
+
 @app.route("/api/chat/ping", methods=["POST"])
 def api_chat_ping():
     """Bare LLM call -- no tool, no system prompt, no scene context.
@@ -551,6 +640,9 @@ def main():
     print(f"[adore_robot]   DEEPSEEK_API_KEY:  {_short_key('DEEPSEEK_API_KEY')}")
     print(f"[adore_robot]   ANTHROPIC_API_KEY: {_short_key('ANTHROPIC_API_KEY')}")
     print(f"[adore_robot]   scenes loaded: {list(SCENES.keys()) or '(none)'}")
+    # Kick MCP init in the background so the progress bar starts ticking
+    # the moment the UI loads. Failure is non-fatal (sandbox / UE not up).
+    _kick_init()
     print(f"[adore_robot] ----- chat events will be logged below -----")
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
 
