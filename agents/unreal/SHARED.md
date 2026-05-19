@@ -138,6 +138,16 @@
 
 ## Changelog
 
+### [v0.3.3] (pending push) -- xiaoxu
+- apps/adore_robot/docs/ue58_mcp_validation_log.md: 254 行实证日志 (handshake / 41 toolset / 35 工具 schema / 反射写 seed=99999 闭环成功 / 架构 trade-off 表)
+- apps/adore_robot/mcp_client.py: +200 LOC (auto_load_toolsets / SSE-or-JSON 双格式解析 / 双层响应 unwrap / 5 个 PCG/ObjectTools 便捷 wrap + apply_pcg_delta 一行编排)
+- apps/adore_robot/main.py: /api/chat 接 _try_mcp_relay 真接 UE; 加 /api/mcp/{apply_pcg, auto_load, probe_graph} 三个端点; /api/mcp/status 暴露 loaded_toolsets
+- apps/adore_robot/web/static/design/main.jsx: callRealChat 把 mcp_relay 状态拼进 narrate (✓ MCP -> UE: X updated / ◌ MCP skipped)
+- apps/adore_robot/tools/probe_mcp.py: 独立 CLI 一键复跑 7 步 (handshake -> auto_load -> get_current_level -> find PCG -> read/write seed -> 探 graphInstance Plan-B 结构)
+- 落 P0 给老白: "跳过 UPCGAdoreToolset C++ plugin" 实证完整, 等他 yes/no/折中
+
+
+
 ### [v0.3.3-dev] (pending push) -- xiaoxu (客户演示 demo, 适配老白 v0.3.3 LLM 接口)
 - apps/adore_robot/llm/keyword.py: offline 关键词 fallback 适配老白 BaseLLMClient (Message/ToolDef/ChatResponse 接口), 加进 factory 作 'keyword' provider 不需 API key
 - apps/adore_robot/demo/{prompts,runner,thumbnail}.py: NL system prompt (派生自 xiaohuan contract §1/§3/§4 + 5 few-shot) + update_scene ToolDef + SSE 假批量进度 + 4-channel SVG thumbnail (final/normal/depth/objectid)

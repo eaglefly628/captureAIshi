@@ -290,18 +290,45 @@ class UnrealMCPClient:
             )
         return pcg_ref
 
-    def apply_pcg_delta(self, params: dict) -> dict:
+    def trigger_pcg_generate(self, pcg_component_refpath: str, force: bool = True) -> Any:
+        """Call PCGComponent.Generate(force) via ProgrammaticToolset Python
+        sandbox (UPCGComponent.Generate is a UFUNCTION exposed in Python).
+        Required after set_properties for the graph to re-sim with new params."""
+        script = (
+            "import unreal\n"
+            "ref = " + json.dumps(pcg_component_refpath) + "\n"
+            "comp = unreal.load_object(None, ref)\n"
+            "if comp is None:\n"
+            "    return {'ok': False, 'reason': 'load_object returned None for ' + ref}\n"
+            "force = " + ("True" if force else "False") + "\n"
+            "comp.generate_local(force)\n"
+            "return {'ok': True, 'component': ref, 'force': force}\n"
+        )
+        return self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset.execute_tool_script",
+            {"script": script},
+        )
+
+    def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
         """One-call orchestration: ensure toolsets loaded, find PCG
-        Component, set the provided pcg_params delta. Returns a dict
+        Component, set the provided pcg_params delta, optionally trigger
+        a regen so the graph re-sims with the new values. Returns a dict
         describing what happened so the caller can render it in chat."""
         self.auto_load_toolsets()
         pcg_ref = self.find_pcg_component_refpath()
         write_result = self.set_actor_properties(pcg_ref, params)
+        generate_result = None
+        if regenerate:
+            try:
+                generate_result = self.trigger_pcg_generate(pcg_ref, force=True)
+            except Exception as e:
+                generate_result = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
         return {
             "ok": True,
             "pcg_component": pcg_ref,
             "applied": params,
             "raw_result": write_result,
+            "regenerated": generate_result,
         }
 
     @property
