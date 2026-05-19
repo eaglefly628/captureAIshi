@@ -6,62 +6,192 @@ Auto-initializes on first call, auto-re-initializes on session expiry.
 UE5.8 enable plugins (Edit -> Plugins): AI Assistant, Toolset Registry,
 Unreal MCP, All Toolsets. Run in editor console: `ModelContextProtocol.StartServer`
 or check `bAutoStartServer` in Editor Preferences -> Model Context Protocol.
+
+PCG flow (proven 2026-05-17, see docs/ue58_mcp_validation_log.md):
+  client.auto_load_toolsets()        # one-time per session
+  pcg_ref = client.find_pcg_component_refpath()
+  client.set_actor_properties(pcg_ref, {"seed": 12345, "shelf_density": 0.9})
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
-import urllib.error
-import urllib.request
+import time
+import urllib.parse
 from typing import Any
+
+
+DEFAULT_TOOLSETS = [
+    "ToolsetRegistry.EditorAppToolset",
+    "toolset_registry.toolsets.core.object.ObjectTools",
+    "toolset_registry.toolsets.core.scene.SceneTools",
+    "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset",
+]
 
 
 class UnrealMCPClient:
     PROTOCOL_VERSION = "2025-11-25"
 
-    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 30.0):
+    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 30.0,
+                 verbose: bool = False):
         self.url = url
+        parsed = urllib.parse.urlparse(url)
+        self._host = parsed.hostname or "127.0.0.1"
+        self._port = parsed.port or 80
+        self._path = parsed.path or "/mcp"
         self.timeout = timeout
         self._session_id: str | None = None
         self._next_id = 1
         self._lock = threading.Lock()
+        self._loaded_toolsets: set[str] = set()
+        # Persistent http.client.HTTPConnection -- reused across all POSTs so
+        # the underlying TCP socket survives across RPCs. urllib opens a new
+        # socket per request, which UE 5.8 Preview's ModelContextProtocol
+        # HttpServer hates (HttpConnection state machine asserts on rapid
+        # new connections). curl works because it reuses connections;
+        # http.client.HTTPConnection matches that behaviour.
+        self._conn: http.client.HTTPConnection | None = None
+        self.verbose = verbose
 
-    def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, dict]:
+    def _ensure_conn(self) -> http.client.HTTPConnection:
+        if self._conn is None:
+            self._conn = http.client.HTTPConnection(
+                self._host, self._port, timeout=self.timeout
+            )
+        return self._conn
+
+    def _close_conn(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+    def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, str]:
         body = json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "Content-Length": str(len(body)),
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         if extra_headers:
             headers.update(extra_headers)
-        req = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
+
+        def _do() -> tuple[int, dict, str]:
+            conn = self._ensure_conn()
+            conn.request("POST", self._path, body=body, headers=headers)
+            resp = conn.getresponse()
+            status = resp.status
+            resp_headers = {k: v for k, v in resp.getheaders()}
+            ctype = (resp_headers.get("Content-Type")
+                     or resp_headers.get("content-type") or "")
+            if "event-stream" in ctype.lower():
+                # UE 5.8 returns SSE without closing the connection -- a
+                # plain resp.read() would block until the server's idle
+                # timeout (~15s) even though the event arrived in <1ms.
+                # Read line-by-line, return as soon as we see a complete
+                # event (data: ... \n\n).
+                lines: list[str] = []
+                seen_data = False
+                while True:
+                    line_b = resp.readline()
+                    if not line_b:
+                        break  # EOF
+                    line = line_b.decode("utf-8", "replace")
+                    lines.append(line)
+                    stripped = line.rstrip("\r\n")
+                    if stripped.startswith("data:"):
+                        seen_data = True
+                    elif stripped == "" and seen_data:
+                        break
+                raw = "".join(lines)
+            else:
+                raw = resp.read().decode("utf-8", "replace")
+            return status, resp_headers, raw
+
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                status = resp.status
-                resp_headers = dict(resp.headers)
-                raw = resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), {"error": {"message": e.read().decode("utf-8", "replace")}}
-        except urllib.error.URLError as e:
-            raise ConnectionError(f"cannot reach MCP server at {self.url}: {e.reason}") from e
+            return _do()
+        except TimeoutError as e:
+            # UE Game Thread Spike held the connection too long. Distinct
+            # from disconnect -- log as WARN, caller may retry.
+            self._close_conn()
+            raise TimeoutError(
+                f"MCP server timed out after {self.timeout}s -- UE Game Thread "
+                f"likely Spiked on a heavy tool call (load_toolset / Generate). "
+                f"Either bump UnrealMCPClient(timeout=...) or retry."
+            ) from e
+        except (http.client.BadStatusLine,
+                http.client.RemoteDisconnected,
+                http.client.HTTPException,
+                ConnectionResetError,
+                BrokenPipeError) as e:
+            # Server closed the socket between RPCs (e.g. keep-alive
+            # timeout). Reopen and retry once.
+            self._close_conn()
+            try:
+                return _do()
+            except (http.client.HTTPException, OSError) as e2:
+                self._close_conn()
+                raise ConnectionError(
+                    f"cannot reach MCP server at {self.url}: {e2} -- "
+                    f"server may have crashed (check UE for assertion log)"
+                ) from e2
+        except OSError as e:
+            self._close_conn()
+            raise ConnectionError(
+                f"cannot reach MCP server at {self.url}: {e} -- "
+                f"server may have crashed or not started"
+            ) from e
+
+    @staticmethod
+    def _parse_sse_or_json(raw: str) -> dict:
+        """Server may return either plain JSON or SSE event stream
+        (`event: message\\ndata: {...}\\n\\n`). Extract the last data: line."""
         if not raw.strip():
-            return status, resp_headers, {}
+            return {}
+        # SSE form: scan for `data: {...}`
+        if raw.startswith("event:") or "\ndata:" in raw or raw.startswith("data:"):
+            last = None
+            for line in raw.splitlines():
+                if line.startswith("data:"):
+                    last = line[5:].strip()
+            if last:
+                try:
+                    return json.loads(last)
+                except json.JSONDecodeError:
+                    return {"raw": last}
+            return {"raw": raw}
         try:
-            return status, resp_headers, json.loads(raw)
+            return json.loads(raw)
         except json.JSONDecodeError:
-            return status, resp_headers, {"raw": raw}
+            return {"raw": raw}
 
     def _rpc(self, method: str, params: dict | None = None, _retry: bool = True) -> dict:
         with self._lock:
             req_id = self._next_id
             self._next_id += 1
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
-        status, headers, data = self._post(payload)
+        t0 = time.time()
+        status, headers, raw = self._post(payload)
+        data = self._parse_sse_or_json(raw)
+        if self.verbose:
+            label = method
+            if method == "tools/call" and isinstance(params, dict):
+                label += f"({params.get('name','?')})"
+                if params.get("name") == "load_toolset":
+                    args = params.get("arguments") or {}
+                    label += f"[{args.get('toolset_name','?')}]"
+            elapsed_ms = int((time.time() - t0) * 1000)
+            print(f"  [mcp] {label:60s} {elapsed_ms:>6d}ms  status={status}",
+                  flush=True)
         if status == 404 and self._session_id and _retry:
             self._session_id = None
+            self._loaded_toolsets.clear()
             self.initialize()
             return self._rpc(method, params, _retry=False)
         if status >= 400:
@@ -71,6 +201,7 @@ class UnrealMCPClient:
         return data.get("result", data) if isinstance(data, dict) else {}
 
     def initialize(self) -> dict:
+        t0 = time.time()
         payload = {
             "jsonrpc": "2.0",
             "id": 0,
@@ -81,12 +212,26 @@ class UnrealMCPClient:
                 "clientInfo": {"name": "adore_robot-flask", "version": "0.3.3"},
             },
         }
-        status, headers, data = self._post(payload)
+        status, headers, raw = self._post(payload)
         if status >= 400:
-            raise RuntimeError(f"MCP initialize failed {status}: {data}")
+            raise RuntimeError(f"MCP initialize failed {status}: {raw[:400]}")
         self._session_id = headers.get("Mcp-Session-Id") or headers.get("mcp-session-id")
-        notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        self._post(notif)
+        data = self._parse_sse_or_json(raw)
+        # IMPORTANT: do NOT send `notifications/initialized` here.
+        # MCP 2025-11-25 spec says client SHOULD send it post-initialize,
+        # but UE 5.8 Preview ModelContextProtocol plugin's HttpConnection
+        # state machine asserts (HttpConnection.cpp:184
+        # EHttpConnectionState::AwaitingProcessing) when a notification
+        # POST arrives back-to-back with subsequent tool calls -- crashes
+        # UE. Skip it. The tools/call methods work without the explicit
+        # initialized notification on this server.
+        # Brief settle so UE finishes post-init bookkeeping before our
+        # first real RPC. 0.2s is plenty in practice (was 0.8 originally,
+        # over-conservative).
+        time.sleep(0.2)
+        if self.verbose:
+            print(f"  [mcp] initialize{'':50s} {int((time.time()-t0)*1000):>6d}ms  "
+                  f"(incl 200ms settle)", flush=True)
         return data.get("result", {}) if isinstance(data, dict) else {}
 
     def ensure_session(self) -> None:
@@ -106,6 +251,236 @@ class UnrealMCPClient:
         self.ensure_session()
         return self._rpc("tools/call", {"name": name, "arguments": arguments or {}})
 
+    @staticmethod
+    def _unwrap(result: Any) -> Any:
+        """Tool call results wrap as {content:[{type:'text', text:'<JSON>'}]}.
+        Unwrap to get the actual payload. ObjectTools.list_properties /
+        get_properties double-wrap (text is JSON of {returnValue:'<JSON>'}),
+        so we parse the inner returnValue string too when it's a string."""
+        if not isinstance(result, dict):
+            return result
+        content = result.get("content")
+        if not isinstance(content, list) or not content:
+            return result
+        first = content[0]
+        if not isinstance(first, dict):
+            return result
+        text = first.get("text")
+        if not isinstance(text, str):
+            return result
+        try:
+            outer = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        if isinstance(outer, dict) and "returnValue" in outer:
+            inner = outer["returnValue"]
+            if isinstance(inner, str):
+                try:
+                    return json.loads(inner)
+                except json.JSONDecodeError:
+                    return inner
+            return inner
+        return outer
+
+    def call_tool_unwrapped(self, name: str, arguments: dict | None = None) -> Any:
+        return self._unwrap(self.call_tool(name, arguments))
+
+    def auto_load_toolsets(self, names: list[str] | None = None,
+                           gap_seconds: float = 0.1,
+                           progress_cb=None) -> dict:
+        """Load default 4 core toolsets if not already loaded this session.
+
+        Workarounds for UE 5.8 Preview ModelContextProtocol plugin bugs:
+        - Prime the HTTP connection state machine with a `tools/list` call
+          BEFORE the first `load_toolset`. Without this, calling load_toolset
+          as the first tool dispatch on a fresh session triggers an engine
+          assertion (HttpConnection.cpp:184) and crashes UE. User's earlier
+          manual curl tests survived because they ran tools/list first.
+        - Small gap (default 0.5s) between successive load_toolset calls.
+        """
+        names = names or DEFAULT_TOOLSETS
+        total = 1 + len(names)  # prime + N loads
+        def _emit(phase: str, idx: int, name: str, status: str) -> None:
+            if progress_cb is None:
+                return
+            try:
+                progress_cb({"phase": phase, "current": idx, "total": total,
+                             "toolset": name, "status": status})
+            except Exception:
+                pass
+
+        self.ensure_session()
+        _emit("prime", 0, "tools/list", "running")
+        try:
+            self._rpc("tools/list")
+            _emit("prime", 1, "tools/list", "done")
+        except Exception as e:
+            _emit("prime", 1, "tools/list", f"warn: {e}")
+
+        loaded = []
+        skipped = []
+        failed = []
+        first = True
+        for i, n in enumerate(names):
+            step_idx = 1 + i  # 1-based after prime
+            if n in self._loaded_toolsets:
+                skipped.append(n)
+                _emit("skipped", step_idx + 1, n, "done")
+                continue
+            if not first and gap_seconds > 0:
+                time.sleep(gap_seconds)
+            first = False
+            _emit("loading", step_idx, n, "running")
+            try:
+                self.call_tool("load_toolset", {"toolset_name": n})
+                self._loaded_toolsets.add(n)
+                loaded.append(n)
+                _emit("loading", step_idx + 1, n, "done")
+            except Exception as e:
+                failed.append({"toolset": n, "error": f"{type(e).__name__}: {e}"})
+                _emit("loading", step_idx + 1, n, f"error: {e}")
+        return {"loaded": loaded, "skipped": skipped, "failed": failed,
+                "total_loaded": len(self._loaded_toolsets)}
+
+    # ─── EditorApp convenience ────────────────────────────────────────────
+    def get_selected_actors(self) -> list[dict]:
+        result = self.call_tool_unwrapped(
+            "ToolsetRegistry.EditorAppToolset.GetSelectedActors"
+        )
+        if isinstance(result, list):
+            return result
+        return result.get("actors", []) if isinstance(result, dict) else []
+
+    def get_current_level(self) -> str:
+        result = self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.get_current_level"
+        )
+        if isinstance(result, str):
+            return result
+        return result.get("level", "") if isinstance(result, dict) else ""
+
+    # ─── ObjectTools wrappers ─────────────────────────────────────────────
+    def list_actor_properties(self, refpath: str) -> Any:
+        return self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.object.ObjectTools.list_properties",
+            {"instance": {"refPath": refpath}},
+        )
+
+    def get_actor_properties(self, refpath: str, props: list[str]) -> dict:
+        result = self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.object.ObjectTools.get_properties",
+            {"instance": {"refPath": refpath}, "properties": props},
+        )
+        return result if isinstance(result, dict) else {}
+
+    def set_actor_properties(self, refpath: str, values: dict) -> Any:
+        """Sets one or more UPROPERTY values via reflection. Returns the
+        result (typically `True` or a status object)."""
+        return self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.object.ObjectTools.set_properties",
+            {"instance": {"refPath": refpath}, "values": json.dumps(values)},
+        )
+
+    # ─── PCG helpers (built on top of ObjectTools) ────────────────────────
+    def find_pcg_component_refpath(self) -> str:
+        """Best-effort locate the PCG Component refPath:
+        1. If the user has selected one or more actors in the level editor,
+           prefer the first one whose path contains 'PCG'.
+        2. Otherwise fall back to ProgrammaticToolset Python find that
+           enumerates the entire level for any PCG*Volume / PCG*Actor.
+        Raises if none found; caller renders a helpful error message."""
+        selected = self.get_selected_actors()
+        candidates: list[str] = []
+        if isinstance(selected, list):
+            for actor in selected:
+                ref = actor.get("refPath") if isinstance(actor, dict) else None
+                if ref and "PCG" in ref:
+                    candidates.append(ref)
+        if not candidates:
+            try:
+                script = (
+                    "import unreal\n"
+                    "subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)\n"
+                    "actors = subsys.get_all_level_actors() if subsys else []\n"
+                    "out = []\n"
+                    "for a in actors:\n"
+                    "    if not a: continue\n"
+                    "    cls = a.get_class().get_path_name() if a.get_class() else ''\n"
+                    "    if 'PCG' in cls:\n"
+                    "        out.append(a.get_path_name())\n"
+                    "return out\n"
+                )
+                result = self.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset.execute_tool_script",
+                    {"script": script},
+                )
+                if isinstance(result, list):
+                    candidates = [r for r in result if isinstance(r, str) and "PCG" in r]
+                elif isinstance(result, str) and "PCG" in result:
+                    candidates = [result]
+            except Exception:
+                pass
+        if not candidates:
+            raise RuntimeError(
+                "no PCG actor found in current level -- "
+                "drop a PCG Volume into the level (or select an existing one) and retry"
+            )
+        actor_ref = candidates[0]
+        props = self.get_actor_properties(actor_ref, ["pCGComponent"])
+        pcg_field = props.get("pCGComponent") if isinstance(props, dict) else None
+        pcg_ref = pcg_field.get("refPath") if isinstance(pcg_field, dict) else None
+        if not pcg_ref:
+            raise RuntimeError(
+                f"actor {actor_ref!r} has no pCGComponent sub-object; "
+                "this may not be a PCG Volume actor"
+            )
+        return pcg_ref
+
+    def trigger_pcg_generate(self, pcg_component_refpath: str, force: bool = True) -> Any:
+        """Call PCGComponent.Generate(force) via ProgrammaticToolset Python
+        sandbox (UPCGComponent.Generate is a UFUNCTION exposed in Python).
+        Required after set_properties for the graph to re-sim with new params."""
+        script = (
+            "import unreal\n"
+            "ref = " + json.dumps(pcg_component_refpath) + "\n"
+            "comp = unreal.load_object(None, ref)\n"
+            "if comp is None:\n"
+            "    return {'ok': False, 'reason': 'load_object returned None for ' + ref}\n"
+            "force = " + ("True" if force else "False") + "\n"
+            "comp.generate_local(force)\n"
+            "return {'ok': True, 'component': ref, 'force': force}\n"
+        )
+        return self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset.execute_tool_script",
+            {"script": script},
+        )
+
+    def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
+        """One-call orchestration: ensure toolsets loaded, find PCG
+        Component, set the provided pcg_params delta, optionally trigger
+        a regen so the graph re-sims with the new values. Returns a dict
+        describing what happened so the caller can render it in chat."""
+        self.auto_load_toolsets()
+        pcg_ref = self.find_pcg_component_refpath()
+        write_result = self.set_actor_properties(pcg_ref, params)
+        generate_result = None
+        if regenerate:
+            try:
+                generate_result = self.trigger_pcg_generate(pcg_ref, force=True)
+            except Exception as e:
+                generate_result = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        return {
+            "ok": True,
+            "pcg_component": pcg_ref,
+            "applied": params,
+            "raw_result": write_result,
+            "regenerated": generate_result,
+        }
+
     @property
     def session_id(self) -> str | None:
         return self._session_id
+
+    @property
+    def loaded_toolsets(self) -> list[str]:
+        return sorted(self._loaded_toolsets)

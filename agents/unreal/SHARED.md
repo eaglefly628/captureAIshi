@@ -51,6 +51,36 @@
 
 #### Open (本期不做，下个 session 接力)
 
+- [ ] **P0 (老白 await confirm, 2026-05-17): v0.3.3 UPCGAdoreToolset C++ plugin 不需要写 -- 实证完整**
+  xiaoxu 当天实机验通 UE5.8 MCP 后**重大发现**: 5.8 内置 `ObjectTools` 已经能
+  `set_properties(pcg_component, '{"shelf_density":0.9,"forklift_count":2}')`
+  改 PCG Component 任意 UPROPERTY override; 内置 `ProgrammaticToolset.execute_tool_script`
+  能跑 Python 沙盒一次串完 `find_actors -> set_properties -> Generate -> capture_image`,
+  把 LLM 的 N 个 round trip 压成 1 个. **完整验证日志 + 41 toolset inventory +
+  35 工具 schema + 架构 trade-off 表 + 端到端实证** 在
+  `apps/adore_robot/docs/ue58_mcp_validation_log.md`.
+  **2026-05-17 闭环实证** (validation log §6 全 [x]):
+   - `SceneTools.get_current_level` -> `/Temp/Untitled_1` (handshake+dispatch+marshal 通)
+   - `ProgrammaticToolset` load 成功, SSE `notifications/tools/list_changed` 正确 push
+   - PCG Volume actor 拖入 level -> `get_properties` 拿到嵌套 `pCGComponent` refPath
+   - PCGComponent `list_properties` 返 35+ UPROPERTY (seed/graphInstance/generationTrigger 等)
+   - `set_properties(pcg_component, '{"seed":99999}')` 返 success
+   - `get_properties` 读回 99999, UE Editor Details panel 实时显示 Seed=99999
+   - **=> set_properties 反射写 PCG UPROPERTY 实证通过.** `graphInstance.OverrideParams`
+     走同样反射机制, 21 param contract 完全可达.
+  - **拟变更**: v2 §2.5 plugin skeleton + 21 UFUNCTION wrap **跳过**, 改用
+    `ObjectTools` + `ProgrammaticToolset` + `apps/adore_robot/main.py` server-side
+    validate (拿 demo/prompts.py contract 做 range/enum 校验, 比 UE 端 native
+    bounds 灵活, 新参数 prompt edit 即可, 不用重编 plugin)
+  - **保留**: v2 §2.2 21-param mapping 表 -- 它现在变成 LLM prompt 的参数 contract
+    清单 / server-side validate 的 ground truth, **不**变成 C++ 函数签名
+  - 省: ~2-3 天 C++ + Build.cs + cook + 5.8 Preview ABI 适配
+  - **请老白回 yes / no / 折中** (如保留 plugin skeleton 但不写 21 UFUNCTION,
+    给 v0.4 留 reflection-cost 优化口)
+  - 在他拍板前 xiaoxu 不动 C++ plugin 分支, 只继续 ObjectTools 路径的 server
+    端 wiring (改 `apps/adore_robot/main.py` `/api/chat` 在 LLM 出 update_scene
+    tool_call 后转 MCP `execute_tool_script` Python 一次性下发)
+
 - [x] **P0 (老白 2026-05-16 决策, v0.3.3): 架构方向 B -- 全面拥抱 UE5.8 MCP** **[done by 老白 2026-05-17]** -- 老白 直接出了 `apps/adore_robot/docs/batch_scene_gen_architecture_v2.md` (~410 行, 7 节) 顶替, v1 已加 SUPERSEDED 头. v2 §2.2 全表是 `UPCGAdoreToolset` 方法 1:1 映射 (warehouse/living_room/industrial 21 + orchestration 6 + 5 个 UENUM literal 列表). LLM provider 抽象在 `apps/adore_robot/llm/` (factory + base + openai_compat + anthropic_adapter), 7 个 provider, deepseek 默认. **xiaoxu 接力即可开工**: §1.3 Plan B-1 验证 + §2.5 plugin skeleton + 1 个 trivial UFUNCTION smoke. -- ref `apps/adore_robot/docs/refs/ue58_ai_mcp_overview.md`。你原 `batch_scene_gen_architecture.md` 的 Flask + subprocess + commandlet 路线**主体作废**，下面这套替代：
   - **UE = MCP Server**: 装 `AIAssistant` + `ToolsetRegistry` + `ModelContextProtocol` + `AllToolsets` plugins，`bAutoStartServer=true`，监听 `http://localhost:8000/mcp`。
   - **写 `UPCGAdoreToolset : UToolsetDefinition`**（plugin 路径 `apps/adore_robot/unreal_projects/AdoreRobot/Plugins/AdoreRobotPCG/`），把 xiaohuan `pcg_param_contract.md` §1 的每个公开参数包成 `UFUNCTION(meta=(AICallable))` 方法，函数名对齐 contract key（snake_case）。例: `void SetShelfDensity(float Value)`、`void SetForkliftCount(int32 Value)`、`void TriggerGenerate()`、`void TriggerMRQRender(FString PresetName)`、`FString GetThumbnailPath()`。反射自动出 JSON Schema，零手写。
@@ -107,6 +137,16 @@
 - Anthropic SDK Python: 见 `.claude/skills/claude-api`
 
 ## Changelog
+
+### [v0.3.3] (pending push) -- xiaoxu
+- apps/adore_robot/docs/ue58_mcp_validation_log.md: 254 行实证日志 (handshake / 41 toolset / 35 工具 schema / 反射写 seed=99999 闭环成功 / 架构 trade-off 表)
+- apps/adore_robot/mcp_client.py: +200 LOC (auto_load_toolsets / SSE-or-JSON 双格式解析 / 双层响应 unwrap / 5 个 PCG/ObjectTools 便捷 wrap + apply_pcg_delta 一行编排)
+- apps/adore_robot/main.py: /api/chat 接 _try_mcp_relay 真接 UE; 加 /api/mcp/{apply_pcg, auto_load, probe_graph} 三个端点; /api/mcp/status 暴露 loaded_toolsets
+- apps/adore_robot/web/static/design/main.jsx: callRealChat 把 mcp_relay 状态拼进 narrate (✓ MCP -> UE: X updated / ◌ MCP skipped)
+- apps/adore_robot/tools/probe_mcp.py: 独立 CLI 一键复跑 7 步 (handshake -> auto_load -> get_current_level -> find PCG -> read/write seed -> 探 graphInstance Plan-B 结构)
+- 落 P0 给老白: "跳过 UPCGAdoreToolset C++ plugin" 实证完整, 等他 yes/no/折中
+
+
 
 ### [v0.3.3-dev] (pending push) -- xiaoxu (客户演示 demo, 适配老白 v0.3.3 LLM 接口)
 - apps/adore_robot/llm/keyword.py: offline 关键词 fallback 适配老白 BaseLLMClient (Message/ToolDef/ChatResponse 接口), 加进 factory 作 'keyword' provider 不需 API key

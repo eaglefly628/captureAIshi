@@ -1119,3 +1119,149 @@ select.twk-field {
   background: var(--accent) !important;
   border-color: var(--accent-strong) !important;
 }
+
+/* ────────────────────────────────────────────────────────────────
+   MCP boot overlay -- sci-fi neural handshake screen
+   ──────────────────────────────────────────────────────────────── */
+.mcp-boot {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, monospace);
+}
+.mcp-boot-scrim {
+  position: absolute; inset: 0;
+  background: radial-gradient(60% 60% at 50% 40%, rgba(91,138,240,0.10), rgba(0,0,0,0.92) 70%);
+  backdrop-filter: blur(6px);
+}
+.mcp-boot-scrim::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(
+    180deg, transparent 0 2px, rgba(91,138,240,0.04) 2px 3px);
+}
+.mcp-boot-card {
+  position: relative;
+  width: min(560px, 88vw);
+  background: linear-gradient(180deg, rgba(15,18,26,0.96), rgba(8,10,14,0.96));
+  border: 1px solid rgba(91,138,240,0.35);
+  box-shadow:
+    0 0 0 1px rgba(91,138,240,0.10) inset,
+    0 0 48px rgba(91,138,240,0.18),
+    0 24px 80px rgba(0,0,0,0.6);
+  padding: 22px 26px 20px;
+  color: #cdd6f4;
+}
+.mcp-boot-card::before, .mcp-boot-card::after {
+  content: ""; position: absolute; width: 18px; height: 18px;
+  border: 1px solid #5b8af0;
+}
+.mcp-boot-card::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+.mcp-boot-card::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+.mcp-boot-hud {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; letter-spacing: 0.18em; color: rgba(91,138,240,0.85);
+  margin-bottom: 14px;
+}
+.mcp-boot-tag {
+  padding: 3px 8px;
+  background: rgba(91,138,240,0.10);
+  border: 1px solid rgba(91,138,240,0.35);
+}
+.mcp-boot-sid { opacity: 0.7; }
+
+.mcp-boot-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 18px; color: #e6ebff; font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.mcp-boot-glyph {
+  color: #5b8af0; font-size: 18px;
+  animation: mcp-pulse 1.6s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(91,138,240,0.6);
+}
+@keyframes mcp-pulse {
+  0%, 100% { opacity: 0.4; transform: rotate(0deg); }
+  50%      { opacity: 1.0; transform: rotate(180deg); }
+}
+.mcp-boot-sub {
+  font-size: 12px; color: rgba(205,214,244,0.65);
+  margin: 6px 0 16px; letter-spacing: 0.02em;
+  min-height: 1.2em;
+}
+
+.mcp-boot-bar {
+  position: relative; height: 6px;
+  background: rgba(91,138,240,0.10);
+  border: 1px solid rgba(91,138,240,0.20);
+  overflow: hidden;
+}
+.mcp-boot-bar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #3b6dd6, #5b8af0, #8ab0ff);
+  box-shadow: 0 0 12px rgba(91,138,240,0.7);
+  transition: width 0.25s ease-out;
+}
+.mcp-boot-bar-scan {
+  position: absolute; top: 0; bottom: 0; width: 64px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  animation: mcp-scan 1.4s linear infinite;
+}
+@keyframes mcp-scan {
+  0%   { transform: translateX(-80px); }
+  100% { transform: translateX(560px); }
+}
+.mcp-boot.ok .mcp-boot-bar-scan { display: none; }
+
+.mcp-boot-meta {
+  display: flex; justify-content: space-between;
+  font-size: 10px; letter-spacing: 0.16em;
+  color: rgba(205,214,244,0.5);
+  margin: 6px 0 14px;
+}
+
+.mcp-boot-log {
+  list-style: none; padding: 10px 12px; margin: 0 0 14px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(91,138,240,0.15);
+  font-size: 11px;
+  max-height: 156px; overflow: hidden;
+}
+.mcp-boot-log li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 3px 0;
+  color: rgba(205,214,244,0.75);
+}
+.mcp-boot-log li.run  { color: #cdd6f4; }
+.mcp-boot-log li.done { color: rgba(120,200,150,0.85); }
+.mcp-boot-log li.err  { color: rgba(255,120,120,0.95); }
+.mcp-boot-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.mcp-boot-log li.run .mcp-boot-dot { animation: mcp-pulse 1s infinite; }
+.mcp-boot-log-name { flex: 1; }
+.mcp-boot-log-at   { opacity: 0.55; font-variant-numeric: tabular-nums; }
+
+.mcp-boot-actions {
+  display: flex; gap: 10px; justify-content: flex-end;
+}
+.mcp-boot-btn {
+  font: inherit; font-size: 12px;
+  padding: 8px 16px; cursor: pointer;
+  background: rgba(91,138,240,0.18);
+  color: #e6ebff;
+  border: 1px solid rgba(91,138,240,0.55);
+  letter-spacing: 0.04em;
+}
+.mcp-boot-btn:hover { background: rgba(91,138,240,0.32); }
+.mcp-boot-btn.ghost {
+  background: transparent; color: rgba(205,214,244,0.6);
+  border-color: rgba(205,214,244,0.18);
+}
+
+.mcp-boot.err .mcp-boot-card { border-color: rgba(255,120,120,0.45); box-shadow: 0 0 48px rgba(255,80,80,0.20), 0 24px 80px rgba(0,0,0,0.6); }
+.mcp-boot.err .mcp-boot-glyph { color: #ff7878; text-shadow: 0 0 8px rgba(255,120,120,0.6); }
+.mcp-boot.err .mcp-boot-bar-fill { background: linear-gradient(90deg, #c43c3c, #ff7878); box-shadow: 0 0 12px rgba(255,120,120,0.6); }
+.mcp-boot.ok  .mcp-boot-bar-fill { background: linear-gradient(90deg, #4fc080, #8be0a8); box-shadow: 0 0 12px rgba(120,220,160,0.6); }
+.mcp-boot.ok  .mcp-boot-glyph    { color: #8be0a8; text-shadow: 0 0 8px rgba(120,220,160,0.6); animation: none; }

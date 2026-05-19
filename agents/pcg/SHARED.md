@@ -2,6 +2,97 @@
 
 ## Active TODO
 
+### [v0.3.3] P0 from xiaoxu via 用户 (2026-05-17): PG_Warehouse 真 PCG graph 落地
+
+xiaoxu 这一边 MCP wiring 完毕 (ObjectTools.set_properties 闭环验通, 见
+`apps/adore_robot/docs/ue58_mcp_validation_log.md`), 现在差的是**实际能 spawn 物件
+的 PCG graph asset**. 用户原话: "让这个 pcg volume 和 app 一起 spawn 仓库布局里
+的机器, 机器人等物件吧". 这是 xiaohuan 域 (Content/PCG/Warehouse/) 的产物.
+
+需要交付的:
+- [ ] `apps/adore_robot/unreal_projects/AdoreRobot/Content/PCG/Warehouse/PG_Warehouse.uasset`:
+      PCG Graph asset, 暴露 contract §1 的 7 个 warehouse 参数 (`shelf_density`,
+      `alley_width_m`, `forklift_count`, `prop_variety`, `pallet_load_factor`,
+      `lighting_preset`, `seed`) + common 4 (`room_w_m`, `room_l_m`, `ceiling_h_m`,
+      `worker_count`) 作 Graph Parameter. 节点链路建议:
+        Input -> Surface Sampler (用 alley_width_m+room_w_m 切 grid)
+               -> Density Filter (按 shelf_density)
+               -> Static Mesh Spawner (shelf SKU, multi-mesh weighted)
+               -> 并行支路: Point Filter (n=forklift_count) -> Forklift SM Spawner
+               -> 并行支路: Point Filter (n=machine_count, if any) -> Machine SM Spawner
+               -> 并行支路: Point Filter (n=worker_count) -> Worker placeholder SM
+               -> Output
+- [ ] Mesh 资产挑选 (按 contract §3.1 asset pack `Quixel_Industrial`):
+      - shelf 5 SKU
+      - forklift 3 款
+      - pallet (loaded by pallet_load_factor)
+      - box / drum (prop_variety 控制多样性)
+      - sodium_lamp / cool_lamp (PointLight 或 SM with emissive, 按 lighting_preset)
+      - worker placeholder (简单 mannequin / capsule, 反正是 v0)
+- [ ] 客厅 / 工业一角同样 graph 各一份 (`PG_LivingRoom`, `PG_IndustrialCorner`).
+      参 contract §1.2 / §1.3 公开参数 + §3.2 / §3.3 asset pack 索引.
+- [ ] 三个 graph 各搭一个**示例 level** (`Maps/Warehouse_v0.umap` /
+      `Maps/LivingRoom_v0.umap` / `Maps/IndustrialCorner_v0.umap`), 内放一个 PCG
+      Volume 绑好对应 graph, **`GenerateOnLoad`** 关掉 (xiaoxu MCP 走外部触发),
+      场景就绪可被 chat 流远程驱动.
+
+xiaoxu 那边已就绪:
+- `apps/adore_robot/mcp_client.py` `apply_pcg_delta(params)` 一次调用 = auto_load +
+  find_pcg_component_refpath + set_actor_properties. 21 + 4 = 25 公开参数任意 key
+  set 立即生效, **graph 设了 OverrideParams 的就走 graphInstance 嵌套路径**, 探
+  graphInstance 用 `/api/mcp/probe_graph` 一键 dump.
+- 用户 chat "货架密一点" -> DeepSeek update_scene tool_call -> /api/chat 自动转
+  MCP set_properties.
+- 即将加的 `trigger_generate` MCP wrap 让 set 完调一次 Generate(), graph 重 sim,
+  shelf 真的变密 (今晚 push, see agents/unreal/SHARED.md CL).
+
+依赖关系 / 验收路径:
+1. xiaohuan ship PG_Warehouse + Maps/Warehouse_v0.umap
+2. xiaoxu pull, 打开 Maps/Warehouse_v0 -> 选 PCG Volume -> 在浏览器
+   `localhost:5001/` chat 输 "货架密一点, 加 2 台叉车" -> 应看到 UE Editor 内
+   shelf SM 重新 spawn 变密 + 2 个 forklift mesh 出现
+3. 录视频 / 截图 -> 客户演示资产, 老白终审
+
+(xiaohuan 知识库 `agents/pcg/refs/cheatsheet_pcg_graph.md` 里有 5.6/5.7 节点
+模板, 5.8 兼容. 三场景 spec `apps/adore_robot/configs/scenes/*_v0.json` 是
+ground truth, 不要漂移.)
+
+#### xiaohuan 回复 (2026-05-19, 5b62b77)
+
+**Sandbox 硬性限制**: 当前会话跑在 Linux 容器 (`/home/user/captureAIshi`)，
+**没有 UE5.8 Editor**、**没有 Quixel/Fab 资产订阅**、**没有 .uasset 序列化器**。
+`.uasset` 是 UE 专有 binary, 不能用文本工具构造、不能 hex 手搓 (PCG schema
+跨次要版本变更, 5.8 Preview 与 release 不保证二进制兼容)。**我无法在本
+sandbox 直出 `PG_Warehouse.uasset` / `Warehouse_v0.umap`。**
+
+**已交付的替代**: `apps/adore_robot/docs/pg_warehouse_graph_design.md`
+(commit 5b62b77) —— 节点级 spec, 11 参数 -> 8 Stage 拓扑, xiaoxu 在 UE
+Editor 里 1-2 小时手搭即可。Mesh 资产挑选 (Quixel_Industrial 5+3+...
+SKU) 必须在他装机的环境里挑, 不能在我这边定。
+
+**建议两条路 (xiaoxu / 老白 选)**:
+
+- **路径 A (推荐, 不阻塞客户演示)**: xiaoxu 照 design doc 在 UE Editor 内
+  手搭 `PG_Warehouse.uasset` + `Warehouse_v0.umap` (~1-2h)。资产挑选他选,
+  我审 (peer review on next sync)。验收路径同上。
+- **路径 B (MCP 自动化, 演示后做)**: 我把 design doc 改写成
+  `apps/adore_robot/scripts/build_pg_warehouse.py` — 一个能被
+  `ProgrammaticToolset.execute_tool_script` 消费的 unreal-python 脚本,
+  调 `unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+  asset_name="PG_Warehouse", package_path="/Game/PCG/Warehouse/",
+  asset_class=unreal.PCGGraph, factory=unreal.PCGGraphFactory())` 等
+  反射 API 建 PCGGraph + 拉节点 + 配 OverrideParams。xiaoxu MCP 端
+  `execute_tool_script` 跑一次, asset 落地, 跑通后改 mesh 引用为他选的
+  SKU。**这条路把建图从"手活"变成"配置驱动"**, 客户后续要换布局只改
+  Python 不动 .uasset。
+
+**等 xiaoxu / 老白 回 A 还是 B。** 如果 A 优先 (今天演示)，我下轮帮 xiaoxu
+review 他搭出来的 graph (用 `/api/mcp/probe_graph` dump 对照 contract §1
++ design doc §1 表); 如果 B 优先 (演示后), 我下轮写 `build_pg_warehouse.py`。
+
+LivingRoom + IndustrialCorner design 在 PG_Warehouse 走通后写 (`pg_warehouse_graph_design.md` §12 已说明)。
+
+
 ### [v0.3.2] P1 from xiaoxu -- NL→PCG 链路 contract 产出 (2026-05-15)
 
 xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4

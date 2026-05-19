@@ -21,6 +21,98 @@ const STAGE_DURATIONS = {
   package: 1200,
 };
 
+// Toolset name -> customer-friendly capability label.
+const TOOLSET_LABELS = {
+  'session': '神经握手',
+  'tools/list': '能力清单',
+  'ToolsetRegistry.EditorAppToolset': '编辑器内核 · EditorApp',
+  'toolset_registry.toolsets.core.object.ObjectTools': '对象反射层 · ObjectTools',
+  'toolset_registry.toolsets.core.scene.SceneTools': '场景态势引擎 · SceneTools',
+  'toolset_registry.toolsets.core.programmatic.ProgrammaticToolset': '程序化沙箱 · Programmatic',
+};
+function toolsetLabel(name) {
+  if (!name) return '';
+  if (TOOLSET_LABELS[name]) return TOOLSET_LABELS[name];
+  // shorten unknown names
+  const tail = name.split('.').slice(-1)[0];
+  return `${tail}`;
+}
+
+function McpBootOverlay({ state, onRetry, onDismiss }) {
+  if (!state) return null;
+  const pct = state.total > 0 ? Math.min(100, Math.round((state.current / state.total) * 100)) : 0;
+  const elapsed = ((state.elapsed_ms || 0) / 1000).toFixed(1);
+  const failed = state.done && state.ok === false;
+  const ready = state.done && state.ok === true;
+
+  let headline;
+  if (failed) headline = '神经接口未响应';
+  else if (ready) headline = '系统在线';
+  else if (state.phase === 'handshake') headline = '正在唤醒 Unreal AI 神经接口';
+  else if (state.phase === 'prime') headline = '探测可用能力空间';
+  else if (state.phase === 'loading') headline = '挂载 AI 工具集';
+  else if (state.phase === 'skipped') headline = '工具集已就绪';
+  else headline = 'ADORE-AI · 引导中';
+
+  const subline = failed
+    ? state.error
+    : ready
+      ? `握手成功 · 4 个工具集在线 · ${elapsed}s`
+      : (state.toolset ? toolsetLabel(state.toolset) : '...');
+
+  const steps = (state.steps || []).slice(-6);
+
+  return (
+    <div className={`mcp-boot ${failed ? 'err' : ''} ${ready ? 'ok' : ''}`}>
+      <div className="mcp-boot-scrim" />
+      <div className="mcp-boot-card">
+        <div className="mcp-boot-hud">
+          <span className="mcp-boot-tag">ADORE-AI · MCP BOOT</span>
+          <span className="mcp-boot-sid">{state.started ? `SESSION ${String(state.started_at || 0).slice(-6)}` : 'STAND BY'}</span>
+        </div>
+
+        <div className="mcp-boot-title">
+          <span className="mcp-boot-glyph" aria-hidden>◈</span>
+          <span>{headline}</span>
+        </div>
+        <div className="mcp-boot-sub">{subline}</div>
+
+        <div className="mcp-boot-bar">
+          <div className="mcp-boot-bar-fill" style={{ width: `${pct}%` }} />
+          <div className="mcp-boot-bar-scan" />
+        </div>
+        <div className="mcp-boot-meta">
+          <span>{state.current}/{state.total}</span>
+          <span>{pct}%</span>
+          <span>{elapsed}s</span>
+        </div>
+
+        <ul className="mcp-boot-log">
+          {steps.map((s, i) => (
+            <li key={i} className={s.status === 'done' ? 'done' : s.status?.startsWith('error') ? 'err' : 'run'}>
+              <span className="mcp-boot-dot" />
+              <span className="mcp-boot-log-name">{toolsetLabel(s.toolset)}</span>
+              <span className="mcp-boot-log-at">{(s.at_ms / 1000).toFixed(2)}s</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mcp-boot-actions">
+          {failed && (
+            <>
+              <button className="mcp-boot-btn" onClick={onRetry}>重连</button>
+              <button className="mcp-boot-btn ghost" onClick={onDismiss}>跳过 · 离线演示</button>
+            </>
+          )}
+          {ready && (
+            <button className="mcp-boot-btn" onClick={onDismiss}>进入控制台</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const scene = tweaks.scene;
@@ -38,9 +130,45 @@ function App() {
   const [dataset, setDataset] = useState(null);
   const [mrqSubdir, setMrqSubdir] = useState('warehouse/v0_demo');
   const [chatMode, setChatMode] = useState('scene');
+  const [mcpInit, setMcpInit] = useState(null);
+  const [mcpInitDismissed, setMcpInitDismissed] = useState(false);
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
+
+  // Poll MCP init progress. Backend kicks the init thread at startup,
+  // we just read the latest state every 250ms until done (or user dismisses).
+  useEffect(() => {
+    let stopped = false;
+    let timer = null;
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/mcp/init');
+        const j = await r.json();
+        if (!stopped) setMcpInit(j);
+        if (!stopped && !j.done) {
+          timer = setTimeout(poll, 250);
+        } else if (!stopped && j.done && j.ok) {
+          // Auto-dismiss success overlay after 1.2s
+          timer = setTimeout(() => setMcpInitDismissed(true), 1200);
+        }
+      } catch (e) {
+        if (!stopped) timer = setTimeout(poll, 1000);
+      }
+    };
+    poll();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, []);
+
+  const retryMcpInit = useCallback(() => {
+    setMcpInitDismissed(false);
+    setMcpInit(prev => prev ? { ...prev, done: false, error: null, ok: null } : null);
+    fetch('/api/mcp/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    }).catch(() => {});
+  }, []);
 
   const updateParam = useCallback((key, value, flash = false) => {
     setParams(prev => ({ ...prev, [key]: value }));
@@ -271,8 +399,17 @@ function App() {
   const projectName = SCENES[scene]?.label || 'Project';
   const jobName = `${scene}/${mrqSubdir.split('/')[1] || 'v0_demo'}`;
 
+  const showMcpBoot = mcpInit && !mcpInitDismissed;
+
   return (
     <>
+      {showMcpBoot && (
+        <McpBootOverlay
+          state={mcpInit}
+          onRetry={retryMcpInit}
+          onDismiss={() => setMcpInitDismissed(true)}
+        />
+      )}
       <div className="app">
         <TopBar projectName="adore-data" jobName={`${scene} · ${mrqSubdir.split('/')[1] || 'v0_demo'}`}
           runStatus={runStatus} runtimeS={runtimeMs} />
@@ -428,7 +565,21 @@ async function callRealChat(userText, scene, currentParams) {
     calls.push({ name: 'trigger_generate', args: {} });
   }
 
-  const narrate = `${rationale}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms`;
+  // MCP relay status -- appended to narrate so user can see whether the
+  // chat actually changed UE Editor state, vs sat at the LLM layer.
+  let relayLine = '';
+  const relay = data.mcp_relay;
+  if (relay) {
+    if (relay.ok) {
+      const target = (relay.pcg_component || '').split('.').pop() || '?';
+      relayLine = `  ·  ✓ MCP -> UE: ${target} updated`;
+    } else if (relay.skipped) {
+      relayLine = `  ·  ◌ MCP skipped (${relay.reason})`;
+    } else {
+      relayLine = `  ·  ✗ MCP error: ${relay.reason}`;
+    }
+  }
+  const narrate = `${rationale}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms${relayLine}`;
   return { narrate, calls };
 }
 
