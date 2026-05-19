@@ -43,9 +43,15 @@ class UnrealMCPClient:
 
     def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, str]:
         body = json.dumps(payload).encode("utf-8")
+        # `Connection: close` forces UE 5.8 MCP server to close the TCP
+        # socket right after the response. Without it, urlopen.read() waits
+        # for the server's keep-alive 15s timeout (= every tool call feels
+        # like it hangs for 15s) before EOF arrives. Each load_toolset would
+        # then take 15s, the 4-toolset auto-load = 60s perceived hang.
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "Connection": "close",
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
