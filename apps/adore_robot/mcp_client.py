@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -43,15 +44,15 @@ class UnrealMCPClient:
 
     def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, str]:
         body = json.dumps(payload).encode("utf-8")
-        # `Connection: close` forces UE 5.8 MCP server to close the TCP
-        # socket right after the response. Without it, urlopen.read() waits
-        # for the server's keep-alive 15s timeout (= every tool call feels
-        # like it hangs for 15s) before EOF arrives. Each load_toolset would
-        # then take 15s, the 4-toolset auto-load = 60s perceived hang.
+        # NOTE: do NOT send `Connection: close` here -- forcing the UE 5.8
+        # MCP server to close the TCP socket mid-load_toolset triggered
+        # wil::ResultException rethrows in the AI plugin (user crashed UE
+        # 2026-05-17). Accept that each tool call takes ~15s due to the
+        # server's keep-alive timeout instead. auto_load_toolsets adds a
+        # 0.5s gap between loads to give the Python sandbox time to digest.
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "Connection": "close",
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
@@ -181,18 +182,26 @@ class UnrealMCPClient:
     def call_tool_unwrapped(self, name: str, arguments: dict | None = None) -> Any:
         return self._unwrap(self.call_tool(name, arguments))
 
-    def auto_load_toolsets(self, names: list[str] | None = None) -> dict:
+    def auto_load_toolsets(self, names: list[str] | None = None,
+                           gap_seconds: float = 0.5) -> dict:
         """Load default 4 core toolsets if not already loaded this session.
-        Idempotent -- skips ones in _loaded_toolsets cache."""
+        Idempotent -- skips ones in _loaded_toolsets cache. Adds a small
+        gap between loads to give UE 5.8's Python sandbox loader time to
+        digest (rapid back-to-back loads were observed to stress the
+        ModelContextProtocol plugin)."""
         self.ensure_session()
         names = names or DEFAULT_TOOLSETS
         loaded = []
         skipped = []
         failed = []
+        first = True
         for n in names:
             if n in self._loaded_toolsets:
                 skipped.append(n)
                 continue
+            if not first and gap_seconds > 0:
+                time.sleep(gap_seconds)
+            first = False
             try:
                 self.call_tool("load_toolset", {"toolset_name": n})
                 self._loaded_toolsets.add(n)
