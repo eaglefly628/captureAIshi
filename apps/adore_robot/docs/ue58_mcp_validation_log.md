@@ -341,10 +341,59 @@ single-digit calls per minute).
         values so we can map the 21-param contract to the UPCGGraphInstance
         property paths without guessing.
       - `/api/mcp/status` now also returns `loaded_toolsets` array.
-- [ ] Plan-B graphInstance OverrideParams structure -- waiting on user
-      to drop a PCG Volume with a Graph asset assigned (current test
-      Volume has no graph), then hit `/api/mcp/probe_graph` and we
-      capture the layout here. Endpoint code is ready and tested
-      against MCP-down gracefully.
+- [x] Plan-B graphInstance OverrideParams structure -- **DONE 2026-05-17 (probe_mcp.py 8 steps all green)**:
+      User created a test PCG Graph `/Game/PG_Test.PG_Test` with two
+      exposed Graph Parameters (`a: int = 16`, `b: string = "lulu"`),
+      assigned it to the PCG Volume's Graph field, then ran
+      `python apps/adore_robot/tools/probe_mcp.py`. Full 8 steps green:
+      handshake -> auto_load 4 toolsets -> /Game/NewMap -> PCG Component
+      found -> seed read 42 -> seed=42424 written + read back -> Step 7
+      drilled graphInstance.
+
+      graphInstance is a `UPCGGraphInstance` with 13 UPROPERTYs:
+      ```
+      bExposeToLibrary / bIsTemplate
+      bOverrideCategory / bOverrideColor / bOverrideDescription / bOverrideTitle
+      category / color / description / title
+      graph                  -> refPath to UPCGGraph asset
+      parametersOverrides    -> struct (see below)  ★ THIS
+      toolDataOverrides      -> struct (UI tooltip etc, ignore)
+      ```
+
+      `parametersOverrides` value layout (from real user test data):
+      ```json
+      {
+        "parameters": {
+          "a": 16,            // int Graph Parameter (key = exposed name)
+          "b": "lulu"         // string Graph Parameter
+        },
+        "propertiesIdsOverridden": []
+      }
+      ```
+
+      **Implication for wiring**: the 21 contract params from
+      `pcg_param_contract.md` (shelf_density / forklift_count /
+      lighting_preset / ...) map 1:1 to
+      `graphInstance.parametersOverrides.parameters.<param_name>`.
+      To set them via MCP, two routes:
+        - Set the whole struct in one go via
+          ObjectTools.set_properties(graphInstance, JSON({
+            "parametersOverrides": {"parameters": {"shelf_density": 0.9, ...},
+                                    "propertiesIdsOverridden": []}}))
+        - OR via ProgrammaticToolset.execute_tool_script Python:
+          gi.parameters_overrides.parameters["shelf_density"] = 0.9
+      Direct PCGComponent UPROPERTYs (`seed`, `bGenerated`, `bRegenerateInEditor`)
+      stay at the PCGComponent level, NOT via graphInstance.
+
+      Engine-bug workaround that made this work (mcp_client.py refactor):
+      - urllib -> http.client.HTTPConnection (persistent TCP socket reuse).
+        urllib opened new socket per request, UE 5.8 HttpListener crashed
+        with HttpConnection.cpp:184 assertion. http.client matches curl's
+        keep-alive reuse, no more crash.
+      - Drop `notifications/initialized` POST (UE plugin reacts badly).
+      - 0.5s gap between successive load_toolset.
+      - 30s timeout (Gemini's 60-120s was overkill in practice).
+      - tools/list state-prime before first load_toolset (was unnecessary
+        once persistent connection landed, kept as belt-and-suspenders).
 - [x] Write 老白-confirm P0 (see `agents/unreal/SHARED.md`) -- 实证完整,
       pending green-light.
