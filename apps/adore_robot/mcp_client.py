@@ -34,7 +34,8 @@ DEFAULT_TOOLSETS = [
 class UnrealMCPClient:
     PROTOCOL_VERSION = "2025-11-25"
 
-    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 30.0):
+    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 30.0,
+                 verbose: bool = False):
         self.url = url
         parsed = urllib.parse.urlparse(url)
         self._host = parsed.hostname or "127.0.0.1"
@@ -52,6 +53,7 @@ class UnrealMCPClient:
         # new connections). curl works because it reuses connections;
         # http.client.HTTPConnection matches that behaviour.
         self._conn: http.client.HTTPConnection | None = None
+        self.verbose = verbose
 
     def _ensure_conn(self) -> http.client.HTTPConnection:
         if self._conn is None:
@@ -151,8 +153,19 @@ class UnrealMCPClient:
             req_id = self._next_id
             self._next_id += 1
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
+        t0 = time.time()
         status, headers, raw = self._post(payload)
         data = self._parse_sse_or_json(raw)
+        if self.verbose:
+            label = method
+            if method == "tools/call" and isinstance(params, dict):
+                label += f"({params.get('name','?')})"
+                if params.get("name") == "load_toolset":
+                    args = params.get("arguments") or {}
+                    label += f"[{args.get('toolset_name','?')}]"
+            elapsed_ms = int((time.time() - t0) * 1000)
+            print(f"  [mcp] {label:60s} {elapsed_ms:>6d}ms  status={status}",
+                  flush=True)
         if status == 404 and self._session_id and _retry:
             self._session_id = None
             self._loaded_toolsets.clear()
@@ -165,6 +178,7 @@ class UnrealMCPClient:
         return data.get("result", data) if isinstance(data, dict) else {}
 
     def initialize(self) -> dict:
+        t0 = time.time()
         payload = {
             "jsonrpc": "2.0",
             "id": 0,
@@ -192,6 +206,9 @@ class UnrealMCPClient:
         # first real RPC. 0.2s is plenty in practice (was 0.8 originally,
         # over-conservative).
         time.sleep(0.2)
+        if self.verbose:
+            print(f"  [mcp] initialize{'':50s} {int((time.time()-t0)*1000):>6d}ms  "
+                  f"(incl 200ms settle)", flush=True)
         return data.get("result", {}) if isinstance(data, dict) else {}
 
     def ensure_session(self) -> None:

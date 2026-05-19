@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # Allow running from repo root or from apps/adore_robot/tools/
@@ -34,7 +35,13 @@ sys.path.insert(0, str(ADORE_ROOT))
 from mcp_client import UnrealMCPClient  # noqa: E402
 
 
+_step_t = [0.0]
 def banner(title: str) -> None:
+    now = time.time()
+    if _step_t[0]:
+        delta = now - _step_t[0]
+        print(f"\n  [step took {delta:.2f}s]")
+    _step_t[0] = now
     print()
     print("=" * 60)
     print(title)
@@ -44,7 +51,8 @@ def banner(title: str) -> None:
 def main() -> int:
     url = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8000/mcp")
     skip_autoload = "--no-autoload" in sys.argv
-    client = UnrealMCPClient(url=url)
+    client = UnrealMCPClient(url=url, verbose=True)
+    t_start = time.time()
 
     banner("Step 1: handshake")
     try:
@@ -117,9 +125,7 @@ def main() -> int:
             print(json.dumps(vals, indent=2, ensure_ascii=False))
 
     banner("DONE")
-    print("All steps green = Plan A wiring + Plan B exploration both verified.")
-    print("Paste full output into apps/adore_robot/docs/ue58_mcp_validation_log.md")
-    print("to backfill the 21-param OverrideParams structure section.")
+    print(f"All steps green. Total elapsed: {time.time() - t_start:.2f}s")
     return 0
 
 
