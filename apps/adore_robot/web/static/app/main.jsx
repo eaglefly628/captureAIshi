@@ -283,63 +283,143 @@ function App() {
       setStageProgress((i + 1) / callTotal);
     }
 
-    // GENERATE stage
-    setRunStatus('generate');
-    setStageProgress(0);
-    // auto-switch right tab to viewport-relevant params (already there) — but show generation through scene anim
-    await animateProgress(setStageProgress, STAGE_DURATIONS.generate);
-
     // Only render if a trigger_mrq_render was in the calls
     const willRender = resp.calls.some(c => c.name === 'trigger_mrq_render');
 
-    if (willRender) {
-      // RENDER stage
-      setRunStatus('render');
-      setStageProgress(0);
-      setRightTab('render');
-      const frameCount = params.frame_count;
-      const dur = STAGE_DURATIONS.render;
-      const startR = performance.now();
-      while (performance.now() - startR < dur) {
-        const t = Math.min(1, (performance.now() - startR) / dur);
-        setStageProgress(t);
-        setCurrentFrame(Math.round(t * frameCount));
-        await sleep(80);
-      }
+    if (!willRender) {
+      setRunStatus('done');
       setStageProgress(1);
-      setCurrentFrame(frameCount);
-
-      // PACKAGE stage
-      setRunStatus('package');
-      setStageProgress(0);
-      await animateProgress(setStageProgress, STAGE_DURATIONS.package);
-
-      // DONE
-      const subdir = (resp.calls.find(c => c.name === 'trigger_mrq_render') || {}).args?.subdir || 'warehouse/v0_demo';
-      const ds = {
-        path: subdir,
-        parquet: `${subdir.replace('/', '_')}.parquet`,
-        parquetSize: '184 KB',
-        video: `${subdir.replace('/', '_')}.mp4`,
-        videoSize: '12.4 MB',
-        exrs: frameCount,
-        exrSize: `${(frameCount * 8.2).toFixed(1)} MB`,
-        size: `${(frameCount * 8.2 + 12.4 + 0.18).toFixed(1)} MB`,
-      };
-      setDataset(ds);
-      setMessages(prev => prev.map((m, i) => i === assistantIdx
-        ? { ...m, dataset: ds }
-        : m));
-      setRunStatus('done');
-    } else {
-      // No render — just done
-      setRunStatus('done');
+      cancelAnimationFrame(animFrameRef.current);
+      busyRef.current = false;
+      return;
     }
 
-    setStageProgress(1);
+    // ── GENERATE + RENDER + PACKAGE driven by real backend SSE ──────────
+    // POST /api/demo/submit returns a real job_id + variant_id, then we
+    // open EventSource /api/demo/stream/{job_id} and map status/log/done
+    // events to UI stage state. Same protocol the UE commandlet will
+    // speak once the C++ pipeline lands, so no UI swap will be needed.
+    let submitResp;
+    try {
+      submitResp = await fetch('/api/demo/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene_id: effectiveScene,
+          pcg_params: params,
+          rationale: resp.narrate || '',
+          variants: 1,
+        }),
+      }).then(r => r.json());
+    } catch (err) {
+      console.error('[pipeline] submit failed:', err);
+      setRunStatus('done');
+      cancelAnimationFrame(animFrameRef.current);
+      busyRef.current = false;
+      return;
+    }
+
+    const job = submitResp && submitResp.jobs && submitResp.jobs[0];
+    if (!job) {
+      console.error('[pipeline] submit returned no job', submitResp);
+      setRunStatus('done');
+      cancelAnimationFrame(animFrameRef.current);
+      busyRef.current = false;
+      return;
+    }
+    setMrqSubdir(`${job.scene_id}/${job.variant_id}`);
+
+    setRunStatus('generate');
+    setStageProgress(0);
+
+    await new Promise((resolve) => {
+      const es = new EventSource(`/api/demo/stream/${job.job_id}`);
+      let frameTotal = params.frame_count || 30;
+
+      es.addEventListener('status', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.status === 'pcg') {
+            setRunStatus('generate');
+            setStageProgress(0);
+          } else if (d.status === 'mrq') {
+            setRunStatus('render');
+            setStageProgress(0);
+            setRightTab('render');
+            if (typeof d.frame_total === 'number') frameTotal = d.frame_total;
+          }
+          if (typeof d.frame_index === 'number' && typeof d.frame_total === 'number' && d.frame_total > 0) {
+            setCurrentFrame(d.frame_index);
+            setStageProgress(d.frame_index / d.frame_total);
+          }
+        } catch {}
+      });
+
+      es.addEventListener('log', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          const tick = /pcg_tick (\d+)\/(\d+)/.exec(d.line || '');
+          if (tick) {
+            setStageProgress(parseInt(tick[1], 10) / parseInt(tick[2], 10));
+            return;
+          }
+          const mrq = /mrq_frame (\d+)\/(\d+)/.exec(d.line || '');
+          if (mrq) {
+            const total = parseInt(mrq[2], 10);
+            const f = parseInt(mrq[1], 10);
+            setCurrentFrame(f);
+            setStageProgress(f / total);
+          }
+        } catch {}
+      });
+
+      es.addEventListener('done', async (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          const subdir = `${d.scene_id}/${d.variant_id}`;
+          setMrqSubdir(subdir);
+          setCurrentFrame(d.frames);
+
+          setRunStatus('package');
+          setStageProgress(0);
+          await animateProgress(setStageProgress, STAGE_DURATIONS.package);
+
+          const fc = d.frames || frameTotal;
+          const ds = {
+            path: subdir,
+            parquet: `${subdir.replace('/', '_')}.parquet`,
+            parquetSize: '184 KB',
+            video: `${subdir.replace('/', '_')}.mp4`,
+            videoSize: '12.4 MB',
+            exrs: fc,
+            exrSize: `${(fc * 8.2).toFixed(1)} MB`,
+            size: `${(fc * 8.2 + 12.4 + 0.18).toFixed(1)} MB`,
+            manifest: d.manifest_path,
+            job_id: d.job_id,
+          };
+          setDataset(ds);
+          setMessages(prev => prev.map((m, i) => i === assistantIdx
+            ? { ...m, dataset: ds }
+            : m));
+          setRunStatus('done');
+          setStageProgress(1);
+        } finally {
+          es.close();
+          resolve();
+        }
+      });
+
+      es.addEventListener('error', () => {
+        console.error('[stream] EventSource error');
+        setRunStatus('done');
+        es.close();
+        resolve();
+      });
+    });
+
     cancelAnimationFrame(animFrameRef.current);
     busyRef.current = false;
-  }, [scene, params.frame_count, setTweak, updateParam]);
+  }, [scene, params, setTweak, updateParam]);
 
   // ─── Free-chat path (no pipeline, no tool_calls; raw LLM reply) ──────────
   const freeChat = useCallback(async (userText) => {

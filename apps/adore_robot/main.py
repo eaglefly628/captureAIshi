@@ -192,8 +192,8 @@ def _short_key(env: str) -> str:
 
 
 @app.route("/")
-def design_view():
-    return render_template("design.html")
+def console_view():
+    return render_template("console.html")
 
 
 @app.route("/3d")
@@ -631,7 +631,7 @@ def main():
     port = int(os.environ.get("PORT", 5001))
     provider = auto_detect_provider()
     print(f"[adore_robot] serving on http://127.0.0.1:{port}")
-    print(f"[adore_robot]   design view: /          (operator console, mock-driven for now)")
+    print(f"[adore_robot]   console:     /          (operator console -- real LLM + MCP relay)")
     print(f"[adore_robot]   3d demo:     /3d        (three.js viewport + real LLM)")
     print(f"[adore_robot]   dev MCP:     /dev       (MCP bridge -> {MCP_URL})")
     print(f"[adore_robot]   debug:       /api/debug/last")
