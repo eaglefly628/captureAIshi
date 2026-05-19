@@ -127,8 +127,17 @@ class UnrealMCPClient:
             raise RuntimeError(f"MCP initialize failed {status}: {raw[:400]}")
         self._session_id = headers.get("Mcp-Session-Id") or headers.get("mcp-session-id")
         data = self._parse_sse_or_json(raw)
-        notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-        self._post(notif)
+        # IMPORTANT: do NOT send `notifications/initialized` here.
+        # MCP 2025-11-25 spec says client SHOULD send it post-initialize,
+        # but UE 5.8 Preview ModelContextProtocol plugin's HttpConnection
+        # state machine asserts (HttpConnection.cpp:184
+        # EHttpConnectionState::AwaitingProcessing) when a notification
+        # POST arrives back-to-back with subsequent tool calls -- crashes
+        # UE. Skip it. The tools/call methods work without the explicit
+        # initialized notification on this server.
+        # Brief settle delay so UE finishes any post-init bookkeeping
+        # before our first real RPC arrives.
+        time.sleep(0.8)
         return data.get("result", {}) if isinstance(data, dict) else {}
 
     def ensure_session(self) -> None:
@@ -185,11 +194,24 @@ class UnrealMCPClient:
     def auto_load_toolsets(self, names: list[str] | None = None,
                            gap_seconds: float = 0.5) -> dict:
         """Load default 4 core toolsets if not already loaded this session.
-        Idempotent -- skips ones in _loaded_toolsets cache. Adds a small
-        gap between loads to give UE 5.8's Python sandbox loader time to
-        digest (rapid back-to-back loads were observed to stress the
-        ModelContextProtocol plugin)."""
+
+        Workarounds for UE 5.8 Preview ModelContextProtocol plugin bugs:
+        - Prime the HTTP connection state machine with a `tools/list` call
+          BEFORE the first `load_toolset`. Without this, calling load_toolset
+          as the first tool dispatch on a fresh session triggers an engine
+          assertion (HttpConnection.cpp:184) and crashes UE. User's earlier
+          manual curl tests survived because they ran tools/list first.
+        - Small gap (default 0.5s) between successive load_toolset calls.
+        """
         self.ensure_session()
+        # State-prime: cheap tools/list call that we don't care about the
+        # result of, just to nudge UE's HttpConnection state machine into
+        # the right state before we send tool dispatches.
+        try:
+            self._rpc("tools/list")
+        except Exception:
+            pass  # if even prime fails, the real load_toolset below will fail
+                  # with a real error message
         names = names or DEFAULT_TOOLSETS
         loaded = []
         skipped = []
