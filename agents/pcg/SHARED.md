@@ -80,7 +80,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.3.3] <commit-sha> -- xiaohuan (PG_Warehouse design + AICallable pointer + drift fix)
+### [v0.3.3] 5b62b77 -- xiaohuan (PG_Warehouse design + AICallable pointer + drift fix)
 - apps/adore_robot/docs/pg_warehouse_graph_design.md: 11 参数 (7 warehouse + 4 common) -> 8 Stage 节点拓扑 + edge case + Nanite/HISM 选型 + xiaoxu UE Editor 7 步 checklist
 - apps/adore_robot/docs/pcg_param_contract.md §9: AICallable Method 映射 pointer (两行 + v2 doc §2.2-§2.4 链接 + 边界规则, 不复制粘贴防漂移)
 - apps/adore_robot/docs/pcg_param_contract.md §1.0: 新增 Common to ALL scenes (room_w_m / room_l_m / ceiling_h_m / worker_count) 收编 commit d45a3af3 drift
