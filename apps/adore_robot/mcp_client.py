@@ -34,7 +34,7 @@ DEFAULT_TOOLSETS = [
 class UnrealMCPClient:
     PROTOCOL_VERSION = "2025-11-25"
 
-    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 30.0):
+    def __init__(self, url: str = "http://127.0.0.1:8000/mcp", timeout: float = 60.0):
         self.url = url
         parsed = urllib.parse.urlparse(url)
         self._host = parsed.hostname or "127.0.0.1"
