@@ -455,6 +455,16 @@ class UnrealMCPClient:
             {"script": script},
         )
 
+    def execute_demo_tool(self, script: str) -> dict:
+        """Run a pre-built unreal-python script in UE via Programmatic
+        Toolset. Returns the script's `return` value (a dict by convention
+        for the demo tools)."""
+        self.auto_load_toolsets()
+        return self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset.execute_tool_script",
+            {"script": script},
+        )
+
     def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
         """One-call orchestration: ensure toolsets loaded, find PCG
         Component, set the provided pcg_params delta, optionally trigger

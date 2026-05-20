@@ -62,6 +62,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from mcp_client import UnrealMCPClient
 from demo.prompts import SYSTEM_PROMPT, UPDATE_SCENE_TOOL
+from demo.demo_tools import DEMO_TOOLS, DEMO_TOOL_NAMES, build_script_for, _clamp_xy
 from demo.runner import DemoJobRegistry
 from demo.thumbnail import render_thumbnail_svg
 from llm import Message, make_llm_client
@@ -281,10 +282,10 @@ def api_chat():
         )
         chat_kwargs = dict(
             messages=[Message(role="user", content=user_msg)],
-            tools=[UPDATE_SCENE_TOOL],
+            tools=[UPDATE_SCENE_TOOL] + DEMO_TOOLS,
             tool_choice="auto",
             system=SYSTEM_PROMPT,
-            max_tokens=512,
+            max_tokens=600,
         )
 
     t0 = time.time()
@@ -319,17 +320,21 @@ def api_chat():
     CHAT_LOG.appendleft(log_entry)
 
     # ── MCP relay (scene mode only) ─────────────────────────────────────
-    # When the LLM emits an update_scene tool_call with a non-empty
-    # pcg_params delta, push it through to a live UE Editor via MCP.
-    # Gracefully no-ops with a structured reason when UE is unreachable
-    # (sandbox demo, MCP server not started, etc).
+    # Two paths:
+    #   (a) update_scene tool_call -> apply_pcg_delta (PCG graph params)
+    #   (b) v0 demo tool_call (spawn/delete/move/list/generate/clear)
+    #       -> execute_tool_script with a pre-built unreal-python snippet.
+    # Either gracefully no-ops with a structured reason when UE is
+    # unreachable (sandbox demo, MCP server not started, etc).
     mcp_relay = None
-    if (mode == "scene" and tc and isinstance(tc.arguments, dict)
-            and tc.arguments.get("pcg_params")):
-        pcg_params = tc.arguments["pcg_params"]
-        mcp_relay = _try_mcp_relay(pcg_params)
-        _log("MCP-RELAY", f"ok={mcp_relay.get('ok')}",
-             f"target={mcp_relay.get('pcg_component') or mcp_relay.get('reason') or '?'}")
+    if mode == "scene" and tc and isinstance(tc.arguments, dict):
+        if tc.name == "update_scene" and tc.arguments.get("pcg_params"):
+            mcp_relay = _try_mcp_relay(tc.arguments["pcg_params"])
+        elif tc.name in DEMO_TOOL_NAMES:
+            mcp_relay = _try_demo_tool(tc.name, tc.arguments)
+        if mcp_relay is not None:
+            _log("MCP-RELAY", f"tool={tc.name}", f"ok={mcp_relay.get('ok')}",
+                 f"target={mcp_relay.get('pcg_component') or mcp_relay.get('reason') or '?'}")
 
     return jsonify({
         "ok": True,
@@ -343,6 +348,30 @@ def api_chat():
         "text": result.text,
         "mcp_relay": mcp_relay,
     })
+
+
+def _try_demo_tool(tool_name: str, args: dict) -> dict:
+    """Translate a v0 demo tool_call (spawn/delete/move/list/...) into a
+    Python script and inject via MCP execute_tool_script. Same graceful
+    error envelope as _try_mcp_relay."""
+    try:
+        clamped, warns = _clamp_xy(args)
+        script = build_script_for(tool_name, clamped)
+        result = mcp.execute_demo_tool(script)
+        out = {"ok": True, "tool": tool_name, "args": clamped, "result": result}
+        if warns:
+            out["warnings"] = warns
+        return out
+    except ConnectionError as e:
+        return {"ok": False, "skipped": True,
+                "reason": "UE MCP server unreachable",
+                "detail": str(e),
+                "hint": "start UE Editor + run `ModelContextProtocol.StartServer`"}
+    except KeyError as e:
+        return {"ok": False, "skipped": False, "reason": str(e)}
+    except Exception as e:
+        return {"ok": False, "skipped": False,
+                "reason": f"{type(e).__name__}: {e}"}
 
 
 def _try_mcp_relay(pcg_params: dict) -> dict:
