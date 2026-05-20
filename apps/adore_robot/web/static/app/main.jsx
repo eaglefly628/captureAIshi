@@ -174,6 +174,10 @@ function App() {
   // Viewport starts empty (just floor + walls). First successful chat
   // action seeds the mock layout so the customer sees "empty -> populated".
   const [sceneSeeded, setSceneSeeded] = useState(false);
+  // Mirror of UE Demo/v0 folder state. Each entry comes from a real
+  // server-confirmed action; viewport renders these 1:1 so the SVG iso
+  // mock matches what's actually in the UE level.
+  const [spawnedActors, setSpawnedActors] = useState([]);
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -282,14 +286,53 @@ function App() {
     try {
       const realCalls = await callRealChat(userText, effectiveScene, params);
       resp = realCalls;
-      // Seed the mock viewport ONLY when a real spawn happened on UE.
-      // list_objects / delete_object / etc. shouldn't make the warehouse
-      // suddenly appear -- that's misleading. clear_demo_objects unseeds.
+      // Mirror UE state into spawnedActors so the viewport shows exactly
+      // what was just spawned/moved/deleted -- nothing more.
       const r = realCalls.relayMeta;
-      if (r) {
-        if (r.tool === 'spawn_object' && r.result?.actor_handle) setSceneSeeded(true);
-        else if (r.tool === 'generate_warehouse_layout' && r.result?.total > 0) setSceneSeeded(true);
-        else if (r.tool === 'clear_demo_objects') setSceneSeeded(false);
+      if (r && r.ok) {
+        const res = r.result || {};
+        if (r.tool === 'spawn_object' && res.actor_handle) {
+          setSpawnedActors(prev => [...prev, {
+            actor_handle: res.actor_handle,
+            asset_name: res.asset_name,
+            x: res.x, y: res.y, z: res.z, yaw_deg: res.yaw_deg,
+          }]);
+          setSceneSeeded(true);
+        } else if (r.tool === 'generate_warehouse_layout' && Array.isArray(res.spawned)) {
+          setSpawnedActors(res.spawned.map(s => ({
+            actor_handle: s.actor_handle,
+            asset_name: s.asset_name,
+            x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
+          })));
+          setSceneSeeded(true);
+        } else if (r.tool === 'clear_demo_objects') {
+          setSpawnedActors([]);
+          setSceneSeeded(false);
+        } else if (r.tool === 'delete_object' && res.deleted) {
+          setSpawnedActors(prev => prev.filter(a => a.actor_handle !== res.deleted));
+        } else if (r.tool === 'modify_location' && res.actor_handle) {
+          setSpawnedActors(prev => {
+            // server may have re-spawned with new handle (see demo_move);
+            // drop old, push new entry at new coords.
+            const oldH = res.old_handle;
+            const keep = oldH ? prev.filter(a => a.actor_handle !== oldH) : prev;
+            const old = oldH ? prev.find(a => a.actor_handle === oldH) : null;
+            return [...keep, {
+              actor_handle: res.actor_handle,
+              asset_name: old?.asset_name || 'shelf',
+              x: res.new_xyz_m[0], y: res.new_xyz_m[1], z: res.new_xyz_m[2] ?? 0,
+              yaw_deg: old?.yaw_deg || 0,
+            }];
+          });
+        } else if (r.tool === 'list_objects' && Array.isArray(res.objects)) {
+          // Treat as authoritative sync from server ledger
+          setSpawnedActors(res.objects.map(o => ({
+            actor_handle: o.actor_handle,
+            asset_name: o.asset_name,
+            x: o.x, y: o.y, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
+          })));
+          if (res.objects.length > 0) setSceneSeeded(true);
+        }
       }
     } catch (err) {
       console.error('[chat] real LLM failed, fallback to canned:', err);
@@ -622,6 +665,7 @@ function App() {
               generating={generating}
               generateProgress={generating ? stageProgress : 1}
               seeded={sceneSeeded}
+              spawnedActors={spawnedActors}
             />
             <div className="viewport-overlay">
               <div className="vp-stat"><span className="k">scene</span><span className="v">{scene}</span></div>

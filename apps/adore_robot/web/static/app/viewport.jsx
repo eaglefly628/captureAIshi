@@ -436,7 +436,7 @@ function buildFactoryLayout(p) {
 }
 
 // ─── Main scene component ───────────────────────────────────────────────────
-function Scene({ params, scene, robot, generating, generateProgress, seeded = true }) {
+function Scene({ params, scene, robot, generating, generateProgress, seeded = true, spawnedActors = [] }) {
   const tint = LIGHTING_TINTS[params.lighting_preset] || LIGHTING_TINTS.sodium;
 
   const layout = useMemo(() => {
@@ -504,30 +504,42 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
         <Floor w={roomW} d={roomD} color={tint.floor} strokeColor={tint.floorStroke} />
         <Walls w={roomW} d={roomD} h={params.ceiling_h_m} lightTint={tint} />
 
-        {/* Items: only render when the scene has been seeded by a real
-            chat action. Default state shows empty floor + walls + lighting. */}
-        {seeded && layout.kind === 'warehouse' && (
-          <>
-            {layout.shelves.map((s, i) => (
-              <g key={s.id} style={itemStyle(i, itemTotal)}>
-                <Shelf x={s.x} y={s.y} w={s.w} d={s.d} loadFactor={s.loadFactor} seed={s.seed} />
-              </g>
-            ))}
-            {layout.forklifts.map((f, i) => (
-              <g key={f.id} style={itemStyle(layout.shelves.length + i, itemTotal)}>
-                <Forklift x={f.x} y={f.y} />
-              </g>
-            ))}
-            {layout.workers.map((wkr, i) => (
-              <g key={wkr.id} style={itemStyle(layout.shelves.length + layout.forklifts.length + i, itemTotal)}>
-                <IsoBox x={wkr.x - 0.15} y={wkr.y - 0.1} w={0.3} d={0.2} h={1.7}
-                  top="#E8C8A8" left="#A88868" right="#75584A" />
-              </g>
-            ))}
-            <g style={itemStyle(itemTotal - 1, itemTotal)}>
-              {renderRobot()}
-            </g>
-          </>
+        {/* Items: driven by real server-spawned actors, not mock params.
+            Each spawnedActor entry corresponds to one StaticMeshActor in
+            UE's Demo/v0 folder. Empty array -> empty viewport, matches UE. */}
+        {scene === 'warehouse' && spawnedActors.map((a, i) => {
+          // Center-anchor each render around the actor's scene-local (x, y).
+          // UE +X is "north" in our iso projection -- swap as needed if the
+          // axis mapping ever feels off.
+          const sx = a.x ?? 0, sy = a.y ?? 0;
+          if (a.asset_name === 'shelf') {
+            return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
+              <Shelf x={sx - 0.8} y={sy - 0.6} w={1.6} d={1.2} loadFactor={0.6} seed={i * 13} />
+            </g>;
+          }
+          if (a.asset_name === 'forklift') {
+            return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
+              <Forklift x={sx} y={sy} />
+            </g>;
+          }
+          // pallet / box / drum / worker / unknown -> IsoBox of varying size
+          const PROFILES = {
+            pallet: { w: 1.2, d: 0.8, h: 0.15, top: '#C8A878', left: '#8E7448', right: '#6A5232' },
+            box:    { w: 0.6, d: 0.6, h: 0.6,  top: '#D9C098', left: '#A08560', right: '#735940' },
+            drum:   { w: 0.6, d: 0.6, h: 0.9,  top: '#5A6B7A', left: '#3F4D5A', right: '#2B3540' },
+            worker: { w: 0.3, d: 0.2, h: 1.7,  top: '#E8C8A8', left: '#A88868', right: '#75584A' },
+          };
+          const p = PROFILES[a.asset_name] || { w: 0.5, d: 0.5, h: 0.5, top: '#8A95A5', left: '#5F6878', right: '#3F4855' };
+          return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
+            <IsoBox x={sx - p.w / 2} y={sy - p.d / 2} w={p.w} d={p.d} h={p.h}
+              top={p.top} left={p.left} right={p.right} />
+          </g>;
+        })}
+        {/* Robot pose: only when warehouse has at least one actor */}
+        {scene === 'warehouse' && spawnedActors.length > 0 && (
+          <g style={itemStyle(spawnedActors.length, spawnedActors.length + 1)}>
+            {renderRobot()}
+          </g>
         )}
 
         {seeded && layout.kind === 'living' && (

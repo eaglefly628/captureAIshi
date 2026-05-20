@@ -463,6 +463,13 @@ class UnrealMCPClient:
 
     DEMO_FOLDER = "Demo/v0"
 
+    # Server-side actor ledger keyed by handle. UE's StaticMeshActor
+    # doesn't expose `root_component` to ObjectTools reflection cleanly,
+    # so we cache exact spawn coordinates here. Source of truth for
+    # demo_list / demo_move / demo_delete. Survives only the current
+    # MCP client lifetime (process restart resets it).
+    _DEMO_LEDGER: dict = {}
+
     def _demo_origin_world_cm(self) -> dict:
         """Return BP_DemoOrigin world location in cm, or origin if absent."""
         if getattr(self, "_demo_origin_cache", None):
@@ -544,12 +551,16 @@ class UnrealMCPClient:
                 )
             except Exception:
                 pass
-        return {
+        record = {
             "actor_handle": actor_name,
             "actor_ref": actor_ref,
             "asset_name": asset_name,
             "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
         }
+        self._DEMO_LEDGER[actor_name] = record
+        if actor_ref:
+            self._DEMO_LEDGER[actor_ref] = record  # alt lookup
+        return record
 
     def _list_demo_folder(self) -> list:
         """get_actors_in_folder, but treat 'folder does not exist' as
@@ -580,76 +591,100 @@ class UnrealMCPClient:
 
     def demo_delete(self, handle: str) -> dict:
         self.auto_load_toolsets()
-        ref = self._find_demo_actor(handle)
+        rec = self._DEMO_LEDGER.get(handle)
+        ref = (rec or {}).get("actor_ref") or self._find_demo_actor(handle)
         if not ref:
             return {"error": f"no demo actor matching '{handle}'"}
         ok = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
             {"actor": ref},
         )
+        # purge from ledger by both keys.
+        for k in [handle, ref] + ([rec.get("actor_handle")] if rec else []):
+            if k:
+                self._DEMO_LEDGER.pop(k, None)
         return {"deleted": handle, "actor_ref": ref, "ok": bool(ok)}
 
     def demo_move(self, handle: str, x_m: float, y_m: float, z_m: float = 0.0) -> dict:
+        """Move via delete + respawn at new (x,y,z) keeping asset + yaw.
+        ObjectTools.set_properties can't reach AStaticMeshActor's transform
+        via root_component, so we fake it by re-spawning. New actor gets a
+        new handle; we update the ledger so the LLM's next reference works."""
         self.auto_load_toolsets()
-        ref = self._find_demo_actor(handle)
-        if not ref:
-            return {"error": f"no demo actor matching '{handle}'"}
-        anchor = self._demo_origin_world_cm()
-        # UPROPERTY path: write root_component.relative_location. Falls
-        # back to actor_location for AStaticMeshActor exposed as a direct
-        # property in some bindings.
-        new_loc = {
-            "x": anchor["x"] + x_m * 100,
-            "y": anchor["y"] + y_m * 100,
-            "z": anchor["z"] + z_m * 100,
-        }
+        rec = self._DEMO_LEDGER.get(handle)
+        if not rec:
+            ref = self._find_demo_actor(handle)
+            if not ref:
+                return {"error": f"no demo actor matching '{handle}'"}
+            rec = {"actor_ref": ref, "asset_name": "unknown", "yaw_deg": 0.0}
+        # delete old
         try:
-            self.set_actor_properties(ref, {"root_component": {"relative_location": new_loc}})
-            return {"actor_handle": handle, "new_xyz_m": [x_m, y_m, z_m], "actor_ref": ref}
-        except Exception as e:
-            return {"error": f"move failed: {type(e).__name__}: {e}", "actor_ref": ref}
+            self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
+                {"actor": rec["actor_ref"]},
+            )
+        except Exception:
+            pass
+        self._DEMO_LEDGER.pop(handle, None)
+        if rec.get("actor_ref"):
+            self._DEMO_LEDGER.pop(rec["actor_ref"], None)
+        # respawn at new location
+        from demo.asset_registry import resolve as _resolve  # late import: avoid cycle
+        try:
+            asset_path = _resolve(rec.get("asset_name", "shelf"))
+        except Exception:
+            asset_path = _resolve("shelf")  # fallback
+        new_rec = self.demo_spawn(
+            asset_path=asset_path,
+            asset_name=rec.get("asset_name", "shelf"),
+            x_m=x_m, y_m=y_m, z_m=z_m,
+            yaw_deg=rec.get("yaw_deg", 0.0),
+        )
+        return {
+            "actor_handle": new_rec["actor_handle"],
+            "old_handle": handle,
+            "new_xyz_m": [x_m, y_m, z_m],
+            "actor_ref": new_rec["actor_ref"],
+        }
 
     def demo_list(self) -> dict:
+        """Return ledger entries that still correspond to a live actor in
+        the Demo/v0 folder. Source of truth = our spawn ledger; we
+        intersect with the live folder so deletes outside the LLM (manual
+        Editor cleanup, level reload) don't leave stale handles."""
         self.auto_load_toolsets()
-        anchor = self._demo_origin_world_cm()
-        actors = self._list_demo_folder()
+        live_refs = set()
+        for a in self._list_demo_folder():
+            ref = a.get("refPath") if isinstance(a, dict) else a
+            if ref:
+                live_refs.add(ref)
         out = []
-        if isinstance(actors, list):
-            for a in actors:
-                ref = a.get("refPath") if isinstance(a, dict) else a
-                if not ref:
-                    continue
-                name = ref.rsplit(".", 1)[-1]
-                # parse asset_name from "Demo_<asset>_<suffix>"
-                asset_name = "unknown"
-                if name.startswith("Demo_"):
-                    rest = name[5:].rsplit("_", 1)[0]
-                    asset_name = rest
-                try:
-                    props = self.get_actor_properties(ref, ["root_component"])
-                    rc = props.get("root_component") if isinstance(props, dict) else {}
-                    loc = (rc.get("relative_location") if isinstance(rc, dict) else {}) or {}
-                    rot = (rc.get("relative_rotation") if isinstance(rc, dict) else {}) or {}
-                    out.append({
-                        "actor_handle": name,
-                        "actor_ref": ref,
-                        "asset_name": asset_name,
-                        "x": (float(loc.get("x", anchor["x"])) - anchor["x"]) / 100,
-                        "y": (float(loc.get("y", anchor["y"])) - anchor["y"]) / 100,
-                        "z": (float(loc.get("z", anchor["z"])) - anchor["z"]) / 100,
-                        "yaw_deg": float(rot.get("yaw", 0)),
-                    })
-                except Exception:
-                    out.append({"actor_handle": name, "actor_ref": ref, "asset_name": asset_name})
+        seen_handles = set()
+        for k, rec in list(self._DEMO_LEDGER.items()):
+            h = rec.get("actor_handle")
+            if not h or h in seen_handles:
+                continue
+            seen_handles.add(h)
+            if live_refs and rec.get("actor_ref") and rec["actor_ref"] not in live_refs:
+                # ledger entry stale -- actor gone from level
+                self._DEMO_LEDGER.pop(k, None)
+                continue
+            out.append({
+                "actor_handle": h,
+                "asset_name": rec.get("asset_name", "unknown"),
+                "x": rec.get("x", 0),
+                "y": rec.get("y", 0),
+                "z": rec.get("z", 0),
+                "yaw_deg": rec.get("yaw_deg", 0),
+            })
         return {"objects": out}
 
     def demo_clear(self) -> dict:
         self.auto_load_toolsets()
-        # remove_from_scene each demo actor; cheaper than per-actor lookup.
-        listed = self.demo_list().get("objects", [])
         cleared = 0
-        for o in listed:
-            ref = o.get("actor_ref")
+        # iterate the folder live (covers actors spawned outside ledger too)
+        for a in self._list_demo_folder():
+            ref = a.get("refPath") if isinstance(a, dict) else a
             if not ref:
                 continue
             try:
@@ -660,6 +695,7 @@ class UnrealMCPClient:
                 cleared += 1
             except Exception:
                 pass
+        self._DEMO_LEDGER.clear()
         return {"cleared": cleared}
 
     def demo_generate_warehouse(self, asset_resolver, **p) -> dict:

@@ -21,11 +21,16 @@ calls that drive the live Unreal Editor.
     shelf, forklift, pallet, box, drum, worker
 - delete_object(actor_handle) -- destroy one demo-spawned actor by handle.
 - modify_location(actor_handle, x, y, z?) -- translate one actor.
-- list_objects() -- ONLY call this when you need to look up an existing
-  actor's handle because the user said "那个叉车" / "刚才那个箱子" /
-  "中间那个" and you don't have the handle from a previous turn. Do NOT
-  call list_objects to "check what's there" before spawning -- the scene
-  may be empty and that wastes a tool round-trip.
+- list_objects() -- ONLY call this in TWO cases:
+    (a) user explicitly asks "现在场景里有什么 / 列出所有物件 / what's
+        currently in the scene"
+    (b) user wants to delete/move a SPECIFIC existing actor and uses an
+        ambiguous reference ("那个叉车 / 刚才那个箱子 / 中间那个")
+  NEVER call list_objects before spawn_object. Adding a new object does
+  not require knowing what already exists. "再放一个" / "添加" / "加一台"
+  / "再来一个" ALWAYS map to spawn_object directly with reasonable
+  coordinates (defaults: x=0 if not specified, y=0 if not specified,
+  shifted per the heuristic below).
 - generate_warehouse_layout(room_w_m?, room_l_m?, shelf_rows?, ...) -- one
   call lays out a full warehouse (shelves in rows, forklifts in aisles,
   pallets/boxes/drums scattered). Reach for this when the user says
