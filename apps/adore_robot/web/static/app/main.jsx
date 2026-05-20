@@ -282,9 +282,15 @@ function App() {
     try {
       const realCalls = await callRealChat(userText, effectiveScene, params);
       resp = realCalls;
-      // First successful chat action seeds the mock viewport so the
-      // customer sees the "empty -> populated" transition.
-      setSceneSeeded(true);
+      // Seed the mock viewport ONLY when a real spawn happened on UE.
+      // list_objects / delete_object / etc. shouldn't make the warehouse
+      // suddenly appear -- that's misleading. clear_demo_objects unseeds.
+      const r = realCalls.relayMeta;
+      if (r) {
+        if (r.tool === 'spawn_object' && r.result?.actor_handle) setSceneSeeded(true);
+        else if (r.tool === 'generate_warehouse_layout' && r.result?.total > 0) setSceneSeeded(true);
+        else if (r.tool === 'clear_demo_objects') setSceneSeeded(false);
+      }
     } catch (err) {
       console.error('[chat] real LLM failed, fallback to canned:', err);
       resp = chooseResponse(userText, effectiveScene);
@@ -762,7 +768,7 @@ async function callRealChat(userText, scene, currentParams) {
     }
   }
   const narrate = `${toolNarrate}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms${relayLine}`;
-  return { narrate, calls };
+  return { narrate, calls, relayMeta: relay };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

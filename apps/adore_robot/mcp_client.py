@@ -551,15 +551,24 @@ class UnrealMCPClient:
             "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
         }
 
-    def _find_demo_actor(self, handle: str) -> str | None:
-        actors = self.call_tool_unwrapped(
-            "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
-            {"folder_path": self.DEMO_FOLDER, "recursive": False},
-        )
+    def _list_demo_folder(self) -> list:
+        """get_actors_in_folder, but treat 'folder does not exist' as
+        empty so list/clear/delete don't error before the first spawn."""
+        try:
+            actors = self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
+                {"folder_path": self.DEMO_FOLDER, "recursive": False},
+            )
+        except Exception as e:
+            if "does not exist" in str(e).lower() or "Folder does not exist" in str(e):
+                return []
+            raise
         if isinstance(actors, dict):
             actors = actors.get("actors") or actors.get("results") or []
-        if not isinstance(actors, list):
-            return None
+        return actors if isinstance(actors, list) else []
+
+    def _find_demo_actor(self, handle: str) -> str | None:
+        actors = self._list_demo_folder()
         for a in actors:
             ref = a.get("refPath") if isinstance(a, dict) else a
             if not ref:
@@ -603,12 +612,7 @@ class UnrealMCPClient:
     def demo_list(self) -> dict:
         self.auto_load_toolsets()
         anchor = self._demo_origin_world_cm()
-        actors = self.call_tool_unwrapped(
-            "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
-            {"folder_path": self.DEMO_FOLDER, "recursive": False},
-        )
-        if isinstance(actors, dict):
-            actors = actors.get("actors") or actors.get("results") or []
+        actors = self._list_demo_folder()
         out = []
         if isinstance(actors, list):
             for a in actors:
