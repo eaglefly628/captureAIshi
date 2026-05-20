@@ -171,6 +171,9 @@ function App() {
   const [chatMode, setChatMode] = useState('scene');
   const [mcpInit, setMcpInit] = useState(null);
   const [mcpInitDismissed, setMcpInitDismissed] = useState(false);
+  // Viewport starts empty (just floor + walls). First successful chat
+  // action seeds the mock layout so the customer sees "empty -> populated".
+  const [sceneSeeded, setSceneSeeded] = useState(false);
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -279,6 +282,9 @@ function App() {
     try {
       const realCalls = await callRealChat(userText, effectiveScene, params);
       resp = realCalls;
+      // First successful chat action seeds the mock viewport so the
+      // customer sees the "empty -> populated" transition.
+      setSceneSeeded(true);
     } catch (err) {
       console.error('[chat] real LLM failed, fallback to canned:', err);
       resp = chooseResponse(userText, effectiveScene);
@@ -609,6 +615,7 @@ function App() {
               robot={robot}
               generating={generating}
               generateProgress={generating ? stageProgress : 1}
+              seeded={sceneSeeded}
             />
             <div className="viewport-overlay">
               <div className="vp-stat"><span className="k">scene</span><span className="v">{scene}</span></div>

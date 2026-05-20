@@ -455,15 +455,270 @@ class UnrealMCPClient:
             {"script": script},
         )
 
-    def execute_demo_tool(self, script: str) -> dict:
-        """Run a pre-built unreal-python script in UE via Programmatic
-        Toolset. Returns the script's `return` value (a dict by convention
-        for the demo tools)."""
+    # ─── Demo v0 actor primitives (native MCP, NO execute_tool_script) ──
+    # UE 5.8 ProgrammaticToolset Python sandbox refuses `import unreal`
+    # (allowlist = {math, json, copy, re, datetime}). All demo actor ops
+    # therefore go through SceneTools native RPCs, which call into the
+    # editor on the game thread directly.
+
+    DEMO_FOLDER = "Demo/v0"
+
+    def _demo_origin_world_cm(self) -> dict:
+        """Return BP_DemoOrigin world location in cm, or origin if absent."""
+        if getattr(self, "_demo_origin_cache", None):
+            return self._demo_origin_cache
+        try:
+            anchors = self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                {"glob": "*DemoOrigin*"},
+            )
+            if isinstance(anchors, dict):
+                anchors = anchors.get("actors") or anchors.get("results") or []
+            if isinstance(anchors, list) and anchors:
+                first = anchors[0]
+                ref = first.get("refPath") if isinstance(first, dict) else first
+                if ref:
+                    props = self.get_actor_properties(ref, ["root_component"])
+                    rc = props.get("root_component") if isinstance(props, dict) else None
+                    if isinstance(rc, dict):
+                        loc = (
+                            rc.get("relative_location")
+                            or rc.get("relativeLocation")
+                            or rc.get("location")
+                            or {}
+                        )
+                        if isinstance(loc, dict) and "x" in loc:
+                            self._demo_origin_cache = {
+                                "x": float(loc.get("x", 0)),
+                                "y": float(loc.get("y", 0)),
+                                "z": float(loc.get("z", 0)),
+                            }
+                            return self._demo_origin_cache
+        except Exception:
+            pass
+        self._demo_origin_cache = {"x": 0.0, "y": 0.0, "z": 0.0}
+        return self._demo_origin_cache
+
+    @staticmethod
+    def _xform(loc_cm: dict, yaw_deg: float = 0.0) -> dict:
+        return {
+            "location": {"x": loc_cm["x"], "y": loc_cm["y"], "z": loc_cm["z"]},
+            "rotation": {"pitch": 0.0, "yaw": float(yaw_deg), "roll": 0.0},
+            "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+        }
+
+    def demo_spawn(self, asset_path: str, asset_name: str,
+                   x_m: float, y_m: float, z_m: float = 0.0,
+                   yaw_deg: float = 0.0) -> dict:
+        """Spawn a static mesh at scene-local (x,y,z) meters. Tags via
+        outliner folder Demo/v0 for safe bulk-delete later."""
         self.auto_load_toolsets()
-        return self.call_tool_unwrapped(
-            "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset.execute_tool_script",
-            {"script": script},
+        anchor = self._demo_origin_world_cm()
+        world = {
+            "x": anchor["x"] + x_m * 100,
+            "y": anchor["y"] + y_m * 100,
+            "z": anchor["z"] + z_m * 100,
+        }
+        # Unique-ish name so the outliner doesn't auto-rename and lose us.
+        suffix = int(time.time() * 1000) & 0xFFFF
+        actor_name = f"Demo_{asset_name}_{suffix}"
+        spawned = self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.add_to_scene_from_asset",
+            {
+                "asset_path": asset_path,
+                "name": actor_name,
+                "xform": self._xform(world, yaw_deg),
+            },
         )
+        actor_ref = None
+        if isinstance(spawned, str):
+            actor_ref = spawned
+        elif isinstance(spawned, dict):
+            actor_ref = spawned.get("refPath") or spawned.get("actor")
+        # Move into demo folder (best-effort; ignore failures).
+        if actor_ref:
+            try:
+                self.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.scene.SceneTools.set_actor_folder",
+                    {"actor": actor_ref, "folder_path": self.DEMO_FOLDER},
+                )
+            except Exception:
+                pass
+        return {
+            "actor_handle": actor_name,
+            "actor_ref": actor_ref,
+            "asset_name": asset_name,
+            "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
+        }
+
+    def _find_demo_actor(self, handle: str) -> str | None:
+        actors = self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
+            {"folder_path": self.DEMO_FOLDER, "recursive": False},
+        )
+        if isinstance(actors, dict):
+            actors = actors.get("actors") or actors.get("results") or []
+        if not isinstance(actors, list):
+            return None
+        for a in actors:
+            ref = a.get("refPath") if isinstance(a, dict) else a
+            if not ref:
+                continue
+            name = ref.rsplit(".", 1)[-1]
+            if name == handle or handle in name:
+                return ref
+        return None
+
+    def demo_delete(self, handle: str) -> dict:
+        self.auto_load_toolsets()
+        ref = self._find_demo_actor(handle)
+        if not ref:
+            return {"error": f"no demo actor matching '{handle}'"}
+        ok = self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
+            {"actor": ref},
+        )
+        return {"deleted": handle, "actor_ref": ref, "ok": bool(ok)}
+
+    def demo_move(self, handle: str, x_m: float, y_m: float, z_m: float = 0.0) -> dict:
+        self.auto_load_toolsets()
+        ref = self._find_demo_actor(handle)
+        if not ref:
+            return {"error": f"no demo actor matching '{handle}'"}
+        anchor = self._demo_origin_world_cm()
+        # UPROPERTY path: write root_component.relative_location. Falls
+        # back to actor_location for AStaticMeshActor exposed as a direct
+        # property in some bindings.
+        new_loc = {
+            "x": anchor["x"] + x_m * 100,
+            "y": anchor["y"] + y_m * 100,
+            "z": anchor["z"] + z_m * 100,
+        }
+        try:
+            self.set_actor_properties(ref, {"root_component": {"relative_location": new_loc}})
+            return {"actor_handle": handle, "new_xyz_m": [x_m, y_m, z_m], "actor_ref": ref}
+        except Exception as e:
+            return {"error": f"move failed: {type(e).__name__}: {e}", "actor_ref": ref}
+
+    def demo_list(self) -> dict:
+        self.auto_load_toolsets()
+        anchor = self._demo_origin_world_cm()
+        actors = self.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
+            {"folder_path": self.DEMO_FOLDER, "recursive": False},
+        )
+        if isinstance(actors, dict):
+            actors = actors.get("actors") or actors.get("results") or []
+        out = []
+        if isinstance(actors, list):
+            for a in actors:
+                ref = a.get("refPath") if isinstance(a, dict) else a
+                if not ref:
+                    continue
+                name = ref.rsplit(".", 1)[-1]
+                # parse asset_name from "Demo_<asset>_<suffix>"
+                asset_name = "unknown"
+                if name.startswith("Demo_"):
+                    rest = name[5:].rsplit("_", 1)[0]
+                    asset_name = rest
+                try:
+                    props = self.get_actor_properties(ref, ["root_component"])
+                    rc = props.get("root_component") if isinstance(props, dict) else {}
+                    loc = (rc.get("relative_location") if isinstance(rc, dict) else {}) or {}
+                    rot = (rc.get("relative_rotation") if isinstance(rc, dict) else {}) or {}
+                    out.append({
+                        "actor_handle": name,
+                        "actor_ref": ref,
+                        "asset_name": asset_name,
+                        "x": (float(loc.get("x", anchor["x"])) - anchor["x"]) / 100,
+                        "y": (float(loc.get("y", anchor["y"])) - anchor["y"]) / 100,
+                        "z": (float(loc.get("z", anchor["z"])) - anchor["z"]) / 100,
+                        "yaw_deg": float(rot.get("yaw", 0)),
+                    })
+                except Exception:
+                    out.append({"actor_handle": name, "actor_ref": ref, "asset_name": asset_name})
+        return {"objects": out}
+
+    def demo_clear(self) -> dict:
+        self.auto_load_toolsets()
+        # remove_from_scene each demo actor; cheaper than per-actor lookup.
+        listed = self.demo_list().get("objects", [])
+        cleared = 0
+        for o in listed:
+            ref = o.get("actor_ref")
+            if not ref:
+                continue
+            try:
+                self.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
+                    {"actor": ref},
+                )
+                cleared += 1
+            except Exception:
+                pass
+        return {"cleared": cleared}
+
+    def demo_generate_warehouse(self, asset_resolver, **p) -> dict:
+        """Server-side warehouse layout algorithm. asset_resolver(name)
+        maps demo asset_name -> UE asset path. Calls demo_spawn many
+        times; returns aggregate dict."""
+        import random as _rand
+        if p.get("clear_first", True):
+            self.demo_clear()
+        rng = _rand.Random(int(p.get("seed", 0)))
+        shelves_per_row = int(p.get("shelves_per_row", 6))
+        shelf_rows = int(p.get("shelf_rows", 3))
+        aisle_w = float(p.get("aisle_width_m", 3.0))
+        SHELF_W, SHELF_D = 1.6, 1.2
+        row_pitch = SHELF_D + aisle_w
+        total_span = shelf_rows * SHELF_D + (shelf_rows - 1) * aisle_w
+        y_start = -total_span / 2 + SHELF_D / 2
+        row_x_extent = (shelves_per_row - 1) * SHELF_W
+        x_start = -row_x_extent / 2
+        room_w = float(p.get("room_w_m", 30))
+        room_l = float(p.get("room_l_m", 40))
+        aisle_y = []
+        spawned = []
+
+        def _spawn(asset_name, x, y, yaw=0.0):
+            res = self.demo_spawn(asset_resolver(asset_name), asset_name, x, y, 0, yaw)
+            spawned.append({"actor_handle": res["actor_handle"],
+                            "asset_name": asset_name, "x": x, "y": y})
+
+        for r in range(shelf_rows):
+            y = y_start + r * row_pitch
+            for s in range(shelves_per_row):
+                _spawn("shelf", x_start + s * SHELF_W, y)
+            if r < shelf_rows - 1:
+                aisle_y.append(y + SHELF_D / 2 + aisle_w / 2)
+        for i in range(int(p.get("forklift_count", 1))):
+            ay = (rng.choice(aisle_y) if aisle_y
+                  else (y_start - row_pitch / 2 if i % 2 == 0 else y_start + total_span))
+            ax = rng.uniform(x_start, x_start + row_x_extent)
+            _spawn("forklift", ax, ay, rng.choice([0, 90, 180, 270]))
+        for _ in range(int(p.get("pallet_count", 10))):
+            _spawn("pallet",
+                   rng.uniform(x_start - 0.5, x_start + row_x_extent + 0.5),
+                   rng.uniform(-total_span / 2 - 1, total_span / 2 + 1),
+                   rng.choice([0, 90]))
+        for _ in range(int(p.get("box_count", 5))):
+            _spawn("box",
+                   rng.uniform(-room_w / 2 + 1, room_w / 2 - 1),
+                   rng.uniform(-room_l / 2 + 1, room_l / 2 - 1),
+                   rng.uniform(0, 360))
+        for _ in range(int(p.get("drum_count", 3))):
+            _spawn("drum",
+                   rng.choice([-room_w / 2 + 1, room_w / 2 - 1]),
+                   rng.uniform(-room_l / 2 + 1, room_l / 2 - 1))
+        for _ in range(int(p.get("worker_count", 0))):
+            _spawn("worker",
+                   rng.uniform(-room_w / 2 + 2, room_w / 2 - 2),
+                   rng.uniform(-room_l / 2 + 2, room_l / 2 - 2),
+                   rng.uniform(0, 360))
+        by_asset: dict = {}
+        for s in spawned:
+            by_asset[s["asset_name"]] = by_asset.get(s["asset_name"], 0) + 1
+        return {"spawned": spawned, "total": len(spawned), "by_asset": by_asset}
 
     def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
         """One-call orchestration: ensure toolsets loaded, find PCG

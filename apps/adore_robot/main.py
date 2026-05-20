@@ -62,7 +62,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from mcp_client import UnrealMCPClient
 from demo.prompts import SYSTEM_PROMPT, UPDATE_SCENE_TOOL
-from demo.demo_tools import DEMO_TOOLS, DEMO_TOOL_NAMES, build_script_for, _clamp_xy
+from demo.demo_tools import DEMO_TOOLS, DEMO_TOOL_NAMES, dispatch as dispatch_demo, _clamp_xy
 from demo.runner import DemoJobRegistry
 from demo.thumbnail import render_thumbnail_svg
 from llm import Message, make_llm_client
@@ -351,13 +351,12 @@ def api_chat():
 
 
 def _try_demo_tool(tool_name: str, args: dict) -> dict:
-    """Translate a v0 demo tool_call (spawn/delete/move/list/...) into a
-    Python script and inject via MCP execute_tool_script. Same graceful
-    error envelope as _try_mcp_relay."""
+    """Run a v0 demo tool_call (spawn/delete/move/list/clear/generate)
+    via native SceneTools/ObjectTools RPCs. Same graceful error envelope
+    as _try_mcp_relay."""
     try:
         clamped, warns = _clamp_xy(args)
-        script = build_script_for(tool_name, clamped)
-        result = mcp.execute_demo_tool(script)
+        result = dispatch_demo(mcp, tool_name, clamped)
         out = {"ok": True, "tool": tool_name, "args": clamped, "result": result}
         if warns:
             out["warnings"] = warns

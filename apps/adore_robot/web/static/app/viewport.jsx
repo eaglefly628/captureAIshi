@@ -436,7 +436,7 @@ function buildFactoryLayout(p) {
 }
 
 // ─── Main scene component ───────────────────────────────────────────────────
-function Scene({ params, scene, robot, generating, generateProgress }) {
+function Scene({ params, scene, robot, generating, generateProgress, seeded = true }) {
   const tint = LIGHTING_TINTS[params.lighting_preset] || LIGHTING_TINTS.sodium;
 
   const layout = useMemo(() => {
@@ -504,8 +504,9 @@ function Scene({ params, scene, robot, generating, generateProgress }) {
         <Floor w={roomW} d={roomD} color={tint.floor} strokeColor={tint.floorStroke} />
         <Walls w={roomW} d={roomD} h={params.ceiling_h_m} lightTint={tint} />
 
-        {/* Items */}
-        {layout.kind === 'warehouse' && (
+        {/* Items: only render when the scene has been seeded by a real
+            chat action. Default state shows empty floor + walls + lighting. */}
+        {seeded && layout.kind === 'warehouse' && (
           <>
             {layout.shelves.map((s, i) => (
               <g key={s.id} style={itemStyle(i, itemTotal)}>
@@ -529,7 +530,7 @@ function Scene({ params, scene, robot, generating, generateProgress }) {
           </>
         )}
 
-        {layout.kind === 'living' && (
+        {seeded && layout.kind === 'living' && (
           <>
             <g style={itemStyle(0, itemTotal)}>
               <Sofa x={layout.sofa.x} y={layout.sofa.y} />
@@ -550,7 +551,7 @@ function Scene({ params, scene, robot, generating, generateProgress }) {
           </>
         )}
 
-        {layout.kind === 'factory' && (
+        {seeded && layout.kind === 'factory' && (
           <>
             <g style={itemStyle(0, itemTotal)}>
               <Conveyor x={2} y={layout.conveyorY} length={layout.conveyorLen} />
