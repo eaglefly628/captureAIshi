@@ -47,8 +47,8 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
 
   let headline;
   if (failed) headline = '神经接口未响应';
-  else if (ready) headline = '系统在线';
-  else if (state.phase === 'handshake') headline = '正在唤醒 Unreal AI 神经接口';
+  else if (ready) headline = 'UNREAL 5.8 EDITOR · LINK ESTABLISHED';
+  else if (state.phase === 'handshake') headline = '正在唤醒 Unreal 神经接口';
   else if (state.phase === 'prime') headline = '探测可用能力空间';
   else if (state.phase === 'loading') headline = '挂载 AI 工具集';
   else if (state.phase === 'skipped') headline = '工具集已就绪';
@@ -57,18 +57,41 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
   const subline = failed
     ? state.error
     : ready
-      ? `握手成功 · 4 个工具集在线 · ${elapsed}s`
+      ? `握手完成 · 4 个工具集挂载 · 协议延迟 ${elapsed}s`
       : (state.toolset ? toolsetLabel(state.toolset) : '...');
 
   const steps = (state.steps || []).slice(-6);
+  const sessionShort = state.session_short || (state.started ? String(Math.floor(state.started_at || 0)).slice(-6) : '——');
 
   return (
     <div className={`mcp-boot ${failed ? 'err' : ''} ${ready ? 'ok' : ''}`}>
       <div className="mcp-boot-scrim" />
       <div className="mcp-boot-card">
+        {/* corner brackets via CSS pseudo, plus center watermark */}
+        <div className="mcp-boot-watermark" aria-hidden>UE</div>
+
         <div className="mcp-boot-hud">
-          <span className="mcp-boot-tag">ADORE-AI · MCP BOOT</span>
-          <span className="mcp-boot-sid">{state.started ? `SESSION ${String(state.started_at || 0).slice(-6)}` : 'STAND BY'}</span>
+          <span className="mcp-boot-tag">
+            <span className="mcp-boot-tag-mark" />
+            ADORE-AI · NEURAL CONSOLE
+          </span>
+          <span className="mcp-boot-sid">SESSION · {sessionShort}</span>
+        </div>
+
+        <div className="mcp-boot-banner">
+          <div className="mcp-boot-banner-left">
+            <span className="mcp-boot-ue">UNREAL ENGINE</span>
+            <span className="mcp-boot-ue-ver">5.8</span>
+          </div>
+          <span className="mcp-boot-banner-sep" />
+          <span className="mcp-boot-banner-proto">
+            MODEL CONTEXT PROTOCOL · 2025-11-25
+          </span>
+          <span className="mcp-boot-banner-grow" />
+          <span className={`mcp-boot-link-dot ${ready ? 'on' : failed ? 'err' : ''}`} />
+          <span className="mcp-boot-banner-status">
+            {ready ? 'LINK ESTABLISHED' : failed ? 'LINK FAILED' : 'LINKING...'}
+          </span>
         </div>
 
         <div className="mcp-boot-title">
@@ -80,6 +103,7 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
         <div className="mcp-boot-bar">
           <div className="mcp-boot-bar-fill" style={{ width: `${pct}%` }} />
           <div className="mcp-boot-bar-scan" />
+          <div className="mcp-boot-bar-ticks" aria-hidden />
         </div>
         <div className="mcp-boot-meta">
           <span>{state.current}/{state.total}</span>
@@ -97,15 +121,30 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
           ))}
         </ul>
 
+        <div className="mcp-boot-stats">
+          <div className="mcp-boot-stat">
+            <span className="mcp-boot-stat-k">PROTOCOL</span>
+            <span className="mcp-boot-stat-v">MCP 1.0 · JSON-RPC 2.0</span>
+          </div>
+          <div className="mcp-boot-stat">
+            <span className="mcp-boot-stat-k">TRANSPORT</span>
+            <span className="mcp-boot-stat-v">HTTP+SSE :8000</span>
+          </div>
+          <div className="mcp-boot-stat">
+            <span className="mcp-boot-stat-k">CAPABILITY</span>
+            <span className="mcp-boot-stat-v">{ready ? '41 toolsets · 35 tools' : 'probing...'}</span>
+          </div>
+        </div>
+
         <div className="mcp-boot-actions">
           {failed && (
             <>
-              <button className="mcp-boot-btn" onClick={onRetry}>重连</button>
+              <button className="mcp-boot-btn" onClick={onRetry}>重连 UE Editor</button>
               <button className="mcp-boot-btn ghost" onClick={onDismiss}>跳过 · 离线演示</button>
             </>
           )}
           {ready && (
-            <button className="mcp-boot-btn" onClick={onDismiss}>进入控制台</button>
+            <button className="mcp-boot-btn" onClick={onDismiss}>进入控制台 ›</button>
           )}
         </div>
       </div>
@@ -655,38 +694,67 @@ async function callRealChat(userText, scene, currentParams) {
     return { narrate: data.text || '(模型未返回工具调用)', calls: [] };
   }
   const args = tc.arguments || {};
-  const pcgParams = args.pcg_params || {};
-  const rationale = args.rationale || '';
-
-  // Expand per-param into individual set_<key> calls so the timeline shows N steps
-  const calls = [];
-  if (args.scene_id && args.scene_id !== scene) {
-    calls.push({ name: 'load_scene', args: { scene: args.scene_id } });
-  }
-  for (const [k, v] of Object.entries(pcgParams)) {
-    calls.push({ name: `set_${k}`, args: { value: v } });
-  }
-  if (calls.length === 0) {
-    calls.push({ name: 'no_op', args: {} });
-  } else {
-    calls.push({ name: 'trigger_generate', args: {} });
-  }
-
-  // MCP relay status -- appended to narrate so user can see whether the
-  // chat actually changed UE Editor state, vs sat at the LLM layer.
-  let relayLine = '';
   const relay = data.mcp_relay;
+
+  let calls = [];
+  let toolNarrate = '';
+
+  if (tc.name === 'update_scene') {
+    const pcgParams = args.pcg_params || {};
+    if (args.scene_id && args.scene_id !== scene) {
+      calls.push({ name: 'load_scene', args: { scene: args.scene_id } });
+    }
+    for (const [k, v] of Object.entries(pcgParams)) {
+      calls.push({ name: `set_${k}`, args: { value: v } });
+    }
+    if (calls.length === 0) calls.push({ name: 'no_op', args: {} });
+    else calls.push({ name: 'trigger_generate', args: {} });
+    toolNarrate = args.rationale || '(PCG 参数更新)';
+  } else if (tc.name === 'spawn_object') {
+    calls.push({ name: 'spawn_object', args });
+    toolNarrate = `在 (${args.x}, ${args.y}) 放了一个 ${args.asset_name}`;
+  } else if (tc.name === 'delete_object') {
+    calls.push({ name: 'delete_object', args });
+    toolNarrate = `删除 ${args.actor_handle}`;
+  } else if (tc.name === 'modify_location') {
+    calls.push({ name: 'modify_location', args });
+    toolNarrate = `${args.actor_handle} 挪到 (${args.x}, ${args.y})`;
+  } else if (tc.name === 'list_objects') {
+    calls.push({ name: 'list_objects', args: {} });
+    toolNarrate = '列出当前 actor';
+  } else if (tc.name === 'generate_warehouse_layout') {
+    calls.push({ name: 'generate_warehouse_layout', args });
+    toolNarrate = '生成仓库布局';
+  } else if (tc.name === 'clear_demo_objects') {
+    calls.push({ name: 'clear_demo_objects', args: {} });
+    toolNarrate = '清空场景';
+  } else {
+    calls.push({ name: tc.name, args });
+    toolNarrate = `(执行) ${tc.name}`;
+  }
+
+  // MCP relay status — synthesise a useful summary per tool family.
+  let relayLine = '';
   if (relay) {
     if (relay.ok) {
-      const target = (relay.pcg_component || '').split('.').pop() || '?';
-      relayLine = `  ·  ✓ MCP -> UE: ${target} updated`;
+      let target = relay.tool || '';
+      const res = relay.result || {};
+      if (relay.tool === 'spawn_object' && res.actor_handle) target = `spawn → ${res.actor_handle}`;
+      else if (relay.tool === 'delete_object' && res.deleted) target = `delete ${res.deleted}`;
+      else if (relay.tool === 'modify_location' && res.actor_handle) target = `move ${res.actor_handle}`;
+      else if (relay.tool === 'list_objects' && Array.isArray(res.objects)) target = `${res.objects.length} actors`;
+      else if (relay.tool === 'generate_warehouse_layout' && res.total) target = `layout · ${res.total} actors`;
+      else if (relay.tool === 'clear_demo_objects' && res.cleared !== undefined) target = `cleared ${res.cleared}`;
+      else if (!relay.tool && relay.pcg_component) target = (relay.pcg_component.split('.').pop() || 'PCG');
+      relayLine = `  ·  ✓ MCP → UE: ${target}`;
+      if (res.error) relayLine = `  ·  ✗ MCP → UE: ${res.error}`;
     } else if (relay.skipped) {
       relayLine = `  ·  ◌ MCP skipped (${relay.reason})`;
     } else {
       relayLine = `  ·  ✗ MCP error: ${relay.reason}`;
     }
   }
-  const narrate = `${rationale}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms${relayLine}`;
+  const narrate = `${toolNarrate}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms${relayLine}`;
   return { narrate, calls };
 }
 
