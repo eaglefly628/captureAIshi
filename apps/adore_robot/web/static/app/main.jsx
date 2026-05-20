@@ -38,6 +38,30 @@ function toolsetLabel(name) {
   return `${tail}`;
 }
 
+function UEViewportPip({ cacheKey, mcpReady }) {
+  const [expanded, setExpanded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (!mcpReady) return null;
+  const src = `/api/mcp/screenshot.png?t=${cacheKey}`;
+  return (
+    <div className={`ue-pip ${expanded ? 'expanded' : ''}`}
+         onClick={() => setExpanded(e => !e)}>
+      <div className="ue-pip-hud">
+        <span className="ue-pip-dot" />
+        <span className="ue-pip-label">UE 5.8 EDITOR · LIVE</span>
+        <span className="ue-pip-hint">{expanded ? '✕' : '⤢'}</span>
+      </div>
+      {failed ? (
+        <div className="ue-pip-fallback">无法捕获截图<br/>(open a level in UE)</div>
+      ) : (
+        <img className="ue-pip-img" src={src} alt="UE viewport"
+             onError={() => setFailed(true)}
+             onLoad={() => setFailed(false)} />
+      )}
+    </div>
+  );
+}
+
 function McpBootOverlay({ state, onRetry, onDismiss }) {
   if (!state) return null;
   const pct = state.total > 0 ? Math.min(100, Math.round((state.current / state.total) * 100)) : 0;
@@ -180,6 +204,9 @@ function App() {
   const [spawnedActors, setSpawnedActors] = useState([]);
   const [currentLevel, setCurrentLevel] = useState('');
   const [appVersion, setAppVersion] = useState('');
+  // Cache-buster counter bumped after every successful chat action so the
+  // UE viewport PIP <img> re-fetches.  Also bumped on MCP-ready boot.
+  const [ueShotKey, setUeShotKey] = useState(0);
 
   // Fetch app version once on mount for the TopBar brand chip.
   useEffect(() => {
@@ -236,6 +263,7 @@ function App() {
           x: o.x ?? 0, y: o.y ?? 0, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
         })));
         setSceneSeeded(j.objects.length > 0);
+        setUeShotKey(k => k + 1);
       }
     } catch {}
   }, []);
@@ -355,6 +383,10 @@ function App() {
       // what was just spawned/moved/deleted -- nothing more.
       const r = realCalls.relayMeta;
       if (r && r.ok) {
+        // Real UE state changed -> grab a fresh viewport screenshot for
+        // the PIP. Tiny delay so the spawn is rendered in the editor
+        // before we capture.
+        setTimeout(() => setUeShotKey(k => k + 1), 250);
         const res = r.result || {};
         if (r.tool === 'spawn_object' && res.actor_handle) {
           setSpawnedActors(prev => [...prev, {
@@ -751,6 +783,9 @@ function App() {
               <div className="vp-stat"><span className="k">tris</span><span className="v">~{Math.round((118 + params.shelf_density * 240 + params.forklift_count * 30) * 1000).toLocaleString()}</span></div>
               <div className="vp-stat"><span className="k">lumen</span><span className="v">on</span><span className="k">·</span><span className="v">path-tracer ready</span></div>
             </div>
+            {/* Schematic vs live UE: left iso SVG is the schematic, this
+                PIP is the actual editor viewport, refreshed on every spawn. */}
+            <UEViewportPip cacheKey={ueShotKey} mcpReady={!!(mcpInit && mcpInit.done && mcpInit.ok)} />
           </div>
           <Timeline currentStage={runStatus} stageProgress={stageProgress} runtimeS={runtimeMs} />
         </div>

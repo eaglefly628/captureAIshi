@@ -1432,3 +1432,54 @@ select.twk-field {
   border-radius: 2px;
   align-self: center;
 }
+
+/* ─── Real UE viewport picture-in-picture ────────────────────────── */
+.ue-pip {
+  position: absolute; left: 16px; bottom: 16px;
+  width: 240px; height: 150px;
+  background: rgba(8,10,14,0.92);
+  border: 1px solid rgba(91,138,240,0.55);
+  box-shadow:
+    0 0 0 1px rgba(91,138,240,0.08) inset,
+    0 12px 32px rgba(0,0,0,0.55);
+  cursor: pointer; overflow: hidden;
+  transition: width 0.25s ease, height 0.25s ease,
+              left 0.25s ease, bottom 0.25s ease;
+  z-index: 50;
+  user-select: none;
+}
+.ue-pip.expanded {
+  width: 640px; height: 400px;
+}
+.ue-pip-hud {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, rgba(15,18,26,0.96), rgba(15,18,26,0.0));
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px; letter-spacing: 0.16em;
+  color: rgba(205,214,244,0.85);
+  z-index: 2;
+}
+.ue-pip-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #ff4040;
+  box-shadow: 0 0 6px rgba(255,80,80,0.8);
+  animation: mcp-pulse 1.4s ease-in-out infinite;
+}
+.ue-pip-label { flex: 1; font-weight: 600; }
+.ue-pip-hint { opacity: 0.6; font-size: 12px; }
+.ue-pip-img {
+  display: block;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  background: #0a0a0a;
+}
+.ue-pip-fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  text-align: center; font-size: 11px;
+  color: rgba(205,214,244,0.55);
+  font-family: var(--mono, ui-monospace, monospace);
+  padding: 24px 16px 0;
+}

@@ -481,6 +481,22 @@ def api_mcp_auto_load():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
+@app.route("/api/mcp/screenshot.png")
+def api_mcp_screenshot():
+    """Live UE viewport PNG. Front-end re-requests after each spawn so
+    the picture-in-picture refreshes in sync with the schematic."""
+    try:
+        png = mcp.capture_editor_image()
+        if png:
+            return Response(png, mimetype="image/png",
+                            headers={"Cache-Control": "no-store"})
+        return Response(b"", status=204)
+    except ConnectionError:
+        return Response(b"", status=503)
+    except Exception as e:
+        return Response(str(e).encode(), status=500, mimetype="text/plain")
+
+
 @app.route("/api/mcp/current_level")
 def api_mcp_current_level():
     """Returns whichever .umap is open in the editor. Polled by the UI

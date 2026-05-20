@@ -846,6 +846,41 @@ class UnrealMCPClient:
             by_asset[s["asset_name"]] = by_asset.get(s["asset_name"], 0) + 1
         return {"spawned": spawned, "total": len(spawned), "by_asset": by_asset}
 
+    def capture_editor_image(self) -> bytes | None:
+        """Snap the active UE Editor viewport via EditorAppToolset. Returns
+        raw PNG bytes; powers the "real UE PIP" so the customer sees the
+        SVG schematic AND the actual engine output side by side."""
+        self.auto_load_toolsets()
+        try:
+            result = self.call_tool_unwrapped(
+                "ToolsetRegistry.EditorAppToolset.CaptureEditorImage"
+            )
+        except Exception:
+            return None
+        import base64 as _b64
+        if isinstance(result, str):
+            try:
+                return _b64.b64decode(result)
+            except Exception:
+                return None
+        if isinstance(result, dict):
+            for k in ("image", "data", "png", "base64"):
+                v = result.get(k)
+                if isinstance(v, str):
+                    try:
+                        return _b64.b64decode(v)
+                    except Exception:
+                        pass
+            for k in ("path", "file", "filepath", "image_path"):
+                p = result.get(k)
+                if isinstance(p, str):
+                    try:
+                        with open(p, "rb") as f:
+                            return f.read()
+                    except Exception:
+                        pass
+        return None
+
     def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
         """One-call orchestration: ensure toolsets loaded, find PCG
         Component, set the provided pcg_params delta, optionally trigger
