@@ -1265,3 +1265,158 @@ select.twk-field {
 .mcp-boot.err .mcp-boot-bar-fill { background: linear-gradient(90deg, #c43c3c, #ff7878); box-shadow: 0 0 12px rgba(255,120,120,0.6); }
 .mcp-boot.ok  .mcp-boot-bar-fill { background: linear-gradient(90deg, #4fc080, #8be0a8); box-shadow: 0 0 12px rgba(120,220,160,0.6); }
 .mcp-boot.ok  .mcp-boot-glyph    { color: #8be0a8; text-shadow: 0 0 8px rgba(120,220,160,0.6); animation: none; }
+
+/* ────────────────────────────────────────────────────────────────
+   MCP offline banner (post-dismiss persistent reconnect bar)
+   ──────────────────────────────────────────────────────────────── */
+.mcp-offline-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 18px;
+  background: linear-gradient(90deg, rgba(200,40,40,0.92), rgba(160,30,30,0.92));
+  color: #ffe6e6;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(255,120,120,0.6);
+  box-shadow: 0 6px 20px rgba(120,0,0,0.35);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.mcp-offline-banner:hover {
+  background: linear-gradient(90deg, rgba(220,55,55,0.96), rgba(175,40,40,0.96));
+}
+.mcp-offline-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ffd0d0;
+  box-shadow: 0 0 8px rgba(255,255,255,0.6);
+  animation: mcp-offline-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mcp-offline-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50%      { opacity: 1.0; transform: scale(1.2); }
+}
+.mcp-offline-text {
+  flex: 1;
+  font-weight: 400;
+}
+.mcp-offline-text b { font-weight: 600; }
+.mcp-offline-hint { opacity: 0.78; font-size: 12px; }
+.mcp-offline-btn {
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.4);
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mcp-offline-banner:hover .mcp-offline-btn {
+  background: rgba(255,255,255,0.28);
+}
+/* push the app down so the banner doesn't cover the topbar */
+.app.has-offline-banner { padding-top: 38px; }
+
+/* ─── MCP boot overlay v2: UE 5.8 brand strip + tech stats ─────────── */
+.mcp-boot-watermark {
+  position: absolute; right: 26px; top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 180px; line-height: 1; font-weight: 800;
+  color: rgba(91,138,240,0.045);
+  letter-spacing: -0.05em;
+  pointer-events: none; user-select: none;
+}
+.mcp-boot-tag {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.mcp-boot-tag-mark {
+  display: inline-block; width: 9px; height: 9px;
+  background: linear-gradient(135deg, #5b8af0, #2e63d8);
+  box-shadow: 0 0 6px rgba(91,138,240,0.7);
+  transform: rotate(45deg);
+}
+.mcp-boot-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  margin: 4px 0 14px;
+  background: linear-gradient(90deg, rgba(91,138,240,0.10), rgba(91,138,240,0.02));
+  border-left: 2px solid #5b8af0;
+  font-size: 10px; letter-spacing: 0.16em;
+  position: relative;
+}
+.mcp-boot-banner-left {
+  display: flex; align-items: baseline; gap: 6px;
+  color: rgba(205,214,244,0.85);
+}
+.mcp-boot-ue {
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.mcp-boot-ue-ver {
+  font-size: 13px; font-weight: 700; letter-spacing: 0;
+  color: #5b8af0;
+  text-shadow: 0 0 6px rgba(91,138,240,0.5);
+}
+.mcp-boot-banner-sep {
+  width: 1px; height: 14px;
+  background: rgba(91,138,240,0.35);
+}
+.mcp-boot-banner-proto {
+  color: rgba(205,214,244,0.55);
+}
+.mcp-boot-banner-grow { flex: 1; }
+.mcp-boot-link-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #f5b942;
+  box-shadow: 0 0 6px rgba(245,185,66,0.8);
+  animation: mcp-pulse 1.2s ease-in-out infinite;
+}
+.mcp-boot-link-dot.on {
+  background: #4fc080; box-shadow: 0 0 8px rgba(120,220,160,0.9);
+  animation: none;
+}
+.mcp-boot-link-dot.err {
+  background: #ff7878; box-shadow: 0 0 8px rgba(255,120,120,0.9);
+  animation: none;
+}
+.mcp-boot-banner-status {
+  color: rgba(205,214,244,0.78);
+  font-weight: 600;
+}
+
+.mcp-boot-bar-ticks {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: repeating-linear-gradient(
+    90deg, transparent 0 39px,
+    rgba(91,138,240,0.20) 39px 40px);
+}
+
+.mcp-boot-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: rgba(91,138,240,0.15);
+  border: 1px solid rgba(91,138,240,0.18);
+  margin-bottom: 14px;
+  font-family: var(--mono);
+}
+.mcp-boot-stat {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 9px 12px;
+  background: rgba(0,0,0,0.4);
+}
+.mcp-boot-stat-k {
+  font-size: 9px; letter-spacing: 0.20em;
+  color: rgba(205,214,244,0.45);
+}
+.mcp-boot-stat-v {
+  font-size: 11px;
+  color: rgba(205,214,244,0.90);
+  font-variant-numeric: tabular-nums;
+}
+
+/* tweak existing title for slightly bigger / brand-aligned */
+.mcp-boot-title { font-size: 19px; }
+.mcp-boot-card  { width: min(620px, 92vw); padding-right: 28px; }
+.mcp-boot.ok .mcp-boot-banner { border-left-color: #4fc080; background: linear-gradient(90deg, rgba(120,220,160,0.10), rgba(120,220,160,0.02)); }
+.mcp-boot.ok .mcp-boot-ue-ver { color: #4fc080; text-shadow: 0 0 6px rgba(120,220,160,0.6); }
+.mcp-boot.err .mcp-boot-banner { border-left-color: #ff7878; background: linear-gradient(90deg, rgba(255,120,120,0.10), rgba(255,120,120,0.02)); }
+.mcp-boot.err .mcp-boot-ue-ver { color: #ff7878; text-shadow: 0 0 6px rgba(255,120,120,0.6); }
