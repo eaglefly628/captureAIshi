@@ -1,6 +1,6 @@
 // viewport.jsx — isometric SVG scene (warehouse / livingroom / factory)
 
-const { useMemo, useState, useRef, useEffect } = React;
+const { useMemo } = React;
 
 // ─── Iso projection ────────────────────────────────────────────────────────
 // World axes: x → right-down, y → left-down, z → up
@@ -438,13 +438,15 @@ function buildFactoryLayout(p) {
 // ─── Main scene component ───────────────────────────────────────────────────
 function Scene({ params, scene, robot, generating, generateProgress, seeded = true, spawnedActors = [] }) {
   // Hover state: surface handle/asset/coord as floating tag on mouse-over.
-  const [hoveredHandle, setHoveredHandle] = useState(null);
-  // Track newly-arrived handles so we can ease them in. We diff
-  // spawnedActors against the previous list; brand-new entries get a
-  // CSS animation class for ~700ms.
-  const knownRef = useRef(new Set());
-  const [recentSpawns, setRecentSpawns] = useState(new Set());
-  useEffect(() => {
+  // Hover state: surface handle/asset/coord as floating tag on mouse-over.
+  // NOTE: viewport.jsx loads before panels.jsx in the bundle order, but
+  // both files run under the same global scope via Babel standalone, so
+  // re-declaring `const useState = React.useState` breaks the bundle.
+  // Reach through React.* directly here.
+  const [hoveredHandle, setHoveredHandle] = React.useState(null);
+  const knownRef = React.useRef(new Set());
+  const [recentSpawns, setRecentSpawns] = React.useState(new Set());
+  React.useEffect(() => {
     const cur = new Set(spawnedActors.map(a => a.actor_handle));
     const fresh = new Set();
     cur.forEach(h => { if (!knownRef.current.has(h)) fresh.add(h); });
