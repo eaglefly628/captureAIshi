@@ -621,10 +621,16 @@ class UnrealMCPClient:
             except Exception:
                 pass
             try:
+                # Tags double as a sidecar metadata store that survives
+                # the level save + reopen + Flask restart cycle. Position
+                # and yaw encoded here so demo_list can recover them when
+                # the in-memory ledger is empty.
                 self.set_actor_properties(actor_ref, {"tags": [
                     "demo_v0_spawned",
                     f"demo_v0_asset:{asset_name}",
                     f"demo_v0_handle:{actor_name}",
+                    f"demo_v0_pos:{x_m:.3f},{y_m:.3f},{z_m:.3f}",
+                    f"demo_v0_yaw:{yaw_deg:.2f}",
                 ]})
             except Exception:
                 pass
@@ -768,8 +774,10 @@ class UnrealMCPClient:
             y = rec.get("y") if rec else None
             z = rec.get("z") if rec else None
             yaw = rec.get("yaw_deg") if rec else None
-            # Fallback: read tags directly from the actor.
-            if handle is None or asset is None:
+            # Fallback: read tags directly from the actor.  Tags carry
+            # asset/handle/pos/yaw so we can render this actor even when
+            # the in-memory ledger has no entry for it.
+            if handle is None or asset is None or x is None or y is None:
                 try:
                     props = self.get_actor_properties(ref, ["tags"])
                     tags = props.get("tags", []) if isinstance(props, dict) else []
@@ -779,6 +787,19 @@ class UnrealMCPClient:
                             asset = s.split(":", 1)[1]
                         elif s.startswith("demo_v0_handle:") and handle is None:
                             handle = s.split(":", 1)[1]
+                        elif s.startswith("demo_v0_pos:") and (x is None or y is None):
+                            try:
+                                parts = s.split(":", 1)[1].split(",")
+                                x = float(parts[0]); y = float(parts[1])
+                                if len(parts) > 2:
+                                    z = float(parts[2])
+                            except Exception:
+                                pass
+                        elif s.startswith("demo_v0_yaw:") and yaw is None:
+                            try:
+                                yaw = float(s.split(":", 1)[1])
+                            except Exception:
+                                pass
                 except Exception:
                     pass
             if handle is None:

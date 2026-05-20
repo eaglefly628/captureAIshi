@@ -515,12 +515,26 @@ def api_demo_list_objects():
     """Sync UE Demo/v0 folder -> client. Used on page load and Sync button.
     Returns the same {objects: [...]} shape as the LLM list_objects tool."""
     try:
-        return jsonify({"ok": True, **mcp.demo_list()})
+        result = mcp.demo_list()
+        objs = result.get("objects", [])
+        try:
+            lvl = mcp._current_level_cached()
+        except Exception:
+            lvl = "?"
+        # Log enough to tell the user "loaded? pushed? data what?" without
+        # dumping the full payload.  Each line one-shot grep-able.
+        _log("DEMO-LIST",
+             f"level={lvl}",
+             f"count={len(objs)}",
+             f"handles={[o.get('actor_handle') for o in objs][:10]}")
+        return jsonify({"ok": True, **result})
     except ConnectionError as e:
+        _log("DEMO-LIST", "skipped (UE unreachable)", str(e))
         return jsonify({"ok": False, "skipped": True,
                         "reason": "UE MCP server unreachable",
                         "detail": str(e)}), 503
     except Exception as e:
+        _log("DEMO-LIST", "error", f"{type(e).__name__}: {e}")
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
