@@ -471,6 +471,20 @@ class UnrealMCPClient:
     _level_cache: str = ""
     _level_cache_ts: float = 0.0
 
+    def _next_id_for(self, bucket: dict, asset_name: str) -> int:
+        """Per-asset auto-increment ID. Scans current bucket so we don't
+        collide if the user reloaded a level with existing demo actors."""
+        used = set()
+        for rec in bucket.values():
+            if rec.get("asset_name") == asset_name:
+                idn = rec.get("id_number")
+                if isinstance(idn, int):
+                    used.add(idn)
+        i = 1
+        while i in used:
+            i += 1
+        return i
+
     @classmethod
     def _ledger_load(cls):
         import json as _j, os as _os
@@ -575,9 +589,12 @@ class UnrealMCPClient:
             "y": anchor["y"] + y_m * 100,
             "z": anchor["z"] + z_m * 100,
         }
-        # Unique-ish name so the outliner doesn't auto-rename and lose us.
-        suffix = int(time.time() * 1000) & 0xFFFF
-        actor_name = f"Demo_{asset_name}_{suffix}"
+        # Customer-friendly auto-increment per asset type: forklift_1,
+        # forklift_2, shelf_1 ... User can say "挪开 2 号叉车" and LLM
+        # maps it through list_objects -> handle "forklift_2".
+        bucket_for_id = self._ledger_bucket()
+        id_number = self._next_id_for(bucket_for_id, asset_name)
+        actor_name = f"{asset_name}_{id_number}"
         spawned = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.add_to_scene_from_asset",
             {
@@ -615,6 +632,7 @@ class UnrealMCPClient:
             "actor_handle": actor_name,
             "actor_ref": actor_ref,
             "asset_name": asset_name,
+            "id_number": id_number,
             "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
         }
         bucket = self._ledger_bucket()
@@ -737,6 +755,7 @@ class UnrealMCPClient:
             out.append({
                 "actor_handle": h,
                 "asset_name": rec.get("asset_name", "unknown"),
+                "id_number": rec.get("id_number"),
                 "x": rec.get("x", 0),
                 "y": rec.get("y", 0),
                 "z": rec.get("z", 0),

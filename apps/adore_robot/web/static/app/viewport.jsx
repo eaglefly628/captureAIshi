@@ -568,6 +568,23 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
               top={p.top} left={p.left} right={p.right} />
           </g>;
         })}
+        {/* Per-actor ID badge -- shows '#N' next to every spawned actor
+            so customer + LLM can refer to "2 号叉车" without ambiguity. */}
+        {scene === 'warehouse' && spawnedActors.map((a, i) => {
+          if (a.id_number == null) return null;
+          const fx = sx(a.x ?? 0), fy = sy(a.y ?? 0);
+          const p = iso(fx, fy);
+          return (
+            <g key={`id-${a.actor_handle || i}`}
+               transform={`translate(${p.x}, ${p.y - 1.4})`}>
+              <rect x="-0.45" y="-0.4" width="0.9" height="0.55" rx="0.08"
+                    fill="#0a0a0a" fillOpacity="0.85" stroke="#5b8af0" strokeWidth="0.04" />
+              <text x="0" y="0.02" textAnchor="middle"
+                    fontSize="0.32" fontFamily="var(--mono)" fontWeight="600"
+                    fill="#5b8af0">#{a.id_number}</text>
+            </g>
+          );
+        })}
         {/* Robot pose: only when warehouse has at least one actor */}
         {scene === 'warehouse' && spawnedActors.length > 0 && (
           <g style={itemStyle(spawnedActors.length, spawnedActors.length + 1)}>

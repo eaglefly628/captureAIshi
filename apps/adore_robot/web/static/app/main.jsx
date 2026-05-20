@@ -260,6 +260,7 @@ function App() {
         setSpawnedActors(j.objects.map(o => ({
           actor_handle: o.actor_handle,
           asset_name: o.asset_name || 'shelf',
+          id_number: o.id_number,
           x: o.x ?? 0, y: o.y ?? 0, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
         })));
         setSceneSeeded(j.objects.length > 0);
@@ -392,6 +393,7 @@ function App() {
           setSpawnedActors(prev => [...prev, {
             actor_handle: res.actor_handle,
             asset_name: res.asset_name,
+            id_number: res.id_number,
             x: res.x, y: res.y, z: res.z, yaw_deg: res.yaw_deg,
           }]);
           setSceneSeeded(true);
@@ -399,6 +401,7 @@ function App() {
           setSpawnedActors(res.spawned.map(s => ({
             actor_handle: s.actor_handle,
             asset_name: s.asset_name,
+            id_number: s.id_number,
             x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
           })));
           setSceneSeeded(true);
@@ -406,6 +409,7 @@ function App() {
           setSpawnedActors(prev => [...prev, ...res.spawned.map(s => ({
             actor_handle: s.actor_handle,
             asset_name: s.asset_name,
+            id_number: s.id_number,
             x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
           }))]);
           if (res.total > 0) setSceneSeeded(true);
@@ -429,10 +433,10 @@ function App() {
             }];
           });
         } else if (r.tool === 'list_objects' && Array.isArray(res.objects)) {
-          // Treat as authoritative sync from server ledger
           setSpawnedActors(res.objects.map(o => ({
             actor_handle: o.actor_handle,
             asset_name: o.asset_name,
+            id_number: o.id_number,
             x: o.x, y: o.y, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
           })));
           if (res.objects.length > 0) setSceneSeeded(true);

@@ -60,6 +60,16 @@ calls that drive the live Unreal Editor.
   After switching, subsequent spawn/delete calls go into the NEW level's
   Demo/v0 folder, separate from the old level.
 
+Actor handle convention: every spawn returns a handle like "forklift_1",
+"forklift_2", "shelf_1", "box_3" -- the trailing integer is the per-asset
+auto-increment ID. When the user says "把 2 号叉车挪开" / "delete forklift 3"
+/ "把 1 号货架往左 2 米", parse the number and use it directly:
+  "2 号叉车" -> handle = "forklift_2"
+  "1 号货架" -> handle = "shelf_1"
+Don't call list_objects just to look up an ID -- the convention is
+predictable. Only fall back to list_objects if the user uses a vague
+reference WITHOUT a number ("那个叉车", "刚才那个").
+
 User-term mapping (use the closest enum value, do NOT refuse):
   叉车 / 拖车 / 铲车 / forklift / tow            -> forklift
   托盘 / 木板 / pallet                            -> pallet
