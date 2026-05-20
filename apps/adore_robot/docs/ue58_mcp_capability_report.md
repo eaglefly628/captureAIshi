@@ -513,5 +513,141 @@ data: {"jsonrpc":"2.0","id":20,"result":{"content":[{"type":"text","text":"{\"re
 ### 11.4 报告版本
 
 - v1.0 - 2026-05-19 - xiaohuan 整合 xiaoxu validation + 老白 v0.3.3 决策 + 本人 demo contract → 单份 cc design 评审稿
+- v1.1 - 2026-05-19 - 加 §12 网上调研对照（3rd-party MCP 生态 / 官方文档可达性 / 独立验证）+ §13 残留盲区清单
 - 下次更新触发条件: UE5.8 GA release (6 月) + Final Build 跑过 §5 4 条
-  链路 + v0 demo 走通 5 步验收 → 升 v1.1 (production-ready 标)
+  链路 + v0 demo 走通 5 步验收 → 升 v1.2 (production-ready 标)
+
+---
+
+## §12 网上调研对照 (2026-05-19, v1.1 增补)
+
+xiaoxu 内部 validation log 是 ground truth，但**对照外部官方 / 社区资料**
+查我们有没有漏看。本节列出 WebSearch + WebFetch 实查结果。
+
+### 12.1 Epic 官方文档可达性
+
+`dev.epicgames.com` 整站对 sandbox WebFetch 返回 **HTTP 403 Forbidden**
+（包括 5.8 release notes、PCG runtime generation API、Metadata Specifiers
+docs）。直接验证 Epic-side 文档不可行。**对策**：
+
+- 通过 WebSearch 拿 snippet（够定调，不够全文）
+- 通过 Wayback / GitHub README / 第三方博客拿映射
+- 以 xiaoxu live validation 为最终事实，外部资料作 cross-check
+
+**已确认的间接证据**：
+
+| 主题 | 间接证据来源 | 结论 |
+|---|---|---|
+| AI Assistant Experimental flag | Productboard card 2168 (search snippet) | 5.8 Preview 标的，6 月 final 待定 |
+| `AICallable` UFUNCTION metadata | 不在公开的 UFUNCTION specifier 列表里 (Unreal Garden / Community Wiki / Epic 4.27 docs) | **官方未文档化**；只能信 xiaoxu live 实证 + Epic Plugin 源码 |
+| `UToolsetRegistry::Register` 自定义 toolset API | 无公开 tutorial / sample code | **官方未文档化**；我们 §6 决策 drop 自定义 plugin 顺势规避此盲区 |
+| `ToolsetRegistry / ModelContextProtocol` 插件 | Productboard 列在公开 roadmap，5.8 Preview Experimental | 状态匹配 xiaoxu validation §0 |
+| PCG runtime generation (`FPCGRuntimeGenScheduler` / `APCGPartitionActor`) | dev.epicgames forum 帖 + 5.7 API docs (snippet) | 5.7 已有，5.8 无 specific delta 公开 (匹配 ue58_pcg_notes_xiaohuan.md) |
+| State Tree 转为 5.8 默认 AI/logic 框架 | StraySpark / DigitalProduction 5.8 preview 评测 | 已在 §2 Tier 4 标 not relevant (机器人 kinematic, 无需 AI logic) |
+| Mesh Terrain + PCG 原生集成 | 80.lv / StraySpark 5.8 preview | 已在 ue58_pcg_notes §1 [adopt] + §4 [reject for 室内 v0] |
+
+### 12.2 3rd-Party MCP 生态对照 (我们 vs 社区)
+
+UE 社区 + 第三方在 2026 上半年涌出多个 MCP 实现。这是**客户演示话术
+必备**——客户大概率会问"为什么你们用 Epic 自带的而不是 [社区方案]"。
+
+| 项目 | 路径 | 工具集规模 | 5.8 支持 | 用 Epic 官方 stack? |
+|---|---|---|---|---|
+| **我们 (xiaoxu)** | UE5.8 Preview built-in + 自家 `mcp_client.py` | **41 toolset / 数百 tool** (实测拉到 35) | ✅ 实证 | ✅ AIAssistant + ToolsetRegistry + ModelContextProtocol + AllToolsets |
+| StraySpark Unreal MCP Server | UE 5.7 自家 HTTP server + 207 tool / 34 类 | 207 tool / 34 类 | ❌ (5.7 only) | ❌ 自家 plugin |
+| chongdashu/unreal-mcp | UE 5.x C++ plugin + Python FastMCP | 4 类 (Actor / BP / BP Graph / Editor Control) | ⚠️ 未声明 | ❌ TCP socket |
+| ChiR24/Unreal_mcp | UE 5.x C++ Automation Bridge + TS 客户端 | 中等 (含 HTTP 内建) | ⚠️ 未声明 | ❌ |
+| Flux-Point-Studios/unreal-mcp | 自家 plugin (`5.6 build won't work on 5.5/5.7/5.8`) | — | ❌ 版本绑死 | ❌ |
+| jl-codes/unreal-5-mcp | 同 chongdashu fork | 4 类 | ⚠️ | ❌ |
+| GenOrca/unreal-mcp | UE C++ + Python + JSON-RPC | 中等 | ⚠️ | ❌ |
+| remiphilippe/mcp-unreal | UE 5.7 单 Go binary | 49 tool | ❌ (5.7) | ❌ |
+| AgenticLink (Fab marketplace) | UE plugin | 商业插件 | 未公开 | ❌ |
+| UnrealClaude | UE 5.7 plugin 嵌 Claude Code CLI | 20+ tool MCP server | ❌ (5.7) | ⚠️ MCP server 自家但宿主是 Epic 框架 |
+| prajwalshettydev/UnrealGenAISupport | UE 5.4-5.7+ Python MCP server | — | ❌ (5.4-5.7) | ❌ 自家 (README 原文："Epic Games is working on an official Unreal MCP integration for UE 5.8+") |
+| nootest-unreal-mcp / mcpservers.org listings | 各种实现 | 各异 | 各异 | ❌ |
+
+**关键观察**：
+
+1. **所有 3rd-party 都走自己的 plugin + 协议桥**，没人用 Epic 官方 AIAssistant
+   + ToolsetRegistry + ModelContextProtocol 这一套。原因：
+   - 官方插件 2026 5 月才进 5.8 Preview（之前没东西可用）
+   - 官方插件标 Experimental，社区不愿赌 ABI
+   - 自家 plugin 可以装在 5.4-5.7 老版本
+2. **UnrealGenAISupport README 明文承认** "Epic Games is working on an official Unreal MCP integration for UE 5.8+" → **我们的方向就是 Epic 钦点路线**，等于押官方 GA
+3. **工具规模**: 我们 41 toolset / 数百 tool > 任何 3rd-party (除 StraySpark 207 tool / 34 类的同量级)。Epic 官方 stack 由编辑器各子系统团队各自维护，
+   覆盖面无社区可比
+4. **协议层**: 我们走 HTTP JSON-RPC 2.0 + SSE（MCP 标准），3rd-party 有
+   走 TCP socket / Go binary / TS bridge 的，跨客户端兼容性差
+
+**话术建议**: "我们押 Epic 官方 MCP 5.8 GA。社区方案要么是 5.7 卡死、要
+么是自家 plugin 跟不上 Epic 更新。我们用 Epic 自带的 AI Assistant +
+Toolset Registry + Model Context Protocol 一套，未来 5.9/6.0 自动跟。"
+
+### 12.3 独立验证 (NVIDIA + 社区)
+
+| 来源 | 内容 | 对我们的意义 |
+|---|---|---|
+| NVIDIA Developer Blog "Reliable AI Coding for Unreal Engine" | 强调 token-efficient batching + 减少 round-trip | **独立背书**我们 §5.2 `ProgrammaticToolset.execute_tool_script` 单 RPC 串多步的设计 |
+| Autonomix README (PRQELT) | 每次消息附带 "fresh project context (file tree, active level, selected actors, context window stats)" | 我们 §4 `list_objects` + `GetSelectedActors` 思路一致 |
+| StraySpark UE5 plugin | UE T3D Ctrl+C/V format + human-readable tokens (LINK_1, GUID_A) → 真 engine GUID | 未来 v1+ 我们如果要 LLM 改 Blueprint 节点图，可借鉴这个 token 翻译 pattern |
+| Nwiro AI | "Blueprints, materials, levels, animations, Niagara, Sequencer, GAS, PIE runtime, 30+ node types in one tool" | 印证 UE 编辑器整体可 AI 化趋势；我们 v0 不动 Blueprint，但路线在 |
+
+### 12.4 5.8 PCG 跨 toolset 利好（MCP 角度）
+
+ue58_pcg_notes_xiaohuan.md 已列 5.8 PCG 变化，从 MCP 视角额外强调：
+
+| 5.8 PCG 变化 | MCP-side 收益 |
+|---|---|
+| DAG 并行 graph evaluation (2-2.5x 提速) | LLM 触发 PCG regenerate 时延 ↓，agent loop 体验 ↑ |
+| 手动编辑 procedural output 不破图 | LLM 调用 `add_to_scene_from_asset` 在 PCG 区域内手 spawn actor 不破 PCG，**这正是我们 demo 路线的核心**（v0 actor + v1 PCG 共存） |
+| Mesh Terrain (Experimental) + PCG 集成 | 未来 v0.5 工业一角外景可用，本期 reject |
+| `FPCGRuntimeGenScheduler` 在 5.7 已存 | 5.8 无 specific delta 公开，我们 cook-time generate 路线不依赖此 |
+| `unreal.PCGComponent.set_graph_parameter(...)` Python API | 5.7 已工作，5.8 未公开 delta。我们走 `ObjectTools.set_properties` 反射路径，规避 Python API method 名变更风险 |
+
+---
+
+## §13 残留盲区清单
+
+经 §12 调研后**仍未确证的事项**。每条标 risk + 缓解策略。
+
+| # | 盲区 | Risk | 缓解 |
+|---|---|---|---|
+| 1 | `AICallable` UFUNCTION metadata 官方拼写 + 行为 | 低（我们不写 plugin，不依赖此 metadata） | §6 决策 drop 自定义 plugin 后此盲区无关 |
+| 2 | `UToolsetRegistry::Register` 自定义 toolset 注册 API | 低（同上） | 不写自定义 toolset |
+| 3 | AI Assistant 编辑器面板内部 "hidden context" 数据格式 | 低（我们绕开 UE 自带面板，自家 web UI） | 不用 Epic 面板 = 不需要适配它的 context format |
+| 4 | `MCPClientToolset` (UE 当 MCP client 反向调外部 MCP) | 无（v0/v1 不用反向） | 标 out-of-scope，老白如果想未来用本地 LLM 跑 UE 内部 agent 再说 |
+| 5 | Epic 6 月 GA 时 ToolsetRegistry/MCP 是否转 Production-ready | 中 (影响发布时间表) | 6 月初对 Final Build 重跑 §5 四条链路；如果 Experimental 还在，演示话术加 "Epic Preview 阶段, GA 后转正" |
+| 6 | 多客户端并发 (web + Cursor + Claude Desktop 同时连一个 UE) | 低 (chat-scale 单数字调用/分钟) | 不并发，演示单客户端 |
+| 7 | 认证 / 鉴权 (localhost only, 无 token) | 低 (本地演示) | 客户演示 localhost 部署即可；远程时加 reverse proxy + auth |
+| 8 | UE 内 Python sandbox 真实 import 白名单 | 中 (布局算法用了 `random`, 没问题) | 调用 `ProgrammaticToolset.get_execution_environment()` 一次 dump 沙箱 import 表，写进 mcp_client docstring (xiaoxu TODO) |
+| 9 | `set_properties` 性能上限 (一次写多少 UPROPERTY 安全) | 低 (chat-scale 几十 KB JSON / 调用) | 演示规模 21 PCG 参数 + 4 robotics_backend 字段 = << 100 KB，不会触阈值 |
+| 10 | 5.8 → 5.9/6.0 升级路径 Epic 是否破坏当前 toolset 名字 | 中-高 (Experimental → Production-ready 间名字常变) | 在 mcp_client 锁 `PROTOCOL_VERSION = "2025-11-25"`，升级时整体 retest §5 |
+
+**总体风险评估**: 我们当前 v0 demo 链路**所有关键路径都在 5.7 已经稳定的
+机制上**（反射 UPROPERTY 写、Python 沙箱、SceneTools find/add/remove、
+Editor Camera capture）。5.8 Experimental 标的是**注册机制 + 协议外壳**，
+对调用方影响小。**演示风险 = 低**。
+
+---
+
+## §14 Web 调研引用
+
+Sources consulted via WebSearch (Epic dev.epicgames.com 全部 403, 仅依赖 search snippet + 社区):
+
+- **Epic Public Roadmap (productboard)**: [AI Assistant Experimental card](https://portal.productboard.com/epicgames/1-unreal-engine-public-roadmap/c/2168-ai-assistant-experimental-) — 通过 search snippet 拿到状态
+- **StraySpark UE5.8 Preview Indie Features**: [https://www.strayspark.studio/blog/unreal-engine-5-8-preview-indie-features-2026](https://www.strayspark.studio/blog/unreal-engine-5-8-preview-indie-features-2026) — 5.8 PCG / Mesh Terrain / Mega Lights / State Tree 默认
+- **80.lv UE5.8 Preview**: [https://80.lv/articles/unreal-engine-5-8-preview-has-arrived](https://80.lv/articles/unreal-engine-5-8-preview-has-arrived) — 5.8 高亮特性 (403 直读，靠 search snippet)
+- **DigitalProduction UE5.8 Preview**: [https://digitalproduction.com/2026/05/14/unreal-engine-5-8-preview-rolls-in/](https://digitalproduction.com/2026/05/14/unreal-engine-5-8-preview-rolls-in/) — Mesh Terrain + PCG 集成
+- **NVIDIA Developer Blog**: [Reliable AI Coding for Unreal Engine](https://developer.nvidia.com/blog/reliable-ai-coding-for-unreal-engine-improving-accuracy-and-reducing-token-costs/) — token-efficient batching 设计原则
+- **chongdashu/unreal-mcp**: [https://github.com/chongdashu/unreal-mcp](https://github.com/chongdashu/unreal-mcp) — 3rd-party MCP 4 类 (Actor/BP/BP Graph/Editor)
+- **prajwalshettydev/UnrealGenAISupport**: [https://github.com/prajwalshettydev/UnrealGenAISupport](https://github.com/prajwalshettydev/UnrealGenAISupport) — 自家 Python MCP，README 明文 "Epic Games is working on an official Unreal MCP integration for UE 5.8+"
+- **StraySpark Unreal MCP Server (forum)**: [https://forums.unrealengine.com/t/strayspark-unreal-mcp-server-200-ai-tools-for-ue5-editor-automation-via-mcp/2707474](https://forums.unrealengine.com/t/strayspark-unreal-mcp-server-200-ai-tools-for-ue5-editor-automation-via-mcp/2707474) — 207 tool / 34 类规模 (5.7)
+- **VibeUE UE5 MCP Server (forum)**: [https://forums.unrealengine.com/t/vibeue-ue5-mcp-server-with-in-editor-ai-chat-open-source-community-driven/2708486](https://forums.unrealengine.com/t/vibeue-ue5-mcp-server-with-in-editor-ai-chat-open-source-community-driven/2708486)
+- **AgenticLink (forum)**: [https://forums.unrealengine.com/t/agenticlink-agentic-workflow-automation-for-unreal/2701801](https://forums.unrealengine.com/t/agenticlink-agentic-workflow-automation-for-unreal/2701801) — 商业 plugin 路线
+- **UE5 AI Skills (GitHub)**: [quodsoler/unreal-engine-skills](https://github.com/quodsoler/unreal-engine-skills) — Agent Skills spec 路线, 27 skills (gameplay/rendering/animation, 非编辑器自动化)
+- **Grokipedia PCG Framework**: [https://grokipedia.com/page/Procedural_Content_Generation_Framework_Unreal_Engine](https://grokipedia.com/page/Procedural_Content_Generation_Framework_Unreal_Engine) (403 直读)
+- **PCG Runtime Generation Docs (Epic)**: [https://dev.epicgames.com/documentation/en-us/unreal-engine/runtime-hierarchical-generation](https://dev.epicgames.com/documentation/en-us/unreal-engine/runtime-hierarchical-generation) (403)
+- **FPCGRuntimeGenScheduler API**: [https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Plugins/PCG/FPCGRuntimeGenScheduler](https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Plugins/PCG/FPCGRuntimeGenScheduler) (403)
+- **PCG Hierarchical Generation forum**: [https://forums.unrealengine.com/t/pcg-hierarchical-generation/1602888](https://forums.unrealengine.com/t/pcg-hierarchical-generation/1602888)
+- **Unreal Garden UFUNCTION Specifiers**: [https://unreal-garden.com/docs/ufunction/](https://unreal-garden.com/docs/ufunction/) — 公开的 UFUNCTION metadata 全列，**无 AICallable**
+- **Tom Looman UFUNCTION Guide**: [https://tomlooman.com/unreal-engine-ufunction-specifiers/](https://tomlooman.com/unreal-engine-ufunction-specifiers/) — 同上无 AICallable
