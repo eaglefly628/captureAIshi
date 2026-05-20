@@ -490,6 +490,10 @@ function App() {
   const jobName = `${scene}/${mrqSubdir.split('/')[1] || 'v0_demo'}`;
 
   const showMcpBoot = mcpInit && !mcpInitDismissed;
+  // After user dismisses the overlay while UE is offline, keep an obvious
+  // red banner pinned at the top so the reconnect entry point is never
+  // hidden during a customer demo.
+  const showOfflineBanner = mcpInit && mcpInitDismissed && mcpInit.done && mcpInit.ok === false;
 
   return (
     <>
@@ -500,7 +504,21 @@ function App() {
           onDismiss={() => setMcpInitDismissed(true)}
         />
       )}
-      <div className="app">
+      {showOfflineBanner && (
+        <div className="mcp-offline-banner" role="button" tabIndex={0}
+             onClick={retryMcpInit}
+             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') retryMcpInit(); }}>
+          <span className="mcp-offline-dot" />
+          <span className="mcp-offline-text">
+            <b>UE Editor 未连接</b> · 工具调用无法推送到 UE
+            <span className="mcp-offline-hint">
+              {mcpInit.error ? ` · ${mcpInit.error}` : ' · 启动 UE 后 ModelContextProtocol.StartServer 再点此重连'}
+            </span>
+          </span>
+          <span className="mcp-offline-btn">重连 UE Editor</span>
+        </div>
+      )}
+      <div className={`app${showOfflineBanner ? ' has-offline-banner' : ''}`}>
         <TopBar projectName="adore-data" jobName={`${scene} · ${mrqSubdir.split('/')[1] || 'v0_demo'}`}
           runStatus={runStatus} runtimeS={runtimeMs}
           mcpState={mcpInit} onMcpReconnect={retryMcpInit} />

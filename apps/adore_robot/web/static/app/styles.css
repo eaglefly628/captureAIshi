@@ -1265,3 +1265,52 @@ select.twk-field {
 .mcp-boot.err .mcp-boot-bar-fill { background: linear-gradient(90deg, #c43c3c, #ff7878); box-shadow: 0 0 12px rgba(255,120,120,0.6); }
 .mcp-boot.ok  .mcp-boot-bar-fill { background: linear-gradient(90deg, #4fc080, #8be0a8); box-shadow: 0 0 12px rgba(120,220,160,0.6); }
 .mcp-boot.ok  .mcp-boot-glyph    { color: #8be0a8; text-shadow: 0 0 8px rgba(120,220,160,0.6); animation: none; }
+
+/* ────────────────────────────────────────────────────────────────
+   MCP offline banner (post-dismiss persistent reconnect bar)
+   ──────────────────────────────────────────────────────────────── */
+.mcp-offline-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 18px;
+  background: linear-gradient(90deg, rgba(200,40,40,0.92), rgba(160,30,30,0.92));
+  color: #ffe6e6;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(255,120,120,0.6);
+  box-shadow: 0 6px 20px rgba(120,0,0,0.35);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.mcp-offline-banner:hover {
+  background: linear-gradient(90deg, rgba(220,55,55,0.96), rgba(175,40,40,0.96));
+}
+.mcp-offline-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ffd0d0;
+  box-shadow: 0 0 8px rgba(255,255,255,0.6);
+  animation: mcp-offline-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mcp-offline-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50%      { opacity: 1.0; transform: scale(1.2); }
+}
+.mcp-offline-text {
+  flex: 1;
+  font-weight: 400;
+}
+.mcp-offline-text b { font-weight: 600; }
+.mcp-offline-hint { opacity: 0.78; font-size: 12px; }
+.mcp-offline-btn {
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.4);
+  font-size: 12px; font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mcp-offline-banner:hover .mcp-offline-btn {
+  background: rgba(255,255,255,0.28);
+}
+/* push the app down so the banner doesn't cover the topbar */
+.app.has-offline-banner { padding-top: 38px; }
