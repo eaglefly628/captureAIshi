@@ -187,7 +187,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.3.3] <commit-sha> -- xiaohuan (v0 demo §10 整图布局生成)
+### [v0.3.3] 5e19f62 -- xiaohuan (v0 demo §10 整图布局生成)
 - demo_v0_simplified_contract.md §10 增补 (用户 2026-05-19 "把整个场景物件布局生成"): 3 个 layout 生成器 (warehouse 完整 / living_room sketch / industrial_corner sketch) + clear_demo_objects + LLM prompt 补 (3 few-shot)
 - warehouse algo (~95 行 Python, drop-in MCP `execute_tool_script`): shelf 阵列 + aisle 计算 + forklift 随机 aisle + pallet 贴 shelf + box room-floor + drum 靠墙 + worker 避开 forklift
 - 默认参数 37 actor / 一次 generate ~4s, 跟 §2 primitive 共用 `demo_v0_spawned` tag, generate 后用户继续 spawn/move/delete 微调
