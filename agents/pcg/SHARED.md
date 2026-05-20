@@ -187,6 +187,13 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
+### [v0.3.3] <commit-sha> -- xiaohuan (v0 demo §10 整图布局生成)
+- demo_v0_simplified_contract.md §10 增补 (用户 2026-05-19 "把整个场景物件布局生成"): 3 个 layout 生成器 (warehouse 完整 / living_room sketch / industrial_corner sketch) + clear_demo_objects + LLM prompt 补 (3 few-shot)
+- warehouse algo (~95 行 Python, drop-in MCP `execute_tool_script`): shelf 阵列 + aisle 计算 + forklift 随机 aisle + pallet 贴 shelf + box room-floor + drum 靠墙 + worker 避开 forklift
+- 默认参数 37 actor / 一次 generate ~4s, 跟 §2 primitive 共用 `demo_v0_spawned` tag, generate 后用户继续 spawn/move/delete 微调
+- §10.9 v0 vs v1 对比表: v0=Python+6 mesh+全量重 spawn, v1=PCG graph+full SKU pack+incremental regen, 演示路线递进
+- xiaoxu 接力 wire `/api/chat` 加 4 个新 tool (3 layout + clear)，prompts.py 加 §10.7 system prompt 补丁 + 4 few-shot
+
 ### [v0.3.3] a39e0f8 -- xiaohuan (v0 demo simplified contract: spawn/delete/move)
 - apps/adore_robot/docs/demo_v0_simplified_contract.md (新, 9 节): 用户 2026-05-19 简化路线 -- v0 demo 只 3 个 actor 动作 + 1 query
 - §1 Asset 目录 (6 mesh: shelf/forklift/pallet/box/drum/worker), §2 4 个 Tool Schema (strict JSON), §3 坐标系约定 (米 + BP_DemoOrigin)
