@@ -120,9 +120,45 @@ CLEAR_DEMO_TOOL = ToolDef(
     },
 )
 
+SPAWN_BATCH_TOOL = ToolDef(
+    name="spawn_batch",
+    description=(
+        "Spawn many static mesh actors in one call. PREFERRED for any "
+        "intent that places multiple objects -- rows, grids, lines, "
+        "evenly-spaced sets, 'put N forklifts in the back', etc. One "
+        "tool call instead of N. Each item is {asset_name, x, y, z?, "
+        "yaw_deg?} with the same enum + bounds rules as spawn_object."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 60,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "asset_name": {"type": "string", "enum": ASSET_NAMES},
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                        "z": {"type": "number", "default": 0},
+                        "yaw_deg": {"type": "number", "default": 0},
+                    },
+                    "required": ["asset_name", "x", "y"],
+                },
+            },
+        },
+        "required": ["items"],
+    },
+)
+
 
 DEMO_TOOLS: list[ToolDef] = [
     SPAWN_OBJECT_TOOL,
+    SPAWN_BATCH_TOOL,
     DELETE_OBJECT_TOOL,
     MODIFY_LOCATION_TOOL,
     LIST_OBJECTS_TOOL,
@@ -185,8 +221,34 @@ def dispatch_warehouse(mcp, args: dict) -> dict:
     return mcp.demo_generate_warehouse(asset_resolver=resolve_asset, **args)
 
 
+def dispatch_batch(mcp, args: dict) -> dict:
+    items = args.get("items") or []
+    spawned = []
+    errors = []
+    for it in items:
+        try:
+            clamped, _ = _clamp_xy(it)
+            rec = mcp.demo_spawn(
+                asset_path=resolve_asset(clamped["asset_name"]),
+                asset_name=clamped["asset_name"],
+                x_m=float(clamped["x"]),
+                y_m=float(clamped["y"]),
+                z_m=float(clamped.get("z", 0)),
+                yaw_deg=float(clamped.get("yaw_deg", 0)),
+            )
+            spawned.append(rec)
+        except Exception as e:
+            errors.append({"item": it, "error": f"{type(e).__name__}: {e}"})
+    by_asset: dict = {}
+    for s in spawned:
+        by_asset[s["asset_name"]] = by_asset.get(s["asset_name"], 0) + 1
+    return {"spawned": spawned, "total": len(spawned),
+            "by_asset": by_asset, "errors": errors}
+
+
 DISPATCHERS = {
     "spawn_object": dispatch_spawn,
+    "spawn_batch": dispatch_batch,
     "delete_object": dispatch_delete,
     "modify_location": dispatch_move,
     "list_objects": dispatch_list,

@@ -305,6 +305,13 @@ function App() {
             x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
           })));
           setSceneSeeded(true);
+        } else if (r.tool === 'spawn_batch' && Array.isArray(res.spawned)) {
+          setSpawnedActors(prev => [...prev, ...res.spawned.map(s => ({
+            actor_handle: s.actor_handle,
+            asset_name: s.asset_name,
+            x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
+          }))]);
+          if (res.total > 0) setSceneSeeded(true);
         } else if (r.tool === 'clear_demo_objects') {
           setSpawnedActors([]);
           setSceneSeeded(false);
@@ -779,6 +786,10 @@ async function callRealChat(userText, scene, currentParams) {
   } else if (tc.name === 'list_objects') {
     calls.push({ name: 'list_objects', args: {} });
     toolNarrate = '列出当前 actor';
+  } else if (tc.name === 'spawn_batch') {
+    const items = Array.isArray(args.items) ? args.items : [];
+    items.forEach((it, idx) => calls.push({ name: `spawn ${idx + 1}`, args: it }));
+    toolNarrate = `批量 spawn ${items.length} 个物件`;
   } else if (tc.name === 'generate_warehouse_layout') {
     calls.push({ name: 'generate_warehouse_layout', args });
     toolNarrate = '生成仓库布局';
@@ -800,6 +811,7 @@ async function callRealChat(userText, scene, currentParams) {
       else if (relay.tool === 'delete_object' && res.deleted) target = `delete ${res.deleted}`;
       else if (relay.tool === 'modify_location' && res.actor_handle) target = `move ${res.actor_handle}`;
       else if (relay.tool === 'list_objects' && Array.isArray(res.objects)) target = `${res.objects.length} actors`;
+      else if (relay.tool === 'spawn_batch' && res.total) target = `batch · ${res.total} actors`;
       else if (relay.tool === 'generate_warehouse_layout' && res.total) target = `layout · ${res.total} actors`;
       else if (relay.tool === 'clear_demo_objects' && res.cleared !== undefined) target = `cleared ${res.cleared}`;
       else if (!relay.tool && relay.pcg_component) target = (relay.pcg_component.split('.').pop() || 'PCG');

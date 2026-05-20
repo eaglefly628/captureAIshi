@@ -307,48 +307,56 @@ def api_chat():
         }), 502
     elapsed_ms = int((time.time() - t0) * 1000)
 
-    tc = result.tool_calls[0] if result.tool_calls else None
-    args_preview = json.dumps(tc.arguments if tc else {}, ensure_ascii=False)[:300]
+    tcs = list(result.tool_calls or [])
+    primary = tcs[0] if tcs else None
+    args_preview = json.dumps(primary.arguments if primary else {}, ensure_ascii=False)[:300]
     _log("CHAT-OUT", f"provider={provider_resolved}",
          f"model={getattr(client, 'model', '?')}", f"elapsed={elapsed_ms}ms",
-         f"tool={tc.name if tc else None}", f"args={args_preview}")
+         f"n_calls={len(tcs)}", f"primary={primary.name if primary else None}",
+         f"args={args_preview}")
 
     log_entry.update({
         "elapsed_ms": elapsed_ms,
         "model": getattr(client, "model", "?"),
-        "tool_call": {"name": tc.name, "arguments": tc.arguments} if tc else None,
+        "tool_calls": [{"name": t.name, "arguments": t.arguments} for t in tcs],
         "text": result.text,
     })
     CHAT_LOG.appendleft(log_entry)
 
     # ── MCP relay (scene mode only) ─────────────────────────────────────
-    # Two paths:
-    #   (a) update_scene tool_call -> apply_pcg_delta (PCG graph params)
-    #   (b) v0 demo tool_call (spawn/delete/move/list/generate/clear)
-    #       -> execute_tool_script with a pre-built unreal-python snippet.
-    # Either gracefully no-ops with a structured reason when UE is
-    # unreachable (sandbox demo, MCP server not started, etc).
-    mcp_relay = None
-    if mode == "scene" and tc and isinstance(tc.arguments, dict):
-        if tc.name == "update_scene" and tc.arguments.get("pcg_params"):
-            mcp_relay = _try_mcp_relay(tc.arguments["pcg_params"])
-        elif tc.name in DEMO_TOOL_NAMES:
-            mcp_relay = _try_demo_tool(tc.name, tc.arguments)
-        if mcp_relay is not None:
-            _log("MCP-RELAY", f"tool={tc.name}", f"ok={mcp_relay.get('ok')}",
-                 f"target={mcp_relay.get('pcg_component') or mcp_relay.get('reason') or '?'}")
+    # Iterate every tool_call returned in this turn. Strong models
+    # (Claude, GPT-4o, DeepSeek-reasoner) emit N parallel calls for
+    # "5 forklifts in a row"; weak models fall back to spawn_batch
+    # which packs the same intent into one call (server fans out).
+    mcp_relays: list = []
+    if mode == "scene":
+        for t in tcs:
+            args = t.arguments if isinstance(t.arguments, dict) else {}
+            relay = None
+            if t.name == "update_scene" and args.get("pcg_params"):
+                relay = _try_mcp_relay(args["pcg_params"])
+            elif t.name in DEMO_TOOL_NAMES:
+                relay = _try_demo_tool(t.name, args)
+            if relay is not None:
+                relay["tool"] = relay.get("tool") or t.name
+                mcp_relays.append(relay)
+                _log("MCP-RELAY", f"tool={t.name}", f"ok={relay.get('ok')}",
+                     f"target={relay.get('pcg_component') or relay.get('reason') or '?'}")
 
+    # Back-compat: front-end currently reads `tool_call` + `mcp_relay`
+    # (singular). Keep those pointing at the first call; surface the full
+    # list as `tool_calls` + `mcp_relays` so newer UI can show every step.
     return jsonify({
         "ok": True,
         "provider": provider_resolved,
         "model": getattr(client, "model", "unknown"),
         "elapsed_ms": elapsed_ms,
-        "tool_call": {
-            "name": tc.name,
-            "arguments": tc.arguments,
-        } if tc else None,
+        "tool_call": ({"name": primary.name, "arguments": primary.arguments}
+                      if primary else None),
+        "tool_calls": [{"name": t.name, "arguments": t.arguments} for t in tcs],
         "text": result.text,
-        "mcp_relay": mcp_relay,
+        "mcp_relay": mcp_relays[0] if mcp_relays else None,
+        "mcp_relays": mcp_relays,
     })
 
 

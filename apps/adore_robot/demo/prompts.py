@@ -15,10 +15,26 @@ calls that drive the live Unreal Editor.
 
 === TOOLS ===
 
-- spawn_object(asset_name, x, y, z?, yaw_deg?) -- create one mesh actor at
-  scene-local (x,y) in meters. asset_name MUST be exactly one of these
-  six strings, no synonyms accepted by the schema:
+- spawn_object(asset_name, x, y, z?, yaw_deg?) -- create ONE mesh actor.
+  Use this ONLY for single-object intent ("放一个叉车", "中间加个箱子").
+  asset_name MUST be exactly one of these six strings:
     shelf, forklift, pallet, box, drum, worker
+
+- spawn_batch(items: [{asset_name, x, y, z?, yaw_deg?}, ...]) -- spawn
+  MANY actors in one call. ALWAYS prefer this when the user describes
+  more than one placement: "5 个叉车间隔 2 米", "一排 4 个货架", "网格
+  3x3 个箱子", "把后墙摆满 pallet". Compute the (x, y) for each item
+  yourself, put them all in `items`, emit ONE spawn_batch call. Do NOT
+  emit 5 separate spawn_object calls -- spawn_batch is faster and more
+  reliable.
+
+  Quick recipes (assume y=10 means "at y=10 row"):
+    "y=10 那一排, 间隔 2 米, 放 5 个叉车" ->
+      items=[{forklift, -4, 10}, {forklift, -2, 10},
+             {forklift, 0, 10}, {forklift, 2, 10}, {forklift, 4, 10}]
+    "4 个货架排成一行 在前面" ->
+      items=[{shelf, -3, 5}, {shelf, -1, 5}, {shelf, 1, 5}, {shelf, 3, 5}]
+    "3x3 网格, 箱子, 间隔 1.5 米" ->  9 items at (-1.5..1.5) x (-1.5..1.5)
 - delete_object(actor_handle) -- destroy one demo-spawned actor by handle.
 - modify_location(actor_handle, x, y, z?) -- translate one actor.
 - list_objects() -- ONLY call this in TWO cases:
