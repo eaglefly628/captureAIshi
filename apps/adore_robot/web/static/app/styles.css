@@ -1420,3 +1420,15 @@ select.twk-field {
 .mcp-boot.ok .mcp-boot-ue-ver { color: #4fc080; text-shadow: 0 0 6px rgba(120,220,160,0.6); }
 .mcp-boot.err .mcp-boot-banner { border-left-color: #ff7878; background: linear-gradient(90deg, rgba(255,120,120,0.10), rgba(255,120,120,0.02)); }
 .mcp-boot.err .mcp-boot-ue-ver { color: #ff7878; text-shadow: 0 0 6px rgba(255,120,120,0.6); }
+
+/* version chip next to ADORE wordmark */
+.brand-ver {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px; letter-spacing: 0.08em;
+  padding: 2px 6px; margin-left: 8px;
+  color: var(--accent, #5b8af0);
+  border: 1px solid rgba(91,138,240,0.35);
+  background: rgba(91,138,240,0.08);
+  border-radius: 2px;
+  align-self: center;
+}

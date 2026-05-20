@@ -3,7 +3,7 @@
 const { useState, useEffect, useRef } = React;
 
 // ─── Top bar ─────────────────────────────────────────────────────────────────
-function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect, onSyncFromUE, onClearAll, actorCount = 0, currentLevel = '' }) {
+function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect, onSyncFromUE, onClearAll, actorCount = 0, currentLevel = '', appVersion = '' }) {
   // Display the trailing path segment so "/Game/RobotDemo2" -> "RobotDemo2"
   const levelShort = (currentLevel || '').split('/').filter(Boolean).pop() || '——';
   const connecting = mcpState && mcpState.started && !mcpState.done;
@@ -30,6 +30,7 @@ function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReco
       <div className="brand">
         <div className="brand-mark">A</div>
         <div className="brand-name">ADORE</div>
+        {appVersion && <div className="brand-ver">{appVersion}</div>}
       </div>
       <div className="crumb">
         <span>{projectName}</span>

@@ -73,6 +73,11 @@ TEMPLATES = ROOT / "web" / "templates"
 STATIC = ROOT / "web" / "static"
 CONFIGS_SCENES = ROOT / "configs" / "scenes"
 
+# Surfaced in /api/status and the TopBar brand chip. Bump per
+# .claude/rules/versioning.md when changes affect inter-agent contracts.
+APP_VERSION = "0.4.0"
+APP_CHANNEL = "demo-v0"
+
 MCP_URL = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8000/mcp")
 
 app = Flask(
@@ -211,7 +216,8 @@ def dev_view():
 def status():
     return jsonify({
         "ok": True,
-        "version": "0.3.3-dev",
+        "version": APP_VERSION,
+        "channel": APP_CHANNEL,
         "phase": "demo+mcp-bridge",
         "mcp_url": MCP_URL,
         "mcp_session_id": mcp.session_id,

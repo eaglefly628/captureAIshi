@@ -75,7 +75,7 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
             <span className="mcp-boot-tag-mark" />
             ADORE-AI · NEURAL CONSOLE
           </span>
-          <span className="mcp-boot-sid">SESSION · {sessionShort}</span>
+          <span className="mcp-boot-sid">v0.4.0 · SESSION · {sessionShort}</span>
         </div>
 
         <div className="mcp-boot-banner">
@@ -179,6 +179,14 @@ function App() {
   // mock matches what's actually in the UE level.
   const [spawnedActors, setSpawnedActors] = useState([]);
   const [currentLevel, setCurrentLevel] = useState('');
+  const [appVersion, setAppVersion] = useState('');
+
+  // Fetch app version once on mount for the TopBar brand chip.
+  useEffect(() => {
+    fetch('/api/status').then(r => r.json()).then(j => {
+      if (j.ok && j.version) setAppVersion(`v${j.version}`);
+    }).catch(() => {});
+  }, []);
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -680,7 +688,7 @@ function App() {
           mcpState={mcpInit} onMcpReconnect={retryMcpInit}
           onSyncFromUE={syncFromUE} onClearAll={clearAllFromUE}
           actorCount={spawnedActors.length}
-          currentLevel={currentLevel} />
+          currentLevel={currentLevel} appVersion={appVersion} />
 
         {/* LEFT: Chat */}
         <ChatPanel
