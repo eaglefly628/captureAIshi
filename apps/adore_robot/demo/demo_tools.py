@@ -57,7 +57,7 @@ DELETE_OBJECT_TOOL = ToolDef(
 
 MODIFY_LOCATION_TOOL = ToolDef(
     name="modify_location",
-    description="Translate an existing actor to new scene-local (x,y) meters.",
+    description="Translate an existing actor to ABSOLUTE scene-local (x,y) meters.",
     input_schema={
         "type": "object",
         "additionalProperties": False,
@@ -68,6 +68,28 @@ MODIFY_LOCATION_TOOL = ToolDef(
             "z": {"type": "number", "default": 0},
         },
         "required": ["actor_handle", "x", "y"],
+    },
+)
+
+NUDGE_OBJECT_TOOL = ToolDef(
+    name="nudge_object",
+    description=(
+        "RELATIVE translate -- add (dx, dy, dz) meters to an existing "
+        "actor's current location. PREFERRED for '往左/往右/往前/往后 N 米' "
+        "and any chat that describes movement as a delta rather than an "
+        "absolute target. Server reads current position, so LLM does NOT "
+        "need to call list_objects first."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "actor_handle": {"type": "string"},
+            "dx": {"type": "number", "default": 0, "description": "delta along +X (right)"},
+            "dy": {"type": "number", "default": 0, "description": "delta along +Y (forward)"},
+            "dz": {"type": "number", "default": 0},
+        },
+        "required": ["actor_handle"],
     },
 )
 
@@ -179,6 +201,7 @@ DEMO_TOOLS: list[ToolDef] = [
     SPAWN_BATCH_TOOL,
     DELETE_OBJECT_TOOL,
     MODIFY_LOCATION_TOOL,
+    NUDGE_OBJECT_TOOL,
     LIST_OBJECTS_TOOL,
     GENERATE_WAREHOUSE_TOOL,
     CLEAR_DEMO_TOOL,
@@ -230,6 +253,14 @@ def dispatch_move(mcp, args: dict) -> dict:
         z_m=float(args.get("z", 0)),
     )
 
+def dispatch_nudge(mcp, args: dict) -> dict:
+    return mcp.demo_nudge(
+        handle=args["actor_handle"],
+        dx_m=float(args.get("dx", 0)),
+        dy_m=float(args.get("dy", 0)),
+        dz_m=float(args.get("dz", 0)),
+    )
+
 def dispatch_list(mcp, _args: dict) -> dict:
     return mcp.demo_list()
 
@@ -274,6 +305,7 @@ DISPATCHERS = {
     "spawn_batch": dispatch_batch,
     "delete_object": dispatch_delete,
     "modify_location": dispatch_move,
+    "nudge_object": dispatch_nudge,
     "list_objects": dispatch_list,
     "clear_demo_objects": dispatch_clear,
     "generate_warehouse_layout": dispatch_warehouse,

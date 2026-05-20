@@ -384,10 +384,14 @@ function App() {
       // what was just spawned/moved/deleted -- nothing more.
       const r = realCalls.relayMeta;
       if (r && r.ok) {
-        // Real UE state changed -> grab a fresh viewport screenshot for
-        // the PIP. Tiny delay so the spawn is rendered in the editor
-        // before we capture.
-        setTimeout(() => setUeShotKey(k => k + 1), 250);
+        // Real UE state changed -> grab fresh viewport screenshots.
+        // UE Editor's add_to_scene_from_asset is async: it returns when
+        // the spawn is queued, not when the new actor has actually been
+        // rendered in the viewport. We retry at a few intervals so the
+        // PIP catches the engine once the frame settles.
+        setTimeout(() => setUeShotKey(k => k + 1), 350);
+        setTimeout(() => setUeShotKey(k => k + 1), 900);
+        setTimeout(() => setUeShotKey(k => k + 1), 1800);
         const res = r.result || {};
         if (r.tool === 'spawn_object' && res.actor_handle) {
           setSpawnedActors(prev => [...prev, {
@@ -418,7 +422,7 @@ function App() {
           setSceneSeeded(false);
         } else if (r.tool === 'delete_object' && res.deleted) {
           setSpawnedActors(prev => prev.filter(a => a.actor_handle !== res.deleted));
-        } else if (r.tool === 'modify_location' && res.actor_handle) {
+        } else if ((r.tool === 'modify_location' || r.tool === 'nudge_object') && res.actor_handle) {
           setSpawnedActors(prev => {
             // server may have re-spawned with new handle (see demo_move);
             // drop old, push new entry at new coords.
@@ -903,6 +907,13 @@ async function callRealChat(userText, scene, currentParams) {
   } else if (tc.name === 'modify_location') {
     calls.push({ name: 'modify_location', args });
     toolNarrate = `${args.actor_handle} 挪到 (${args.x}, ${args.y})`;
+  } else if (tc.name === 'nudge_object') {
+    calls.push({ name: 'nudge_object', args });
+    const dx = args.dx ?? 0, dy = args.dy ?? 0;
+    const parts = [];
+    if (dx) parts.push(`${dx > 0 ? '+' : ''}${dx}m X`);
+    if (dy) parts.push(`${dy > 0 ? '+' : ''}${dy}m Y`);
+    toolNarrate = `${args.actor_handle} ${parts.join(' / ') || '0'}`;
   } else if (tc.name === 'list_objects') {
     calls.push({ name: 'list_objects', args: {} });
     toolNarrate = '列出当前 actor';
@@ -930,6 +941,7 @@ async function callRealChat(userText, scene, currentParams) {
       if (relay.tool === 'spawn_object' && res.actor_handle) target = `spawn → ${res.actor_handle}`;
       else if (relay.tool === 'delete_object' && res.deleted) target = `delete ${res.deleted}`;
       else if (relay.tool === 'modify_location' && res.actor_handle) target = `move ${res.actor_handle}`;
+      else if (relay.tool === 'nudge_object' && res.actor_handle) target = `nudge ${res.actor_handle}`;
       else if (relay.tool === 'list_objects' && Array.isArray(res.objects)) target = `${res.objects.length} actors`;
       else if (relay.tool === 'spawn_batch' && res.total) target = `batch · ${res.total} actors`;
       else if (relay.tool === 'generate_warehouse_layout' && res.total) target = `layout · ${res.total} actors`;

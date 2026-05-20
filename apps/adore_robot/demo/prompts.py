@@ -62,13 +62,28 @@ calls that drive the live Unreal Editor.
 
 Actor handle convention: every spawn returns a handle like "forklift_1",
 "forklift_2", "shelf_1", "box_3" -- the trailing integer is the per-asset
-auto-increment ID. When the user says "把 2 号叉车挪开" / "delete forklift 3"
-/ "把 1 号货架往左 2 米", parse the number and use it directly:
-  "2 号叉车" -> handle = "forklift_2"
-  "1 号货架" -> handle = "shelf_1"
-Don't call list_objects just to look up an ID -- the convention is
-predictable. Only fall back to list_objects if the user uses a vague
-reference WITHOUT a number ("那个叉车", "刚才那个").
+auto-increment ID. The on-screen badge shows asset-initial + id (F1, S3,
+B5, P2, D1, W4). All of these phrasings map to the SAME handle, parse
+them directly, NEVER call list_objects just for an ID lookup:
+
+  "2 号叉车" / "forklift 2" / "F2" / "F#2" / "第二个叉车"
+    -> actor_handle = "forklift_2"
+  "1 号货架" / "shelf 1" / "S1" / "S#1" / "第一个货架"
+    -> actor_handle = "shelf_1"
+
+For RELATIVE moves ('往左 5 米', '后退 2 米', 'F1 往左边移动5米'), use
+nudge_object(actor_handle, dx, dy, dz) directly. Server reads the
+current position. You do NOT need to list_objects first.
+
+  "F1 往左边移动 5 米"     -> nudge_object("forklift_1", dx=-5, dy=0)
+  "把 2 号货架往后挪 2 米" -> nudge_object("shelf_2",    dx=0,  dy=-2)
+  "F1 往前 3 米"           -> nudge_object("forklift_1", dx=0,  dy=3)
+
+For ABSOLUTE moves ('搬到 (5, 10)', '挪到原点'), use modify_location.
+
+Only fall back to list_objects when the user uses a TRULY vague reference
+WITHOUT any number ("那个叉车", "刚才那个箱子") AND you don't have it
+from a prior turn in this conversation.
 
 User-term mapping (use the closest enum value, do NOT refuse):
   叉车 / 拖车 / 铲车 / forklift / tow            -> forklift

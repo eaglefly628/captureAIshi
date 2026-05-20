@@ -832,6 +832,30 @@ class UnrealMCPClient:
         self._ledger_save()
         return {"cleared": cleared}
 
+    def demo_nudge(self, handle: str, dx_m: float = 0, dy_m: float = 0, dz_m: float = 0) -> dict:
+        """Relative move: current_pos + (dx, dy, dz). Handles the common
+        '往左/前/后 N 米' chat patterns without forcing the LLM to first
+        list_objects to look up the absolute target."""
+        self.auto_load_toolsets()
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
+        cur_x = rec.get("x", 0) if rec else None
+        cur_y = rec.get("y", 0) if rec else None
+        cur_z = rec.get("z", 0) if rec else None
+        if cur_x is None or cur_y is None:
+            # Fallback: query through demo_list which can recover from
+            # tags even when ledger is empty. Position may still be 0,0
+            # if the actor was never spawned via us.
+            for o in self.demo_list().get("objects", []):
+                if o.get("actor_handle") == handle:
+                    cur_x = o.get("x", 0)
+                    cur_y = o.get("y", 0)
+                    cur_z = o.get("z", 0)
+                    break
+        if cur_x is None or cur_y is None:
+            return {"error": f"no demo actor matching '{handle}'"}
+        return self.demo_move(handle, cur_x + dx_m, cur_y + dy_m, cur_z + dz_m)
+
     def demo_switch_level(self, level_path: str) -> dict:
         """Load a different .umap in the editor. Invalidates the level
         cache so the next demo_* call buckets into the new level."""
