@@ -568,20 +568,29 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
               top={p.top} left={p.left} right={p.right} />
           </g>;
         })}
-        {/* Per-actor ID badge -- shows '#N' next to every spawned actor
-            so customer + LLM can refer to "2 号叉车" without ambiguity. */}
+        {/* Per-actor ID badge -- short asset prefix + #N. Customer +
+            LLM can refer to "2 号叉车" without ambiguity. Hover shows
+            the full handle as a native SVG tooltip. */}
         {scene === 'warehouse' && spawnedActors.map((a, i) => {
           if (a.id_number == null) return null;
           const fx = sx(a.x ?? 0), fy = sy(a.y ?? 0);
           const p = iso(fx, fy);
+          // Asset prefix: F=forklift, S=shelf, B=box, P=pallet, D=drum, W=worker
+          const prefix = (a.asset_name || '?')[0].toUpperCase();
+          const label = `${prefix}${a.id_number}`;
+          // Badge floats ~2 scene-meters above the actor centroid.
           return (
             <g key={`id-${a.actor_handle || i}`}
-               transform={`translate(${p.x}, ${p.y - 1.4})`}>
-              <rect x="-0.45" y="-0.4" width="0.9" height="0.55" rx="0.08"
-                    fill="#0a0a0a" fillOpacity="0.85" stroke="#5b8af0" strokeWidth="0.04" />
-              <text x="0" y="0.02" textAnchor="middle"
-                    fontSize="0.32" fontFamily="var(--mono)" fontWeight="600"
-                    fill="#5b8af0">#{a.id_number}</text>
+               transform={`translate(${p.x}, ${p.y - 2.0})`}>
+              <title>{a.actor_handle} @ ({a.x.toFixed(1)}, {a.y.toFixed(1)})m</title>
+              <line x1="0" y1="0.6" x2="0" y2="1.6"
+                    stroke="#5b8af0" strokeWidth="0.06" opacity="0.55" />
+              <rect x="-1.1" y="-0.7" width="2.2" height="1.3" rx="0.18"
+                    fill="#0a0a0a" fillOpacity="0.92"
+                    stroke="#5b8af0" strokeWidth="0.10" />
+              <text x="0" y="0.22" textAnchor="middle"
+                    fontSize="0.95" fontFamily="var(--mono)" fontWeight="700"
+                    fill="#5b8af0" letterSpacing="-0.05">{label}</text>
             </g>
           );
         })}
