@@ -730,37 +730,86 @@ class UnrealMCPClient:
         }
 
     def demo_list(self) -> dict:
-        """Return ledger entries that still correspond to a live actor in
-        the Demo/v0 folder. Source of truth = our spawn ledger; we
-        intersect with the live folder so deletes outside the LLM (manual
-        Editor cleanup, level reload) don't leave stale handles."""
+        """Return every actor currently in the Demo/v0 folder, augmented
+        with whatever metadata we can find. Two sources, tried in order:
+
+          1. In-memory ledger keyed by actor_ref (fast, has exact spawn
+             coords + id_number).
+          2. The actor's own `tags` UPROPERTY (slow but survives Flask
+             restart, level reload, and ledger deletion -- we wrote
+             demo_v0_asset:<name> + demo_v0_handle:<name> at spawn time).
+
+        Position falls back to (0,0) when no ledger entry exists; if the
+        user reloaded a saved .umap the visual stays at origin but the
+        handle + asset + id are still recoverable so the LLM can still
+        delete / move them by name."""
         self.auto_load_toolsets()
-        live_refs = set()
+        live_refs = []
         for a in self._list_demo_folder():
             ref = a.get("refPath") if isinstance(a, dict) else a
             if ref:
-                live_refs.add(ref)
+                live_refs.append(ref)
         bucket = self._ledger_bucket()
+        # Index ledger entries by actor_ref so we can join with live list.
+        by_ref: dict = {}
+        for k, rec in list(bucket.items()):
+            r = rec.get("actor_ref")
+            if r:
+                by_ref[r] = rec
+
         out = []
         seen_handles = set()
-        for k, rec in list(bucket.items()):
-            h = rec.get("actor_handle")
-            if not h or h in seen_handles:
+        for ref in live_refs:
+            rec = by_ref.get(ref)
+            handle = rec.get("actor_handle") if rec else None
+            asset = rec.get("asset_name") if rec else None
+            id_n = rec.get("id_number") if rec else None
+            x = rec.get("x") if rec else None
+            y = rec.get("y") if rec else None
+            z = rec.get("z") if rec else None
+            yaw = rec.get("yaw_deg") if rec else None
+            # Fallback: read tags directly from the actor.
+            if handle is None or asset is None:
+                try:
+                    props = self.get_actor_properties(ref, ["tags"])
+                    tags = props.get("tags", []) if isinstance(props, dict) else []
+                    for t in tags:
+                        s = str(t)
+                        if s.startswith("demo_v0_asset:") and asset is None:
+                            asset = s.split(":", 1)[1]
+                        elif s.startswith("demo_v0_handle:") and handle is None:
+                            handle = s.split(":", 1)[1]
+                except Exception:
+                    pass
+            if handle is None:
+                handle = ref.rsplit(".", 1)[-1]  # last-resort: refPath tail
+            if asset is None:
+                asset = "unknown"
+            # Recover id_number from handle like "forklift_2"
+            if id_n is None and "_" in handle:
+                tail = handle.rsplit("_", 1)[1]
+                if tail.isdigit():
+                    id_n = int(tail)
+            if handle in seen_handles:
                 continue
-            seen_handles.add(h)
-            if live_refs and rec.get("actor_ref") and rec["actor_ref"] not in live_refs:
-                # ledger entry stale -- actor gone from level
-                bucket.pop(k, None)
-                continue
+            seen_handles.add(handle)
             out.append({
-                "actor_handle": h,
-                "asset_name": rec.get("asset_name", "unknown"),
-                "id_number": rec.get("id_number"),
-                "x": rec.get("x", 0),
-                "y": rec.get("y", 0),
-                "z": rec.get("z", 0),
-                "yaw_deg": rec.get("yaw_deg", 0),
+                "actor_handle": handle,
+                "asset_name": asset,
+                "id_number": id_n,
+                "x": x if x is not None else 0,
+                "y": y if y is not None else 0,
+                "z": z if z is not None else 0,
+                "yaw_deg": yaw if yaw is not None else 0,
             })
+
+        # Purge ledger entries whose actor_ref is no longer live (manual
+        # editor cleanup, level reload, etc.).
+        live_set = set(live_refs)
+        for k, rec in list(bucket.items()):
+            if rec.get("actor_ref") and rec["actor_ref"] not in live_set:
+                bucket.pop(k, None)
+        self._ledger_save()
         return {"objects": out}
 
     def demo_clear(self) -> dict:
