@@ -1483,3 +1483,22 @@ select.twk-field {
   font-family: var(--mono, ui-monospace, monospace);
   padding: 24px 16px 0;
 }
+
+/* ─── Viewport actor polish ──────────────────────────────────────── */
+.vp-actor {
+  transform-box: fill-box;
+  transition: filter 0.18s ease;
+  cursor: pointer;
+}
+.vp-actor-fresh {
+  animation: vp-actor-drop 0.55s cubic-bezier(0.22, 0.85, 0.4, 1.05);
+  transform-origin: center;
+}
+@keyframes vp-actor-drop {
+  0%   { transform: translateY(-30px) scale(0.6); opacity: 0; }
+  60%  { transform: translateY(2px)  scale(1.06); opacity: 1; }
+  100% { transform: translateY(0)    scale(1.0);  opacity: 1; }
+}
+.vp-actor-hover {
+  filter: drop-shadow(0 0 4px rgba(91,138,240,0.6)) brightness(1.15);
+}

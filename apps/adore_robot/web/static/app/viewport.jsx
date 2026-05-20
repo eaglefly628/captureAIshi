@@ -1,6 +1,6 @@
 // viewport.jsx — isometric SVG scene (warehouse / livingroom / factory)
 
-const { useMemo } = React;
+const { useMemo, useState, useRef, useEffect } = React;
 
 // ─── Iso projection ────────────────────────────────────────────────────────
 // World axes: x → right-down, y → left-down, z → up
@@ -437,6 +437,33 @@ function buildFactoryLayout(p) {
 
 // ─── Main scene component ───────────────────────────────────────────────────
 function Scene({ params, scene, robot, generating, generateProgress, seeded = true, spawnedActors = [] }) {
+  // Hover state: surface handle/asset/coord as floating tag on mouse-over.
+  const [hoveredHandle, setHoveredHandle] = useState(null);
+  // Track newly-arrived handles so we can ease them in. We diff
+  // spawnedActors against the previous list; brand-new entries get a
+  // CSS animation class for ~700ms.
+  const knownRef = useRef(new Set());
+  const [recentSpawns, setRecentSpawns] = useState(new Set());
+  useEffect(() => {
+    const cur = new Set(spawnedActors.map(a => a.actor_handle));
+    const fresh = new Set();
+    cur.forEach(h => { if (!knownRef.current.has(h)) fresh.add(h); });
+    knownRef.current = cur;
+    if (fresh.size === 0) return;
+    setRecentSpawns(prev => {
+      const next = new Set(prev);
+      fresh.forEach(h => next.add(h));
+      return next;
+    });
+    const t = setTimeout(() => {
+      setRecentSpawns(prev => {
+        const next = new Set(prev);
+        fresh.forEach(h => next.delete(h));
+        return next;
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [spawnedActors]);
   const tint = LIGHTING_TINTS[params.lighting_preset] || LIGHTING_TINTS.sodium;
 
   // Warehouse: auto-fit floor to actor extent + breathing room. Other
@@ -544,29 +571,49 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
         {scene === 'warehouse' && spawnedActors.map((a, i) => {
           const ax = a.x ?? 0, ay = a.y ?? 0;
           const fx = sx(ax), fy = sy(ay);
-          const SX = fx, SY = fy;  // alias for readability in renderers below
+          const SX = fx, SY = fy;
+          const isHover = hoveredHandle === a.actor_handle;
+          const isFresh = recentSpawns.has(a.actor_handle);
+          // Ground shadow: soft iso ellipse under the actor. Sits at z=0.
+          const shadowR = a.asset_name === 'shelf' ? 1.0
+                        : a.asset_name === 'forklift' ? 0.9
+                        : a.asset_name === 'pallet' ? 0.7
+                        : a.asset_name === 'worker' ? 0.25
+                        : 0.45;
+          const sp = iso(SX, SY);
+          let inner;
           if (a.asset_name === 'shelf') {
-            return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
-              <Shelf x={SX - 0.8} y={SY - 0.6} w={1.6} d={1.2} loadFactor={0.6} seed={i * 13} />
-            </g>;
+            inner = <Shelf x={SX - 0.8} y={SY - 0.6} w={1.6} d={1.2} loadFactor={0.6} seed={i * 13} />;
+          } else if (a.asset_name === 'forklift') {
+            inner = <Forklift x={SX} y={SY} />;
+          } else {
+            const PROFILES = {
+              pallet: { w: 1.2, d: 0.8, h: 0.15, top: '#C8A878', left: '#8E7448', right: '#6A5232' },
+              box:    { w: 0.6, d: 0.6, h: 0.6,  top: '#D9C098', left: '#A08560', right: '#735940' },
+              drum:   { w: 0.6, d: 0.6, h: 0.9,  top: '#5A6B7A', left: '#3F4D5A', right: '#2B3540' },
+              worker: { w: 0.3, d: 0.2, h: 1.7,  top: '#E8C8A8', left: '#A88868', right: '#75584A' },
+            };
+            const p = PROFILES[a.asset_name] || { w: 0.5, d: 0.5, h: 0.5, top: '#8A95A5', left: '#5F6878', right: '#3F4855' };
+            inner = <IsoBox x={SX - p.w / 2} y={SY - p.d / 2} w={p.w} d={p.d} h={p.h}
+                            top={p.top} left={p.left} right={p.right} />;
           }
-          if (a.asset_name === 'forklift') {
-            return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
-              <Forklift x={SX} y={SY} />
-            </g>;
-          }
-          // pallet / box / drum / worker / unknown -> IsoBox of varying size
-          const PROFILES = {
-            pallet: { w: 1.2, d: 0.8, h: 0.15, top: '#C8A878', left: '#8E7448', right: '#6A5232' },
-            box:    { w: 0.6, d: 0.6, h: 0.6,  top: '#D9C098', left: '#A08560', right: '#735940' },
-            drum:   { w: 0.6, d: 0.6, h: 0.9,  top: '#5A6B7A', left: '#3F4D5A', right: '#2B3540' },
-            worker: { w: 0.3, d: 0.2, h: 1.7,  top: '#E8C8A8', left: '#A88868', right: '#75584A' },
-          };
-          const p = PROFILES[a.asset_name] || { w: 0.5, d: 0.5, h: 0.5, top: '#8A95A5', left: '#5F6878', right: '#3F4855' };
-          return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
-            <IsoBox x={SX - p.w / 2} y={SY - p.d / 2} w={p.w} d={p.d} h={p.h}
-              top={p.top} left={p.left} right={p.right} />
-          </g>;
+          return (
+            <g key={a.actor_handle || i}
+               className={`vp-actor${isFresh ? ' vp-actor-fresh' : ''}${isHover ? ' vp-actor-hover' : ''}`}
+               style={itemStyle(i, spawnedActors.length)}
+               onMouseEnter={() => setHoveredHandle(a.actor_handle)}
+               onMouseLeave={() => setHoveredHandle(h => h === a.actor_handle ? null : h)}>
+              <ellipse cx={sp.x} cy={sp.y + 0.05} rx={shadowR} ry={shadowR * 0.45}
+                       fill="#000" opacity="0.32" filter="url(#softShadow)" />
+              {inner}
+              {isHover && (
+                <rect x={SX - 1.2} y={SY - 1.2} width="2.4" height="2.4"
+                      fill="none" stroke={tint.overlay || '#5b8af0'}
+                      strokeWidth="0.06" strokeDasharray="0.2 0.15"
+                      opacity="0.8" />
+              )}
+            </g>
+          );
         })}
         {/* Per-actor ID badge -- short asset prefix + #N. Customer +
             LLM can refer to "2 号叉车" without ambiguity. Hover shows

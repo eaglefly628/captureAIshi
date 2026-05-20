@@ -784,6 +784,19 @@ function App() {
               <div className="vp-stat"><span className="k">room</span><span className="v">{params.room_w_m.toFixed(1)} × {params.room_l_m.toFixed(1)} × {params.ceiling_h_m.toFixed(1)} m</span></div>
             </div>
             <div className="viewport-overlay right">
+              <div className="vp-stat">
+                <span className="k">actors</span>
+                <span className="v">{spawnedActors.length}</span>
+                {spawnedActors.length > 0 && (() => {
+                  const counts = spawnedActors.reduce((acc, a) => {
+                    acc[a.asset_name] = (acc[a.asset_name] || 0) + 1;
+                    return acc;
+                  }, {});
+                  const parts = Object.entries(counts).map(([k, v]) =>
+                    `${k[0].toUpperCase()}${v}`).join(' · ');
+                  return <><span className="k">·</span><span className="v" style={{fontSize: 10, opacity: 0.7}}>{parts}</span></>;
+                })()}
+              </div>
               <div className="vp-stat"><span className="k">tris</span><span className="v">~{Math.round((118 + params.shelf_density * 240 + params.forklift_count * 30) * 1000).toLocaleString()}</span></div>
               <div className="vp-stat"><span className="k">lumen</span><span className="v">on</span><span className="k">·</span><span className="v">path-tracer ready</span></div>
             </div>
