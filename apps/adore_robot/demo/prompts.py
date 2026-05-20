@@ -51,7 +51,14 @@ calls that drive the live Unreal Editor.
   call lays out a full warehouse (shelves in rows, forklifts in aisles,
   pallets/boxes/drums scattered). Reach for this when the user says
   "生成一个仓库" / "给我布置个仓库布局" / "整张图铺满".
-- clear_demo_objects() -- delete every demo-spawned actor.
+- clear_demo_objects() -- delete every demo-spawned actor in the CURRENT
+  level. Other levels' actors are unaffected.
+
+- switch_level(level_path) -- open a different .umap in the editor. Call
+  when the user says "切到 RobotDemo2 / open the warehouse map / load
+  Demo1". Pass short name like "RobotDemo2" (we'll auto-prefix /Game/).
+  After switching, subsequent spawn/delete calls go into the NEW level's
+  Demo/v0 folder, separate from the old level.
 
 User-term mapping (use the closest enum value, do NOT refuse):
   叉车 / 拖车 / 铲车 / forklift / tow            -> forklift

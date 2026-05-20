@@ -463,13 +463,13 @@ class UnrealMCPClient:
 
     DEMO_FOLDER = "Demo/v0"
 
-    # Server-side actor ledger keyed by handle.  Persisted to
-    # apps/adore_robot/.demo_ledger.json so Flask restarts don't lose
-    # mapping of handle -> {asset_name, x, y, z, yaw_deg, actor_ref}.
-    # UE's StaticMeshActor doesn't expose its transform through
-    # ObjectTools.set_properties so we cache exact spawn coords here.
+    # Per-level actor ledger.  Shape: { level_path: { handle: record } }
+    # so RobotDemo1 and RobotDemo2 never see each other's actors.
+    # Persisted to apps/adore_robot/.demo_ledger.json across Flask restarts.
     _DEMO_LEDGER: dict = {}
     _LEDGER_FILE = "apps/adore_robot/.demo_ledger.json"
+    _level_cache: str = ""
+    _level_cache_ts: float = 0.0
 
     @classmethod
     def _ledger_load(cls):
@@ -477,7 +477,16 @@ class UnrealMCPClient:
         try:
             if _os.path.exists(cls._LEDGER_FILE):
                 with open(cls._LEDGER_FILE, "r", encoding="utf-8") as f:
-                    cls._DEMO_LEDGER = _j.load(f)
+                    data = _j.load(f)
+                # back-compat: older ledger was flat {handle: record}.
+                # Wrap it under a "_legacy" level so we don't lose history.
+                if data and not any(isinstance(v, dict) and
+                                    any(isinstance(vv, dict) and "actor_handle" in vv
+                                        for vv in v.values())
+                                    for v in data.values()):
+                    cls._DEMO_LEDGER = {"_legacy": data}
+                else:
+                    cls._DEMO_LEDGER = data
         except Exception:
             cls._DEMO_LEDGER = {}
 
@@ -489,6 +498,26 @@ class UnrealMCPClient:
                 _j.dump(cls._DEMO_LEDGER, f, ensure_ascii=False, indent=0)
         except Exception:
             pass
+
+    def _current_level_cached(self) -> str:
+        """get_current_level with a 2s cache to avoid one RPC per spawn."""
+        now = time.time()
+        if now - self._level_cache_ts < 2.0 and self._level_cache:
+            return self._level_cache
+        try:
+            lvl = self.get_current_level() or "_unknown"
+        except Exception:
+            lvl = self._level_cache or "_unknown"
+        self._level_cache = lvl
+        self._level_cache_ts = now
+        return lvl
+
+    def _ledger_bucket(self) -> dict:
+        """Return (and create if absent) the per-level bucket."""
+        lvl = self._current_level_cached()
+        if lvl not in self._DEMO_LEDGER:
+            self._DEMO_LEDGER[lvl] = {}
+        return self._DEMO_LEDGER[lvl]
 
     def _demo_origin_world_cm(self) -> dict:
         """Return BP_DemoOrigin world location in cm, or origin if absent."""
@@ -588,9 +617,10 @@ class UnrealMCPClient:
             "asset_name": asset_name,
             "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
         }
-        self._DEMO_LEDGER[actor_name] = record
+        bucket = self._ledger_bucket()
+        bucket[actor_name] = record
         if actor_ref:
-            self._DEMO_LEDGER[actor_ref] = record  # alt lookup
+            bucket[actor_ref] = record  # alt lookup
         self._ledger_save()
         return record
 
@@ -623,7 +653,8 @@ class UnrealMCPClient:
 
     def demo_delete(self, handle: str) -> dict:
         self.auto_load_toolsets()
-        rec = self._DEMO_LEDGER.get(handle)
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
         ref = (rec or {}).get("actor_ref") or self._find_demo_actor(handle)
         if not ref:
             return {"error": f"no demo actor matching '{handle}'"}
@@ -631,10 +662,9 @@ class UnrealMCPClient:
             "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
             {"actor": ref},
         )
-        # purge from ledger by both keys.
         for k in [handle, ref] + ([rec.get("actor_handle")] if rec else []):
             if k:
-                self._DEMO_LEDGER.pop(k, None)
+                bucket.pop(k, None)
         self._ledger_save()
         return {"deleted": handle, "actor_ref": ref, "ok": bool(ok)}
 
@@ -644,7 +674,8 @@ class UnrealMCPClient:
         via root_component, so we fake it by re-spawning. New actor gets a
         new handle; we update the ledger so the LLM's next reference works."""
         self.auto_load_toolsets()
-        rec = self._DEMO_LEDGER.get(handle)
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
         if not rec:
             ref = self._find_demo_actor(handle)
             if not ref:
@@ -658,9 +689,9 @@ class UnrealMCPClient:
             )
         except Exception:
             pass
-        self._DEMO_LEDGER.pop(handle, None)
+        bucket.pop(handle, None)
         if rec.get("actor_ref"):
-            self._DEMO_LEDGER.pop(rec["actor_ref"], None)
+            bucket.pop(rec["actor_ref"], None)
         # respawn at new location
         from demo.asset_registry import resolve as _resolve  # late import: avoid cycle
         try:
@@ -691,16 +722,17 @@ class UnrealMCPClient:
             ref = a.get("refPath") if isinstance(a, dict) else a
             if ref:
                 live_refs.add(ref)
+        bucket = self._ledger_bucket()
         out = []
         seen_handles = set()
-        for k, rec in list(self._DEMO_LEDGER.items()):
+        for k, rec in list(bucket.items()):
             h = rec.get("actor_handle")
             if not h or h in seen_handles:
                 continue
             seen_handles.add(h)
             if live_refs and rec.get("actor_ref") and rec["actor_ref"] not in live_refs:
                 # ledger entry stale -- actor gone from level
-                self._DEMO_LEDGER.pop(k, None)
+                bucket.pop(k, None)
                 continue
             out.append({
                 "actor_handle": h,
@@ -728,9 +760,29 @@ class UnrealMCPClient:
                 cleared += 1
             except Exception:
                 pass
-        self._DEMO_LEDGER.clear()
+        self._ledger_bucket().clear()
         self._ledger_save()
         return {"cleared": cleared}
+
+    def demo_switch_level(self, level_path: str) -> dict:
+        """Load a different .umap in the editor. Invalidates the level
+        cache so the next demo_* call buckets into the new level."""
+        self.auto_load_toolsets()
+        # normalize: accept "RobotDemo1" -> "/Game/RobotDemo1"
+        if level_path and not level_path.startswith("/"):
+            level_path = "/Game/" + level_path
+        try:
+            self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.load_level",
+                {"level_path": level_path},
+            )
+        except Exception as e:
+            return {"error": f"load_level failed: {type(e).__name__}: {e}",
+                    "level_path": level_path}
+        self._level_cache = ""
+        self._level_cache_ts = 0.0
+        new = self._current_level_cached()
+        return {"ok": True, "level_path": new}
 
     def demo_generate_warehouse(self, asset_resolver, **p) -> dict:
         """Server-side warehouse layout algorithm. asset_resolver(name)

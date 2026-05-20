@@ -178,6 +178,7 @@ function App() {
   // server-confirmed action; viewport renders these 1:1 so the SVG iso
   // mock matches what's actually in the UE level.
   const [spawnedActors, setSpawnedActors] = useState([]);
+  const [currentLevel, setCurrentLevel] = useState('');
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -243,6 +244,31 @@ function App() {
   useEffect(() => {
     if (mcpInit && mcpInit.done && mcpInit.ok) syncFromUE();
   }, [mcpInit && mcpInit.done && mcpInit.ok, syncFromUE]);
+
+  // Poll current level every 4s. UE is the source of truth -- when user
+  // opens a different .umap in the editor we detect it and re-sync.
+  useEffect(() => {
+    if (!(mcpInit && mcpInit.done && mcpInit.ok)) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const j = await fetch('/api/mcp/current_level').then(r => r.json());
+        if (!alive) return;
+        const lvl = j.ok ? (j.level_path || '') : '';
+        if (lvl && lvl !== currentLevel) {
+          setCurrentLevel(lvl);
+          // Level changed in UE -> wipe local mirror and pull the new
+          // level's Demo/v0 contents fresh.
+          setSpawnedActors([]);
+          setSceneSeeded(false);
+          syncFromUE();
+        }
+      } catch {}
+      if (alive) setTimeout(tick, 4000);
+    };
+    tick();
+    return () => { alive = false; };
+  }, [mcpInit && mcpInit.done && mcpInit.ok, currentLevel, syncFromUE]);
 
   const retryMcpInit = useCallback(() => {
     setMcpInitDismissed(false);
@@ -653,7 +679,8 @@ function App() {
           runStatus={runStatus} runtimeS={runtimeMs}
           mcpState={mcpInit} onMcpReconnect={retryMcpInit}
           onSyncFromUE={syncFromUE} onClearAll={clearAllFromUE}
-          actorCount={spawnedActors.length} />
+          actorCount={spawnedActors.length}
+          currentLevel={currentLevel} />
 
         {/* LEFT: Chat */}
         <ChatPanel

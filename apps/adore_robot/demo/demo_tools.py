@@ -112,11 +112,29 @@ GENERATE_WAREHOUSE_TOOL = ToolDef(
 
 CLEAR_DEMO_TOOL = ToolDef(
     name="clear_demo_objects",
-    description="Delete every actor tagged demo_v0_spawned.",
+    description="Delete every actor tagged demo_v0_spawned in the CURRENT level.",
     input_schema={
         "type": "object",
         "additionalProperties": False,
         "properties": {},
+    },
+)
+
+SWITCH_LEVEL_TOOL = ToolDef(
+    name="switch_level",
+    description=(
+        "Open a different UE level (map). Takes a short name like "
+        "'RobotDemo1' or 'RobotDemo2' (or a full path like "
+        "'/Game/RobotDemo1'). After this returns, subsequent spawn/list/"
+        "delete calls scope to the new level's Demo/v0 folder."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "level_path": {"type": "string"},
+        },
+        "required": ["level_path"],
     },
 )
 
@@ -164,6 +182,7 @@ DEMO_TOOLS: list[ToolDef] = [
     LIST_OBJECTS_TOOL,
     GENERATE_WAREHOUSE_TOOL,
     CLEAR_DEMO_TOOL,
+    SWITCH_LEVEL_TOOL,
 ]
 
 DEMO_TOOL_NAMES = {t.name for t in DEMO_TOOLS}
@@ -246,6 +265,10 @@ def dispatch_batch(mcp, args: dict) -> dict:
             "by_asset": by_asset, "errors": errors}
 
 
+def dispatch_switch_level(mcp, args: dict) -> dict:
+    return mcp.demo_switch_level(args.get("level_path", ""))
+
+
 DISPATCHERS = {
     "spawn_object": dispatch_spawn,
     "spawn_batch": dispatch_batch,
@@ -254,6 +277,7 @@ DISPATCHERS = {
     "list_objects": dispatch_list,
     "clear_demo_objects": dispatch_clear,
     "generate_warehouse_layout": dispatch_warehouse,
+    "switch_level": dispatch_switch_level,
 }
 
 

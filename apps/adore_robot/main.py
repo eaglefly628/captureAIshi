@@ -475,6 +475,19 @@ def api_mcp_auto_load():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
+@app.route("/api/mcp/current_level")
+def api_mcp_current_level():
+    """Returns whichever .umap is open in the editor. Polled by the UI
+    to detect level changes and re-sync the actor mirror."""
+    try:
+        lvl = mcp.get_current_level()
+        return jsonify({"ok": True, "level_path": lvl or ""})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True, "reason": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
 @app.route("/api/demo/list_objects")
 def api_demo_list_objects():
     """Sync UE Demo/v0 folder -> client. Used on page load and Sync button.
