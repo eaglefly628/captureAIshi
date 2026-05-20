@@ -282,7 +282,9 @@ def api_chat():
         )
         chat_kwargs = dict(
             messages=[Message(role="user", content=user_msg)],
-            tools=[UPDATE_SCENE_TOOL] + DEMO_TOOLS,
+            # v0 demo: only direct-actor tools. update_scene (PCG param
+            # delta) is parked until a real PCG graph exists in the level.
+            tools=DEMO_TOOLS,
             tool_choice="auto",
             system=SYSTEM_PROMPT,
             max_tokens=600,
