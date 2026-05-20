@@ -55,3 +55,6 @@ CMakeCache.txt
 CMakeFiles/
 ref/
 agents/unreal/refs/Unreal_mcp/
+
+# One-off code-review packages
+adore_robot_v*_review.zip
