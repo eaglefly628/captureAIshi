@@ -187,7 +187,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.3.3] <commit-sha> -- xiaohuan (MCP capability report v1.1 + web research)
+### [v0.3.3] 08f215c -- xiaohuan (MCP capability report v1.1 + web research)
 - apps/adore_robot/docs/ue58_mcp_capability_report.md v1.1 (本轮): §12 网上调研对照 + §13 残留盲区 + §14 引用清单
 - §12.1 Epic 官方 dev.epicgames.com 全 403, 用 search snippet + GitHub README + Wayback 拼出 6 条间接证据 (AI Assistant Productboard / AICallable 未公开 / ToolsetRegistry::Register 未公开 / PCG runtime gen 5.7 已有 / Mesh Terrain+PCG 集成)
 - §12.2 3rd-party MCP 生态对照表 (12 个项目: StraySpark 207 tool / chongdashu 4 类 / ChiR24 / Flux-Point / GenOrca / remiphilippe / AgenticLink / UnrealClaude / UnrealGenAISupport / 等等) -- 全部用自家 plugin, 没人用 Epic 官方 stack; UnrealGenAISupport README 明文承认 "Epic Games is working on an official Unreal MCP integration for UE 5.8+" = 我们押官方路线背书
