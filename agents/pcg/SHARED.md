@@ -187,6 +187,14 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
+### [v0.3.3] 08f215c -- xiaohuan (MCP capability report v1.1 + web research)
+- apps/adore_robot/docs/ue58_mcp_capability_report.md v1.1 (本轮): §12 网上调研对照 + §13 残留盲区 + §14 引用清单
+- §12.1 Epic 官方 dev.epicgames.com 全 403, 用 search snippet + GitHub README + Wayback 拼出 6 条间接证据 (AI Assistant Productboard / AICallable 未公开 / ToolsetRegistry::Register 未公开 / PCG runtime gen 5.7 已有 / Mesh Terrain+PCG 集成)
+- §12.2 3rd-party MCP 生态对照表 (12 个项目: StraySpark 207 tool / chongdashu 4 类 / ChiR24 / Flux-Point / GenOrca / remiphilippe / AgenticLink / UnrealClaude / UnrealGenAISupport / 等等) -- 全部用自家 plugin, 没人用 Epic 官方 stack; UnrealGenAISupport README 明文承认 "Epic Games is working on an official Unreal MCP integration for UE 5.8+" = 我们押官方路线背书
+- §12.3 NVIDIA blog "Reliable AI Coding for UE" 独立验证 ProgrammaticToolset 单 RPC 串多步设计
+- §13 10 个残留盲区分级 (AICallable 未公开/MCPClientToolset 反向/认证/多客户端/Python sandbox 白名单等), 总体演示风险评估 = 低
+- 客户演示话术建议: "押 Epic 官方 MCP 5.8 GA, 不是社区 5.7 自家 plugin"
+
 ### [v0.3.3] 5e19f62 -- xiaohuan (v0 demo §10 整图布局生成)
 - demo_v0_simplified_contract.md §10 增补 (用户 2026-05-19 "把整个场景物件布局生成"): 3 个 layout 生成器 (warehouse 完整 / living_room sketch / industrial_corner sketch) + clear_demo_objects + LLM prompt 补 (3 few-shot)
 - warehouse algo (~95 行 Python, drop-in MCP `execute_tool_script`): shelf 阵列 + aisle 计算 + forklift 随机 aisle + pallet 贴 shelf + box room-floor + drum 靠墙 + worker 避开 forklift
