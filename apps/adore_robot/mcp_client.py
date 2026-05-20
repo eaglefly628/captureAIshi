@@ -463,12 +463,32 @@ class UnrealMCPClient:
 
     DEMO_FOLDER = "Demo/v0"
 
-    # Server-side actor ledger keyed by handle. UE's StaticMeshActor
-    # doesn't expose `root_component` to ObjectTools reflection cleanly,
-    # so we cache exact spawn coordinates here. Source of truth for
-    # demo_list / demo_move / demo_delete. Survives only the current
-    # MCP client lifetime (process restart resets it).
+    # Server-side actor ledger keyed by handle.  Persisted to
+    # apps/adore_robot/.demo_ledger.json so Flask restarts don't lose
+    # mapping of handle -> {asset_name, x, y, z, yaw_deg, actor_ref}.
+    # UE's StaticMeshActor doesn't expose its transform through
+    # ObjectTools.set_properties so we cache exact spawn coords here.
     _DEMO_LEDGER: dict = {}
+    _LEDGER_FILE = "apps/adore_robot/.demo_ledger.json"
+
+    @classmethod
+    def _ledger_load(cls):
+        import json as _j, os as _os
+        try:
+            if _os.path.exists(cls._LEDGER_FILE):
+                with open(cls._LEDGER_FILE, "r", encoding="utf-8") as f:
+                    cls._DEMO_LEDGER = _j.load(f)
+        except Exception:
+            cls._DEMO_LEDGER = {}
+
+    @classmethod
+    def _ledger_save(cls):
+        import json as _j
+        try:
+            with open(cls._LEDGER_FILE, "w", encoding="utf-8") as f:
+                _j.dump(cls._DEMO_LEDGER, f, ensure_ascii=False, indent=0)
+        except Exception:
+            pass
 
     def _demo_origin_world_cm(self) -> dict:
         """Return BP_DemoOrigin world location in cm, or origin if absent."""
@@ -542,13 +562,24 @@ class UnrealMCPClient:
             actor_ref = spawned
         elif isinstance(spawned, dict):
             actor_ref = spawned.get("refPath") or spawned.get("actor")
-        # Move into demo folder (best-effort; ignore failures).
+        # Move into demo folder + write asset_name as an actor tag so
+        # the actor is self-identifying when we re-load a saved level
+        # without the in-memory ledger. Best-effort; ignore individual
+        # failures.
         if actor_ref:
             try:
                 self.call_tool_unwrapped(
                     "toolset_registry.toolsets.core.scene.SceneTools.set_actor_folder",
                     {"actor": actor_ref, "folder_path": self.DEMO_FOLDER},
                 )
+            except Exception:
+                pass
+            try:
+                self.set_actor_properties(actor_ref, {"tags": [
+                    "demo_v0_spawned",
+                    f"demo_v0_asset:{asset_name}",
+                    f"demo_v0_handle:{actor_name}",
+                ]})
             except Exception:
                 pass
         record = {
@@ -560,6 +591,7 @@ class UnrealMCPClient:
         self._DEMO_LEDGER[actor_name] = record
         if actor_ref:
             self._DEMO_LEDGER[actor_ref] = record  # alt lookup
+        self._ledger_save()
         return record
 
     def _list_demo_folder(self) -> list:
@@ -603,6 +635,7 @@ class UnrealMCPClient:
         for k in [handle, ref] + ([rec.get("actor_handle")] if rec else []):
             if k:
                 self._DEMO_LEDGER.pop(k, None)
+        self._ledger_save()
         return {"deleted": handle, "actor_ref": ref, "ok": bool(ok)}
 
     def demo_move(self, handle: str, x_m: float, y_m: float, z_m: float = 0.0) -> dict:
@@ -696,6 +729,7 @@ class UnrealMCPClient:
             except Exception:
                 pass
         self._DEMO_LEDGER.clear()
+        self._ledger_save()
         return {"cleared": cleared}
 
     def demo_generate_warehouse(self, asset_resolver, **p) -> dict:
@@ -789,3 +823,8 @@ class UnrealMCPClient:
     @property
     def loaded_toolsets(self) -> list[str]:
         return sorted(self._loaded_toolsets)
+
+
+# Load persistent ledger at import time so the very first /api/demo/list
+# after Flask restart already has handle -> asset_name mapping ready.
+UnrealMCPClient._ledger_load()

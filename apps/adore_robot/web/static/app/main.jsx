@@ -213,6 +213,37 @@ function App() {
     return () => { pollSeqRef.current += 1; };  // invalidate on unmount
   }, [startMcpPoll]);
 
+  // Sync spawnedActors with UE's Demo/v0 folder. Called automatically
+  // when MCP boot finishes (so opening the page already shows whatever
+  // RobotDemo.umap has) and from the manual Sync button.
+  const syncFromUE = useCallback(async () => {
+    try {
+      const r = await fetch('/api/demo/list_objects');
+      const j = await r.json();
+      if (j.ok && Array.isArray(j.objects)) {
+        setSpawnedActors(j.objects.map(o => ({
+          actor_handle: o.actor_handle,
+          asset_name: o.asset_name || 'shelf',
+          x: o.x ?? 0, y: o.y ?? 0, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
+        })));
+        setSceneSeeded(j.objects.length > 0);
+      }
+    } catch {}
+  }, []);
+
+  const clearAllFromUE = useCallback(async () => {
+    try {
+      await fetch('/api/demo/clear', { method: 'POST' });
+      setSpawnedActors([]);
+      setSceneSeeded(false);
+    } catch {}
+  }, []);
+
+  // Auto-sync the moment MCP init turns green.
+  useEffect(() => {
+    if (mcpInit && mcpInit.done && mcpInit.ok) syncFromUE();
+  }, [mcpInit && mcpInit.done && mcpInit.ok, syncFromUE]);
+
   const retryMcpInit = useCallback(() => {
     setMcpInitDismissed(false);
     setMcpInit(prev => prev ? { ...prev, started: true, done: false, error: null, ok: null, phase: 'handshake', current: 0 } : null);
@@ -620,7 +651,9 @@ function App() {
       <div className={`app${showOfflineBanner ? ' has-offline-banner' : ''}`}>
         <TopBar projectName="adore-data" jobName={`${scene} · ${mrqSubdir.split('/')[1] || 'v0_demo'}`}
           runStatus={runStatus} runtimeS={runtimeMs}
-          mcpState={mcpInit} onMcpReconnect={retryMcpInit} />
+          mcpState={mcpInit} onMcpReconnect={retryMcpInit}
+          onSyncFromUE={syncFromUE} onClearAll={clearAllFromUE}
+          actorCount={spawnedActors.length} />
 
         {/* LEFT: Chat */}
         <ChatPanel

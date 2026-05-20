@@ -475,6 +475,30 @@ def api_mcp_auto_load():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
+@app.route("/api/demo/list_objects")
+def api_demo_list_objects():
+    """Sync UE Demo/v0 folder -> client. Used on page load and Sync button.
+    Returns the same {objects: [...]} shape as the LLM list_objects tool."""
+    try:
+        return jsonify({"ok": True, **mcp.demo_list()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True,
+                        "reason": "UE MCP server unreachable",
+                        "detail": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/api/demo/clear", methods=["POST"])
+def api_demo_clear():
+    try:
+        return jsonify({"ok": True, **mcp.demo_clear()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True, "reason": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
 @app.route("/api/mcp/init", methods=["GET", "POST"])
 def api_mcp_init():
     """UI progress feed. GET returns current state. POST kicks init

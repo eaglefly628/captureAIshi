@@ -439,23 +439,50 @@ function buildFactoryLayout(p) {
 function Scene({ params, scene, robot, generating, generateProgress, seeded = true, spawnedActors = [] }) {
   const tint = LIGHTING_TINTS[params.lighting_preset] || LIGHTING_TINTS.sodium;
 
+  // Warehouse: auto-fit floor to actor extent + breathing room. Other
+  // scenes keep the legacy params-driven layout (no live actor mirror yet).
+  const isWarehouse = scene === 'warehouse';
   const layout = useMemo(() => {
-    if (scene === 'warehouse') return { kind: 'warehouse', ...buildWarehouseLayout(params) };
-    if (scene === 'livingroom') return { kind: 'living', ...buildLivingLayout(params) };
-    if (scene === 'factory') return { kind: 'factory', ...buildFactoryLayout(params) };
+    if (!isWarehouse) {
+      if (scene === 'livingroom') return { kind: 'living', ...buildLivingLayout(params) };
+      if (scene === 'factory') return { kind: 'factory', ...buildFactoryLayout(params) };
+    }
     return { kind: 'warehouse', ...buildWarehouseLayout(params) };
   }, [params, scene]);
 
-  const roomW = scene === 'warehouse' ? params.room_w_m
-              : scene === 'livingroom' ? Math.min(params.room_w_m, 8)
-              : Math.min(params.room_w_m, 16);
-  const roomD = scene === 'warehouse' ? params.room_l_m
-              : scene === 'livingroom' ? Math.min(params.room_l_m, 7)
-              : Math.min(params.room_l_m, 18);
+  // Bounds: floor wraps {origin (0,0)} ∪ all spawned actors with padding.
+  // Scene-coord (a.x, a.y) is mapped to floor-coord (a.x - bbox.minX,
+  // a.y - bbox.minY) so floor still starts at internal (0,0) but the
+  // origin marker shifts when actors push outward.
+  const padding = 4;
+  let roomW, roomD, sx, sy, originFx, originFy;
+  if (isWarehouse) {
+    const xs = [0, ...spawnedActors.map(a => a.x)];
+    const ys = [0, ...spawnedActors.map(a => a.y)];
+    const minX = Math.min(...xs) - padding;
+    const maxX = Math.max(...xs) + padding;
+    const minY = Math.min(...ys) - padding;
+    const maxY = Math.max(...ys) + padding;
+    roomW = Math.max(12, maxX - minX);
+    roomD = Math.max(12, maxY - minY);
+    sx = x => x - minX;
+    sy = y => y - minY;
+    originFx = sx(0);
+    originFy = sy(0);
+  } else {
+    roomW = scene === 'livingroom' ? Math.min(params.room_w_m, 8) : Math.min(params.room_w_m, 16);
+    roomD = scene === 'livingroom' ? Math.min(params.room_l_m, 7) : Math.min(params.room_l_m, 18);
+    sx = x => x; sy = y => y; originFx = roomW / 2; originFy = roomD / 2;
+  }
 
-  // Camera: center the iso projection on the room center
+  // Camera: center on floor center. Tile shrinks as floor grows so the
+  // view always fits the SVG viewBox without clipping.
   const center = iso(roomW / 2, roomD / 2);
-  const TILE = scene === 'warehouse' ? 13 : 32;
+  const baseTile = isWarehouse ? 13 : 32;
+  const fitTile = isWarehouse
+    ? Math.min(baseTile, Math.max(5, 360 / Math.max(roomW, roomD)))
+    : baseTile;
+  const TILE = fitTile;
   const offsetX = -center.x * TILE;
   const offsetY = -center.y * TILE + 30;
 
@@ -507,19 +534,25 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
         {/* Items: driven by real server-spawned actors, not mock params.
             Each spawnedActor entry corresponds to one StaticMeshActor in
             UE's Demo/v0 folder. Empty array -> empty viewport, matches UE. */}
+        {/* BP_DemoOrigin marker: small crosshair on floor at scene (0,0) */}
+        {isWarehouse && (
+          <g transform={`translate(${iso(originFx, originFy).x}, ${iso(originFx, originFy).y})`} opacity="0.4">
+            <line x1="-0.3" y1="0" x2="0.3" y2="0" stroke="#5b8af0" strokeWidth="0.05" />
+            <line x1="0" y1="-0.2" x2="0" y2="0.2" stroke="#5b8af0" strokeWidth="0.05" />
+          </g>
+        )}
         {scene === 'warehouse' && spawnedActors.map((a, i) => {
-          // Center-anchor each render around the actor's scene-local (x, y).
-          // UE +X is "north" in our iso projection -- swap as needed if the
-          // axis mapping ever feels off.
-          const sx = a.x ?? 0, sy = a.y ?? 0;
+          const ax = a.x ?? 0, ay = a.y ?? 0;
+          const fx = sx(ax), fy = sy(ay);
+          const SX = fx, SY = fy;  // alias for readability in renderers below
           if (a.asset_name === 'shelf') {
             return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
-              <Shelf x={sx - 0.8} y={sy - 0.6} w={1.6} d={1.2} loadFactor={0.6} seed={i * 13} />
+              <Shelf x={SX - 0.8} y={SY - 0.6} w={1.6} d={1.2} loadFactor={0.6} seed={i * 13} />
             </g>;
           }
           if (a.asset_name === 'forklift') {
             return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
-              <Forklift x={sx} y={sy} />
+              <Forklift x={SX} y={SY} />
             </g>;
           }
           // pallet / box / drum / worker / unknown -> IsoBox of varying size
@@ -531,7 +564,7 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
           };
           const p = PROFILES[a.asset_name] || { w: 0.5, d: 0.5, h: 0.5, top: '#8A95A5', left: '#5F6878', right: '#3F4855' };
           return <g key={a.actor_handle || i} style={itemStyle(i, spawnedActors.length)}>
-            <IsoBox x={sx - p.w / 2} y={sy - p.d / 2} w={p.w} d={p.d} h={p.h}
+            <IsoBox x={SX - p.w / 2} y={SY - p.d / 2} w={p.w} d={p.d} h={p.h}
               top={p.top} left={p.left} right={p.right} />
           </g>;
         })}
