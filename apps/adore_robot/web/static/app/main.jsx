@@ -151,12 +151,10 @@ function App() {
         setMcpInit(j);
         if (!j.done) {
           setTimeout(tick, 250);
-        } else if (j.ok) {
-          setTimeout(() => {
-            if (pollSeqRef.current === mySeq) setMcpInitDismissed(true);
-          }, 1200);
         }
-        // on err: stop polling, overlay stays with 重连 button
+        // On done (ok or err): stop polling. Overlay stays open so the
+        // customer sees the full handshake -> green-ready flow and the
+        // operator decides when to dismiss via the "进入控制台" button.
       } catch {
         if (pollSeqRef.current === mySeq) setTimeout(tick, 1000);
       }
