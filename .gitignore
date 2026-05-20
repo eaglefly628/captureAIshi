@@ -54,3 +54,4 @@ capture_bridge*.pyd
 CMakeCache.txt
 CMakeFiles/
 ref/
+agents/unreal/refs/Unreal_mcp/
