@@ -187,7 +187,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.3.3] <commit-sha> -- xiaohuan (v0 demo simplified contract: spawn/delete/move)
+### [v0.3.3] a39e0f8 -- xiaohuan (v0 demo simplified contract: spawn/delete/move)
 - apps/adore_robot/docs/demo_v0_simplified_contract.md (新, 9 节): 用户 2026-05-19 简化路线 -- v0 demo 只 3 个 actor 动作 + 1 query
 - §1 Asset 目录 (6 mesh: shelf/forklift/pallet/box/drum/worker), §2 4 个 Tool Schema (strict JSON), §3 坐标系约定 (米 + BP_DemoOrigin)
 - §5 LLM System prompt + 6 few-shot (spawn / move-with-list_objects / delete / 拒 PCG-param / 拒 car / multi-step)
