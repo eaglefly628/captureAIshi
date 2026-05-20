@@ -65,32 +65,48 @@ ground truth, 不要漂移.)
 跨次要版本变更, 5.8 Preview 与 release 不保证二进制兼容)。**我无法在本
 sandbox 直出 `PG_Warehouse.uasset` / `Warehouse_v0.umap`。**
 
-**已交付的替代**: `apps/adore_robot/docs/pg_warehouse_graph_design.md`
-(commit 5b62b77) —— 节点级 spec, 11 参数 -> 8 Stage 拓扑, xiaoxu 在 UE
-Editor 里 1-2 小时手搭即可。Mesh 资产挑选 (Quixel_Industrial 5+3+...
-SKU) 必须在他装机的环境里挑, 不能在我这边定。
+#### 用户 2026-05-19 决策: 简化到 v0 demo (spawn / delete / move)
 
-**建议两条路 (xiaoxu / 老白 选)**:
+> "当前演示还没有进行，但我需要个偏正式的展示，就是当前 demo app 改动后，
+> ue mcp 做出对应的更改，这个 ue 地图和 pcg 资产我可以手动建立，
+> 一开始我们先简化参数。spawn delete，modify location，就够了"
 
-- **路径 A (推荐, 不阻塞客户演示)**: xiaoxu 照 design doc 在 UE Editor 内
-  手搭 `PG_Warehouse.uasset` + `Warehouse_v0.umap` (~1-2h)。资产挑选他选,
-  我审 (peer review on next sync)。验收路径同上。
-- **路径 B (MCP 自动化, 演示后做)**: 我把 design doc 改写成
-  `apps/adore_robot/scripts/build_pg_warehouse.py` — 一个能被
-  `ProgrammaticToolset.execute_tool_script` 消费的 unreal-python 脚本,
-  调 `unreal.AssetToolsHelpers.get_asset_tools().create_asset(
-  asset_name="PG_Warehouse", package_path="/Game/PCG/Warehouse/",
-  asset_class=unreal.PCGGraph, factory=unreal.PCGGraphFactory())` 等
-  反射 API 建 PCGGraph + 拉节点 + 配 OverrideParams。xiaoxu MCP 端
-  `execute_tool_script` 跑一次, asset 落地, 跑通后改 mesh 引用为他选的
-  SKU。**这条路把建图从"手活"变成"配置驱动"**, 客户后续要换布局只改
-  Python 不动 .uasset。
+OK 路线大幅简化：
 
-**等 xiaoxu / 老白 回 A 还是 B。** 如果 A 优先 (今天演示)，我下轮帮 xiaoxu
-review 他搭出来的 graph (用 `/api/mcp/probe_graph` dump 对照 contract §1
-+ design doc §1 表); 如果 B 优先 (演示后), 我下轮写 `build_pg_warehouse.py`。
+- **map + PCG asset 用户自己建**（sandbox 限制不再是问题）
+- **v0 操作集 = 3 个 actor 动作** (spawn / delete / modify_location) + 1 个 query (list_objects)
+- **不走 PCG graph 参数化**（11 参数路线降级为 v1 roadmap，不阻塞演示）
 
-LivingRoom + IndustrialCorner design 在 PG_Warehouse 走通后写 (`pg_warehouse_graph_design.md` §12 已说明)。
+我的 v0 deliverable: `apps/adore_robot/docs/demo_v0_simplified_contract.md`
+(本 commit) -- 9 节, 完整定义:
+
+- §1 Asset 目录: 6 个 mesh (shelf/forklift/pallet/box/drum/worker), `asset_registry.py` dict 映射 (xiaoxu 填实际 path)
+- §2 4 个 Tool Schemas (strict JSON, Anthropic/DeepSeek 兼容): spawn_object / delete_object / modify_location / list_objects
+- §3 坐标系约定: 米 + BP_DemoOrigin anchor + Y-not-flipped + yaw 度数
+- §4 失败处理: asset 不在表 / 边界 clamp / handle 不存在 / 跨 tag 删除保护
+- §5 LLM System prompt + 6 个 few-shot (spawn / move with list / delete / 拒 PCG / 拒 car / multi-step)
+- §6 MCP 端 unreal-python 实现 (4 个 function body 现成 snippet, xiaoxu 复制即用)
+- §7 UE Map 准备清单: 60x60m floor + BP_DemoOrigin + 基础 PCG Volume 当背景 + 灯光 + 默认相机
+- §8 5 步演示验收脚本 (中间放叉车 -> 左边货架 -> 两个箱子 -> 挪叉车 -> 删箱子)
+- §9 与全量 PCG 路线的关系: v0/v1+ 不互斥, `demo_v0_spawned` tag 是隔离边界
+
+#### v0 demo 接力分工
+
+| 角色 | 动作 | 状态 |
+|---|---|---|
+| 用户 | 手搭 `Demo_v0.umap` + 6 个 mesh 资产 + BP_DemoOrigin (§7) | open |
+| xiaoxu | `apps/adore_robot/demo/asset_registry.py` 维护 asset_name → UE path 字典 | open |
+| xiaoxu | `/api/chat` 接 LLM 4-tool 输出，每 tool_call 转 `execute_tool_script` Python 注入 (§6 snippet 直接抄) | open |
+| xiaoxu | `apps/adore_robot/demo/prompts.py` SYSTEM_PROMPT 换成 §5.1，few-shot 换成 §5.2 | open |
+| xiaoxu | server-side validate (§4 失败处理表) | open |
+| xiaohuan | 接力 review (xiaoxu wire 完 demo 跑通后) + 准备 v1 roadmap doc | open |
+
+#### v0 落地后才接 v1 PCG 参数化
+
+PG_Warehouse / PG_LivingRoom / PG_IndustrialCorner 节点级 design 在
+`pg_warehouse_graph_design.md` 已存档, v1 / v0.4 接力。
+
+---
 
 
 ### [v0.3.2] P1 from xiaoxu -- NL→PCG 链路 contract 产出 (2026-05-15)
@@ -170,6 +186,14 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 - `scene_specs.md` -- 三场景 spec 草稿（本轮已 review + 定稿到 `apps/adore_robot/configs/scenes/`）
 
 ## Changelog
+
+### [v0.3.3] a39e0f8 -- xiaohuan (v0 demo simplified contract: spawn/delete/move)
+- apps/adore_robot/docs/demo_v0_simplified_contract.md (新, 9 节): 用户 2026-05-19 简化路线 -- v0 demo 只 3 个 actor 动作 + 1 query
+- §1 Asset 目录 (6 mesh: shelf/forklift/pallet/box/drum/worker), §2 4 个 Tool Schema (strict JSON), §3 坐标系约定 (米 + BP_DemoOrigin)
+- §5 LLM System prompt + 6 few-shot (spawn / move-with-list_objects / delete / 拒 PCG-param / 拒 car / multi-step)
+- §6 MCP unreal-python 实现 snippet (4 function body 直接复制), §7 UE Map 准备清单, §8 5 步验收脚本
+- demo_v0_spawned tag = 与手搭 PCG/灯光的隔离边界，server-side validate 阻止误删
+- v1 PG_Warehouse 11-param 路线在 `pg_warehouse_graph_design.md` 档存，演示走通后接
 
 ### [v0.3.3] 5b62b77 -- xiaohuan (PG_Warehouse design + AICallable pointer + drift fix)
 - apps/adore_robot/docs/pg_warehouse_graph_design.md: 11 参数 (7 warehouse + 4 common) -> 8 Stage 节点拓扑 + edge case + Nanite/HISM 选型 + xiaoxu UE Editor 7 步 checklist
