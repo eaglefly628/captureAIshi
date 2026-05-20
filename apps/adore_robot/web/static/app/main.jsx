@@ -136,39 +136,49 @@ function App() {
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
 
-  // Poll MCP init progress. Backend kicks the init thread at startup,
-  // we just read the latest state every 250ms until done (or user dismisses).
-  useEffect(() => {
-    let stopped = false;
-    let timer = null;
-    const poll = async () => {
+  // Poll MCP init progress. Backend kicks the init thread at startup; we
+  // read latest state every 250ms while it's running. A ref tracks the
+  // active poll session so retry can cleanly restart it.
+  const pollSeqRef = useRef(0);
+  const startMcpPoll = useCallback(() => {
+    pollSeqRef.current += 1;
+    const mySeq = pollSeqRef.current;
+    const tick = async () => {
+      if (pollSeqRef.current !== mySeq) return;
       try {
-        const r = await fetch('/api/mcp/init');
-        const j = await r.json();
-        if (!stopped) setMcpInit(j);
-        if (!stopped && !j.done) {
-          timer = setTimeout(poll, 250);
-        } else if (!stopped && j.done && j.ok) {
-          // Auto-dismiss success overlay after 1.2s
-          timer = setTimeout(() => setMcpInitDismissed(true), 1200);
+        const j = await fetch('/api/mcp/init').then(r => r.json());
+        if (pollSeqRef.current !== mySeq) return;
+        setMcpInit(j);
+        if (!j.done) {
+          setTimeout(tick, 250);
+        } else if (j.ok) {
+          setTimeout(() => {
+            if (pollSeqRef.current === mySeq) setMcpInitDismissed(true);
+          }, 1200);
         }
-      } catch (e) {
-        if (!stopped) timer = setTimeout(poll, 1000);
+        // on err: stop polling, overlay stays with 重连 button
+      } catch {
+        if (pollSeqRef.current === mySeq) setTimeout(tick, 1000);
       }
     };
-    poll();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
+    tick();
   }, []);
+
+  useEffect(() => {
+    startMcpPoll();
+    return () => { pollSeqRef.current += 1; };  // invalidate on unmount
+  }, [startMcpPoll]);
 
   const retryMcpInit = useCallback(() => {
     setMcpInitDismissed(false);
-    setMcpInit(prev => prev ? { ...prev, done: false, error: null, ok: null } : null);
+    setMcpInit(prev => prev ? { ...prev, started: true, done: false, error: null, ok: null, phase: 'handshake', current: 0 } : null);
     fetch('/api/mcp/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ force: true }),
     }).catch(() => {});
-  }, []);
+    startMcpPoll();
+  }, [startMcpPoll]);
 
   const updateParam = useCallback((key, value, flash = false) => {
     setParams(prev => ({ ...prev, [key]: value }));
@@ -492,7 +502,8 @@ function App() {
       )}
       <div className="app">
         <TopBar projectName="adore-data" jobName={`${scene} · ${mrqSubdir.split('/')[1] || 'v0_demo'}`}
-          runStatus={runStatus} runtimeS={runtimeMs} />
+          runStatus={runStatus} runtimeS={runtimeMs}
+          mcpState={mcpInit} onMcpReconnect={retryMcpInit} />
 
         {/* LEFT: Chat */}
         <ChatPanel

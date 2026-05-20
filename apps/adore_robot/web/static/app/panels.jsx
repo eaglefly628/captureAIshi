@@ -3,7 +3,26 @@
 const { useState, useEffect, useRef } = React;
 
 // ─── Top bar ─────────────────────────────────────────────────────────────────
-function TopBar({ projectName, jobName, runStatus, runtimeS }) {
+function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect }) {
+  const connecting = mcpState && mcpState.started && !mcpState.done;
+  const ok = mcpState && mcpState.done && mcpState.ok === true;
+  const err = mcpState && mcpState.done && mcpState.ok === false;
+  let dotColor = 'var(--text-3)';
+  let label = '— offline';
+  let title = 'UE MCP 未初始化';
+  if (connecting) {
+    dotColor = '#f5b942';
+    label = '· connecting';
+    title = `挂载工具集 ${mcpState.current}/${mcpState.total}`;
+  } else if (ok) {
+    dotColor = 'var(--ok)';
+    label = '● connected';
+    title = `UE MCP 在线 · ${((mcpState.elapsed_ms || 0) / 1000).toFixed(1)}s`;
+  } else if (err) {
+    dotColor = '#ff6b6b';
+    label = '● disconnected';
+    title = mcpState.error || 'MCP 连接失败 — 点击重连';
+  }
   return (
     <div className="topbar">
       <div className="brand">
@@ -16,13 +35,15 @@ function TopBar({ projectName, jobName, runStatus, runtimeS }) {
         <span className="active">{jobName}</span>
       </div>
       <div className="topbar-spacer" />
-      <button className="top-btn">
+      <button className="top-btn" title={title} onClick={onMcpReconnect}>
         <span style={{opacity: 0.6}}>UE5.8</span>
-        <span style={{ color: 'var(--ok)' }}>● connected</span>
+        <span style={{ color: dotColor }}>{label}</span>
       </button>
-      <button className="top-btn">
+      <button className="top-btn" title="点击重连 UE MCP" onClick={onMcpReconnect}>
         <span style={{opacity: 0.6}}>MCP</span>
-        <span style={{fontFamily: 'var(--mono)', fontSize: 11}}>:8000</span>
+        <span style={{fontFamily: 'var(--mono)', fontSize: 11, color: err ? '#ff6b6b' : 'inherit'}}>
+          {err ? '重连' : ':8000'}
+        </span>
       </button>
       <button className="top-btn">⌘K</button>
     </div>
