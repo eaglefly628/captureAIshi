@@ -15,7 +15,7 @@
 
 | 域 | # 条目 | 类型 |
 |---|---|---|
-| PCG (节点 / Graph Parameters / 行为) | §1 | 11 条已确认 + 3 条 open |
+| PCG (节点 / Graph Parameters / 行为) | §1 | 15 条已确认 + 3 条 open (+ Epic ref doc 落档) |
 | MCP (协议 / SSE / 反射写) | §2 | 6 条已确认 + 2 条 open |
 | Python Sandbox / Programmatic Toolset | §3 | 2 条已确认 |
 | AI Assistant / ToolsetRegistry | §4 | 3 条已确认 + 4 条 open (官方未文档化) |
@@ -176,6 +176,46 @@ SurfaceSampler_0 (Surface input)
 - 用户视觉上看到一根线 A → B, 实际 graph 内部可能多了适配节点
 - 不是 bug, 是 5.8 智能化的体现 (5.7 同样行为待验证)
 - 看 T3D / 仔细看 graph canvas 时会看到 "凭空多出" 的节点, 别误以为是脏数据
+
+### 1.14 [verified] Mesh 参数化的正解 = `PCGMeshSelectorByAttribute` + `Create Attribute` + `Copy Attribute`
+
+来源: Epic 5.7 PCG Node Reference (user 拷贴 2026-05-20), 见 `agents/pcg/refs/ue58_pcg_node_reference.md` §10 + §15.
+
+**问题**: SM Spawner 的 Mesh field 不在 Override pin 列表里 (嵌套在 MeshSelectorParameters.MeshEntries[0].Descriptor.StaticMesh)。**直接绑 Graph Param 走 Override 路径行不通**。
+
+**官方推荐 pattern**:
+- SM Spawner Mesh Selector Type = **`PCG Mesh Selector By Attribute`**
+- 配置选择器读 attribute name (e.g. `"Mesh"`)
+- 上游用 `Create Attribute` 节点把 Graph Parameter 值包成单属性 Attribute Set
+- 用 `Copy Attribute` 节点把这个 attribute 注入每个 Point Data
+
+Doc 原文 (Point Match and Set 描述):
+> "A common use case is to select meshes to be used downstream in a Static Mesh Spawner node with the **By Attribute selector**."
+
+完整链路见 `ue58_pcg_node_reference.md` §X "链路 2" cookbook。
+
+### 1.15 [verified] `Create Constant` UI label = `Create Attribute` 底层节点
+
+UE 5.8 PCG Editor 显示 "Create Constant" 但 doc 叫 "Create Attribute"。同一节点, UI vs class 名差异。
+- `Type`: Attribute 数据类型
+- `Output Target`: Attribute **名字** (不是路径)
+- `<TypeName> Value` (e.g. `Soft Object Path Value`): Attribute 实际值, **可绑 Graph Parameter**
+
+### 1.16 [verified] PCG Editor debug 快捷键
+
+来源: Tech Artist's Guide (user 拷贴 2026-05-20)。
+
+- 节点选中 + `D` → 节点位置可视化 debug, **持久**, 不像 transient debug 切节点就消失
+- 节点选中 + `A` → 显示该节点的 Attributes 面板
+- Debug 不显示 → 检查 graph editor bottom-left 是否选对 PCG component
+
+### 1.17 [verified] Spatial Data / Concrete Data / Attribute Data 三类区分
+
+- **Spatial Data**: PCG 主要处理对象, Points / Landscape / Spline / Volume 都属于
+- **Concrete Data**: Spatial Data 的"具体实例"基类, 任何 Spatial Data 都能 decay 成 Points
+- **Attribute Data**: **不能直接变成点**的数据 (e.g. Data Table 每列 = Attribute), 用作 lookup table
+
+含义: `Create Attribute` 输出 Attribute Set (Attribute Data 类型), 跟 Point Data (Spatial) 不同流, 需要 `Copy Attribute` / `Match And Set` / `Add Attribute` 节点桥接。
 
 ### 1.13 [verified] Surface Sampler 的全部 Override 字段清单 (5.8 实证)
 
