@@ -2,6 +2,27 @@
 
 ## Active TODO
 
+### [v0.4.x TODO, 演示后回] Mesh 参数化 (shelf_mesh / forklift_mesh / ...) 走 PCG ByAttribute 路径
+
+**当前状态 (2026-05-20)**: 演示前**暂搁置**。Cube hardcode 在 PG_Warhouse 的 SM Spawner MeshEntries[0]=1M_CubeWithSocket，演示走通。6 个 mesh Graph Parameter (`shelf_mesh / forklift_mesh / pallet_mesh / box_mesh / drum_mesh / worker_mesh`) 留在 Graph Parameters panel **未连**，占位预留。
+
+**踩过的坑** (`ue58_knowledge_base.md` §1.14):
+- SM Spawner 的 Mesh field **不在 Override pin 列表** (嵌套在 MeshSelectorParameters.MeshEntries 数组里)
+- 直接绑 Graph Param 走 Override 路径**走不通**
+- 试了 Create Constant 节点 + Output Target = "Mesh" 路径，UI 上**没法把 shelf_mesh 拖进 Soft Object Path Value 字段** (5.8 PCG 这个字段不接受 binding pin)
+- Epic doc (Match And Set + ByAttribute selector) 写了 pattern, 但 5.8 PCG editor 实际操作链路没跑通
+
+**v1 演示后回来怎么解** (备选路径):
+1. 用 `Set Attribute` 节点 (Metadata → Attribute Maths Op → Set), 看能不能从 Graph Param 输入
+2. 用 `Match And Set Attributes` 节点 + Data Table 驱动 (复杂但 doc 推荐, 适合多 mesh 场景)
+3. PCG 5.9 (UE 6.0) 后看有没有 native 的 "Bind Mesh to Graph Param" 路径
+4. **fallback**: PCG Volume Details panel 直接改 Override Parameters 的 mesh path (graph 不动, 但 chat 不能驱动)
+5. **完全 fallback**: 每个 asset 类型一个独立 PG_*_v0.uasset, hardcode 不同 mesh in MeshEntries, 切 graph 不切 mesh
+
+**下次接力**: xiaohuan 在 sandbox 让用户拷专项 doc (PCG 5.8 ByAttribute 实操), 调研清楚再开 session 试。**不阻塞演示**, 不阻塞 xiaoxu 后端 wiring (后端 `set_properties` 走 shelf_density / forklift_count / seed / room_w/l/ceil_h / worker_count 这 7 个 v0.4 P0 参数, mesh 参数 v1 再说).
+
+---
+
 ### [v0.4.0] P0 from xiaoxu via 用户 (2026-05-20): 接演示 v1 路线 — 真 PG_Warehouse PCG graph
 
 **当前状态**（xiaoxu 这边给你的现况快照）:
