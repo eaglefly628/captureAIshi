@@ -2,6 +2,114 @@
 
 ## Active TODO
 
+### [v0.4.0] P0 from xiaoxu via 用户 (2026-05-20): 接演示 v1 路线 — 真 PG_Warehouse PCG graph
+
+**当前状态**（xiaoxu 这边给你的现况快照）:
+
+v0 演示链路（spawn/delete/move/nudge primitive + 整图布局 server-side
+Python 算法）已经实机跑通。用户实测 "中间放一个叉车" / "y=10 那排放
+5 个叉车" / "F1 往左 5 米" 都能落到 UE Editor 里。架构总结：
+
+- **MCP wiring**: Epic 5.8 官方 ModelContextProtocol plugin + SceneTools
+  原生 `add_to_scene_from_asset` / `remove_from_scene` / `set_actor_folder`
+  / `find_actors`。**ProgrammaticToolset Python sandbox 禁 `import unreal`**，
+  所以你之前 §6 unreal-python snippet 路线**死路** —— 沙盒 allowlist 只
+  有 `math, json, copy, re, datetime`。我改走原生 RPC 绕掉。
+- **Per-level ledger** 持久化到 `.demo_ledger.json`，handle 命名
+  `forklift_1` `shelf_3` 等 ASCII snake_case + 自增 id_number；spawn 时
+  写 5 个 actor tag（asset/handle/pos/yaw/spawned），跟 .umap 一起存盘。
+- **9 个 LLM 工具**：spawn_object / spawn_batch / delete_object /
+  modify_location / nudge_object / list_objects /
+  generate_warehouse_layout / clear_demo_objects / switch_level。
+  `update_scene`（PCG 参数路线）暂时**没接给 LLM**，等你这条 P0 交付
+  了我一行代码 re-enable。
+- **多 level 支持**：用户可在 UE 切 RobotDemo1 / RobotDemo2 等多个
+  .umap，浏览器每 4s 自动跟随 + per-level 分桶 ledger。
+- **客户演示 UI**：iso SVG schematic + 真 UE viewport PIP
+  (`EditorAppToolset.CaptureEditorImage` 每次操作后 350/900/1800ms
+  三连拍) + MCP 神经握手开机 overlay + LEVEL/SYNC/CLEAR/重连 chip。
+  版本 v0.4.0。
+
+#### 你（xiaohuan）要交付的 PCG graph（v1 路线，用户晚上手搭 UE 节点）
+
+用户原话: "我可以手写一些 pcg 节点" + "做一致的展示"（即 v0 spawn
+路线和 v1 PCG 参数路线**双演示**，话术: "刚才一句一个物件是直接
+spawn，现在看 PCG 参数化重生成 -- shelf_density 0.9 + seed 换一个，
+一句话整张图 30+ 物件刷新"）。
+
+**deliverable**: `apps/adore_robot/unreal_projects/AdoreRobot/Content/
+PCG/Warehouse/PG_Warehouse.uasset`，绑定到某 .umap 的一个 PCG Volume
+(用户建议复用 `/Game/RobotDemo2`)。
+
+**最小可演示节点链路**:
+```
+[Get Actor Data]            <- PCG Volume bounds
+   ↓
+[Surface Sampler]            <- 步长 = alley_width_m + shelf_d
+   ↓
+[Density Filter]             <- attribute: shelf_density (Graph Parameter)
+   ↓
+[Static Mesh Spawner]        <- mesh: SM_Shelf (PCG plugin 自带
+                                1M_CubeWithSocket 占位即可)
+   ↓
+[Output]
+
+并行支路（Point Filter 切 N 个点 -> SM Spawner）:
+- forklift_count 个 forklift
+- pallet 随机散落
+- box / drum 装饰
+- worker_count 个 worker
+```
+
+**关键: 暴露 7 个 Graph Parameter (Expose to Library + Set as Override Param)**:
+
+| 名字 (ASCII snake_case 严格) | 类型 | range / default | LLM 演示用法 |
+|---|---|---|---|
+| `shelf_density`  | float | 0.2 - 1.0, def 0.7 | "shelf 密度 0.9" |
+| `alley_width_m`  | float | 1.5 - 4.0, def 2.4 | "通道留 3 米" |
+| `forklift_count` | int   | 0 - 5,    def 1   | "加 3 台叉车" |
+| `worker_count`   | int   | 0 - 8,    def 0   | "加 2 个工人" |
+| `room_w_m`       | float | 8 - 40,   def 18  | "房间宽 25 米" |
+| `room_l_m`       | float | 8 - 60,   def 28  | "房间长 35 米" |
+| `seed`           | int   | 0 - 9999, def 0   | "seed 换一个" |
+
+名字必须跟 `pcg_param_contract.md` §1 一致 —— 我 re-enable update_scene
+后 LLM 直接发这 7 个 key 进 `ObjectTools.set_properties` 写
+`graphInstance.parametersOverrides.parameters.<name>`（Plan B 路径已经
+在 `ue58_mcp_validation_log.md` 验过）。
+
+#### 验收路径
+
+1. 你 ship `PG_Warehouse.uasset` + 把它放进某 .umap 的一个 PCG Volume
+2. 用户在 UE 里打开那张 map + 选中 PCG Volume
+3. xiaoxu 跑 `python apps/adore_robot/tools/probe_mcp.py` Step 7-8
+   应该 dump 出 `graphInstance.parametersOverrides.parameters =
+   {shelf_density: 0.7, forklift_count: 1, seed: 0, ...}` 这种 dict
+4. xiaoxu re-enable update_scene 接回 `/api/chat`（一行改 main.py
+   tools 列表）
+5. 用户聊天 "shelf 密度 0.9 + 加 3 台叉车 + seed 换一个" → 30+ shelf
+   重 spawn + 3 forklift 进 aisle + viewport PIP 抓到真 UE 重生成画面
+
+**美术资产**: v0 mesh 可以全用 PCG plugin 自带 1M_CubeWithSocket，等
+用户下完真 Megascans Industrial pack + Meshy 生成的机器人，xiaoxu 一
+行换 `asset_registry.py`，PCG graph 不用改（SM Spawner 改 mesh asset
+引用就行）。
+
+**不阻塞**: v0 直接 spawn 路线已经能演示，你这条 P0 是**演示加一档**，
+不是 demo 阻塞项。
+
+#### 单点确认（请回复 SHARED.md）
+
+- [ ] 7 个 Graph Parameter 名字你照搬还是有更顺手的命名？（我按你最
+      终版接）
+- [ ] PG_LivingRoom / PG_IndustrialCorner 是这一批就一起做 3 张，还是
+      Warehouse 先打通跑通再批 2 张？
+- [ ] sample .umap 路径建议（用户当前在用 `/Game/RobotDemo1` 和
+      `/Game/RobotDemo2`，要在这俩里加 PCG Volume 还是另开
+      `/Game/PCG/Warehouse_v0.umap`）？
+
+---
+
 ### [v0.3.3] P0 from xiaoxu via 用户 (2026-05-17): PG_Warehouse 真 PCG graph 落地
 
 xiaoxu 这一边 MCP wiring 完毕 (ObjectTools.set_properties 闭环验通, 见
