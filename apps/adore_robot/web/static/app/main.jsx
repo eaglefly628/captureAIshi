@@ -394,9 +394,13 @@ function App() {
         // the spawn is queued, not when the new actor has actually been
         // rendered in the viewport. We retry at a few intervals so the
         // PIP catches the engine once the frame settles.
-        setTimeout(() => setUeShotKey(k => k + 1), 350);
-        setTimeout(() => setUeShotKey(k => k + 1), 900);
-        setTimeout(() => setUeShotKey(k => k + 1), 1800);
+        // Capture cadence: UE's add_to_scene + delete cycles are async
+        // and don't settle in one tick. 4 retries span ~5s so even slow
+        // editor frames catch up.
+        setTimeout(() => setUeShotKey(k => k + 1), 400);
+        setTimeout(() => setUeShotKey(k => k + 1), 1200);
+        setTimeout(() => setUeShotKey(k => k + 1), 2500);
+        setTimeout(() => setUeShotKey(k => k + 1), 5000);
         const res = r.result || {};
         if (r.tool === 'spawn_object' && res.actor_handle) {
           setSpawnedActors(prev => [...prev, {
@@ -436,9 +440,13 @@ function App() {
             const old = oldH ? prev.find(a => a.actor_handle === oldH) : null;
             return [...keep, {
               actor_handle: res.actor_handle,
-              asset_name: old?.asset_name || 'shelf',
+              asset_name: res.asset_name || old?.asset_name || 'shelf',
+              // Preserve id_number across server-side delete+respawn
+              // so the F1/S3 badge sticks to the same actor. Server now
+              // returns it explicitly; fall back to the previous entry.
+              id_number: (res.id_number != null) ? res.id_number : old?.id_number,
               x: res.new_xyz_m[0], y: res.new_xyz_m[1], z: res.new_xyz_m[2] ?? 0,
-              yaw_deg: old?.yaw_deg || 0,
+              yaw_deg: (res.yaw_deg != null) ? res.yaw_deg : (old?.yaw_deg ?? 0),
             }];
           });
         } else if (r.tool === 'list_objects' && Array.isArray(res.objects)) {

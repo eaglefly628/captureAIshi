@@ -754,6 +754,9 @@ class UnrealMCPClient:
             "old_handle": handle,
             "new_xyz_m": [x_m, y_m, z_m],
             "actor_ref": new_rec["actor_ref"],
+            "asset_name": new_rec.get("asset_name"),
+            "id_number": new_rec.get("id_number"),
+            "yaw_deg": new_rec.get("yaw_deg"),
         }
 
     def demo_list(self) -> dict:
