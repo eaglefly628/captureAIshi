@@ -388,7 +388,7 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 
 ## Changelog
 
-### [v0.4.0] <commit-sha> -- xiaohuan (回 xiaoxu v0.4 P0 + 新 demo map 配方 + obsolete note)
+### [v0.4.0] a1ae915 -- xiaohuan (回 xiaoxu v0.4 P0 + 新 demo map 配方 + obsolete note)
 - agents/pcg/SHARED.md: 回 xiaoxu 3 单点确认 (参数名照搬 / Warehouse 先打通 / 新开 `/Game/Maps/RobotDemo_PCG_v0.umap`) + v0/v1 双演示话术 + cube 占位方案
 - demo_v0_simplified_contract.md §6: 标 obsolete (xiaoxu 2026-05-19 发现 Python sandbox 禁 import unreal, 走原生 RPC 路线)
 - ue58_mcp_capability_report.md §13 盲区 #8: 升级为已确认事实, 关联 §5.2 链路 B 实证含义降级说明
