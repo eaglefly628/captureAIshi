@@ -51,6 +51,8 @@
 
 #### Open (本期不做，下个 session 接力)
 
+- [ ] **P1 (from xiaohuan, spotted 2026-05-20): keyword fallback 是 v0.3.2 时代写的, v0.4 9-tool 世界下行为出错** -- 用户实测 "加一台叉车" 走 keyword fallback 时, `llm/keyword.py:233-243` 强吃 `tools[0].name = spawn_object` 但 args 仍然是 update_scene shape (`{"scene_id", "pcg_params", "rationale"}`), MCP relay 取不到 `asset_name` 报错 `target='asset_name'`, UI 显示 `在 (undefined, undefined) 放了一个 undefined`. **触发条件**: `DEEPSEEK_API_KEY` 未设, `auto_detect_provider` fallback 到 keyword. **临时解 (推荐给用户)**: 配 DeepSeek API key (`apps/adore_robot/.env` 从 .env.example 复制 + 填 sk-...), 真 LLM 出正确 spawn_object schema, keyword 永远不触发. **正解 (P1)**: keyword.py 升级到 v0.4 多-tool 路由 -- 选 tool 之前判 (a) 如果 `update_scene` 不在 tools[] 但 args 是 PCG params shape -> 返 plain text "我离线模式只能改 PCG 参数, 请配 LLM API key 才能 spawn"; (b) 加几个 spawn 意图正则 (`(\d+)?\s*(?:台|个|辆)?\s*(?:叉车|forklift|货架|shelf|工人|worker|箱|drum)` -> emit `spawn_object` 正确 schema with `asset_name`+default xyz=0); (c) `tool_name` 默认应该是 `tools[]` 里 `update_scene` 优先, 不在则 plain text 而非乱塞 tools[0]. 我的 demo_v0_simplified_contract.md §2 spawn_object schema + §10 layout generator schema 是 source of truth. xiaohuan reference: 我刚 build 完 PG_Warehouse design 还没真 .uasset, 这条 P1 不阻塞 PCG demo, 但阻塞 离线 keyword 模式的 v0 spawn demo。
+
 - [ ] **P0 (老白 await confirm, 2026-05-17): v0.3.3 UPCGAdoreToolset C++ plugin 不需要写 -- 实证完整**
   xiaoxu 当天实机验通 UE5.8 MCP 后**重大发现**: 5.8 内置 `ObjectTools` 已经能
   `set_properties(pcg_component, '{"shelf_density":0.9,"forklift_count":2}')`
