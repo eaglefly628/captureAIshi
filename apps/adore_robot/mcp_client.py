@@ -20,6 +20,7 @@ import json
 import threading
 import time
 import urllib.parse
+from pathlib import Path as _Path
 from typing import Any
 
 
@@ -66,8 +67,13 @@ class UnrealMCPClient:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except Exception:
+            except (OSError, http.client.HTTPException) as e:
+                # Already-broken socket on close is normal; broader
+                # exceptions get logged so a real leak isn't masked.
                 pass
+            except Exception as e:
+                print(f"[mcp] unexpected exception on _close_conn: "
+                      f"{type(e).__name__}: {e}", flush=True)
             self._conn = None
 
     def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, str]:
@@ -467,7 +473,8 @@ class UnrealMCPClient:
     # so RobotDemo1 and RobotDemo2 never see each other's actors.
     # Persisted to apps/adore_robot/.demo_ledger.json across Flask restarts.
     _DEMO_LEDGER: dict = {}
-    _LEDGER_FILE = "apps/adore_robot/.demo_ledger.json"
+    # Absolute path so Flask cwd doesn't matter for ledger persistence.
+    _LEDGER_FILE = str(_Path(__file__).resolve().parent / ".demo_ledger.json")
     _level_cache: str = ""
     _level_cache_ts: float = 0.0
 
@@ -514,17 +521,21 @@ class UnrealMCPClient:
             pass
 
     def _current_level_cached(self) -> str:
-        """get_current_level with a 2s cache to avoid one RPC per spawn."""
+        """get_current_level with a 2s cache to avoid one RPC per spawn.
+        On RPC failure we keep the last-known value as a soft fallback
+        but reset the timestamp so the very next call retries instead
+        of trusting a stale value for the rest of the 2s window."""
         now = time.time()
         if now - self._level_cache_ts < 2.0 and self._level_cache:
             return self._level_cache
         try:
             lvl = self.get_current_level() or "_unknown"
+            self._level_cache = lvl
+            self._level_cache_ts = now
+            return lvl
         except Exception:
-            lvl = self._level_cache or "_unknown"
-        self._level_cache = lvl
-        self._level_cache_ts = now
-        return lvl
+            self._level_cache_ts = 0.0  # force retry next call
+            return self._level_cache or "_unknown"
 
     def _ledger_bucket(self) -> dict:
         """Return (and create if absent) the per-level bucket."""
@@ -579,9 +590,15 @@ class UnrealMCPClient:
 
     def demo_spawn(self, asset_path: str, asset_name: str,
                    x_m: float, y_m: float, z_m: float = 0.0,
-                   yaw_deg: float = 0.0) -> dict:
+                   yaw_deg: float = 0.0,
+                   id_number_override: int | None = None) -> dict:
         """Spawn a static mesh at scene-local (x,y,z) meters. Tags via
-        outliner folder Demo/v0 for safe bulk-delete later."""
+        outliner folder Demo/v0 for safe bulk-delete later.
+
+        id_number_override: when set (e.g. by demo_move's respawn path),
+        keeps the previous handle's number so the user's "F1" doesn't
+        become "F2" after a move.
+        """
         self.auto_load_toolsets()
         anchor = self._demo_origin_world_cm()
         world = {
@@ -593,7 +610,8 @@ class UnrealMCPClient:
         # forklift_2, shelf_1 ... User can say "挪开 2 号叉车" and LLM
         # maps it through list_objects -> handle "forklift_2".
         bucket_for_id = self._ledger_bucket()
-        id_number = self._next_id_for(bucket_for_id, asset_name)
+        id_number = (id_number_override if id_number_override is not None
+                     else self._next_id_for(bucket_for_id, asset_name))
         actor_name = f"{asset_name}_{id_number}"
         spawned = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.add_to_scene_from_asset",
@@ -722,10 +740,13 @@ class UnrealMCPClient:
             asset_path = _resolve(rec.get("asset_name", "shelf"))
         except Exception:
             asset_path = _resolve("shelf")  # fallback
+        # Preserve the old id_number so 'F1' stays 'F1' after a move
+        # (was reassigning to the next free integer -> UX confusion).
         new_rec = self.demo_spawn(
             asset_path=asset_path,
             asset_name=rec.get("asset_name", "shelf"),
             x_m=x_m, y_m=y_m, z_m=z_m,
+            id_number_override=rec.get("id_number"),
             yaw_deg=rec.get("yaw_deg", 0.0),
         )
         return {
@@ -875,7 +896,12 @@ class UnrealMCPClient:
                     break
         if cur_x is None or cur_y is None:
             return {"error": f"no demo actor matching '{handle}'"}
-        return self.demo_move(handle, cur_x + dx_m, cur_y + dy_m, cur_z + dz_m)
+        # Clamp the post-delta target to scene bounds so '往左 1000 米'
+        # doesn't fling the actor out into the void.
+        SCENE_BOUNDS_M = 25.0
+        new_x = max(-SCENE_BOUNDS_M, min(SCENE_BOUNDS_M, cur_x + dx_m))
+        new_y = max(-SCENE_BOUNDS_M, min(SCENE_BOUNDS_M, cur_y + dy_m))
+        return self.demo_move(handle, new_x, new_y, cur_z + dz_m)
 
     def demo_switch_level(self, level_path: str) -> dict:
         """Load a different .umap in the editor. Invalidates the level
@@ -992,6 +1018,15 @@ class UnrealMCPClient:
                             return f.read()
                     except Exception:
                         pass
+        # Couldn't decode -- log enough context so we can adapt the
+        # parser without dumping bytes everywhere.
+        if isinstance(result, dict):
+            print(f"[mcp] CaptureEditorImage unparsed: dict keys="
+                  f"{list(result.keys())}", flush=True)
+        else:
+            preview = repr(result)[:120] if result is not None else "None"
+            print(f"[mcp] CaptureEditorImage unparsed: "
+                  f"type={type(result).__name__} preview={preview}", flush=True)
         return None
 
     def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:

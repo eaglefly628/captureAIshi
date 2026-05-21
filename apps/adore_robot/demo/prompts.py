@@ -81,9 +81,11 @@ current position. You do NOT need to list_objects first.
 
 For ABSOLUTE moves ('搬到 (5, 10)', '挪到原点'), use modify_location.
 
-Only fall back to list_objects when the user uses a TRULY vague reference
-WITHOUT any number ("那个叉车", "刚才那个箱子") AND you don't have it
-from a prior turn in this conversation.
+IMPORTANT: each chat call is STATELESS. You see only the current user
+message -- there is NO prior turn memory. Always resolve handles from
+the current message alone. If the user uses a truly vague reference
+WITHOUT any number ("那个叉车", "刚才那个箱子"), and only then, fall
+back to list_objects to see what exists right now.
 
 User-term mapping (use the closest enum value, do NOT refuse):
   叉车 / 拖车 / 铲车 / forklift / tow            -> forklift

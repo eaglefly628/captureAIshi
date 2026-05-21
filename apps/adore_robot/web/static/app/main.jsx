@@ -39,8 +39,13 @@ function toolsetLabel(name) {
 }
 
 function UEViewportPip({ cacheKey, mcpReady }) {
-  const [expanded, setExpanded] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  // Reset failure state whenever a fresh capture is requested. Without
+  // this, the first failed fetch latches `failed=true` and the fallback
+  // branch hides the <img> forever -- onLoad can never re-fire to
+  // recover.  UE briefly down + back = dead PIP until page reload.
+  React.useEffect(() => { setFailed(false); }, [cacheKey]);
   if (!mcpReady) return null;
   const src = `/api/mcp/screenshot.png?t=${cacheKey}`;
   return (
