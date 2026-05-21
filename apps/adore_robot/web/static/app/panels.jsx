@@ -3,7 +3,9 @@
 const { useState, useEffect, useRef } = React;
 
 // ─── Top bar ─────────────────────────────────────────────────────────────────
-function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect }) {
+function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect, onSyncFromUE, onClearAll, actorCount = 0, currentLevel = '', appVersion = '' }) {
+  // Display the trailing path segment so "/Game/RobotDemo2" -> "RobotDemo2"
+  const levelShort = (currentLevel || '').split('/').filter(Boolean).pop() || '——';
   const connecting = mcpState && mcpState.started && !mcpState.done;
   const ok = mcpState && mcpState.done && mcpState.ok === true;
   const err = mcpState && mcpState.done && mcpState.ok === false;
@@ -28,6 +30,7 @@ function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReco
       <div className="brand">
         <div className="brand-mark">A</div>
         <div className="brand-name">ADORE</div>
+        {appVersion && <div className="brand-ver">{appVersion}</div>}
       </div>
       <div className="crumb">
         <span>{projectName}</span>
@@ -35,6 +38,27 @@ function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReco
         <span className="active">{jobName}</span>
       </div>
       <div className="topbar-spacer" />
+      {currentLevel && (
+        <button className="top-btn" title={`UE 当前 level: ${currentLevel}`}
+                onClick={onSyncFromUE}>
+          <span style={{opacity: 0.6}}>LEVEL</span>
+          <span style={{fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)'}}>{levelShort}</span>
+        </button>
+      )}
+      {onSyncFromUE && (
+        <button className="top-btn" title="从 UE Editor 重读 Demo/v0 actor 列表"
+                onClick={onSyncFromUE}>
+          <span style={{opacity: 0.6}}>SYNC</span>
+          <span style={{fontFamily: 'var(--mono)', fontSize: 11}}>↻ {actorCount}</span>
+        </button>
+      )}
+      {onClearAll && actorCount > 0 && (
+        <button className="top-btn" title="删除所有 demo actor"
+                onClick={onClearAll}
+                style={{color: '#ff8080'}}>
+          <span style={{opacity: 0.8}}>CLEAR</span>
+        </button>
+      )}
       <button className="top-btn" title={title} onClick={onMcpReconnect}>
         <span style={{opacity: 0.6}}>UE5.8</span>
         <span style={{ color: dotColor }}>{label}</span>

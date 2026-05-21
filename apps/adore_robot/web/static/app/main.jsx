@@ -38,6 +38,35 @@ function toolsetLabel(name) {
   return `${tail}`;
 }
 
+function UEViewportPip({ cacheKey, mcpReady }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  // Reset failure state whenever a fresh capture is requested. Without
+  // this, the first failed fetch latches `failed=true` and the fallback
+  // branch hides the <img> forever -- onLoad can never re-fire to
+  // recover.  UE briefly down + back = dead PIP until page reload.
+  React.useEffect(() => { setFailed(false); }, [cacheKey]);
+  if (!mcpReady) return null;
+  const src = `/api/mcp/screenshot.png?t=${cacheKey}`;
+  return (
+    <div className={`ue-pip ${expanded ? 'expanded' : ''}`}
+         onClick={() => setExpanded(e => !e)}>
+      <div className="ue-pip-hud">
+        <span className="ue-pip-dot" />
+        <span className="ue-pip-label">UE 5.8 EDITOR · LIVE</span>
+        <span className="ue-pip-hint">{expanded ? '✕' : '⤢'}</span>
+      </div>
+      {failed ? (
+        <div className="ue-pip-fallback">无法捕获截图<br/>(open a level in UE)</div>
+      ) : (
+        <img className="ue-pip-img" src={src} alt="UE viewport"
+             onError={() => setFailed(true)}
+             onLoad={() => setFailed(false)} />
+      )}
+    </div>
+  );
+}
+
 function McpBootOverlay({ state, onRetry, onDismiss }) {
   if (!state) return null;
   const pct = state.total > 0 ? Math.min(100, Math.round((state.current / state.total) * 100)) : 0;
@@ -75,7 +104,7 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
             <span className="mcp-boot-tag-mark" />
             ADORE-AI · NEURAL CONSOLE
           </span>
-          <span className="mcp-boot-sid">SESSION · {sessionShort}</span>
+          <span className="mcp-boot-sid">v0.4.0 · SESSION · {sessionShort}</span>
         </div>
 
         <div className="mcp-boot-banner">
@@ -174,6 +203,22 @@ function App() {
   // Viewport starts empty (just floor + walls). First successful chat
   // action seeds the mock layout so the customer sees "empty -> populated".
   const [sceneSeeded, setSceneSeeded] = useState(false);
+  // Mirror of UE Demo/v0 folder state. Each entry comes from a real
+  // server-confirmed action; viewport renders these 1:1 so the SVG iso
+  // mock matches what's actually in the UE level.
+  const [spawnedActors, setSpawnedActors] = useState([]);
+  const [currentLevel, setCurrentLevel] = useState('');
+  const [appVersion, setAppVersion] = useState('');
+  // Cache-buster counter bumped after every successful chat action so the
+  // UE viewport PIP <img> re-fetches.  Also bumped on MCP-ready boot.
+  const [ueShotKey, setUeShotKey] = useState(0);
+
+  // Fetch app version once on mount for the TopBar brand chip.
+  useEffect(() => {
+    fetch('/api/status').then(r => r.json()).then(j => {
+      if (j.ok && j.version) setAppVersion(`v${j.version}`);
+    }).catch(() => {});
+  }, []);
 
   const busyRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -208,6 +253,64 @@ function App() {
     startMcpPoll();
     return () => { pollSeqRef.current += 1; };  // invalidate on unmount
   }, [startMcpPoll]);
+
+  // Sync spawnedActors with UE's Demo/v0 folder. Called automatically
+  // when MCP boot finishes (so opening the page already shows whatever
+  // RobotDemo.umap has) and from the manual Sync button.
+  const syncFromUE = useCallback(async () => {
+    try {
+      const r = await fetch('/api/demo/list_objects');
+      const j = await r.json();
+      if (j.ok && Array.isArray(j.objects)) {
+        setSpawnedActors(j.objects.map(o => ({
+          actor_handle: o.actor_handle,
+          asset_name: o.asset_name || 'shelf',
+          id_number: o.id_number,
+          x: o.x ?? 0, y: o.y ?? 0, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
+        })));
+        setSceneSeeded(j.objects.length > 0);
+        setUeShotKey(k => k + 1);
+      }
+    } catch {}
+  }, []);
+
+  const clearAllFromUE = useCallback(async () => {
+    try {
+      await fetch('/api/demo/clear', { method: 'POST' });
+      setSpawnedActors([]);
+      setSceneSeeded(false);
+    } catch {}
+  }, []);
+
+  // Auto-sync the moment MCP init turns green.
+  useEffect(() => {
+    if (mcpInit && mcpInit.done && mcpInit.ok) syncFromUE();
+  }, [mcpInit && mcpInit.done && mcpInit.ok, syncFromUE]);
+
+  // Poll current level every 4s. UE is the source of truth -- when user
+  // opens a different .umap in the editor we detect it and re-sync.
+  useEffect(() => {
+    if (!(mcpInit && mcpInit.done && mcpInit.ok)) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const j = await fetch('/api/mcp/current_level').then(r => r.json());
+        if (!alive) return;
+        const lvl = j.ok ? (j.level_path || '') : '';
+        if (lvl && lvl !== currentLevel) {
+          setCurrentLevel(lvl);
+          // Level changed in UE -> wipe local mirror and pull the new
+          // level's Demo/v0 contents fresh.
+          setSpawnedActors([]);
+          setSceneSeeded(false);
+          syncFromUE();
+        }
+      } catch {}
+      if (alive) setTimeout(tick, 4000);
+    };
+    tick();
+    return () => { alive = false; };
+  }, [mcpInit && mcpInit.done && mcpInit.ok, currentLevel, syncFromUE]);
 
   const retryMcpInit = useCallback(() => {
     setMcpInitDismissed(false);
@@ -282,14 +385,71 @@ function App() {
     try {
       const realCalls = await callRealChat(userText, effectiveScene, params);
       resp = realCalls;
-      // Seed the mock viewport ONLY when a real spawn happened on UE.
-      // list_objects / delete_object / etc. shouldn't make the warehouse
-      // suddenly appear -- that's misleading. clear_demo_objects unseeds.
+      // Mirror UE state into spawnedActors so the viewport shows exactly
+      // what was just spawned/moved/deleted -- nothing more.
       const r = realCalls.relayMeta;
-      if (r) {
-        if (r.tool === 'spawn_object' && r.result?.actor_handle) setSceneSeeded(true);
-        else if (r.tool === 'generate_warehouse_layout' && r.result?.total > 0) setSceneSeeded(true);
-        else if (r.tool === 'clear_demo_objects') setSceneSeeded(false);
+      if (r && r.ok) {
+        // Real UE state changed -> grab fresh viewport screenshots.
+        // UE Editor's add_to_scene_from_asset is async: it returns when
+        // the spawn is queued, not when the new actor has actually been
+        // rendered in the viewport. We retry at a few intervals so the
+        // PIP catches the engine once the frame settles.
+        setTimeout(() => setUeShotKey(k => k + 1), 350);
+        setTimeout(() => setUeShotKey(k => k + 1), 900);
+        setTimeout(() => setUeShotKey(k => k + 1), 1800);
+        const res = r.result || {};
+        if (r.tool === 'spawn_object' && res.actor_handle) {
+          setSpawnedActors(prev => [...prev, {
+            actor_handle: res.actor_handle,
+            asset_name: res.asset_name,
+            id_number: res.id_number,
+            x: res.x, y: res.y, z: res.z, yaw_deg: res.yaw_deg,
+          }]);
+          setSceneSeeded(true);
+        } else if (r.tool === 'generate_warehouse_layout' && Array.isArray(res.spawned)) {
+          setSpawnedActors(res.spawned.map(s => ({
+            actor_handle: s.actor_handle,
+            asset_name: s.asset_name,
+            id_number: s.id_number,
+            x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
+          })));
+          setSceneSeeded(true);
+        } else if (r.tool === 'spawn_batch' && Array.isArray(res.spawned)) {
+          setSpawnedActors(prev => [...prev, ...res.spawned.map(s => ({
+            actor_handle: s.actor_handle,
+            asset_name: s.asset_name,
+            id_number: s.id_number,
+            x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
+          }))]);
+          if (res.total > 0) setSceneSeeded(true);
+        } else if (r.tool === 'clear_demo_objects') {
+          setSpawnedActors([]);
+          setSceneSeeded(false);
+        } else if (r.tool === 'delete_object' && res.deleted) {
+          setSpawnedActors(prev => prev.filter(a => a.actor_handle !== res.deleted));
+        } else if ((r.tool === 'modify_location' || r.tool === 'nudge_object') && res.actor_handle) {
+          setSpawnedActors(prev => {
+            // server may have re-spawned with new handle (see demo_move);
+            // drop old, push new entry at new coords.
+            const oldH = res.old_handle;
+            const keep = oldH ? prev.filter(a => a.actor_handle !== oldH) : prev;
+            const old = oldH ? prev.find(a => a.actor_handle === oldH) : null;
+            return [...keep, {
+              actor_handle: res.actor_handle,
+              asset_name: old?.asset_name || 'shelf',
+              x: res.new_xyz_m[0], y: res.new_xyz_m[1], z: res.new_xyz_m[2] ?? 0,
+              yaw_deg: old?.yaw_deg || 0,
+            }];
+          });
+        } else if (r.tool === 'list_objects' && Array.isArray(res.objects)) {
+          setSpawnedActors(res.objects.map(o => ({
+            actor_handle: o.actor_handle,
+            asset_name: o.asset_name,
+            id_number: o.id_number,
+            x: o.x, y: o.y, z: o.z ?? 0, yaw_deg: o.yaw_deg ?? 0,
+          })));
+          if (res.objects.length > 0) setSceneSeeded(true);
+        }
       }
     } catch (err) {
       console.error('[chat] real LLM failed, fallback to canned:', err);
@@ -570,7 +730,10 @@ function App() {
       <div className={`app${showOfflineBanner ? ' has-offline-banner' : ''}`}>
         <TopBar projectName="adore-data" jobName={`${scene} · ${mrqSubdir.split('/')[1] || 'v0_demo'}`}
           runStatus={runStatus} runtimeS={runtimeMs}
-          mcpState={mcpInit} onMcpReconnect={retryMcpInit} />
+          mcpState={mcpInit} onMcpReconnect={retryMcpInit}
+          onSyncFromUE={syncFromUE} onClearAll={clearAllFromUE}
+          actorCount={spawnedActors.length}
+          currentLevel={currentLevel} appVersion={appVersion} />
 
         {/* LEFT: Chat */}
         <ChatPanel
@@ -622,6 +785,7 @@ function App() {
               generating={generating}
               generateProgress={generating ? stageProgress : 1}
               seeded={sceneSeeded}
+              spawnedActors={spawnedActors}
             />
             <div className="viewport-overlay">
               <div className="vp-stat"><span className="k">scene</span><span className="v">{scene}</span></div>
@@ -629,9 +793,25 @@ function App() {
               <div className="vp-stat"><span className="k">room</span><span className="v">{params.room_w_m.toFixed(1)} × {params.room_l_m.toFixed(1)} × {params.ceiling_h_m.toFixed(1)} m</span></div>
             </div>
             <div className="viewport-overlay right">
+              <div className="vp-stat">
+                <span className="k">actors</span>
+                <span className="v">{spawnedActors.length}</span>
+                {spawnedActors.length > 0 && (() => {
+                  const counts = spawnedActors.reduce((acc, a) => {
+                    acc[a.asset_name] = (acc[a.asset_name] || 0) + 1;
+                    return acc;
+                  }, {});
+                  const parts = Object.entries(counts).map(([k, v]) =>
+                    `${k[0].toUpperCase()}${v}`).join(' · ');
+                  return <><span className="k">·</span><span className="v" style={{fontSize: 10, opacity: 0.7}}>{parts}</span></>;
+                })()}
+              </div>
               <div className="vp-stat"><span className="k">tris</span><span className="v">~{Math.round((118 + params.shelf_density * 240 + params.forklift_count * 30) * 1000).toLocaleString()}</span></div>
               <div className="vp-stat"><span className="k">lumen</span><span className="v">on</span><span className="k">·</span><span className="v">path-tracer ready</span></div>
             </div>
+            {/* Schematic vs live UE: left iso SVG is the schematic, this
+                PIP is the actual editor viewport, refreshed on every spawn. */}
+            <UEViewportPip cacheKey={ueShotKey} mcpReady={!!(mcpInit && mcpInit.done && mcpInit.ok)} />
           </div>
           <Timeline currentStage={runStatus} stageProgress={stageProgress} runtimeS={runtimeMs} />
         </div>
@@ -732,9 +912,20 @@ async function callRealChat(userText, scene, currentParams) {
   } else if (tc.name === 'modify_location') {
     calls.push({ name: 'modify_location', args });
     toolNarrate = `${args.actor_handle} 挪到 (${args.x}, ${args.y})`;
+  } else if (tc.name === 'nudge_object') {
+    calls.push({ name: 'nudge_object', args });
+    const dx = args.dx ?? 0, dy = args.dy ?? 0;
+    const parts = [];
+    if (dx) parts.push(`${dx > 0 ? '+' : ''}${dx}m X`);
+    if (dy) parts.push(`${dy > 0 ? '+' : ''}${dy}m Y`);
+    toolNarrate = `${args.actor_handle} ${parts.join(' / ') || '0'}`;
   } else if (tc.name === 'list_objects') {
     calls.push({ name: 'list_objects', args: {} });
     toolNarrate = '列出当前 actor';
+  } else if (tc.name === 'spawn_batch') {
+    const items = Array.isArray(args.items) ? args.items : [];
+    items.forEach((it, idx) => calls.push({ name: `spawn ${idx + 1}`, args: it }));
+    toolNarrate = `批量 spawn ${items.length} 个物件`;
   } else if (tc.name === 'generate_warehouse_layout') {
     calls.push({ name: 'generate_warehouse_layout', args });
     toolNarrate = '生成仓库布局';
@@ -755,7 +946,9 @@ async function callRealChat(userText, scene, currentParams) {
       if (relay.tool === 'spawn_object' && res.actor_handle) target = `spawn → ${res.actor_handle}`;
       else if (relay.tool === 'delete_object' && res.deleted) target = `delete ${res.deleted}`;
       else if (relay.tool === 'modify_location' && res.actor_handle) target = `move ${res.actor_handle}`;
+      else if (relay.tool === 'nudge_object' && res.actor_handle) target = `nudge ${res.actor_handle}`;
       else if (relay.tool === 'list_objects' && Array.isArray(res.objects)) target = `${res.objects.length} actors`;
+      else if (relay.tool === 'spawn_batch' && res.total) target = `batch · ${res.total} actors`;
       else if (relay.tool === 'generate_warehouse_layout' && res.total) target = `layout · ${res.total} actors`;
       else if (relay.tool === 'clear_demo_objects' && res.cleared !== undefined) target = `cleared ${res.cleared}`;
       else if (!relay.tool && relay.pcg_component) target = (relay.pcg_component.split('.').pop() || 'PCG');

@@ -20,6 +20,7 @@ import json
 import threading
 import time
 import urllib.parse
+from pathlib import Path as _Path
 from typing import Any
 
 
@@ -66,8 +67,13 @@ class UnrealMCPClient:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except Exception:
+            except (OSError, http.client.HTTPException) as e:
+                # Already-broken socket on close is normal; broader
+                # exceptions get logged so a real leak isn't masked.
                 pass
+            except Exception as e:
+                print(f"[mcp] unexpected exception on _close_conn: "
+                      f"{type(e).__name__}: {e}", flush=True)
             self._conn = None
 
     def _post(self, payload: dict, extra_headers: dict | None = None) -> tuple[int, dict, str]:
@@ -463,6 +469,81 @@ class UnrealMCPClient:
 
     DEMO_FOLDER = "Demo/v0"
 
+    # Per-level actor ledger.  Shape: { level_path: { handle: record } }
+    # so RobotDemo1 and RobotDemo2 never see each other's actors.
+    # Persisted to apps/adore_robot/.demo_ledger.json across Flask restarts.
+    _DEMO_LEDGER: dict = {}
+    # Absolute path so Flask cwd doesn't matter for ledger persistence.
+    _LEDGER_FILE = str(_Path(__file__).resolve().parent / ".demo_ledger.json")
+    _level_cache: str = ""
+    _level_cache_ts: float = 0.0
+
+    def _next_id_for(self, bucket: dict, asset_name: str) -> int:
+        """Per-asset auto-increment ID. Scans current bucket so we don't
+        collide if the user reloaded a level with existing demo actors."""
+        used = set()
+        for rec in bucket.values():
+            if rec.get("asset_name") == asset_name:
+                idn = rec.get("id_number")
+                if isinstance(idn, int):
+                    used.add(idn)
+        i = 1
+        while i in used:
+            i += 1
+        return i
+
+    @classmethod
+    def _ledger_load(cls):
+        import json as _j, os as _os
+        try:
+            if _os.path.exists(cls._LEDGER_FILE):
+                with open(cls._LEDGER_FILE, "r", encoding="utf-8") as f:
+                    data = _j.load(f)
+                # back-compat: older ledger was flat {handle: record}.
+                # Wrap it under a "_legacy" level so we don't lose history.
+                if data and not any(isinstance(v, dict) and
+                                    any(isinstance(vv, dict) and "actor_handle" in vv
+                                        for vv in v.values())
+                                    for v in data.values()):
+                    cls._DEMO_LEDGER = {"_legacy": data}
+                else:
+                    cls._DEMO_LEDGER = data
+        except Exception:
+            cls._DEMO_LEDGER = {}
+
+    @classmethod
+    def _ledger_save(cls):
+        import json as _j
+        try:
+            with open(cls._LEDGER_FILE, "w", encoding="utf-8") as f:
+                _j.dump(cls._DEMO_LEDGER, f, ensure_ascii=False, indent=0)
+        except Exception:
+            pass
+
+    def _current_level_cached(self) -> str:
+        """get_current_level with a 2s cache to avoid one RPC per spawn.
+        On RPC failure we keep the last-known value as a soft fallback
+        but reset the timestamp so the very next call retries instead
+        of trusting a stale value for the rest of the 2s window."""
+        now = time.time()
+        if now - self._level_cache_ts < 2.0 and self._level_cache:
+            return self._level_cache
+        try:
+            lvl = self.get_current_level() or "_unknown"
+            self._level_cache = lvl
+            self._level_cache_ts = now
+            return lvl
+        except Exception:
+            self._level_cache_ts = 0.0  # force retry next call
+            return self._level_cache or "_unknown"
+
+    def _ledger_bucket(self) -> dict:
+        """Return (and create if absent) the per-level bucket."""
+        lvl = self._current_level_cached()
+        if lvl not in self._DEMO_LEDGER:
+            self._DEMO_LEDGER[lvl] = {}
+        return self._DEMO_LEDGER[lvl]
+
     def _demo_origin_world_cm(self) -> dict:
         """Return BP_DemoOrigin world location in cm, or origin if absent."""
         if getattr(self, "_demo_origin_cache", None):
@@ -509,9 +590,15 @@ class UnrealMCPClient:
 
     def demo_spawn(self, asset_path: str, asset_name: str,
                    x_m: float, y_m: float, z_m: float = 0.0,
-                   yaw_deg: float = 0.0) -> dict:
+                   yaw_deg: float = 0.0,
+                   id_number_override: int | None = None) -> dict:
         """Spawn a static mesh at scene-local (x,y,z) meters. Tags via
-        outliner folder Demo/v0 for safe bulk-delete later."""
+        outliner folder Demo/v0 for safe bulk-delete later.
+
+        id_number_override: when set (e.g. by demo_move's respawn path),
+        keeps the previous handle's number so the user's "F1" doesn't
+        become "F2" after a move.
+        """
         self.auto_load_toolsets()
         anchor = self._demo_origin_world_cm()
         world = {
@@ -519,9 +606,13 @@ class UnrealMCPClient:
             "y": anchor["y"] + y_m * 100,
             "z": anchor["z"] + z_m * 100,
         }
-        # Unique-ish name so the outliner doesn't auto-rename and lose us.
-        suffix = int(time.time() * 1000) & 0xFFFF
-        actor_name = f"Demo_{asset_name}_{suffix}"
+        # Customer-friendly auto-increment per asset type: forklift_1,
+        # forklift_2, shelf_1 ... User can say "挪开 2 号叉车" and LLM
+        # maps it through list_objects -> handle "forklift_2".
+        bucket_for_id = self._ledger_bucket()
+        id_number = (id_number_override if id_number_override is not None
+                     else self._next_id_for(bucket_for_id, asset_name))
+        actor_name = f"{asset_name}_{id_number}"
         spawned = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.add_to_scene_from_asset",
             {
@@ -535,7 +626,10 @@ class UnrealMCPClient:
             actor_ref = spawned
         elif isinstance(spawned, dict):
             actor_ref = spawned.get("refPath") or spawned.get("actor")
-        # Move into demo folder (best-effort; ignore failures).
+        # Move into demo folder + write asset_name as an actor tag so
+        # the actor is self-identifying when we re-load a saved level
+        # without the in-memory ledger. Best-effort; ignore individual
+        # failures.
         if actor_ref:
             try:
                 self.call_tool_unwrapped(
@@ -544,12 +638,33 @@ class UnrealMCPClient:
                 )
             except Exception:
                 pass
-        return {
+            try:
+                # Tags double as a sidecar metadata store that survives
+                # the level save + reopen + Flask restart cycle. Position
+                # and yaw encoded here so demo_list can recover them when
+                # the in-memory ledger is empty.
+                self.set_actor_properties(actor_ref, {"tags": [
+                    "demo_v0_spawned",
+                    f"demo_v0_asset:{asset_name}",
+                    f"demo_v0_handle:{actor_name}",
+                    f"demo_v0_pos:{x_m:.3f},{y_m:.3f},{z_m:.3f}",
+                    f"demo_v0_yaw:{yaw_deg:.2f}",
+                ]})
+            except Exception:
+                pass
+        record = {
             "actor_handle": actor_name,
             "actor_ref": actor_ref,
             "asset_name": asset_name,
+            "id_number": id_number,
             "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
         }
+        bucket = self._ledger_bucket()
+        bucket[actor_name] = record
+        if actor_ref:
+            bucket[actor_ref] = record  # alt lookup
+        self._ledger_save()
+        return record
 
     def _list_demo_folder(self) -> list:
         """get_actors_in_folder, but treat 'folder does not exist' as
@@ -580,76 +695,171 @@ class UnrealMCPClient:
 
     def demo_delete(self, handle: str) -> dict:
         self.auto_load_toolsets()
-        ref = self._find_demo_actor(handle)
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
+        ref = (rec or {}).get("actor_ref") or self._find_demo_actor(handle)
         if not ref:
             return {"error": f"no demo actor matching '{handle}'"}
         ok = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
             {"actor": ref},
         )
+        for k in [handle, ref] + ([rec.get("actor_handle")] if rec else []):
+            if k:
+                bucket.pop(k, None)
+        self._ledger_save()
         return {"deleted": handle, "actor_ref": ref, "ok": bool(ok)}
 
     def demo_move(self, handle: str, x_m: float, y_m: float, z_m: float = 0.0) -> dict:
+        """Move via delete + respawn at new (x,y,z) keeping asset + yaw.
+        ObjectTools.set_properties can't reach AStaticMeshActor's transform
+        via root_component, so we fake it by re-spawning. New actor gets a
+        new handle; we update the ledger so the LLM's next reference works."""
         self.auto_load_toolsets()
-        ref = self._find_demo_actor(handle)
-        if not ref:
-            return {"error": f"no demo actor matching '{handle}'"}
-        anchor = self._demo_origin_world_cm()
-        # UPROPERTY path: write root_component.relative_location. Falls
-        # back to actor_location for AStaticMeshActor exposed as a direct
-        # property in some bindings.
-        new_loc = {
-            "x": anchor["x"] + x_m * 100,
-            "y": anchor["y"] + y_m * 100,
-            "z": anchor["z"] + z_m * 100,
-        }
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
+        if not rec:
+            ref = self._find_demo_actor(handle)
+            if not ref:
+                return {"error": f"no demo actor matching '{handle}'"}
+            rec = {"actor_ref": ref, "asset_name": "unknown", "yaw_deg": 0.0}
+        # delete old
         try:
-            self.set_actor_properties(ref, {"root_component": {"relative_location": new_loc}})
-            return {"actor_handle": handle, "new_xyz_m": [x_m, y_m, z_m], "actor_ref": ref}
-        except Exception as e:
-            return {"error": f"move failed: {type(e).__name__}: {e}", "actor_ref": ref}
+            self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
+                {"actor": rec["actor_ref"]},
+            )
+        except Exception:
+            pass
+        bucket.pop(handle, None)
+        if rec.get("actor_ref"):
+            bucket.pop(rec["actor_ref"], None)
+        # respawn at new location
+        from demo.asset_registry import resolve as _resolve  # late import: avoid cycle
+        try:
+            asset_path = _resolve(rec.get("asset_name", "shelf"))
+        except Exception:
+            asset_path = _resolve("shelf")  # fallback
+        # Preserve the old id_number so 'F1' stays 'F1' after a move
+        # (was reassigning to the next free integer -> UX confusion).
+        new_rec = self.demo_spawn(
+            asset_path=asset_path,
+            asset_name=rec.get("asset_name", "shelf"),
+            x_m=x_m, y_m=y_m, z_m=z_m,
+            id_number_override=rec.get("id_number"),
+            yaw_deg=rec.get("yaw_deg", 0.0),
+        )
+        return {
+            "actor_handle": new_rec["actor_handle"],
+            "old_handle": handle,
+            "new_xyz_m": [x_m, y_m, z_m],
+            "actor_ref": new_rec["actor_ref"],
+        }
 
     def demo_list(self) -> dict:
+        """Return every actor currently in the Demo/v0 folder, augmented
+        with whatever metadata we can find. Two sources, tried in order:
+
+          1. In-memory ledger keyed by actor_ref (fast, has exact spawn
+             coords + id_number).
+          2. The actor's own `tags` UPROPERTY (slow but survives Flask
+             restart, level reload, and ledger deletion -- we wrote
+             demo_v0_asset:<name> + demo_v0_handle:<name> at spawn time).
+
+        Position falls back to (0,0) when no ledger entry exists; if the
+        user reloaded a saved .umap the visual stays at origin but the
+        handle + asset + id are still recoverable so the LLM can still
+        delete / move them by name."""
         self.auto_load_toolsets()
-        anchor = self._demo_origin_world_cm()
-        actors = self._list_demo_folder()
+        live_refs = []
+        for a in self._list_demo_folder():
+            ref = a.get("refPath") if isinstance(a, dict) else a
+            if ref:
+                live_refs.append(ref)
+        bucket = self._ledger_bucket()
+        # Index ledger entries by actor_ref so we can join with live list.
+        by_ref: dict = {}
+        for k, rec in list(bucket.items()):
+            r = rec.get("actor_ref")
+            if r:
+                by_ref[r] = rec
+
         out = []
-        if isinstance(actors, list):
-            for a in actors:
-                ref = a.get("refPath") if isinstance(a, dict) else a
-                if not ref:
-                    continue
-                name = ref.rsplit(".", 1)[-1]
-                # parse asset_name from "Demo_<asset>_<suffix>"
-                asset_name = "unknown"
-                if name.startswith("Demo_"):
-                    rest = name[5:].rsplit("_", 1)[0]
-                    asset_name = rest
+        seen_handles = set()
+        for ref in live_refs:
+            rec = by_ref.get(ref)
+            handle = rec.get("actor_handle") if rec else None
+            asset = rec.get("asset_name") if rec else None
+            id_n = rec.get("id_number") if rec else None
+            x = rec.get("x") if rec else None
+            y = rec.get("y") if rec else None
+            z = rec.get("z") if rec else None
+            yaw = rec.get("yaw_deg") if rec else None
+            # Fallback: read tags directly from the actor.  Tags carry
+            # asset/handle/pos/yaw so we can render this actor even when
+            # the in-memory ledger has no entry for it.
+            if handle is None or asset is None or x is None or y is None:
                 try:
-                    props = self.get_actor_properties(ref, ["root_component"])
-                    rc = props.get("root_component") if isinstance(props, dict) else {}
-                    loc = (rc.get("relative_location") if isinstance(rc, dict) else {}) or {}
-                    rot = (rc.get("relative_rotation") if isinstance(rc, dict) else {}) or {}
-                    out.append({
-                        "actor_handle": name,
-                        "actor_ref": ref,
-                        "asset_name": asset_name,
-                        "x": (float(loc.get("x", anchor["x"])) - anchor["x"]) / 100,
-                        "y": (float(loc.get("y", anchor["y"])) - anchor["y"]) / 100,
-                        "z": (float(loc.get("z", anchor["z"])) - anchor["z"]) / 100,
-                        "yaw_deg": float(rot.get("yaw", 0)),
-                    })
+                    props = self.get_actor_properties(ref, ["tags"])
+                    tags = props.get("tags", []) if isinstance(props, dict) else []
+                    for t in tags:
+                        s = str(t)
+                        if s.startswith("demo_v0_asset:") and asset is None:
+                            asset = s.split(":", 1)[1]
+                        elif s.startswith("demo_v0_handle:") and handle is None:
+                            handle = s.split(":", 1)[1]
+                        elif s.startswith("demo_v0_pos:") and (x is None or y is None):
+                            try:
+                                parts = s.split(":", 1)[1].split(",")
+                                x = float(parts[0]); y = float(parts[1])
+                                if len(parts) > 2:
+                                    z = float(parts[2])
+                            except Exception:
+                                pass
+                        elif s.startswith("demo_v0_yaw:") and yaw is None:
+                            try:
+                                yaw = float(s.split(":", 1)[1])
+                            except Exception:
+                                pass
                 except Exception:
-                    out.append({"actor_handle": name, "actor_ref": ref, "asset_name": asset_name})
+                    pass
+            if handle is None:
+                handle = ref.rsplit(".", 1)[-1]  # last-resort: refPath tail
+            if asset is None:
+                asset = "unknown"
+            # Recover id_number from handle like "forklift_2"
+            if id_n is None and "_" in handle:
+                tail = handle.rsplit("_", 1)[1]
+                if tail.isdigit():
+                    id_n = int(tail)
+            if handle in seen_handles:
+                continue
+            seen_handles.add(handle)
+            out.append({
+                "actor_handle": handle,
+                "asset_name": asset,
+                "id_number": id_n,
+                "x": x if x is not None else 0,
+                "y": y if y is not None else 0,
+                "z": z if z is not None else 0,
+                "yaw_deg": yaw if yaw is not None else 0,
+            })
+
+        # Purge ledger entries whose actor_ref is no longer live (manual
+        # editor cleanup, level reload, etc.).
+        live_set = set(live_refs)
+        for k, rec in list(bucket.items()):
+            if rec.get("actor_ref") and rec["actor_ref"] not in live_set:
+                bucket.pop(k, None)
+        self._ledger_save()
         return {"objects": out}
 
     def demo_clear(self) -> dict:
         self.auto_load_toolsets()
-        # remove_from_scene each demo actor; cheaper than per-actor lookup.
-        listed = self.demo_list().get("objects", [])
         cleared = 0
-        for o in listed:
-            ref = o.get("actor_ref")
+        # iterate the folder live (covers actors spawned outside ledger too)
+        for a in self._list_demo_folder():
+            ref = a.get("refPath") if isinstance(a, dict) else a
             if not ref:
                 continue
             try:
@@ -660,7 +870,58 @@ class UnrealMCPClient:
                 cleared += 1
             except Exception:
                 pass
+        self._ledger_bucket().clear()
+        self._ledger_save()
         return {"cleared": cleared}
+
+    def demo_nudge(self, handle: str, dx_m: float = 0, dy_m: float = 0, dz_m: float = 0) -> dict:
+        """Relative move: current_pos + (dx, dy, dz). Handles the common
+        '往左/前/后 N 米' chat patterns without forcing the LLM to first
+        list_objects to look up the absolute target."""
+        self.auto_load_toolsets()
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
+        cur_x = rec.get("x", 0) if rec else None
+        cur_y = rec.get("y", 0) if rec else None
+        cur_z = rec.get("z", 0) if rec else None
+        if cur_x is None or cur_y is None:
+            # Fallback: query through demo_list which can recover from
+            # tags even when ledger is empty. Position may still be 0,0
+            # if the actor was never spawned via us.
+            for o in self.demo_list().get("objects", []):
+                if o.get("actor_handle") == handle:
+                    cur_x = o.get("x", 0)
+                    cur_y = o.get("y", 0)
+                    cur_z = o.get("z", 0)
+                    break
+        if cur_x is None or cur_y is None:
+            return {"error": f"no demo actor matching '{handle}'"}
+        # Clamp the post-delta target to scene bounds so '往左 1000 米'
+        # doesn't fling the actor out into the void.
+        SCENE_BOUNDS_M = 25.0
+        new_x = max(-SCENE_BOUNDS_M, min(SCENE_BOUNDS_M, cur_x + dx_m))
+        new_y = max(-SCENE_BOUNDS_M, min(SCENE_BOUNDS_M, cur_y + dy_m))
+        return self.demo_move(handle, new_x, new_y, cur_z + dz_m)
+
+    def demo_switch_level(self, level_path: str) -> dict:
+        """Load a different .umap in the editor. Invalidates the level
+        cache so the next demo_* call buckets into the new level."""
+        self.auto_load_toolsets()
+        # normalize: accept "RobotDemo1" -> "/Game/RobotDemo1"
+        if level_path and not level_path.startswith("/"):
+            level_path = "/Game/" + level_path
+        try:
+            self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.load_level",
+                {"level_path": level_path},
+            )
+        except Exception as e:
+            return {"error": f"load_level failed: {type(e).__name__}: {e}",
+                    "level_path": level_path}
+        self._level_cache = ""
+        self._level_cache_ts = 0.0
+        new = self._current_level_cached()
+        return {"ok": True, "level_path": new}
 
     def demo_generate_warehouse(self, asset_resolver, **p) -> dict:
         """Server-side warehouse layout algorithm. asset_resolver(name)
@@ -724,6 +985,50 @@ class UnrealMCPClient:
             by_asset[s["asset_name"]] = by_asset.get(s["asset_name"], 0) + 1
         return {"spawned": spawned, "total": len(spawned), "by_asset": by_asset}
 
+    def capture_editor_image(self) -> bytes | None:
+        """Snap the active UE Editor viewport via EditorAppToolset. Returns
+        raw PNG bytes; powers the "real UE PIP" so the customer sees the
+        SVG schematic AND the actual engine output side by side."""
+        self.auto_load_toolsets()
+        try:
+            result = self.call_tool_unwrapped(
+                "ToolsetRegistry.EditorAppToolset.CaptureEditorImage"
+            )
+        except Exception:
+            return None
+        import base64 as _b64
+        if isinstance(result, str):
+            try:
+                return _b64.b64decode(result)
+            except Exception:
+                return None
+        if isinstance(result, dict):
+            for k in ("image", "data", "png", "base64"):
+                v = result.get(k)
+                if isinstance(v, str):
+                    try:
+                        return _b64.b64decode(v)
+                    except Exception:
+                        pass
+            for k in ("path", "file", "filepath", "image_path"):
+                p = result.get(k)
+                if isinstance(p, str):
+                    try:
+                        with open(p, "rb") as f:
+                            return f.read()
+                    except Exception:
+                        pass
+        # Couldn't decode -- log enough context so we can adapt the
+        # parser without dumping bytes everywhere.
+        if isinstance(result, dict):
+            print(f"[mcp] CaptureEditorImage unparsed: dict keys="
+                  f"{list(result.keys())}", flush=True)
+        else:
+            preview = repr(result)[:120] if result is not None else "None"
+            print(f"[mcp] CaptureEditorImage unparsed: "
+                  f"type={type(result).__name__} preview={preview}", flush=True)
+        return None
+
     def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
         """One-call orchestration: ensure toolsets loaded, find PCG
         Component, set the provided pcg_params delta, optionally trigger
@@ -753,3 +1058,8 @@ class UnrealMCPClient:
     @property
     def loaded_toolsets(self) -> list[str]:
         return sorted(self._loaded_toolsets)
+
+
+# Load persistent ledger at import time so the very first /api/demo/list
+# after Flask restart already has handle -> asset_name mapping ready.
+UnrealMCPClient._ledger_load()

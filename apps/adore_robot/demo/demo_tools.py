@@ -57,7 +57,7 @@ DELETE_OBJECT_TOOL = ToolDef(
 
 MODIFY_LOCATION_TOOL = ToolDef(
     name="modify_location",
-    description="Translate an existing actor to new scene-local (x,y) meters.",
+    description="Translate an existing actor to ABSOLUTE scene-local (x,y) meters.",
     input_schema={
         "type": "object",
         "additionalProperties": False,
@@ -68,6 +68,28 @@ MODIFY_LOCATION_TOOL = ToolDef(
             "z": {"type": "number", "default": 0},
         },
         "required": ["actor_handle", "x", "y"],
+    },
+)
+
+NUDGE_OBJECT_TOOL = ToolDef(
+    name="nudge_object",
+    description=(
+        "RELATIVE translate -- add (dx, dy, dz) meters to an existing "
+        "actor's current location. PREFERRED for '往左/往右/往前/往后 N 米' "
+        "and any chat that describes movement as a delta rather than an "
+        "absolute target. Server reads current position, so LLM does NOT "
+        "need to call list_objects first."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "actor_handle": {"type": "string"},
+            "dx": {"type": "number", "default": 0, "description": "delta along +X (right)"},
+            "dy": {"type": "number", "default": 0, "description": "delta along +Y (forward)"},
+            "dz": {"type": "number", "default": 0},
+        },
+        "required": ["actor_handle"],
     },
 )
 
@@ -112,7 +134,7 @@ GENERATE_WAREHOUSE_TOOL = ToolDef(
 
 CLEAR_DEMO_TOOL = ToolDef(
     name="clear_demo_objects",
-    description="Delete every actor tagged demo_v0_spawned.",
+    description="Delete every actor tagged demo_v0_spawned in the CURRENT level.",
     input_schema={
         "type": "object",
         "additionalProperties": False,
@@ -120,14 +142,70 @@ CLEAR_DEMO_TOOL = ToolDef(
     },
 )
 
+SWITCH_LEVEL_TOOL = ToolDef(
+    name="switch_level",
+    description=(
+        "Open a different UE level (map). Takes a short name like "
+        "'RobotDemo1' or 'RobotDemo2' (or a full path like "
+        "'/Game/RobotDemo1'). After this returns, subsequent spawn/list/"
+        "delete calls scope to the new level's Demo/v0 folder."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "level_path": {"type": "string"},
+        },
+        "required": ["level_path"],
+    },
+)
+
+SPAWN_BATCH_TOOL = ToolDef(
+    name="spawn_batch",
+    description=(
+        "Spawn many static mesh actors in one call. PREFERRED for any "
+        "intent that places multiple objects -- rows, grids, lines, "
+        "evenly-spaced sets, 'put N forklifts in the back', etc. One "
+        "tool call instead of N. Each item is {asset_name, x, y, z?, "
+        "yaw_deg?} with the same enum + bounds rules as spawn_object."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 60,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "asset_name": {"type": "string", "enum": ASSET_NAMES},
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                        "z": {"type": "number", "default": 0},
+                        "yaw_deg": {"type": "number", "default": 0},
+                    },
+                    "required": ["asset_name", "x", "y"],
+                },
+            },
+        },
+        "required": ["items"],
+    },
+)
+
 
 DEMO_TOOLS: list[ToolDef] = [
     SPAWN_OBJECT_TOOL,
+    SPAWN_BATCH_TOOL,
     DELETE_OBJECT_TOOL,
     MODIFY_LOCATION_TOOL,
+    NUDGE_OBJECT_TOOL,
     LIST_OBJECTS_TOOL,
     GENERATE_WAREHOUSE_TOOL,
     CLEAR_DEMO_TOOL,
+    SWITCH_LEVEL_TOOL,
 ]
 
 DEMO_TOOL_NAMES = {t.name for t in DEMO_TOOLS}
@@ -175,6 +253,14 @@ def dispatch_move(mcp, args: dict) -> dict:
         z_m=float(args.get("z", 0)),
     )
 
+def dispatch_nudge(mcp, args: dict) -> dict:
+    return mcp.demo_nudge(
+        handle=args["actor_handle"],
+        dx_m=float(args.get("dx", 0)),
+        dy_m=float(args.get("dy", 0)),
+        dz_m=float(args.get("dz", 0)),
+    )
+
 def dispatch_list(mcp, _args: dict) -> dict:
     return mcp.demo_list()
 
@@ -185,13 +271,45 @@ def dispatch_warehouse(mcp, args: dict) -> dict:
     return mcp.demo_generate_warehouse(asset_resolver=resolve_asset, **args)
 
 
+def dispatch_batch(mcp, args: dict) -> dict:
+    items = args.get("items") or []
+    spawned = []
+    errors = []
+    for it in items:
+        try:
+            clamped, _ = _clamp_xy(it)
+            rec = mcp.demo_spawn(
+                asset_path=resolve_asset(clamped["asset_name"]),
+                asset_name=clamped["asset_name"],
+                x_m=float(clamped["x"]),
+                y_m=float(clamped["y"]),
+                z_m=float(clamped.get("z", 0)),
+                yaw_deg=float(clamped.get("yaw_deg", 0)),
+            )
+            spawned.append(rec)
+        except Exception as e:
+            errors.append({"item": it, "error": f"{type(e).__name__}: {e}"})
+    by_asset: dict = {}
+    for s in spawned:
+        by_asset[s["asset_name"]] = by_asset.get(s["asset_name"], 0) + 1
+    return {"spawned": spawned, "total": len(spawned),
+            "by_asset": by_asset, "errors": errors}
+
+
+def dispatch_switch_level(mcp, args: dict) -> dict:
+    return mcp.demo_switch_level(args.get("level_path", ""))
+
+
 DISPATCHERS = {
     "spawn_object": dispatch_spawn,
+    "spawn_batch": dispatch_batch,
     "delete_object": dispatch_delete,
     "modify_location": dispatch_move,
+    "nudge_object": dispatch_nudge,
     "list_objects": dispatch_list,
     "clear_demo_objects": dispatch_clear,
     "generate_warehouse_layout": dispatch_warehouse,
+    "switch_level": dispatch_switch_level,
 }
 
 

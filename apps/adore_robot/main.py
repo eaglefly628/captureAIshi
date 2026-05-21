@@ -73,6 +73,11 @@ TEMPLATES = ROOT / "web" / "templates"
 STATIC = ROOT / "web" / "static"
 CONFIGS_SCENES = ROOT / "configs" / "scenes"
 
+# Surfaced in /api/status and the TopBar brand chip. Bump per
+# .claude/rules/versioning.md when changes affect inter-agent contracts.
+APP_VERSION = "0.4.0"
+APP_CHANNEL = "demo-v0"
+
 MCP_URL = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8000/mcp")
 
 app = Flask(
@@ -211,7 +216,8 @@ def dev_view():
 def status():
     return jsonify({
         "ok": True,
-        "version": "0.3.3-dev",
+        "version": APP_VERSION,
+        "channel": APP_CHANNEL,
         "phase": "demo+mcp-bridge",
         "mcp_url": MCP_URL,
         "mcp_session_id": mcp.session_id,
@@ -282,7 +288,9 @@ def api_chat():
         )
         chat_kwargs = dict(
             messages=[Message(role="user", content=user_msg)],
-            tools=[UPDATE_SCENE_TOOL] + DEMO_TOOLS,
+            # v0 demo: only direct-actor tools. update_scene (PCG param
+            # delta) is parked until a real PCG graph exists in the level.
+            tools=DEMO_TOOLS,
             tool_choice="auto",
             system=SYSTEM_PROMPT,
             max_tokens=600,
@@ -305,48 +313,56 @@ def api_chat():
         }), 502
     elapsed_ms = int((time.time() - t0) * 1000)
 
-    tc = result.tool_calls[0] if result.tool_calls else None
-    args_preview = json.dumps(tc.arguments if tc else {}, ensure_ascii=False)[:300]
+    tcs = list(result.tool_calls or [])
+    primary = tcs[0] if tcs else None
+    args_preview = json.dumps(primary.arguments if primary else {}, ensure_ascii=False)[:300]
     _log("CHAT-OUT", f"provider={provider_resolved}",
          f"model={getattr(client, 'model', '?')}", f"elapsed={elapsed_ms}ms",
-         f"tool={tc.name if tc else None}", f"args={args_preview}")
+         f"n_calls={len(tcs)}", f"primary={primary.name if primary else None}",
+         f"args={args_preview}")
 
     log_entry.update({
         "elapsed_ms": elapsed_ms,
         "model": getattr(client, "model", "?"),
-        "tool_call": {"name": tc.name, "arguments": tc.arguments} if tc else None,
+        "tool_calls": [{"name": t.name, "arguments": t.arguments} for t in tcs],
         "text": result.text,
     })
     CHAT_LOG.appendleft(log_entry)
 
     # ── MCP relay (scene mode only) ─────────────────────────────────────
-    # Two paths:
-    #   (a) update_scene tool_call -> apply_pcg_delta (PCG graph params)
-    #   (b) v0 demo tool_call (spawn/delete/move/list/generate/clear)
-    #       -> execute_tool_script with a pre-built unreal-python snippet.
-    # Either gracefully no-ops with a structured reason when UE is
-    # unreachable (sandbox demo, MCP server not started, etc).
-    mcp_relay = None
-    if mode == "scene" and tc and isinstance(tc.arguments, dict):
-        if tc.name == "update_scene" and tc.arguments.get("pcg_params"):
-            mcp_relay = _try_mcp_relay(tc.arguments["pcg_params"])
-        elif tc.name in DEMO_TOOL_NAMES:
-            mcp_relay = _try_demo_tool(tc.name, tc.arguments)
-        if mcp_relay is not None:
-            _log("MCP-RELAY", f"tool={tc.name}", f"ok={mcp_relay.get('ok')}",
-                 f"target={mcp_relay.get('pcg_component') or mcp_relay.get('reason') or '?'}")
+    # Iterate every tool_call returned in this turn. Strong models
+    # (Claude, GPT-4o, DeepSeek-reasoner) emit N parallel calls for
+    # "5 forklifts in a row"; weak models fall back to spawn_batch
+    # which packs the same intent into one call (server fans out).
+    mcp_relays: list = []
+    if mode == "scene":
+        for t in tcs:
+            args = t.arguments if isinstance(t.arguments, dict) else {}
+            relay = None
+            if t.name == "update_scene" and args.get("pcg_params"):
+                relay = _try_mcp_relay(args["pcg_params"])
+            elif t.name in DEMO_TOOL_NAMES:
+                relay = _try_demo_tool(t.name, args)
+            if relay is not None:
+                relay["tool"] = relay.get("tool") or t.name
+                mcp_relays.append(relay)
+                _log("MCP-RELAY", f"tool={t.name}", f"ok={relay.get('ok')}",
+                     f"target={relay.get('pcg_component') or relay.get('reason') or '?'}")
 
+    # Back-compat: front-end currently reads `tool_call` + `mcp_relay`
+    # (singular). Keep those pointing at the first call; surface the full
+    # list as `tool_calls` + `mcp_relays` so newer UI can show every step.
     return jsonify({
         "ok": True,
         "provider": provider_resolved,
         "model": getattr(client, "model", "unknown"),
         "elapsed_ms": elapsed_ms,
-        "tool_call": {
-            "name": tc.name,
-            "arguments": tc.arguments,
-        } if tc else None,
+        "tool_call": ({"name": primary.name, "arguments": primary.arguments}
+                      if primary else None),
+        "tool_calls": [{"name": t.name, "arguments": t.arguments} for t in tcs],
         "text": result.text,
-        "mcp_relay": mcp_relay,
+        "mcp_relay": mcp_relays[0] if mcp_relays else None,
+        "mcp_relays": mcp_relays,
     })
 
 
@@ -461,6 +477,73 @@ def api_mcp_auto_load():
         return jsonify({"ok": True, **mcp.auto_load_toolsets()})
     except ConnectionError as e:
         return jsonify({"ok": False, "error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/api/mcp/screenshot.png")
+def api_mcp_screenshot():
+    """Live UE viewport PNG. Front-end re-requests after each spawn so
+    the picture-in-picture refreshes in sync with the schematic."""
+    try:
+        png = mcp.capture_editor_image()
+        if png:
+            return Response(png, mimetype="image/png",
+                            headers={"Cache-Control": "no-store"})
+        return Response(b"", status=204)
+    except ConnectionError:
+        return Response(b"", status=503)
+    except Exception as e:
+        return Response(str(e).encode(), status=500, mimetype="text/plain")
+
+
+@app.route("/api/mcp/current_level")
+def api_mcp_current_level():
+    """Returns whichever .umap is open in the editor. Polled by the UI
+    to detect level changes and re-sync the actor mirror."""
+    try:
+        lvl = mcp.get_current_level()
+        return jsonify({"ok": True, "level_path": lvl or ""})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True, "reason": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/api/demo/list_objects")
+def api_demo_list_objects():
+    """Sync UE Demo/v0 folder -> client. Used on page load and Sync button.
+    Returns the same {objects: [...]} shape as the LLM list_objects tool."""
+    try:
+        result = mcp.demo_list()
+        objs = result.get("objects", [])
+        try:
+            lvl = mcp._current_level_cached()
+        except Exception:
+            lvl = "?"
+        # Log enough to tell the user "loaded? pushed? data what?" without
+        # dumping the full payload.  Each line one-shot grep-able.
+        _log("DEMO-LIST",
+             f"level={lvl}",
+             f"count={len(objs)}",
+             f"handles={[o.get('actor_handle') for o in objs][:10]}")
+        return jsonify({"ok": True, **result})
+    except ConnectionError as e:
+        _log("DEMO-LIST", "skipped (UE unreachable)", str(e))
+        return jsonify({"ok": False, "skipped": True,
+                        "reason": "UE MCP server unreachable",
+                        "detail": str(e)}), 503
+    except Exception as e:
+        _log("DEMO-LIST", "error", f"{type(e).__name__}: {e}")
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/api/demo/clear", methods=["POST"])
+def api_demo_clear():
+    try:
+        return jsonify({"ok": True, **mcp.demo_clear()})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True, "reason": str(e)}), 503
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 

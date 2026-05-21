@@ -436,26 +436,82 @@ function buildFactoryLayout(p) {
 }
 
 // ─── Main scene component ───────────────────────────────────────────────────
-function Scene({ params, scene, robot, generating, generateProgress, seeded = true }) {
+function Scene({ params, scene, robot, generating, generateProgress, seeded = true, spawnedActors = [] }) {
+  // Hover state: surface handle/asset/coord as floating tag on mouse-over.
+  // Hover state: surface handle/asset/coord as floating tag on mouse-over.
+  // NOTE: viewport.jsx loads before panels.jsx in the bundle order, but
+  // both files run under the same global scope via Babel standalone, so
+  // re-declaring `const useState = React.useState` breaks the bundle.
+  // Reach through React.* directly here.
+  const [hoveredHandle, setHoveredHandle] = React.useState(null);
+  const knownRef = React.useRef(new Set());
+  const [recentSpawns, setRecentSpawns] = React.useState(new Set());
+  React.useEffect(() => {
+    const cur = new Set(spawnedActors.map(a => a.actor_handle));
+    const fresh = new Set();
+    cur.forEach(h => { if (!knownRef.current.has(h)) fresh.add(h); });
+    knownRef.current = cur;
+    if (fresh.size === 0) return;
+    setRecentSpawns(prev => {
+      const next = new Set(prev);
+      fresh.forEach(h => next.add(h));
+      return next;
+    });
+    const t = setTimeout(() => {
+      setRecentSpawns(prev => {
+        const next = new Set(prev);
+        fresh.forEach(h => next.delete(h));
+        return next;
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [spawnedActors]);
   const tint = LIGHTING_TINTS[params.lighting_preset] || LIGHTING_TINTS.sodium;
 
+  // Warehouse: auto-fit floor to actor extent + breathing room. Other
+  // scenes keep the legacy params-driven layout (no live actor mirror yet).
+  const isWarehouse = scene === 'warehouse';
   const layout = useMemo(() => {
-    if (scene === 'warehouse') return { kind: 'warehouse', ...buildWarehouseLayout(params) };
-    if (scene === 'livingroom') return { kind: 'living', ...buildLivingLayout(params) };
-    if (scene === 'factory') return { kind: 'factory', ...buildFactoryLayout(params) };
+    if (!isWarehouse) {
+      if (scene === 'livingroom') return { kind: 'living', ...buildLivingLayout(params) };
+      if (scene === 'factory') return { kind: 'factory', ...buildFactoryLayout(params) };
+    }
     return { kind: 'warehouse', ...buildWarehouseLayout(params) };
   }, [params, scene]);
 
-  const roomW = scene === 'warehouse' ? params.room_w_m
-              : scene === 'livingroom' ? Math.min(params.room_w_m, 8)
-              : Math.min(params.room_w_m, 16);
-  const roomD = scene === 'warehouse' ? params.room_l_m
-              : scene === 'livingroom' ? Math.min(params.room_l_m, 7)
-              : Math.min(params.room_l_m, 18);
+  // Bounds: floor wraps {origin (0,0)} ∪ all spawned actors with padding.
+  // Scene-coord (a.x, a.y) is mapped to floor-coord (a.x - bbox.minX,
+  // a.y - bbox.minY) so floor still starts at internal (0,0) but the
+  // origin marker shifts when actors push outward.
+  const padding = 4;
+  let roomW, roomD, sx, sy, originFx, originFy;
+  if (isWarehouse) {
+    const xs = [0, ...spawnedActors.map(a => a.x)];
+    const ys = [0, ...spawnedActors.map(a => a.y)];
+    const minX = Math.min(...xs) - padding;
+    const maxX = Math.max(...xs) + padding;
+    const minY = Math.min(...ys) - padding;
+    const maxY = Math.max(...ys) + padding;
+    roomW = Math.max(12, maxX - minX);
+    roomD = Math.max(12, maxY - minY);
+    sx = x => x - minX;
+    sy = y => y - minY;
+    originFx = sx(0);
+    originFy = sy(0);
+  } else {
+    roomW = scene === 'livingroom' ? Math.min(params.room_w_m, 8) : Math.min(params.room_w_m, 16);
+    roomD = scene === 'livingroom' ? Math.min(params.room_l_m, 7) : Math.min(params.room_l_m, 18);
+    sx = x => x; sy = y => y; originFx = roomW / 2; originFy = roomD / 2;
+  }
 
-  // Camera: center the iso projection on the room center
+  // Camera: center on floor center. Tile shrinks as floor grows so the
+  // view always fits the SVG viewBox without clipping.
   const center = iso(roomW / 2, roomD / 2);
-  const TILE = scene === 'warehouse' ? 13 : 32;
+  const baseTile = isWarehouse ? 13 : 32;
+  const fitTile = isWarehouse
+    ? Math.min(baseTile, Math.max(5, 360 / Math.max(roomW, roomD)))
+    : baseTile;
+  const TILE = fitTile;
   const offsetX = -center.x * TILE;
   const offsetY = -center.y * TILE + 30;
 
@@ -504,30 +560,94 @@ function Scene({ params, scene, robot, generating, generateProgress, seeded = tr
         <Floor w={roomW} d={roomD} color={tint.floor} strokeColor={tint.floorStroke} />
         <Walls w={roomW} d={roomD} h={params.ceiling_h_m} lightTint={tint} />
 
-        {/* Items: only render when the scene has been seeded by a real
-            chat action. Default state shows empty floor + walls + lighting. */}
-        {seeded && layout.kind === 'warehouse' && (
-          <>
-            {layout.shelves.map((s, i) => (
-              <g key={s.id} style={itemStyle(i, itemTotal)}>
-                <Shelf x={s.x} y={s.y} w={s.w} d={s.d} loadFactor={s.loadFactor} seed={s.seed} />
-              </g>
-            ))}
-            {layout.forklifts.map((f, i) => (
-              <g key={f.id} style={itemStyle(layout.shelves.length + i, itemTotal)}>
-                <Forklift x={f.x} y={f.y} />
-              </g>
-            ))}
-            {layout.workers.map((wkr, i) => (
-              <g key={wkr.id} style={itemStyle(layout.shelves.length + layout.forklifts.length + i, itemTotal)}>
-                <IsoBox x={wkr.x - 0.15} y={wkr.y - 0.1} w={0.3} d={0.2} h={1.7}
-                  top="#E8C8A8" left="#A88868" right="#75584A" />
-              </g>
-            ))}
-            <g style={itemStyle(itemTotal - 1, itemTotal)}>
-              {renderRobot()}
+        {/* Items: driven by real server-spawned actors, not mock params.
+            Each spawnedActor entry corresponds to one StaticMeshActor in
+            UE's Demo/v0 folder. Empty array -> empty viewport, matches UE. */}
+        {/* BP_DemoOrigin marker: small crosshair on floor at scene (0,0) */}
+        {isWarehouse && (
+          <g transform={`translate(${iso(originFx, originFy).x}, ${iso(originFx, originFy).y})`} opacity="0.4">
+            <line x1="-0.3" y1="0" x2="0.3" y2="0" stroke="#5b8af0" strokeWidth="0.05" />
+            <line x1="0" y1="-0.2" x2="0" y2="0.2" stroke="#5b8af0" strokeWidth="0.05" />
+          </g>
+        )}
+        {scene === 'warehouse' && spawnedActors.map((a, i) => {
+          const ax = a.x ?? 0, ay = a.y ?? 0;
+          const fx = sx(ax), fy = sy(ay);
+          const SX = fx, SY = fy;
+          const isHover = hoveredHandle === a.actor_handle;
+          const isFresh = recentSpawns.has(a.actor_handle);
+          // Ground shadow: soft iso ellipse under the actor. Sits at z=0.
+          const shadowR = a.asset_name === 'shelf' ? 1.0
+                        : a.asset_name === 'forklift' ? 0.9
+                        : a.asset_name === 'pallet' ? 0.7
+                        : a.asset_name === 'worker' ? 0.25
+                        : 0.45;
+          const sp = iso(SX, SY);
+          let inner;
+          if (a.asset_name === 'shelf') {
+            inner = <Shelf x={SX - 0.8} y={SY - 0.6} w={1.6} d={1.2} loadFactor={0.6} seed={i * 13} />;
+          } else if (a.asset_name === 'forklift') {
+            inner = <Forklift x={SX} y={SY} />;
+          } else {
+            const PROFILES = {
+              pallet: { w: 1.2, d: 0.8, h: 0.15, top: '#C8A878', left: '#8E7448', right: '#6A5232' },
+              box:    { w: 0.6, d: 0.6, h: 0.6,  top: '#D9C098', left: '#A08560', right: '#735940' },
+              drum:   { w: 0.6, d: 0.6, h: 0.9,  top: '#5A6B7A', left: '#3F4D5A', right: '#2B3540' },
+              worker: { w: 0.3, d: 0.2, h: 1.7,  top: '#E8C8A8', left: '#A88868', right: '#75584A' },
+            };
+            const p = PROFILES[a.asset_name] || { w: 0.5, d: 0.5, h: 0.5, top: '#8A95A5', left: '#5F6878', right: '#3F4855' };
+            inner = <IsoBox x={SX - p.w / 2} y={SY - p.d / 2} w={p.w} d={p.d} h={p.h}
+                            top={p.top} left={p.left} right={p.right} />;
+          }
+          return (
+            <g key={a.actor_handle || i}
+               className={`vp-actor${isFresh ? ' vp-actor-fresh' : ''}${isHover ? ' vp-actor-hover' : ''}`}
+               style={itemStyle(i, spawnedActors.length)}
+               onMouseEnter={() => setHoveredHandle(a.actor_handle)}
+               onMouseLeave={() => setHoveredHandle(h => h === a.actor_handle ? null : h)}>
+              <ellipse cx={sp.x} cy={sp.y + 0.05} rx={shadowR} ry={shadowR * 0.45}
+                       fill="#000" opacity="0.32" filter="url(#softShadow)" />
+              {inner}
+              {isHover && (
+                <rect x={SX - 1.2} y={SY - 1.2} width="2.4" height="2.4"
+                      fill="none" stroke={tint.overlay || '#5b8af0'}
+                      strokeWidth="0.06" strokeDasharray="0.2 0.15"
+                      opacity="0.8" />
+              )}
             </g>
-          </>
+          );
+        })}
+        {/* Per-actor ID badge -- short asset prefix + #N. Customer +
+            LLM can refer to "2 号叉车" without ambiguity. Hover shows
+            the full handle as a native SVG tooltip. */}
+        {scene === 'warehouse' && spawnedActors.map((a, i) => {
+          if (a.id_number == null) return null;
+          const fx = sx(a.x ?? 0), fy = sy(a.y ?? 0);
+          const p = iso(fx, fy);
+          // Asset prefix: F=forklift, S=shelf, B=box, P=pallet, D=drum, W=worker
+          const prefix = (a.asset_name || '?')[0].toUpperCase();
+          const label = `${prefix}${a.id_number}`;
+          // Badge floats ~2 scene-meters above the actor centroid.
+          return (
+            <g key={`id-${a.actor_handle || i}`}
+               transform={`translate(${p.x}, ${p.y - 2.0})`}>
+              <title>{a.actor_handle} @ ({a.x.toFixed(1)}, {a.y.toFixed(1)})m</title>
+              <line x1="0" y1="0.6" x2="0" y2="1.6"
+                    stroke="#5b8af0" strokeWidth="0.06" opacity="0.55" />
+              <rect x="-1.1" y="-0.7" width="2.2" height="1.3" rx="0.18"
+                    fill="#0a0a0a" fillOpacity="0.92"
+                    stroke="#5b8af0" strokeWidth="0.10" />
+              <text x="0" y="0.22" textAnchor="middle"
+                    fontSize="0.95" fontFamily="var(--mono)" fontWeight="700"
+                    fill="#5b8af0" letterSpacing="-0.05">{label}</text>
+            </g>
+          );
+        })}
+        {/* Robot pose: only when warehouse has at least one actor */}
+        {scene === 'warehouse' && spawnedActors.length > 0 && (
+          <g style={itemStyle(spawnedActors.length, spawnedActors.length + 1)}>
+            {renderRobot()}
+          </g>
         )}
 
         {seeded && layout.kind === 'living' && (
