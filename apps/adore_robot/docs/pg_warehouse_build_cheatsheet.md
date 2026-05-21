@@ -2,7 +2,15 @@
 
 > Audience: 用户 在 UE5.8 Editor 内搭 `PG_Warehouse.uasset` (任务 A) 时随手翻。
 > 配套全 spec: `pg_warehouse_graph_design.md` (290 行). 本页 = 速查精简版.
-> Date: 2026-05-19.
+> Date: 2026-05-19, **v0.4.0 精简版更新 2026-05-20**.
+>
+> ⚠️ **v0.4.0 演示交付只暴露 7 个 Graph Parameter** (xiaoxu 派 P0):
+> `shelf_density / alley_width_m / forklift_count / worker_count /
+> room_w_m / room_l_m / seed`. 下面 11-param 表中第 4 / 5 / 6 / 10 行
+> (prop_variety / pallet_load_factor / lighting_preset / ceiling_h_m)
+> **本期不暴露**, 接 v1.1. graph 内可用固定常量替代。
+> Default `room_w_m=18` / `room_l_m=28` (warehouse 演示尺度);
+> ceiling 固定 4m, lighting 固定 sodium 预设。
 
 ---
 
@@ -12,19 +20,19 @@
 **精确名字 + UE 类型**, 后面 LLM / asset_registry / MCP set_properties 一字
 不差靠它们对齐. 不要任何拼写偏差.
 
-| # | Graph Param 名 | UE 类型 | 默认 | 范围 | 接入 Stage |
-|---|---|---|---|---|---|
-| 1 | `shelf_density` | `float` | 0.7 | 0.2-1.0 | §3 Shelf → `Density Filter` (threshold = 1 - shelf_density) |
-| 2 | `alley_width_m` | `float` | 2.4 | 1.5-4.0 | §2 BSP → Subdivide cell width + walkway band |
-| 3 | `forklift_count` | `int32` | 1 | 0-5 | §4 Forklift → `Density Filter` rate |
-| 4 | `prop_variety` | `int32` | 3 | 1-5 | §5 Props → `Switch by Index` mesh count |
-| 5 | `pallet_load_factor` | `float` | 0.6 | 0.0-1.0 | §3.5 nested → rack surface `Density Filter` |
-| 6 | `lighting_preset` | `FName` (or enum) | `"warehouse_sodium"` | sodium/cool_white/mixed | §6 Lighting → `Switch by Enum` |
-| 7 | `seed` | `int32` | 0 | uint32 cast | 全 Stage 的 `Self Pruning` / `Density Filter` 的 `Random Stream Seed` |
-| 8 | `room_w_m` | `float` | 50 (warehouse) | 8-40 | §1 Bounds X |
-| 9 | `room_l_m` | `float` | 50 (warehouse) | 8-60 | §1 Bounds Y |
-| 10 | `ceiling_h_m` | `float` | 8 (warehouse) | 3-9 | §1 Bounds Z + §6 light hang = `ceiling_h_m - 0.2` |
-| 11 | `worker_count` | `int32` | 0 | 0-8 | §7 Worker → `Density Filter` rate |
+| # | Graph Param 名 | UE 类型 | 默认 | 范围 | 接入 Stage | v0.4 暴露? |
+|---|---|---|---|---|---|---|
+| 1 | `shelf_density` | `float` | 0.7 | 0.2-1.0 | §3 Shelf → `Density Filter` (threshold = 1 - shelf_density) | ✅ |
+| 2 | `alley_width_m` | `float` | 2.4 | 1.5-4.0 | §2 BSP → Subdivide cell width + walkway band | ✅ |
+| 3 | `forklift_count` | `int32` | 1 | 0-5 | §4 Forklift → `Density Filter` rate | ✅ |
+| 4 | `prop_variety` | `int32` | 3 | 1-5 | §5 Props → `Switch by Index` mesh count | ❌ v1.1 (用常量 3) |
+| 5 | `pallet_load_factor` | `float` | 0.6 | 0.0-1.0 | §3.5 nested → rack surface `Density Filter` | ❌ v1.1 (砍 §3.5) |
+| 6 | `lighting_preset` | `FName` (or enum) | `"warehouse_sodium"` | sodium/cool_white/mixed | §6 Lighting → `Switch by Enum` | ❌ v1.1 (固定 sodium) |
+| 7 | `seed` | `int32` | 0 | **0-9999** (v0.4) | 全 Stage 的 `Self Pruning` / `Density Filter` 的 `Random Stream Seed` | ✅ |
+| 8 | `room_w_m` | `float` | **18** (v0.4) | 8-40 | §1 Bounds X | ✅ |
+| 9 | `room_l_m` | `float` | **28** (v0.4) | 8-60 | §1 Bounds Y | ✅ |
+| 10 | `ceiling_h_m` | `float` | 4 | 3-9 | §1 Bounds Z + §6 light hang = `ceiling_h_m - 0.2` | ❌ v1.1 (固定 4m) |
+| 11 | `worker_count` | `int32` | 0 | 0-8 | §7 Worker → `Density Filter` rate | ✅ |
 
 ⚠️ **`lighting_preset` 类型选择**:
 - 简单走 `FName`: graph 内 `Compare String` 三路分支

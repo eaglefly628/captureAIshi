@@ -619,7 +619,7 @@ ue58_pcg_notes_xiaohuan.md 已列 5.8 PCG 变化，从 MCP 视角额外强调：
 | 5 | Epic 6 月 GA 时 ToolsetRegistry/MCP 是否转 Production-ready | 中 (影响发布时间表) | 6 月初对 Final Build 重跑 §5 四条链路；如果 Experimental 还在，演示话术加 "Epic Preview 阶段, GA 后转正" |
 | 6 | 多客户端并发 (web + Cursor + Claude Desktop 同时连一个 UE) | 低 (chat-scale 单数字调用/分钟) | 不并发，演示单客户端 |
 | 7 | 认证 / 鉴权 (localhost only, 无 token) | 低 (本地演示) | 客户演示 localhost 部署即可；远程时加 reverse proxy + auth |
-| 8 | UE 内 Python sandbox 真实 import 白名单 | 中 (布局算法用了 `random`, 没问题) | 调用 `ProgrammaticToolset.get_execution_environment()` 一次 dump 沙箱 import 表，写进 mcp_client docstring (xiaoxu TODO) |
+| 8 | UE 内 Python sandbox 真实 import 白名单 | **已确认 2026-05-19**: 禁 `import unreal`, allowlist 只有 `math / json / copy / re / datetime` | xiaoxu 改走**原生 RPC 路线** (SceneTools 4 个 tool 各自 tool_call), 不再走 `ProgrammaticToolset.execute_tool_script` 包 Python script 一层。**§5.2 链路 B 实证含义降级**: 仍可用于 server-controlled batching (Python 不调 unreal API, 只调 ProgrammaticToolset 内部桥接的其他 toolset), 但不能 `import unreal`. v0 layout 生成器 (`demo_v0_simplified_contract.md` §10.3 算法) 不需要 `import unreal` (只用 `random`), **算法本身 valid**, 但 spawn 落地通过 ProgrammaticToolset 桥接调 `SceneTools.add_to_scene_from_asset` 而非 `unreal.EditorActorSubsystem().spawn_actor_from_object`. `demo_v0_simplified_contract.md` §6 已标 obsolete + 指 xiaoxu main.py 真实实现 |
 | 9 | `set_properties` 性能上限 (一次写多少 UPROPERTY 安全) | 低 (chat-scale 几十 KB JSON / 调用) | 演示规模 21 PCG 参数 + 4 robotics_backend 字段 = << 100 KB，不会触阈值 |
 | 10 | 5.8 → 5.9/6.0 升级路径 Epic 是否破坏当前 toolset 名字 | 中-高 (Experimental → Production-ready 间名字常变) | 在 mcp_client 锁 `PROTOCOL_VERSION = "2025-11-25"`，升级时整体 retest §5 |
 

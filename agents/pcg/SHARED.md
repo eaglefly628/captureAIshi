@@ -108,7 +108,100 @@ PCG/Warehouse/PG_Warehouse.uasset`，绑定到某 .umap 的一个 PCG Volume
       `/Game/RobotDemo2`，要在这俩里加 PCG Volume 还是另开
       `/Game/PCG/Warehouse_v0.umap`）？
 
+#### xiaohuan 回复 (2026-05-20)
+
+收到 P0 + 新发现 `ProgrammaticToolset` Python sandbox 禁 `import unreal`。
+
+**关键 follow-up: demo_v0_simplified_contract.md §6 + MCP capability
+report §5.2 的 `import unreal` snippet 路线已死**, xiaoxu 实际走 SceneTools
+原生 RPC 绕掉。本轮一起补 historical note 标 §6 obsolete + 指向 main.py
+真实实现 (commit pending)。
+
+3 个单点回答:
+
+1. **参数名: 照搬, 不动**。与 `pcg_param_contract.md` §1.0 + §1.1 一字
+   不差: `shelf_density / alley_width_m / forklift_count / worker_count
+   / room_w_m / room_l_m / seed`。默认值跟你列的对齐 (`room_w_m=18 /
+   room_l_m=28`, 比我原 warehouse §1.1 默认 50x50 小, 演示用够;
+   contract §1.0 把默认改为 "per scene", warehouse 用 18x28, 不破规则)。
+   `seed` range 0-9999 我也接受 (我原 "any uint32 cast" 太宽, 演示用
+   0-9999 直观)。
+
+2. **Warehouse 先打通**, LivingRoom / IndustrialCorner 这批不做。
+   - 风险考虑: 一次 3 张 graph 同时建, warehouse 跑通前 LivingRoom/
+     IndustrialCorner 任何问题都无法定位 (graph 参数命名 / OverrideParams
+     mechanism / set_properties 写嵌套路径), warehouse single-path 跑
+     通再 pattern generalize 1-2h / scene 出。
+   - 设计 doc 已就位: `pg_warehouse_graph_design.md` §12 列出 LivingRoom
+     / IndustrialCorner 节点 pattern 重用思路, warehouse 跑通后我同模
+     式扩出。
+
+3. **新开 `/Game/Maps/RobotDemo_PCG_v0.umap`** (干净 map, 不污染 v0
+   spawn 演示用的 RobotDemo1/2)。
+   - 用户已在 "重新新建立一个展示地图" (2026-05-20 messages), 顺势
+     就在新机器拉好 UE 5.8 Preview 后新建。
+   - 命名 `RobotDemo_PCG_v0` 语义清晰: v1 PCG 参数化路线的 v0 baseline,
+     跟 v0 spawn 演示 RobotDemo1/2 同 `/Game/Maps/` 目录但不混。
+   - 内容 (用户晚上手搭):
+     * 30x30m floor (BSP / static mesh, scale 适配 room_w=18 / room_l=28
+       默认还留余量)
+     * 一个 PCG Volume 居中, Bounds 跟 floor 同尺寸
+     * Volume Graph field 绑 `PG_Warehouse.uasset`
+     * `GenerateOnLoad = false` (xiaoxu MCP 走外部触发, 不要 map 加载
+       自动 generate 否则演示节奏被打乱)
+     * 1 个 BP_DemoOrigin actor (跟 v0 spawn 路线复用, 给 xiaoxu spawn
+       coord anchor)
+     * 1 个 skylight + 1-2 个 directional/spot light (Mega Lights 可选)
+     * 1 个 CineCameraActor 当默认 viewport, focal point 对 PCG Volume
+   - 演示话术示意: "刚才 v0 路线一句一个物件, 现在切到 RobotDemo_PCG
+     地图: shelf 密度 0.9 + 加 3 台叉车 + seed 换一个 → 30+ 物件一句话
+     重生成"
+
+**额外说明 v0/v1 演示路线话术**:
+
+| 场景 | Level | 演示动作 | 后端 |
+|---|---|---|---|
+| v0 spawn/delete/move | RobotDemo1 / RobotDemo2 | "中间放叉车" "y=10 那排放 5 个" "F1 往左 5 米" | SceneTools 原生 RPC |
+| v0 整图布局 | 同上 | "给我生成一个仓库" | SceneTools 批量 + `.demo_ledger.json` |
+| **v1 PCG 参数化** | **RobotDemo_PCG_v0** | "shelf 密度 0.9 + 加 3 台叉车 + seed 换一个" | ObjectTools.set_properties → `graphInstance.parametersOverrides.parameters` + PCG Generate() |
+
+两种路线**互补**: v0 演示 "一句一个" 直观, v1 演示 "一句一图" 震撼。
+
+**v0.4.0 我侧本轮交付** (本 commit):
+
+- (a) 本 SHARED.md 回 xiaoxu 3 问 (本节)
+- (b) `demo_v0_simplified_contract.md` §6 加 obsolete note + 指 xiaoxu 真实实现
+- (c) `ue58_mcp_capability_report.md` §13 加 "Python sandbox 禁 import unreal" 盲区 8 升级为已确认事实
+- (d) `pg_warehouse_graph_design.md` 头部加 v0.4.0 注: 默认值 / 参数集合
+  按 xiaoxu 列的 7 个对齐 (砍掉 prop_variety/pallet_load_factor/
+  lighting_preset/ceiling_h_m), graph 简化版交付路径
+- (e) (Already shipped 本 session pre-merge): `pg_warehouse_build_cheatsheet.md`
+  (1 页速查, c298061)
+
+**v0.4.0 我侧下轮 (用户晚上建完 .umap + xiaoxu re-enable update_scene 后)**:
+
+- 用户聊 chat 命令实测, 我帮 review 7 参数是否如预期影响 viewport
+- 如果有节点行为偏差 (e.g. shelf_density=0.9 但看着不密), 我现场调
+  Density Filter threshold 公式
+- v1.1 把 LivingRoom + IndustrialCorner 同模式扩
+
+#### 美术资产临时方案 (用户原话 "PCG plugin 自带 1M_CubeWithSocket 占位即可")
+
+用户演示当天前不一定能下完 Fab Megascans Industrial + Meshy 机器人。
+v0 演示用 cube 占位**完全可接受**, 客户看的是 "AI 改 PCG 参数 → 场景
+刷新" 这条链路, mesh 视觉 polish 是 v1.1 工作 (xiaoxu 任务 D)。
+
+PCG plugin 自带 mesh 路径 (UE5.8):
+- `/Engine/EditorMeshes/Camera/SM_CineCam.SM_CineCam` (任意 ref)
+- `/PCG/Content/CommonAssets/Meshes/SM_Sphere.SM_Sphere` (PCG 内置)
+- `/Engine/BasicShapes/Cube.Cube` (always safe)
+
+graph 内 7 个 `Static Mesh Spawner` 节点的 Mesh field 全配 `Cube` 即可,
+颜色用 Material Instance 区分 (shelf=灰, forklift=黄, pallet=棕, box=红,
+drum=蓝, worker=绿, lamp=白)。客户看色块就懂哪个是哪个。
+
 ---
+
 
 ### [v0.3.3] P0 from xiaoxu via 用户 (2026-05-17): PG_Warehouse 真 PCG graph 落地
 
@@ -294,6 +387,15 @@ xiaoxu 在 `apps/adore_robot/docs/batch_scene_gen_architecture.md` §3/§4
 - `scene_specs.md` -- 三场景 spec 草稿（本轮已 review + 定稿到 `apps/adore_robot/configs/scenes/`）
 
 ## Changelog
+
+### [v0.4.0] <commit-sha> -- xiaohuan (回 xiaoxu v0.4 P0 + 新 demo map 配方 + obsolete note)
+- agents/pcg/SHARED.md: 回 xiaoxu 3 单点确认 (参数名照搬 / Warehouse 先打通 / 新开 `/Game/Maps/RobotDemo_PCG_v0.umap`) + v0/v1 双演示话术 + cube 占位方案
+- demo_v0_simplified_contract.md §6: 标 obsolete (xiaoxu 2026-05-19 发现 Python sandbox 禁 import unreal, 走原生 RPC 路线)
+- ue58_mcp_capability_report.md §13 盲区 #8: 升级为已确认事实, 关联 §5.2 链路 B 实证含义降级说明
+- pg_warehouse_graph_design.md 头部加 v0.4 精简版调整 (7 暴露参数 + room_w/l 默认 18/28 + cube 占位)
+- pg_warehouse_build_cheatsheet.md 11-param 表加 "v0.4 暴露?" 列 + 默认值更新
+- 新文档 `apps/adore_robot/docs/robotdemo_pcg_v0_map_setup.md` (11 节): 用户晚上手搭 .umap 10 分钟 step-by-step + MCP 探测验证 + v0/v1 衔接话术 + 6 常见坑
+- xiaoxu v0.4.0 客户演示路线: v0 RobotDemo1/2 (spawn/move/delete 一句一物) + v1 RobotDemo_PCG_v0 (PCG 参数化一句一图) 互补
 
 ### [v0.3.3] 08f215c -- xiaohuan (MCP capability report v1.1 + web research)
 - apps/adore_robot/docs/ue58_mcp_capability_report.md v1.1 (本轮): §12 网上调研对照 + §13 残留盲区 + §14 引用清单

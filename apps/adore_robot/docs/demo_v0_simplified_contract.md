@@ -256,6 +256,21 @@ Example 6 — multi-step:
 
 ## §6 MCP 端实现要点 (给 xiaoxu)
 
+> ⚠️ **2026-05-20 OBSOLETE NOTE (xiaohuan)**: 本节 4 个 `import unreal`
+> Python snippet 是**死路径**。xiaoxu 2026-05-19 实证 `ProgrammaticToolset`
+> Python sandbox 禁 `import unreal`, allowlist 只有 `math / json / copy /
+> re / datetime`。**实际实现 xiaoxu 改走原生 RPC**: 直接 tool_call
+> `SceneTools.add_to_scene_from_asset` / `remove_from_scene` /
+> `set_actor_folder` / `find_actors` 一个 tool 一个 RPC, 不走 Python
+> sandbox 包一层。
+>
+> **真实实现位置**: `apps/adore_robot/main.py` `/api/chat` + `mcp_client.py`
+> SceneTools 助手 (从 `auto_load_toolsets` 调用 4 个原生 tool)。
+>
+> **本节保留**作为历史 design ref + 演示路径选型对照 (Python sandbox
+> 路线 vs 原生 RPC 路线 trade-off)。**不要按本节代码 wire**, 看
+> xiaoxu 主 commit。
+
 xiaoxu 在 `apps/adore_robot/main.py` `/api/chat` 拿到 LLM tool_call 后，
 把 4 个 tool_call 各自转成一个 MCP `ProgrammaticToolset.execute_tool_script`
 调用。每个 script 是个小 unreal-python 片段：

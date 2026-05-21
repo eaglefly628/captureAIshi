@@ -1,9 +1,26 @@
 # PG_Warehouse_v0 PCG Graph Design
 
+> **2026-05-20 v0.4.0 演示精简版调整 (xiaoxu via 用户)**:
+> v0 演示交付**只暴露 7 个 Graph Parameter** (不是本 doc 原 11 个):
+> `shelf_density / alley_width_m / forklift_count / worker_count /
+> room_w_m / room_l_m / seed`。**暂时砍掉** `prop_variety` /
+> `pallet_load_factor` / `lighting_preset` / `ceiling_h_m`, v1.1 接。
+> 默认值: `room_w_m=18 / room_l_m=28` (warehouse 演示尺度比 50x50 紧凑)。
+> Mesh 全部用 `/Engine/BasicShapes/Cube` 占位 (Material Instance 区分颜色:
+> shelf=灰 / forklift=黄 / pallet=棕 / box=红 / drum=蓝 / worker=绿 /
+> lamp=白), 真 Megascans Industrial pack 等用户演示后 task D 替换。
+> 详见 `agents/pcg/SHARED.md` v0.4.0 P0 xiaohuan 回复节。
+> **本 doc §1-§9 拓扑仍 valid**, 只是 §3.5 nested pallet (依赖
+> `pallet_load_factor`) / §6 lighting (依赖 `lighting_preset` /
+> `ceiling_h_m`) 在 v0.4 砍掉; §1 Bounds Z 用固定值 4m 替代;
+> §5 prop 分支用固定 1 SKU (cube) 替代 variety 选择。
+> **关联 cheatsheet**: `pg_warehouse_build_cheatsheet.md` 已对齐 v0.4 精简版。
+
 Audience: xiaoxu（在 UE 5.8 Editor 里把这份 spec 机械翻译成
 `PG_Warehouse_v0.uasset`）+ xiaohuan 自己（落 v1 graph 时核对节点拓扑）。
 
-**Target asset**: `apps/adore_robot/unreal_projects/AdoreRobot/Content/PCG/Warehouse/PG_Warehouse_v0.uasset`
+**Target asset**: `apps/adore_robot/unreal_projects/AdoreRobot/Content/PCG/Warehouse/PG_Warehouse.uasset`
+**Target map**: `apps/adore_robot/unreal_projects/AdoreRobot/Content/Maps/RobotDemo_PCG_v0.umap`
 
 Source contract: `apps/adore_robot/docs/pcg_param_contract.md` §1.1 (7 warehouse
 params) + §1.0 common (4 params: `room_w_m / room_l_m / ceiling_h_m /
