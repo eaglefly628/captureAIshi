@@ -2,6 +2,29 @@
 
 ## Active TODO
 
+### [v0.4.1] 方向转变 (用户 2026-05-22): UE PCG → App 端 Python 实现 -- DONE
+
+用户调 UE PCG 一天卡 Surface vs Volume, **决定 drop UE PCG 走 app 端 Python 实现**等价能力。我建好 `apps/adore_robot/pcg/` 模块, 13 PCG-等价参数全实现, 单元测试通过。
+
+**模块结构** (`apps/adore_robot/pcg/`):
+- [x] `__init__.py` -- 统一 export
+- [x] `base.py` -- SpawnRequest / LayoutResult / PCGContext (含 seed-driven RNG, chaos/jitter helpers,米→cm 转 `to_mcp_calls()`)
+- [x] `primitives.py` -- 复用算法 (grid / scatter / wall_hug / line / avoid_actors)
+- [x] `lighting.py` -- lighting_preset enum → ceiling 灯网格 (sodium/cool/mixed)
+- [x] `warehouse.py` -- 13 参数 layout (shelf_density 推导 row/per_row, alley/forklift/worker/pallet/box/drum/lighting/jitter/chaos 全支持)
+- [x] `living_room.py` -- 简化版 (sofa + coffee_table + decor + rug + clutter + lighting, mesh 占位 fallback)
+- [x] `industrial_corner.py` -- 简化版 (machine + workbench + toolboard + pipe + crate + cable_reel + oil_stain + lighting)
+- [x] `README.md` -- 架构 + quick start + 13 参数表 + 集成指南
+
+**单元测试通过** (没 UE 也能跑):
+- Warehouse default: 99 物件 (shelf 54 + 灯 28 + 杂物 17)
+- Warehouse high chaos: 131 物件
+- Living room: 15 物件
+- Industrial corner: 31 物件
+- MCP 转换 (米 → cm) 正确
+
+**集成 P1 给 xiaoxu** (`agents/unreal/SHARED.md` Open 节顶): 6 步 ~30 分钟改 `demo_tools.py / runner.py / prompts.py / keyword.py / asset_registry.py`. 演示卖点 "一句话整图刷新" unblock, **不用碰 UE PCG**.
+
 ### [v0.4.x TODO, 演示后回] Mesh 参数化 (shelf_mesh / forklift_mesh / ...) 走 PCG ByAttribute 路径
 
 **当前状态 (2026-05-20)**: 演示前**暂搁置**。Cube hardcode 在 PG_Warhouse 的 SM Spawner MeshEntries[0]=1M_CubeWithSocket，演示走通。6 个 mesh Graph Parameter (`shelf_mesh / forklift_mesh / pallet_mesh / box_mesh / drum_mesh / worker_mesh`) 留在 Graph Parameters panel **未连**，占位预留。
