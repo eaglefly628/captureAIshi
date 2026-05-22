@@ -161,7 +161,26 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
           </div>
           <div className="mcp-boot-stat">
             <span className="mcp-boot-stat-k">CAPABILITY</span>
-            <span className="mcp-boot-stat-v">{ready ? '41 toolsets · 35 tools' : 'probing...'}</span>
+            {ready ? (
+              <a
+                className="mcp-boot-stat-v"
+                href="/tools"
+                target="_blank"
+                rel="noopener"
+                title="查看所有 toolsets / tools 明细"
+                style={{
+                  textDecoration: 'underline',
+                  textDecorationStyle: 'dotted',
+                  textUnderlineOffset: 3,
+                  cursor: 'pointer',
+                  color: 'inherit',
+                }}
+              >
+                41 toolsets · 35 tools ›
+              </a>
+            ) : (
+              <span className="mcp-boot-stat-v">probing...</span>
+            )}
           </div>
         </div>
 
@@ -173,7 +192,19 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
             </>
           )}
           {ready && (
-            <button className="mcp-boot-btn" onClick={onDismiss}>进入控制台 ›</button>
+            <>
+              <a
+                className="mcp-boot-btn ghost"
+                href="/tools"
+                target="_blank"
+                rel="noopener"
+                style={{ textDecoration: 'none', display: 'inline-flex',
+                         alignItems: 'center' }}
+              >
+                查看 tools 明细
+              </a>
+              <button className="mcp-boot-btn" onClick={onDismiss}>进入控制台 ›</button>
+            </>
           )}
         </div>
       </div>
