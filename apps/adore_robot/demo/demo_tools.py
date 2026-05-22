@@ -268,24 +268,27 @@ def dispatch_delete(mcp, args: dict) -> dict:
     return mcp.demo_delete(args["actor_handle"])
 
 def dispatch_move(mcp, args: dict) -> dict:
-    # demo_move doesn't accept anchor_override yet; keep offset_m path as
-    # a stopgap so absolute moves still resolve to the same volume frame.
-    off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
+    anchor = _cached_workspace(mcp).get("world_cm")
     return mcp.demo_move(
         handle=args["actor_handle"],
-        x_m=float(args["x"]) + off[0],
-        y_m=float(args["y"]) + off[1],
+        x_m=float(args["x"]),
+        y_m=float(args["y"]),
         z_m=float(args.get("z", 0)),
+        anchor_override_cm=anchor,
     )
 
 def dispatch_nudge(mcp, args: dict) -> dict:
-    # Nudge is a RELATIVE delta -- no workspace anchor needed; the
-    # mcp.demo_nudge server-side reads current actor pos and adds dx/dy.
+    # nudge is a RELATIVE delta -- server reads current actor pos and
+    # adds dx/dy, but the respawn under the hood still needs the volume
+    # anchor so the new pos stays in the volume's frame instead of
+    # collapsing to BP_DemoOrigin.
+    anchor = _cached_workspace(mcp).get("world_cm")
     return mcp.demo_nudge(
         handle=args["actor_handle"],
         dx_m=float(args.get("dx", 0)),
         dy_m=float(args.get("dy", 0)),
         dz_m=float(args.get("dz", 0)),
+        anchor_override_cm=anchor,
     )
 
 def dispatch_list(mcp, _args: dict) -> dict:

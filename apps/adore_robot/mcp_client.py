@@ -716,11 +716,18 @@ class UnrealMCPClient:
         self._ledger_save()
         return {"deleted": handle, "actor_ref": ref, "ok": bool(ok)}
 
-    def demo_move(self, handle: str, x_m: float, y_m: float, z_m: float = 0.0) -> dict:
+    def demo_move(self, handle: str, x_m: float, y_m: float, z_m: float = 0.0,
+                  anchor_override_cm: dict | None = None) -> dict:
         """Move via delete + respawn at new (x,y,z) keeping asset + yaw.
         ObjectTools.set_properties can't reach AStaticMeshActor's transform
         via root_component, so we fake it by re-spawning. New actor gets a
-        new handle; we update the ledger so the LLM's next reference works."""
+        new handle; we update the ledger so the LLM's next reference works.
+
+        anchor_override_cm: passed straight through to demo_spawn so the
+        respawned actor anchors against the same frame the original used
+        (typically PCGVolume center) rather than slipping back to
+        BP_DemoOrigin.
+        """
         self.auto_load_toolsets()
         bucket = self._ledger_bucket()
         rec = bucket.get(handle)
@@ -754,6 +761,7 @@ class UnrealMCPClient:
             x_m=x_m, y_m=y_m, z_m=z_m,
             id_number_override=rec.get("id_number"),
             yaw_deg=rec.get("yaw_deg", 0.0),
+            anchor_override_cm=anchor_override_cm,
         )
         return {
             "actor_handle": new_rec["actor_handle"],
@@ -883,7 +891,8 @@ class UnrealMCPClient:
         self._ledger_save()
         return {"cleared": cleared}
 
-    def demo_nudge(self, handle: str, dx_m: float = 0, dy_m: float = 0, dz_m: float = 0) -> dict:
+    def demo_nudge(self, handle: str, dx_m: float = 0, dy_m: float = 0, dz_m: float = 0,
+                   anchor_override_cm: dict | None = None) -> dict:
         """Relative move: current_pos + (dx, dy, dz). Handles the common
         '往左/前/后 N 米' chat patterns without forcing the LLM to first
         list_objects to look up the absolute target."""
@@ -910,7 +919,8 @@ class UnrealMCPClient:
         SCENE_BOUNDS_M = 25.0
         new_x = max(-SCENE_BOUNDS_M, min(SCENE_BOUNDS_M, cur_x + dx_m))
         new_y = max(-SCENE_BOUNDS_M, min(SCENE_BOUNDS_M, cur_y + dy_m))
-        return self.demo_move(handle, new_x, new_y, cur_z + dz_m)
+        return self.demo_move(handle, new_x, new_y, cur_z + dz_m,
+                              anchor_override_cm=anchor_override_cm)
 
     def demo_switch_level(self, level_path: str) -> dict:
         """Load a different .umap in the editor. Invalidates the level
