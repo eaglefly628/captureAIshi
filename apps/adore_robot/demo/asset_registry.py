@@ -25,6 +25,8 @@ _FORKLIFT_REAL = "/Game/Scene_Warehouse/Maps/PackedLevels/Ind_War_HandTruck_01.I
 _ROBOT_REAL = "/Game/Robot_scout_R_21/Mesh/SK_Robot_scout_R21.SK_Robot_scout_R21"
 _DRUM_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_Aba_Storage_Barrel_Metal_Green_01/"
               "SM_Ind_Aba_Storage_Barrel_Metal_Green_01.SM_Ind_Aba_Storage_Barrel_Metal_Green_01")
+_BOX_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_War_Storage_Box_Cardboard_Worn_02/"
+             "SM_Ind_War_Storage_Box_Cardboard_Worn_02.SM_Ind_War_Storage_Box_Cardboard_Worn_02")
 
 # Rack variants: 4 BPP variants in the same package; resolve() picks one
 # at random per call so a 'shelf' row visually varies. Single-asset
@@ -41,7 +43,7 @@ ASSET_REGISTRY: dict[str, "str | list[str]"] = {
     "shelf":    _SHELF_VARIANTS,   # random rack variant per spawn
     "forklift": _FORKLIFT_REAL,    # real Ind_War_HandTruck_01 PackedLevel
     "pallet":   _CUBE_PLACEHOLDER,
-    "box":      _CUBE_PLACEHOLDER,
+    "box":      _BOX_REAL,         # SM_Ind_War_Storage_Box_Cardboard_Worn_02
     "drum":     _DRUM_REAL,        # SM_Ind_Aba_Storage_Barrel_Metal_Green_01
     "worker":   _ROBOT_REAL,       # SK_Robot_scout_R21 -- the robot agent
 
@@ -95,7 +97,7 @@ for _light in ("light_sodium", "light_cool_white", "light_mixed", "ceiling_penda
     ASSET_PIVOT_Z_M[_light] = 0.0
 # Real assets (PackedLevel / BPP / SkeletalMesh / StaticMesh) publish
 # their pivot at floor level (z=0) -- no extra lift needed when spawning.
-for _real in ("forklift", "shelf", "worker", "drum"):
+for _real in ("forklift", "shelf", "worker", "drum", "box"):
     ASSET_PIVOT_Z_M[_real] = 0.0
 
 
