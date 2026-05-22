@@ -875,6 +875,108 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/demo/diagnose_workspace")
+def diagnose_workspace():
+    """Print everything we know about PCG_Workspace anchoring.
+
+    Returns a fat envelope so xiaohuan can eyeball why dispatch_spawn
+    ends up placing actors outside the volume:
+
+      - tagged_actors:   raw find_actors {tag: PCG_Workspace} result
+      - chosen_ref:      which one _resolve_pcg_workspace picked
+      - workspace:       _resolve_pcg_workspace output (offset_m, size_m, ref)
+      - bp_demo_origin:  what _demo_origin_world_cm sees (cm)
+      - raw_root_props:  full root_component dump on the chosen actor
+                         -- inspect relative_location vs actor_location
+                         vs world_location to spot frame mismatch
+      - effective_spawn: if you pass ?x=3&y=2, the cm coords that would
+                         go into mcp.demo_spawn -> add_to_scene_from_asset
+      - cache_state:     contents of _WORKSPACE_CACHE
+      - asset_pivot_z:   what we add for the cube placeholder (m)
+
+    Caller hint: GET /api/demo/diagnose_workspace?x=3&y=2&asset=forklift
+    """
+    from demo.demo_tools import (
+        _resolve_pcg_workspace, _cached_workspace, _WORKSPACE_CACHE,
+        invalidate_workspace_cache,
+    )
+    from demo.asset_registry import pivot_z
+
+    # Force fresh fetch so the diagnostic isn't lying via cache.
+    invalidate_workspace_cache()
+    out: dict = {"ok": True}
+
+    try:
+        tagged = mcp.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+            {"tag": "PCG_Workspace"},
+        )
+        out["tagged_actors_raw"] = tagged
+    except Exception as e:
+        out["ok"] = False
+        out["error"] = f"find_actors failed: {type(e).__name__}: {e}"
+        return jsonify(out), 200
+
+    actors = tagged
+    if isinstance(tagged, dict):
+        actors = tagged.get("actors") or tagged.get("results") or []
+    out["tagged_actor_count"] = len(actors) if isinstance(actors, list) else None
+
+    chosen_ref = None
+    if isinstance(actors, list) and actors:
+        first = actors[0]
+        chosen_ref = first.get("refPath") if isinstance(first, dict) else first
+    out["chosen_ref"] = chosen_ref
+
+    if chosen_ref:
+        # Dump everything on root_component so frame issues are visible.
+        try:
+            rc_props = mcp.get_actor_properties(chosen_ref, ["root_component"])
+            out["root_component_props"] = rc_props
+        except Exception as e:
+            out["root_component_error"] = f"{type(e).__name__}: {e}"
+        # Also dump actor-level location fields if exposed
+        try:
+            actor_loc = mcp.get_actor_properties(
+                chosen_ref,
+                ["actor_location", "actor_world_location", "tags", "actor_label"],
+            )
+            out["actor_props"] = actor_loc
+        except Exception as e:
+            out["actor_props_error"] = f"{type(e).__name__}: {e}"
+
+    out["workspace"] = _resolve_pcg_workspace(mcp)
+    out["bp_demo_origin_cm"] = mcp._demo_origin_world_cm()
+    out["cache_state"] = dict(_WORKSPACE_CACHE)
+
+    # Effective spawn coords if user passed ?x=3&y=2&asset=forklift
+    try:
+        qx = float(request.args.get("x", "3"))
+        qy = float(request.args.get("y", "2"))
+        qasset = request.args.get("asset", "forklift")
+        off = out["workspace"].get("offset_m", (0.0, 0.0))
+        pz = pivot_z(qasset)
+        anchor = out["bp_demo_origin_cm"]
+        out["asset_pivot_z_m"] = pz
+        out["effective_spawn"] = {
+            "scene_local_x_m": qx + off[0],
+            "scene_local_y_m": qy + off[1],
+            "scene_local_z_m": pz,
+            "world_cm": {
+                "x": anchor["x"] + (qx + off[0]) * 100,
+                "y": anchor["y"] + (qy + off[1]) * 100,
+                "z": anchor["z"] + pz * 100,
+            },
+            "explain": (
+                f"x_world_cm = BP_DemoOrigin.x ({anchor['x']}) "
+                f"+ (user_x_m {qx} + workspace_offset_m {off[0]}) * 100"
+            ),
+        }
+    except Exception as e:
+        out["effective_spawn_error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
 @app.route("/api/mcp/probe_sandbox")
 def mcp_probe_sandbox():
     """Tell xiaohuan whether the MCP Python sandbox allows `import unreal`.
