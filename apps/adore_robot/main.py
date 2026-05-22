@@ -875,6 +875,17 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/demo/refresh_volume", methods=["POST", "GET"])
+def refresh_volume():
+    """Drop cached workspace and re-resolve. Use after switching UE level
+    or moving / replacing the PCGVolume actor in-editor.
+    """
+    from demo.demo_tools import invalidate_workspace_cache, _cached_workspace
+    invalidate_workspace_cache()
+    fresh = _cached_workspace(mcp)
+    return jsonify({"ok": True, "workspace": fresh})
+
+
 @app.route("/api/demo/dump_volume_raw")
 def dump_volume_raw():
     """Hard-evidence dump: resolve the PCGVolume actor + show the LITERAL
