@@ -259,6 +259,24 @@ function Msg({ m }) {
           {m.meta}
         </div>
       )}
+      {m.warehouseProgress && m.warehouseProgress.total > 0 && (
+        <div style={{
+          marginTop: 6, height: 14, position: 'relative',
+          background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden',
+          fontFamily: 'var(--mono)', fontSize: 10, lineHeight: '14px',
+        }}>
+          <div style={{
+            position: 'absolute', left: 0, top: 0, bottom: 0,
+            width: `${Math.min(100, 100 * m.warehouseProgress.i / m.warehouseProgress.total)}%`,
+            background: 'linear-gradient(90deg, #2d6 0%, #6ce 100%)',
+            transition: 'width 80ms linear',
+          }} />
+          <span style={{ position: 'relative', paddingLeft: 6, color: '#fff', mixBlendMode: 'difference' }}>
+            {m.warehouseProgress.i}/{m.warehouseProgress.total}
+            {m.warehouseProgress.latest ? ` · ${m.warehouseProgress.latest}` : ''}
+          </span>
+        </div>
+      )}
       {m.actions && m.actions.length > 0 && (
         <div className="msg-actions">
           {m.actions.map((a, i) => (

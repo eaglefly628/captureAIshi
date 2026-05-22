@@ -514,7 +514,63 @@ function App() {
         updateParam, setTweak, setMrqSubdir, setRightTab,
       });
 
-      await sleep(220 + Math.random() * 120);
+      // generate_warehouse_layout is the only deferred tool right now -- it
+      // runs as an SSE stream so the user sees per-actor progress instead
+      // of waiting 5-15s for one giant relay response. resp.relayMeta is
+      // the chat-endpoint's mcp_relay envelope; deferred=true means the
+      // backend skipped the synchronous dispatch and handed the args back.
+      if (tc.name === 'generate_warehouse_layout'
+          && resp.relayMeta && resp.relayMeta.deferred) {
+        // Clear any previous warehouse so live spawns are visible.
+        setSpawnedActors([]);
+        await runWarehouseStream(resp.relayMeta.args || tc.args || {}, {
+          onPlan: (d) => {
+            setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+              ? { ...m,
+                  text: `${resp.narrate}  ·  PCG plan: ${d.total} actors`
+                       + (d.volume_anchored ? ` · volume ${d.room_w}x${d.room_l}m` : '')
+                       + (d.object_budget ? ` · budget ${d.object_budget}` : ''),
+                  warehouseProgress: { i: 0, total: d.total, by_asset: d.by_asset || {} } }
+              : m));
+          },
+          onSpawn: (d) => {
+            if (d.ok) {
+              setSpawnedActors(prev => [...prev, {
+                actor_handle: d.actor_handle || `${d.asset_name}_${d.i}`,
+                asset_name: d.asset_name,
+                id_number: d.id_number != null ? d.id_number : d.i,
+                x: d.x, y: d.y, z: d.z ?? 0, yaw_deg: d.yaw_deg ?? 0,
+              }]);
+            }
+            setStageProgress(d.total > 0 ? d.i / d.total : 1);
+            setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+              ? { ...m,
+                  text: `${resp.narrate}  ·  生成中 ${d.i}/${d.total} · ${d.asset_name}`,
+                  warehouseProgress: { i: d.i, total: d.total, latest: d.asset_name } }
+              : m));
+            // Throttled viewport snapshot every ~5 spawns so the PIP shows
+            // the build happening in near-real-time without spamming MCP.
+            if (d.i % 5 === 0) setUeShotKey(k => k + 1);
+          },
+          onSummary: (d) => {
+            setSceneSeeded(true);
+            setUeShotKey(k => k + 1);
+            setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+              ? { ...m,
+                  text: `${resp.narrate}  ·  ✓ ${d.spawned} actors (${d.elapsed_s}s)`,
+                  warehouseProgress: null }
+              : m));
+          },
+          onError: (d) => {
+            console.error('[warehouse-stream] error:', d);
+            setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+              ? { ...m, text: `${resp.narrate}  ·  ✗ ${d.message || 'stream failed'}` }
+              : m));
+          },
+        });
+      } else {
+        await sleep(220 + Math.random() * 120);
+      }
 
       // mark done
       setToolCalls(prev => prev.map((c, idx) => idx === i ? { ...c, status: 'done' } : c));
@@ -986,6 +1042,62 @@ async function callRealChat(userText, scene, currentParams) {
   }
   const narrate = `${toolNarrate}  ·  ${data.provider}/${data.model} · ${data.elapsed_ms}ms${relayLine}`;
   return { narrate, calls, relayMeta: relay };
+}
+
+// ─── SSE stream for /api/demo/generate_warehouse_stream ────────────────────
+// EventSource only supports GET; we POST + manually parse the text/event-stream
+// body. Block-by-block: events are separated by "\n\n", lines inside an event
+// are "event: <name>" / "data: <json>".
+async function runWarehouseStream(args, cb) {
+  let resp;
+  try {
+    resp = await fetch('/api/demo/generate_warehouse_stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args || {}),
+    });
+  } catch (err) {
+    cb.onError && cb.onError({ message: `network: ${err.message}` });
+    return;
+  }
+  if (!resp.ok || !resp.body) {
+    cb.onError && cb.onError({ message: `stream HTTP ${resp.status}` });
+    return;
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buf = '';
+  while (true) {
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (err) {
+      cb.onError && cb.onError({ message: `read: ${err.message}` });
+      return;
+    }
+    if (chunk.done) break;
+    buf += decoder.decode(chunk.value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      let event = 'message';
+      const dataLines = [];
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) continue;
+      let data;
+      try { data = JSON.parse(dataLines.join('\n')); }
+      catch { continue; }
+      if (event === 'plan')    cb.onPlan    && cb.onPlan(data);
+      else if (event === 'spawn')   cb.onSpawn   && cb.onSpawn(data);
+      else if (event === 'done')    cb.onDone    && cb.onDone(data);
+      else if (event === 'summary') cb.onSummary && cb.onSummary(data);
+      else if (event === 'error')   cb.onError   && cb.onError(data);
+    }
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

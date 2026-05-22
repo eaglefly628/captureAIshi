@@ -423,7 +423,30 @@ def api_chat():
 def _try_demo_tool(tool_name: str, args: dict) -> dict:
     """Run a v0 demo tool_call (spawn/delete/move/list/clear/generate)
     via native SceneTools/ObjectTools RPCs. Same graceful error envelope
-    as _try_mcp_relay."""
+    as _try_mcp_relay.
+
+    `generate_warehouse_layout` is special: it is *deferred* to the SSE
+    endpoint /api/demo/generate_warehouse_stream so the UI can show
+    per-spawn progress. The chat endpoint returns the args back and the
+    front-end re-issues the call as a stream. Without this defer the
+    chat response blocks for ~5-15s until every actor lands, giving the
+    user zero feedback (the "MCP -> UE: layout · 113 actors" message
+    arrived all at once).
+    """
+    if tool_name == "generate_warehouse_layout":
+        clamped, warns = _clamp_xy(args)
+        out = {
+            "ok": True,
+            "tool": tool_name,
+            "args": clamped,
+            "deferred": True,
+            "stream_url": "/api/demo/generate_warehouse_stream",
+            "result": {},  # filled in by the SSE consumer
+        }
+        if warns:
+            out["warnings"] = warns
+        return out
+
     try:
         clamped, warns = _clamp_xy(args)
         result = dispatch_demo(mcp, tool_name, clamped)

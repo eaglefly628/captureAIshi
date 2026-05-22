@@ -515,13 +515,20 @@ def dispatch_warehouse(
             _try_invalidate_viewports(mcp)
 
         if on_progress:
-            on_progress({
+            evt = {
                 "phase": "spawn", "i": i + 1, "total": total,
                 "asset_name": asset_name,
                 "x": float(sr.x) + workspace_offset_m[0],
                 "y": float(sr.y) + workspace_offset_m[1],
+                "z": z_adjusted,
+                "yaw_deg": float(sr.yaw_deg),
                 "ok": ok,
-            })
+            }
+            if ok and spawned:
+                last = spawned[-1]
+                evt["actor_handle"] = last.get("actor_handle")
+                evt["id_number"] = last.get("id_number")
+            on_progress(evt)
 
     # Final viewport flush so the very last batch always shows up.
     _try_invalidate_viewports(mcp)
