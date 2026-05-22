@@ -560,14 +560,13 @@ _TOOL_SET_CAM = "ToolsetRegistry.EditorAppToolset.SetCameraTransform"
 
 
 def viewport_hint_needed() -> bool:
-    """True the first time we determine invalidate is unavailable.
-    dispatch_warehouse appends this to the summary so the chat surface
-    explains why the actual UE viewport window looks frozen between
-    spawns -- user should enable Realtime (Ctrl+R) on the viewport,
-    or build the BP RefreshViewport function we documented in
-    docs/scene_foundry_bp_contract.md.
+    """Show a one-shot hint after the first warehouse generation telling
+    the user how to keep UE Editor's viewport ticking when the window is
+    in the background (Slate throttles foreground-only tick by default,
+    so spawns made while UE is not focused look frozen even though our
+    camera-nudge invalidate fires on every batch).
     """
-    if _INVALIDATE_STATE["mode"] == "disabled" and not _INVALIDATE_STATE["hint_emitted"]:
+    if not _INVALIDATE_STATE["hint_emitted"]:
         _INVALIDATE_STATE["hint_emitted"] = True
         return True
     return False
@@ -783,8 +782,9 @@ def dispatch_warehouse(
         }
         if viewport_hint_needed():
             done_payload["viewport_hint"] = (
-                "UE viewport 不会自动刷新 -- 请按 Ctrl+R 启用 viewport Realtime, "
-                "或在 PCGVolume 蓝图里加 RefreshViewport function (见 docs/scene_foundry_bp_contract.md)"
+                "UE 后台 viewport 不刷新? Edit -> Editor Preferences -> "
+                "General -> Performance -> 取消 'Use Less CPU when in Background' "
+                "(或 UE 控制台输 'slate.bAllowThrottling 0')"
             )
         on_progress(done_payload)
 
