@@ -875,6 +875,58 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/demo/dump_volume_raw")
+def dump_volume_raw():
+    """Hard-evidence dump: resolve the PCGVolume actor + show the LITERAL
+    JSON returned for every prop name we could possibly want. No clever
+    parsing -- just the raw bytes coming out of mcp.get_actor_properties.
+
+    Use this when _resolve_pcg_workspace silently fails: paste the JSON
+    here back into chat and we can match shapes (refPath string? dict?
+    null?) without guessing.
+    """
+    try:
+        actors = mcp.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+            {"tag": "PCGVolume"},
+        )
+        if isinstance(actors, dict):
+            actors = actors.get("actors") or actors.get("results") or []
+        if not actors:
+            return jsonify({"ok": False, "error": "no PCGVolume tagged actor"}), 404
+        first = actors[0]
+        ref = first.get("refPath") if isinstance(first, dict) else first
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"find: {type(e).__name__}: {e}"}), 500
+
+    out: dict = {"ok": True, "ref": ref, "find_first_raw": first, "probes": {}}
+
+    # Probe each candidate IN ISOLATION so we see exactly what each one
+    # returns (even null / empty / refPath / nested dict).
+    candidates = [
+        "BrushComponent", "brush_component",
+        "RootComponent", "root_component",
+        "ActorLocation", "actor_location",
+        "ActorTransform", "actor_transform",
+        "Brush", "BrushBuilder", "brush_builder",
+        "Tags", "tags",
+    ]
+    for k in candidates:
+        try:
+            v = mcp.get_actor_properties(ref, [k])
+            out["probes"][k] = v
+        except Exception as e:
+            out["probes"][k] = {"__error__": f"{type(e).__name__}: {e}"}
+
+    # Also try list_properties to know the actor schema universe.
+    try:
+        out["list_properties"] = mcp.list_actor_properties(ref)
+    except Exception as e:
+        out["list_properties_error"] = f"{type(e).__name__}: {e}"
+
+    return jsonify(out)
+
+
 @app.route("/api/demo/list_actor_props")
 def list_actor_props():
     """Dump the full property schema for one actor.

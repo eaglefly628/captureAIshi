@@ -411,21 +411,51 @@ def _resolve_pcg_workspace(mcp) -> dict:
         #   Begin Object Name="BrushComponent0" ...
         #     RelativeLocation=(X=6880, Y=10, Z=130)
         #     RelativeScale3D=(X=5, Y=5, Z=1)
-        # The property is "BrushComponent" (PascalCase) -- UE5.8 reflection
-        # exposes UPROPERTY names verbatim. No need to guess; ask for it.
+        #
+        # UE5.8 MCP returns object-typed UPROPERTYs as refPath strings or
+        # {"refPath": "..."} envelopes -- it does NOT auto-expand nested
+        # object data. So we make two RPCs:
+        #   1. actor.BrushComponent          -> refPath of the component
+        #   2. component.RelativeLocation +
+        #      component.RelativeScale3D     -> the actual vectors
         loc_cm = None
-        component_obj = None
+        component_data = None
         try:
             props = mcp.get_actor_properties(ref, ["BrushComponent"])
             bc = props.get("BrushComponent") if isinstance(props, dict) else None
+
+            # Normalize: extract a component refPath, OR an already-expanded
+            # dict containing RelativeLocation.
+            component_ref = None
             if isinstance(bc, dict):
-                rel = bc.get("RelativeLocation") or bc.get("relative_location")
+                if "RelativeLocation" in bc or "relative_location" in bc:
+                    component_data = bc
+                else:
+                    component_ref = bc.get("refPath")
+            elif isinstance(bc, str):
+                component_ref = bc
+
+            # Second RPC: pull the actual vectors off the component.
+            if component_ref and not component_data:
+                try:
+                    cprops = mcp.get_actor_properties(
+                        component_ref, ["RelativeLocation", "RelativeScale3D"]
+                    )
+                    if isinstance(cprops, dict):
+                        component_data = cprops
+                except Exception:
+                    pass
+
+            if isinstance(component_data, dict):
+                rel = (component_data.get("RelativeLocation")
+                       or component_data.get("relative_location"))
                 if isinstance(rel, dict) and "x" in rel:
                     loc_cm = (float(rel["x"]), float(rel["y"]))
-                    component_obj = bc
-                    out["resolved_by"] = (out["resolved_by"] or "?") + ":BrushComponent.RelativeLocation"
+                    out["resolved_by"] = ((out["resolved_by"] or "?")
+                                          + ":BrushComponent.RelativeLocation")
         except Exception:
             pass
+        component_obj = component_data  # for the size-lookup block
 
         if loc_cm:
             bp = mcp._demo_origin_world_cm()
