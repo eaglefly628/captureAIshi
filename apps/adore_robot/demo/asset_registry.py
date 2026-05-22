@@ -27,6 +27,7 @@ _DRUM_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_Aba_Storage_Barrel_Metal_G
               "SM_Ind_Aba_Storage_Barrel_Metal_Green_01.SM_Ind_Aba_Storage_Barrel_Metal_Green_01")
 _BOX_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_War_Storage_Box_Cardboard_Worn_02/"
              "SM_Ind_War_Storage_Box_Cardboard_Worn_02.SM_Ind_War_Storage_Box_Cardboard_Worn_02")
+_LIGHT_SODIUM_REAL = "/Game/Scene_Warehouse/Assets/Blueprints/light_sodium.light_sodium"
 
 # Rack variants: 4 BPP variants in the same package; resolve() picks one
 # at random per call so a 'shelf' row visually varies. Single-asset
@@ -48,8 +49,7 @@ ASSET_REGISTRY: dict[str, "str | list[str]"] = {
     "worker":   _ROBOT_REAL,       # SK_Robot_scout_R21 -- the robot agent
 
     # Lighting (warehouse procgen v0.4.1 -- xiaohuan apps/adore_robot/pcg/)
-    # Real impl: BP_MegaLight_Sodium / CoolWhite; v0 placeholder cube
-    "light_sodium":      _CUBE_PLACEHOLDER,
+    "light_sodium":      _LIGHT_SODIUM_REAL,  # BP_light_sodium
     "light_cool_white":  _CUBE_PLACEHOLDER,
     "light_mixed":       _CUBE_PLACEHOLDER,
 
