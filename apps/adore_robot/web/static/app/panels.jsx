@@ -3,7 +3,7 @@
 const { useState, useEffect, useRef } = React;
 
 // ─── Top bar ─────────────────────────────────────────────────────────────────
-function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect, onSyncFromUE, onClearAll, actorCount = 0, currentLevel = '', appVersion = '' }) {
+function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReconnect, onSyncFromUE, onClearAll, actorCount = 0, currentLevel = '', appVersion = '', pcgStatus = null, onRefreshPcg }) {
   // Display the trailing path segment so "/Game/RobotDemo2" -> "RobotDemo2"
   const levelShort = (currentLevel || '').split('/').filter(Boolean).pop() || '——';
   const connecting = mcpState && mcpState.started && !mcpState.done;
@@ -45,6 +45,23 @@ function TopBar({ projectName, jobName, runStatus, runtimeS, mcpState, onMcpReco
           <span style={{fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)'}}>{levelShort}</span>
         </button>
       )}
+      {pcgStatus && (() => {
+        const ready = !!pcgStatus.has_graph;
+        const has_vol = !!pcgStatus.has_pcg_volume;
+        const label = ready ? 'ready' : (has_vol ? 'no graph' : 'n/a');
+        const color = ready ? 'var(--ok)' : (has_vol ? '#f5b942' : 'var(--text-3)');
+        const tip = ready
+          ? `PCG 模式可用 · graph=${(pcgStatus.graph_path || '').split('.').pop() || '?'}\n聊天可用 update_scene 写 Graph Parameters`
+          : (has_vol
+              ? 'PCG Volume 在场景但无 graph 绑定 · LLM 暂用 spawn 路线'
+              : '当前 level 无 PCG Volume · LLM 走 spawn 路线');
+        return (
+          <button className="top-btn" title={tip} onClick={onRefreshPcg}>
+            <span style={{opacity: 0.6}}>PCG</span>
+            <span style={{fontFamily: 'var(--mono)', fontSize: 11, color}}>● {label}</span>
+          </button>
+        );
+      })()}
       {onSyncFromUE && (
         <button className="top-btn" title="从 UE Editor 重读 Demo/v0 actor 列表"
                 onClick={onSyncFromUE}>

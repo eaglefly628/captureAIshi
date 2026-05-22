@@ -1032,6 +1032,41 @@ class UnrealMCPClient:
                   f"type={type(result).__name__} preview={preview}", flush=True)
         return None
 
+    def pcg_status(self) -> dict:
+        """Cheap one-RPC probe: is there a PCG Volume with a graph bound
+        in the current level? Used to decide whether to expose
+        update_scene to the LLM. Returns:
+          {has_pcg_volume: bool, has_graph: bool, graph_path: str|None,
+           pcg_component_ref: str|None, level: str}
+        """
+        out = {"has_pcg_volume": False, "has_graph": False,
+               "graph_path": None, "pcg_component_ref": None,
+               "level": self._current_level_cached()}
+        try:
+            ref = self.find_pcg_component_refpath()
+            out["pcg_component_ref"] = ref
+            out["has_pcg_volume"] = True
+        except Exception:
+            return out
+        # Read the PCG Component's graphInstance.graph to detect whether
+        # a graph asset is actually bound.
+        try:
+            gi_field = self.get_actor_properties(ref, ["graphInstance"])
+            gi_obj = (gi_field.get("graphInstance")
+                      if isinstance(gi_field, dict) else None) or {}
+            gi_ref = gi_obj.get("refPath")
+            if gi_ref:
+                graph_field = self.get_actor_properties(gi_ref, ["graph"])
+                graph_obj = (graph_field.get("graph")
+                             if isinstance(graph_field, dict) else None) or {}
+                gp = graph_obj.get("refPath")
+                if gp:
+                    out["has_graph"] = True
+                    out["graph_path"] = gp
+        except Exception:
+            pass
+        return out
+
     def apply_pcg_delta(self, params: dict, regenerate: bool = True) -> dict:
         """One-call orchestration: ensure toolsets loaded, find PCG
         Component, set the provided pcg_params delta, optionally trigger

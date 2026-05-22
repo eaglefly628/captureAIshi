@@ -208,6 +208,9 @@ function App() {
   // mock matches what's actually in the UE level.
   const [spawnedActors, setSpawnedActors] = useState([]);
   const [currentLevel, setCurrentLevel] = useState('');
+  // PCG availability per current level. Surfaces a chip in TopBar +
+  // (later) example prompts hint when PCG mode is on.
+  const [pcgStatus, setPcgStatus] = useState(null);
   const [appVersion, setAppVersion] = useState('');
   // Cache-buster counter bumped after every successful chat action so the
   // UE viewport PIP <img> re-fetches.  Also bumped on MCP-ready boot.
@@ -254,6 +257,13 @@ function App() {
     return () => { pollSeqRef.current += 1; };  // invalidate on unmount
   }, [startMcpPoll]);
 
+  const refreshPcgStatus = useCallback(async () => {
+    try {
+      const j = await fetch('/api/mcp/pcg_status').then(r => r.json());
+      if (j.ok) setPcgStatus(j);
+    } catch {}
+  }, []);
+
   // Sync spawnedActors with UE's Demo/v0 folder. Called automatically
   // when MCP boot finishes (so opening the page already shows whatever
   // RobotDemo.umap has) and from the manual Sync button.
@@ -284,8 +294,11 @@ function App() {
 
   // Auto-sync the moment MCP init turns green.
   useEffect(() => {
-    if (mcpInit && mcpInit.done && mcpInit.ok) syncFromUE();
-  }, [mcpInit && mcpInit.done && mcpInit.ok, syncFromUE]);
+    if (mcpInit && mcpInit.done && mcpInit.ok) {
+      syncFromUE();
+      refreshPcgStatus();
+    }
+  }, [mcpInit && mcpInit.done && mcpInit.ok, syncFromUE, refreshPcgStatus]);
 
   // Poll current level every 4s. UE is the source of truth -- when user
   // opens a different .umap in the editor we detect it and re-sync.
@@ -300,10 +313,12 @@ function App() {
         if (lvl && lvl !== currentLevel) {
           setCurrentLevel(lvl);
           // Level changed in UE -> wipe local mirror and pull the new
-          // level's Demo/v0 contents fresh.
+          // level's Demo/v0 contents fresh.  Also re-probe PCG status
+          // since the new level may or may not have a PCG graph bound.
           setSpawnedActors([]);
           setSceneSeeded(false);
           syncFromUE();
+          refreshPcgStatus();
         }
       } catch {}
       if (alive) setTimeout(tick, 4000);
@@ -741,7 +756,8 @@ function App() {
           mcpState={mcpInit} onMcpReconnect={retryMcpInit}
           onSyncFromUE={syncFromUE} onClearAll={clearAllFromUE}
           actorCount={spawnedActors.length}
-          currentLevel={currentLevel} appVersion={appVersion} />
+          currentLevel={currentLevel} appVersion={appVersion}
+          pcgStatus={pcgStatus} onRefreshPcg={refreshPcgStatus} />
 
         {/* LEFT: Chat */}
         <ChatPanel

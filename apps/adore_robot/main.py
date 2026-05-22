@@ -184,6 +184,48 @@ def _load_scenes() -> dict[str, dict]:
 
 SCENES = _load_scenes()
 
+# Per-level PCG status cache. Refreshed lazily when the cached level
+# differs from mcp's current_level cache. {level_path: {has_graph,
+# graph_path, pcg_component_ref, checked_at}}
+PCG_STATUS_CACHE: dict = {}
+
+PCG_AVAILABLE_HINT = """
+=== PCG MODE AVAILABLE IN THIS LEVEL ===
+
+This level has a PCG Volume with a bound graph asset.  In addition to
+the direct-actor tools, you can use:
+
+- update_scene(scene_id, pcg_params, rationale) -- write to PCG Graph
+  Parameters. Use this when the user is adjusting parameters that
+  affect the WHOLE scene at once -- "shelf 密度 0.9 / seed 换一个 /
+  房间宽 25 米 / 通道留 3 米 / 加 2 个工人". The PCG graph re-sims
+  with the new params and 30+ actors refresh in one call.
+
+Routing rule: single-object intent -> spawn_object/spawn_batch. Whole-
+scene parameter intent -> update_scene. If user says "加 1 个叉车" use
+spawn_object even when PCG is available (it's a single-object intent).
+"""
+
+
+def _get_cached_pcg_status() -> dict:
+    """Returns current level's PCG status, refreshing the cache if the
+    UE current_level changed.  Falls back to {} on MCP errors -- caller
+    treats absent has_graph as 'no PCG mode'."""
+    try:
+        lvl = mcp._current_level_cached()
+    except Exception:
+        return {}
+    cached = PCG_STATUS_CACHE.get(lvl)
+    if cached is None:
+        try:
+            status = mcp.pcg_status()
+            status["checked_at"] = time.time()
+            PCG_STATUS_CACHE[lvl] = status
+            cached = status
+        except Exception:
+            return {}
+    return cached or {}
+
 CHAT_LOG: collections.deque = collections.deque(maxlen=50)
 
 
@@ -286,13 +328,22 @@ def api_chat():
             f'scene_id: {current_spec.get("scene_id", "warehouse")}\n\n'
             f'user request: {text}'
         )
+        # Conditionally expose update_scene only when the current UE
+        # level has a PCG Volume with a bound graph asset. Otherwise the
+        # LLM may pick update_scene in maps that don't support it and
+        # apply_pcg_delta fails with 'no PCG actor'. Status is cached
+        # per-level in PCG_STATUS_CACHE (refreshed on level change).
+        pcg_status = _get_cached_pcg_status()
+        active_tools = list(DEMO_TOOLS)
+        sys_prompt = SYSTEM_PROMPT
+        if pcg_status.get("has_graph"):
+            active_tools = [UPDATE_SCENE_TOOL] + active_tools
+            sys_prompt = SYSTEM_PROMPT + "\n" + PCG_AVAILABLE_HINT
         chat_kwargs = dict(
             messages=[Message(role="user", content=user_msg)],
-            # v0 demo: only direct-actor tools. update_scene (PCG param
-            # delta) is parked until a real PCG graph exists in the level.
-            tools=DEMO_TOOLS,
+            tools=active_tools,
             tool_choice="auto",
-            system=SYSTEM_PROMPT,
+            system=sys_prompt,
             max_tokens=600,
         )
 
@@ -495,6 +546,24 @@ def api_mcp_screenshot():
         return Response(b"", status=503)
     except Exception as e:
         return Response(str(e).encode(), status=500, mimetype="text/plain")
+
+
+@app.route("/api/mcp/pcg_status")
+def api_mcp_pcg_status():
+    """Reports PCG availability for the CURRENT UE level. UI uses this
+    to render a 'PCG · ready' / 'PCG · n/a' chip + decide whether to
+    surface PCG-only example chat prompts."""
+    refresh = request.args.get("refresh") == "1"
+    try:
+        if refresh:
+            lvl = mcp._current_level_cached()
+            PCG_STATUS_CACHE.pop(lvl, None)
+        status = _get_cached_pcg_status()
+        return jsonify({"ok": True, **status})
+    except ConnectionError as e:
+        return jsonify({"ok": False, "skipped": True, "reason": str(e)}), 503
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
 @app.route("/api/mcp/current_level")
