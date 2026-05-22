@@ -407,97 +407,25 @@ def _resolve_pcg_workspace(mcp) -> dict:
         # then component fallbacks. Each get_actor_properties call only
         # asks for one candidate so a failure on one doesn't block the
         # others.
-        # Strategy: ONE batch get_properties for every readable schema
-        # key, then scan the result for a vector-shaped value. This is
-        # more robust than guessing prop names one-by-one (the earlier
-        # candidate-loop missed because reflection only exposes some
-        # PascalCase variants and we kept guessing snake_case).
-
-        # 1) Schema discovery.
-        readable: list[str] = []
-        try:
-            schema = mcp.list_actor_properties(ref)
-            if isinstance(schema, dict):
-                readable = list(schema.keys())
-        except Exception:
-            pass
-
-        # 2) Batch fetch all readable props in one RPC. UE will warn-but-
-        # return for any unreadable ones; we just won't see them in the
-        # response. If the schema dump failed, fall back to a hard-coded
-        # candidate list so we degrade gracefully instead of going blind.
-        all_props: dict = {}
-        keys_to_fetch = readable or [
-            "BrushComponent", "RootComponent",
-            "ActorLocation", "actor_location",
-            "ActorTransform", "actor_transform",
-        ]
-        try:
-            r = mcp.get_actor_properties(ref, keys_to_fetch)
-            if isinstance(r, dict):
-                all_props = r
-        except Exception:
-            pass
-
+        # T3D ground truth (user 2026-05-22):
+        #   Begin Object Name="BrushComponent0" ...
+        #     RelativeLocation=(X=6880, Y=10, Z=130)
+        #     RelativeScale3D=(X=5, Y=5, Z=1)
+        # The property is "BrushComponent" (PascalCase) -- UE5.8 reflection
+        # exposes UPROPERTY names verbatim. No need to guess; ask for it.
         loc_cm = None
         component_obj = None
-
-        def _vec_xy(d):
-            if isinstance(d, dict) and "x" in d and "y" in d:
-                return float(d["x"]), float(d["y"])
-            return None
-
-        def _extract_location(value):
-            """Pull a Vector out of any of the shapes UE returns."""
-            if not isinstance(value, dict):
-                return None, None  # (loc_cm, component_holding_scale)
-            # Direct {x,y,z}
-            v = _vec_xy(value)
-            if v:
-                return v, None
-            # Transform with .location / .Location
-            for tk in ("location", "Location"):
-                t = value.get(tk)
-                v = _vec_xy(t)
-                if v:
-                    return v, value
-            # Component with RelativeLocation
-            for rk in ("RelativeLocation", "relative_location", "relativeLocation"):
-                v = _vec_xy(value.get(rk))
-                if v:
-                    return v, value
-            return None, None
-
-        # 3) Priority lookup -- BrushComponent first (Volume actors keep
-        # their position there per the T3D dump).
-        priority_keys = [
-            "BrushComponent", "brush_component",
-            "RootComponent", "root_component",
-            "ActorLocation", "actor_location",
-            "actor_world_location", "ActorTransform", "actor_transform",
-        ]
-        for k in priority_keys:
-            if k not in all_props:
-                continue
-            v, comp = _extract_location(all_props[k])
-            if v:
-                loc_cm = v
-                component_obj = comp
-                out["resolved_by"] = (out["resolved_by"] or "?") + ":" + k
-                break
-
-        # 4) Last-resort scan: any field whose name screams location.
-        if not loc_cm:
-            for k, val in all_props.items():
-                kl = k.lower()
-                if not any(t in kl for t in ("location", "position", "transform", "brush", "component")):
-                    continue
-                v, comp = _extract_location(val)
-                if v:
-                    loc_cm = v
-                    component_obj = comp
-                    out["resolved_by"] = (out["resolved_by"] or "?") + ":scan(" + k + ")"
-                    break
+        try:
+            props = mcp.get_actor_properties(ref, ["BrushComponent"])
+            bc = props.get("BrushComponent") if isinstance(props, dict) else None
+            if isinstance(bc, dict):
+                rel = bc.get("RelativeLocation") or bc.get("relative_location")
+                if isinstance(rel, dict) and "x" in rel:
+                    loc_cm = (float(rel["x"]), float(rel["y"]))
+                    component_obj = bc
+                    out["resolved_by"] = (out["resolved_by"] or "?") + ":BrushComponent.RelativeLocation"
+        except Exception:
+            pass
 
         if loc_cm:
             bp = mcp._demo_origin_world_cm()
@@ -528,30 +456,20 @@ def _resolve_pcg_workspace(mcp) -> dict:
             )
 
         # --- size: BrushBuilder.X/Y/Z (cm, full extent) * RelativeScale3D ---
-        # CubeBuilder defaults X=Y=Z=200; user T3D scale (5,5,1) -> 10x10x2 m.
+        # T3D shows BrushBuilder is a UCubeBuilder; default X=Y=Z=200.
+        # For an unscaled volume that's 2m^3; with scale (5,5,1) -> (10,10,2) m.
         brush_xyz = (200.0, 200.0, 200.0)
-        bb_candidates = ["BrushBuilder", "brush_builder"]
-        if readable:
-            bb_candidates = [c for c in bb_candidates if c in readable]
-            for k in readable:
-                if "builder" in k.lower() and k not in bb_candidates:
-                    bb_candidates.append(k)
-        for field in bb_candidates:
-            try:
-                props = mcp.get_actor_properties(ref, [field])
-            except Exception:
-                continue
-            if not isinstance(props, dict):
-                continue
-            bb = props.get(field)
-            if not isinstance(bb, dict):
-                continue
-            x = bb.get("X") or bb.get("x")
-            y = bb.get("Y") or bb.get("y")
-            z = bb.get("Z") or bb.get("z")
-            if x and y and z:
-                brush_xyz = (float(x), float(y), float(z))
-                break
+        try:
+            props = mcp.get_actor_properties(ref, ["BrushBuilder"])
+            bb = props.get("BrushBuilder") if isinstance(props, dict) else None
+            if isinstance(bb, dict):
+                x = bb.get("X") or bb.get("x")
+                y = bb.get("Y") or bb.get("y")
+                z = bb.get("Z") or bb.get("z")
+                if x and y and z:
+                    brush_xyz = (float(x), float(y), float(z))
+        except Exception:
+            pass
 
         if scale is not None:
             out["size_m"] = (
