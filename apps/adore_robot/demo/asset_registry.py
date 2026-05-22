@@ -30,6 +30,7 @@ _BOX_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_War_Storage_Box_Cardboard_W
 _PALLET_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_War_Storage_Crate_Plastic_Blue_01/"
                 "SM_Ind_War_Storage_Crate_Plastic_Blue_01.SM_Ind_War_Storage_Crate_Plastic_Blue_01")
 _LIGHT_SODIUM_REAL = "/Game/Scene_Warehouse/Assets/Blueprints/light_sodium.light_sodium"
+_LIGHT_COOL_WHITE_REAL = "/Game/Scene_Warehouse/Assets/Blueprints/whiteLight.whiteLight"
 
 # Rack variants: 4 BPP variants in the same package; resolve() picks one
 # at random per call so a 'shelf' row visually varies. Single-asset
@@ -51,9 +52,9 @@ ASSET_REGISTRY: dict[str, "str | list[str]"] = {
     "worker":   _ROBOT_REAL,       # SK_Robot_scout_R21 -- the robot agent
 
     # Lighting (warehouse procgen v0.4.1 -- xiaohuan apps/adore_robot/pcg/)
-    "light_sodium":      _LIGHT_SODIUM_REAL,  # BP_light_sodium
-    "light_cool_white":  _CUBE_PLACEHOLDER,
-    "light_mixed":       _CUBE_PLACEHOLDER,
+    "light_sodium":      _LIGHT_SODIUM_REAL,      # BP_light_sodium
+    "light_cool_white":  _LIGHT_COOL_WHITE_REAL,  # BP_whiteLight
+    "light_mixed":       _CUBE_PLACEHOLDER,        # logical only -- pcg alternates sodium/cool_white
 
     # Living room v0.4.1 (xiaohuan generate_living_room)
     "sofa":            _CUBE_PLACEHOLDER,
