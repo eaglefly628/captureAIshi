@@ -1,5 +1,19 @@
 # PCG Agent (小幻) — Shared Notes
 
+## Changelog
+
+### [v0.4.2] <pending sha> -- xiaohuan
+- `pcg/conflict.py` (新增): 跨 asset overlap pass + budget cap + recommend_object_budget
+- `pcg/warehouse.py`: 加 `object_budget` 参; budget 给定时自适应 shelf_density + decor 比例缩放; 末尾跑 conflict + budget pass
+- `demo/asset_registry.py`: ASSET_PIVOT_Z_M + pivot_z() -- 1m cube placeholder 自动抬 0.5m 不再半埋
+- `demo/demo_tools.py`: `_find_pcg_workspace_offset_m` -> `_resolve_pcg_workspace` (offset + size + ref); GENERATE_WAREHOUSE_TOOL schema 加 object_budget; dispatch_warehouse 接 on_progress 回调 + viewport invalidate + size 覆盖 room
+- `main.py`: 新 endpoint `/api/demo/generate_warehouse_stream` POST SSE -- plan/spawn/done/summary 流式事件
+- 单元: budget 15-100 delta 多在 0±2, 跨 5 seed 稳定; conflict pass 0 cross-class clash
+
+**给 xiaoyu** (UI): 前端 chat 识别 generate_warehouse_layout tool_call 后, **不再依赖 /api/chat 同步执行**, 改走 POST /api/demo/generate_warehouse_stream, 订阅 SSE 画进度条。
+
+**给 xiaoxu** (UE): 确认 UE5.8 MCP EditorAppToolset 触发 viewport redraw 的 tool 真名 -- 我在 `_try_invalidate_viewports` 写了 4 个候选, probe_mcp.py 跑一下报实际名字。
+
 ## Active TODO
 
 ### [v0.4.1] 方向转变 (用户 2026-05-22): UE PCG → App 端 Python 实现 -- DONE

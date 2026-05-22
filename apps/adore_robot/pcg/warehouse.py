@@ -25,6 +25,7 @@ from .primitives import (
     grid_points, random_scatter, wall_hug, line_points, avoid_actors,
 )
 from .lighting import spawn_ceiling_lights
+from .conflict import enforce_no_overlap, enforce_budget
 
 # 资产物理尺寸 (m) - 跟 contract §1.1 隐式参数对齐
 SHELF_DEPTH_M = 1.2
@@ -91,6 +92,10 @@ def generate_warehouse(
     lighting_preset: int = 0,  # 0=sodium / 1=cool / 2=mixed
     rotation_jitter_deg: float = 15.0,
     chaos: float = 0.3,
+    # v0.4.2: user-facing object_budget (e.g. "give me 40 things").
+    # Lights are not counted. Structural shelves are preserved first.
+    # If None, no budget cap is enforced.
+    object_budget: int | None = None,
 ) -> LayoutResult:
     """生成 warehouse layout, 13 参数全支持.
 
@@ -102,6 +107,43 @@ def generate_warehouse(
         rotation_jitter_deg=max(0.0, min(180.0, rotation_jitter_deg)),
     )
     spawns: list[SpawnRequest] = []
+
+    # v0.4.2 budget-aware shelf scaling: if shelves alone would exceed
+    # ~60% of object_budget, reduce shelf_density so the budget has room
+    # for decor. Shelves are STRUCTURAL and never get dropped by
+    # enforce_budget, so we must size them down up front.
+    if object_budget is not None and object_budget > 0:
+        tentative_rows, tentative_per_row = _derive_shelf_grid(
+            shelf_density, room_w_m, room_l_m, alley_width_m
+        )
+        shelf_n = tentative_rows * tentative_per_row
+        shelf_cap = max(4, int(object_budget * 0.6))
+        if shelf_n > shelf_cap:
+            # Binary-walk shelf_density down until shelves fit cap.
+            for _ in range(20):
+                shelf_density = max(0.2, shelf_density * 0.85)
+                tr, tpr = _derive_shelf_grid(
+                    shelf_density, room_w_m, room_l_m, alley_width_m
+                )
+                if tr * tpr <= shelf_cap:
+                    break
+            shelf_n = tr * tpr  # final after binary-walk
+
+        # Decor-side rescale: aim for total approx budget. Forklift /
+        # worker keep their explicit count (LLM intent like "3 forklifts").
+        # Overshoot 1.4x so the conflict pass + enforce_budget trim land
+        # near target rather than under it.
+        decor_quota = max(0, object_budget - shelf_n - forklift_count - worker_count)
+        # Overshoot scales with budget -- larger budgets eat more cross-class
+        # overlap losses in the conflict pass, so we need more headroom.
+        overshoot = 1.4 + min(0.6, object_budget * 0.005)
+        target_decor = int(decor_quota * overshoot)
+        current_decor = pallet_count + box_count + drum_count
+        if current_decor > 0 and target_decor > 0:
+            scale = target_decor / current_decor
+            pallet_count = max(1, int(round(pallet_count * scale)))
+            box_count    = max(1, int(round(box_count * scale)))
+            drum_count   = max(1, int(round(drum_count * scale)))
 
     # 1. Shelf 阵列
     rows, per_row = _derive_shelf_grid(
@@ -203,6 +245,12 @@ def generate_warehouse(
         grid_x=max(3, int(room_w_m / 4)),  # 每 4m 一盏灯
         grid_y=max(3, int(room_l_m / 4)),
     ))
+
+    # 8. Global conflict pass -- drop cross-class overlaps before budget cut.
+    spawns, _overlap_drop = enforce_no_overlap(spawns)
+
+    # 9. Budget enforcement -- random trim of non-structural decor.
+    spawns, _budget_drop = enforce_budget(spawns, object_budget, ctx.rng)
 
     return LayoutResult(spawns=spawns)
 

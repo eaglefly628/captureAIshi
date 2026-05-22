@@ -61,6 +61,19 @@ ASSET_REGISTRY: dict[str, str] = {
 
 ASSET_NAMES = list(ASSET_REGISTRY.keys())
 
+# --- Pivot vertical offset (meters) -----------------------------------------
+# Cube placeholder is 1m^3 with pivot at center -> base sits 0.5m below pivot.
+# Adding this to z keeps the mesh's bottom on the floor instead of bisecting it.
+# When real meshes land, override here per-asset.
+_CUBE_PIVOT_Z_M = 0.5
+ASSET_PIVOT_Z_M: dict[str, float] = {
+    name: _CUBE_PIVOT_Z_M for name in ASSET_NAMES
+}
+# Ceiling lights hang from ceiling -- no floor offset needed (their z is
+# already set to ceiling_h_m in pcg/lighting.py).
+for _light in ("light_sodium", "light_cool_white", "light_mixed", "ceiling_pendant"):
+    ASSET_PIVOT_Z_M[_light] = 0.0
+
 
 def resolve(asset_name: str) -> str:
     """Returns the UE path, or raises KeyError if not in v0 catalog."""
@@ -70,3 +83,11 @@ def resolve(asset_name: str) -> str:
             f"valid: {', '.join(ASSET_NAMES)}"
         )
     return ASSET_REGISTRY[asset_name]
+
+
+def pivot_z(asset_name: str) -> float:
+    """Vertical offset (m) to add so the asset's BOTTOM sits at z=0.
+
+    Returns 0.0 for unknown names (safe no-op).
+    """
+    return ASSET_PIVOT_Z_M.get(asset_name, 0.0)

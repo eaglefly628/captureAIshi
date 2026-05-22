@@ -62,7 +62,10 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from mcp_client import UnrealMCPClient
 from demo.prompts import SYSTEM_PROMPT, UPDATE_SCENE_TOOL
-from demo.demo_tools import DEMO_TOOLS, DEMO_TOOL_NAMES, dispatch as dispatch_demo, _clamp_xy
+from demo.demo_tools import (
+    DEMO_TOOLS, DEMO_TOOL_NAMES, dispatch as dispatch_demo, _clamp_xy,
+    dispatch_warehouse,
+)
 from demo.runner import DemoJobRegistry
 from demo.thumbnail import render_thumbnail_svg
 from llm import Message, make_llm_client
@@ -736,6 +739,77 @@ def api_demo_stream(job_id):
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     })
+
+
+@app.route("/api/demo/generate_warehouse_stream", methods=["POST"])
+def api_generate_warehouse_stream():
+    """SSE-streamed warehouse generation. Stream events:
+
+      event: plan   data: {total, by_asset, room_w, room_l, volume_anchored, ...}
+      event: spawn  data: {i, total, asset_name, x, y, ok}
+      event: done   data: {spawned, failed, elapsed_s, by_asset, errors}
+      event: error  data: {message}
+
+    POST body: same shape as generate_warehouse_layout tool args, e.g.
+      {"object_budget": 40, "shelf_density": 0.6, "seed": 42, ...}
+    """
+    import queue as _q
+    import threading
+
+    args = request.get_json(silent=True) or {}
+    q: _q.Queue = _q.Queue()
+    SENTINEL = object()
+    final: dict = {}
+
+    def _emit(payload: dict) -> None:
+        q.put(payload)
+
+    def _worker() -> None:
+        try:
+            result = dispatch_warehouse(mcp, args, on_progress=_emit)
+            final.update(result)
+        except ConnectionError as e:
+            _emit({"phase": "error",
+                   "message": f"UE MCP unreachable: {e}",
+                   "hint": "start UE Editor and ModelContextProtocol.StartServer"})
+        except Exception as e:
+            _emit({"phase": "error", "message": f"{type(e).__name__}: {e}"})
+        finally:
+            q.put(SENTINEL)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    def gen():
+        while True:
+            payload = q.get()
+            if payload is SENTINEL:
+                # Attach the dispatch return summary onto the done event
+                # so the client receives the by_asset/errors breakdown
+                # without a follow-up GET.
+                if final:
+                    yield _sse("summary", {
+                        "spawned": final.get("total", 0),
+                        "by_asset": final.get("by_asset", {}),
+                        "errors": final.get("errors", []),
+                        "pcg_args": final.get("pcg_args", {}),
+                        "workspace_offset_m": final.get("workspace_offset_m"),
+                        "volume_size_m": final.get("volume_size_m"),
+                        "room_overridden_by_volume":
+                            final.get("room_overridden_by_volume"),
+                        "elapsed_s": final.get("elapsed_s"),
+                    })
+                break
+            phase = payload.get("phase", "msg")
+            yield _sse(phase, payload)
+
+    return Response(gen(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @app.route("/api/demo/thumbnail/<scene_id>")

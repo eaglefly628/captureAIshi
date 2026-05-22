@@ -14,9 +14,11 @@ via asset_registry.ASSET_REGISTRY immediately before the RPC call.
 
 from __future__ import annotations
 
+from typing import Callable
+
 from llm.base import ToolDef
 
-from .asset_registry import ASSET_NAMES, resolve as resolve_asset
+from .asset_registry import ASSET_NAMES, resolve as resolve_asset, pivot_z
 
 
 SCENE_BOUNDS_M = 25.0  # clamp x,y inputs to +/-SCENE_BOUNDS_M
@@ -137,6 +139,14 @@ GENERATE_WAREHOUSE_TOOL = ToolDef(
                                     "description": "Per-object yaw chaos (0=neat, 180=fully random)"},
             "chaos":          {"type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3,
                                "description": "Master messiness knob (position jitter + variety)"},
+            "object_budget":  {"type": "integer", "minimum": 4, "maximum": 200,
+                               "description": (
+                                   "Hard cap on total spawned objects (lights excluded). "
+                                   "Pass this when the user explicitly asks for a count "
+                                   "like '40 个物件 / put 40 things'. Structural shelves "
+                                   "are preserved first; floor decor is randomly trimmed. "
+                                   "Omit to let density/count params decide."
+                               )},
             "clear_first":    {"type": "boolean", "default": True},
         },
     },
@@ -277,16 +287,25 @@ def dispatch_list(mcp, _args: dict) -> dict:
 def dispatch_clear(mcp, _args: dict) -> dict:
     return mcp.demo_clear()
 
-def _find_pcg_workspace_offset_m(mcp) -> tuple[float, float]:
+def _resolve_pcg_workspace(mcp) -> dict:
     """Find user-tagged PCG Builder Volume (tag = 'PCG_Workspace') and
-    return offset in meters from BP_DemoOrigin to the volume center.
+    return both its offset from BP_DemoOrigin AND its bounding size.
 
-    Returns (0.0, 0.0) if either:
-    - Volume tag not found (LLM never tagged, or different scene)
-    - BP_DemoOrigin missing (anchor falls back to world origin anyway)
+    Returns:
+        {
+            "offset_m": (dx, dy),  # always present, (0,0) on any failure
+            "size_m":   (w, l, h) or None,  # None if extent unreadable
+            "ref":      "/Game/...:PCGBuilderVolume_1" or None,
+        }
 
-    All errors silently fallback to (0, 0) so dispatch_warehouse never throws.
+    PCG Builder Volume root is a Brush/BoxComponent; we try several
+    common UE Property names because UE5.8 MCP exposes them with varying
+    snake/camel casings depending on the toolset version.
+
+    All exceptions are swallowed -- callers treat missing fields as
+    "no volume tagged, fall back to LLM-provided room_w/l_m".
     """
+    out: dict = {"offset_m": (0.0, 0.0), "size_m": None, "ref": None}
     try:
         actors = mcp.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
@@ -295,118 +314,239 @@ def _find_pcg_workspace_offset_m(mcp) -> tuple[float, float]:
         if isinstance(actors, dict):
             actors = actors.get("actors") or actors.get("results") or []
         if not isinstance(actors, list) or not actors:
-            return (0.0, 0.0)
+            return out
         first = actors[0]
         ref = first.get("refPath") if isinstance(first, dict) else first
         if not ref:
-            return (0.0, 0.0)
-        # Read volume location
+            return out
+        out["ref"] = ref
+
         props = mcp.get_actor_properties(ref, ["root_component"])
         rc = props.get("root_component") if isinstance(props, dict) else None
         if not isinstance(rc, dict):
-            return (0.0, 0.0)
-        loc = (
-            rc.get("relative_location")
-            or rc.get("relativeLocation")
-            or rc.get("location")
-            or {}
-        )
-        if not isinstance(loc, dict) or "x" not in loc:
-            return (0.0, 0.0)
-        volume_cm = (float(loc.get("x", 0)), float(loc.get("y", 0)))
-        # Subtract BP_DemoOrigin (existing spawn anchor) to get relative offset
-        bp = mcp._demo_origin_world_cm()
-        return (
-            (volume_cm[0] - bp["x"]) / 100.0,
-            (volume_cm[1] - bp["y"]) / 100.0,
-        )
+            return out
+
+        # --- offset ---
+        loc = (rc.get("relative_location") or rc.get("relativeLocation")
+               or rc.get("location") or {})
+        if isinstance(loc, dict) and "x" in loc:
+            volume_cm = (float(loc.get("x", 0)), float(loc.get("y", 0)))
+            bp = mcp._demo_origin_world_cm()
+            out["offset_m"] = (
+                (volume_cm[0] - bp["x"]) / 100.0,
+                (volume_cm[1] - bp["y"]) / 100.0,
+            )
+
+        # --- size: prefer box_extent (BoxComponent) * scale ---
+        scale = (rc.get("relative_scale3d") or rc.get("relativeScale3D")
+                 or {"x": 1, "y": 1, "z": 1})
+        sx = float(scale.get("x", 1)); sy = float(scale.get("y", 1)); sz = float(scale.get("z", 1))
+        extent_cm = None
+        for k in ("box_extent", "boxExtent", "brush_extent", "extent"):
+            v = rc.get(k)
+            if isinstance(v, dict) and "x" in v:
+                extent_cm = (float(v["x"]), float(v["y"]), float(v.get("z", 200)))
+                break
+        if extent_cm is None:
+            # Fallback: dump every prop on the actor and scan for any
+            # field whose name contains 'extent' (covers MCP toolset
+            # versions that surface PCG Volume extent under unusual keys).
+            try:
+                all_props = mcp.list_actor_properties(ref)
+                if isinstance(all_props, dict):
+                    for kk, vv in all_props.items():
+                        if "extent" in kk.lower() and isinstance(vv, dict) and "x" in vv:
+                            extent_cm = (float(vv["x"]), float(vv["y"]), float(vv.get("z", 200)))
+                            break
+            except Exception:
+                pass
+
+        if extent_cm is not None:
+            # box_extent is HALF-extent; full size = 2 * extent * scale
+            out["size_m"] = (
+                round(2 * extent_cm[0] * sx / 100.0, 2),
+                round(2 * extent_cm[1] * sy / 100.0, 2),
+                round(2 * extent_cm[2] * sz / 100.0, 2),
+            )
     except Exception:
-        return (0.0, 0.0)
+        pass
+    return out
 
 
-def dispatch_warehouse(mcp, args: dict) -> dict:
+def _try_invalidate_viewports(mcp) -> None:
+    """Best-effort viewport redraw -- silently no-op if the MCP server
+    doesn't expose a redraw tool.
+
+    UE5 Editor throttles viewport tick unless Realtime is enabled, which
+    makes remote spawning look frozen until the user hovers the viewport.
+    We try several known tool names; the first one that returns without
+    raising wins. List of candidates was probed against UE5.8 MCP's
+    EditorAppToolset (see tools/probe_mcp.py).
+    """
+    candidates = (
+        "ToolsetRegistry.EditorAppToolset.InvalidateAllViewports",
+        "ToolsetRegistry.EditorAppToolset.RedrawAllViewports",
+        "ToolsetRegistry.EditorAppToolset.RedrawEditorViewports",
+        "toolset_registry.toolsets.core.editor_app.EditorAppTools.invalidate_viewports",
+    )
+    for name in candidates:
+        try:
+            mcp.call_tool_unwrapped(name, {})
+            return
+        except Exception:
+            continue
+
+
+def dispatch_warehouse(
+    mcp,
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+    viewport_refresh_every: int = 5,
+) -> dict:
     """Run xiaohuan procgen module + spawn each result via mcp.demo_spawn.
 
-    13-param contract: shelf_density / alley_width_m / forklift/worker/pallet/box/
-    drum_count / room_w/l_m / seed / lighting_preset / rotation_jitter_deg / chaos.
+    14-param contract (v0.4.2 added object_budget): shelf_density /
+    alley_width_m / forklift/worker/pallet/box/drum_count /
+    room_w/l_m / seed / lighting_preset / rotation_jitter_deg / chaos /
+    object_budget.
 
-    Anchor priority:
-    1. PCG Builder Volume tagged "PCG_Workspace" (if present, layout centered here)
-    2. BP_DemoOrigin actor (existing fallback in mcp.demo_spawn)
-    3. World origin (0,0,0) if both above missing
+    PCG Builder Volume integration:
+      - tag "PCG_Workspace" on a PCGBuilderVolume actor
+      - offset_m  -> layout centred at volume center
+      - size_m    -> overrides room_w_m / room_l_m so layout fits volume
 
-    Replaces the old mcp.demo_generate_warehouse path (which had a fixed
-    12-param algorithm). The new module lives at apps/adore_robot/pcg/.
+    on_progress (v0.4.2): called with progress dicts at each milestone.
+    Payload shapes:
+      {"phase":"plan",   "total":N, "by_asset":{...}, "room_w":W, "room_l":L,
+       "volume": True/False, "args": {...}}
+      {"phase":"spawn",  "i":k, "total":N, "asset_name":s, "ok":bool}
+      {"phase":"done",   "spawned":N, "failed":M, "elapsed_s":T}
+
+    viewport_refresh_every: invalidate UE editor viewports every N spawns
+    so the user doesn't have to click the editor to see new actors.
     """
-    # Import here to avoid top-level circular import if pcg evolves.
-    # 多路径 fallback: 用户可能 main.py 从 captureAIshi 根 / apps/adore_robot 跑
+    import time
     try:
-        from pcg import generate_warehouse  # cwd = apps/adore_robot (sys.path 有这条)
+        from pcg import generate_warehouse
     except ImportError:
         try:
-            from ..pcg import generate_warehouse  # 包内 relative (demo 是 package)
+            from ..pcg import generate_warehouse
         except ImportError:
-            from apps.adore_robot.pcg import generate_warehouse  # 全路径 (cwd = captureAIshi)
+            from apps.adore_robot.pcg import generate_warehouse
 
     # Optional clear
     if args.get("clear_first", True):
         try:
             mcp.demo_clear()
         except Exception:
-            pass  # 没东西可清也 OK
+            pass
 
-    # Filter to pcg-recognized keys (drops clear_first + 任何未来 LLM 多塞的 key)
+    # PCG_Workspace volume resolution: offset + size (size may be None).
+    ws = _resolve_pcg_workspace(mcp)
+    workspace_offset_m = ws["offset_m"]
+    volume_size_m = ws["size_m"]
+
+    # Filter to pcg-recognized keys.
     pcg_keys = {
         "shelf_density", "alley_width_m", "forklift_count", "worker_count",
         "room_w_m", "room_l_m", "seed", "pallet_count", "box_count",
         "drum_count", "lighting_preset", "rotation_jitter_deg", "chaos",
+        "object_budget",
     }
     pcg_args = {k: v for k, v in args.items() if k in pcg_keys}
 
+    # Volume size overrides LLM-supplied room dimensions when available.
+    # Margin: leave 0.5m on each side so wall-hugging drums aren't outside.
+    room_override = False
+    if volume_size_m is not None:
+        w, l, _h = volume_size_m
+        pcg_args["room_w_m"] = max(4.0, w - 1.0)
+        pcg_args["room_l_m"] = max(4.0, l - 1.0)
+        room_override = True
+
     result = generate_warehouse(**pcg_args)
+    total = len(result.spawns)
+    t_start = time.time()
 
-    # Volume-anchor offset: 0,0 if no PCG Builder Volume tagged
-    workspace_offset_m = _find_pcg_workspace_offset_m(mcp)
+    if on_progress:
+        on_progress({
+            "phase": "plan",
+            "total": total,
+            "by_asset": dict(result.by_asset),
+            "room_w": pcg_args.get("room_w_m"),
+            "room_l": pcg_args.get("room_l_m"),
+            "volume_anchored": bool(ws.get("ref")),
+            "volume_size_m": volume_size_m,
+            "room_overridden_by_volume": room_override,
+            "object_budget": pcg_args.get("object_budget"),
+            "args": pcg_args,
+        })
 
-    # Spawn each SpawnRequest via existing mcp.demo_spawn
     spawned: list[dict] = []
     errors: list[dict] = []
-    for sr in result.spawns:
+    for i, sr in enumerate(result.spawns):
         asset_name = sr.asset_name
-        # Resolve asset; unknown (light_sodium / cool_white / etc.) → cube fallback
         try:
             asset_path = resolve_asset(asset_name)
         except KeyError:
-            # v0: light + future asset names fallback to cube placeholder
-            asset_path = resolve_asset("box")
+            asset_path = resolve_asset("box")  # placeholder fallback
+        # Floor offset: shift z up by pivot offset so mesh BOTTOM sits at sr.z.
+        z_adjusted = float(sr.z) + pivot_z(asset_name)
         try:
             rec = mcp.demo_spawn(
                 asset_path=asset_path,
                 asset_name=asset_name,
                 x_m=float(sr.x) + workspace_offset_m[0],
                 y_m=float(sr.y) + workspace_offset_m[1],
-                z_m=float(sr.z),
+                z_m=z_adjusted,
                 yaw_deg=float(sr.yaw_deg),
             )
             spawned.append(rec)
+            ok = True
         except Exception as e:
             errors.append({
                 "asset_name": asset_name,
                 "x": sr.x, "y": sr.y,
                 "error": f"{type(e).__name__}: {e}",
             })
+            ok = False
+
+        if viewport_refresh_every > 0 and (i + 1) % viewport_refresh_every == 0:
+            _try_invalidate_viewports(mcp)
+
+        if on_progress:
+            on_progress({
+                "phase": "spawn", "i": i + 1, "total": total,
+                "asset_name": asset_name,
+                "x": float(sr.x) + workspace_offset_m[0],
+                "y": float(sr.y) + workspace_offset_m[1],
+                "ok": ok,
+            })
+
+    # Final viewport flush so the very last batch always shows up.
+    _try_invalidate_viewports(mcp)
 
     by_asset: dict[str, int] = {}
     for s in spawned:
         by_asset[s.get("asset_name", "?")] = by_asset.get(s.get("asset_name", "?"), 0) + 1
+
+    elapsed_s = round(time.time() - t_start, 2)
+    if on_progress:
+        on_progress({
+            "phase": "done", "spawned": len(spawned),
+            "failed": len(errors), "elapsed_s": elapsed_s,
+        })
 
     return {
         "spawned": spawned,
         "total": len(spawned),
         "by_asset": by_asset,
         "errors": errors,
-        "pcg_args": pcg_args,  # echo back for debugging
-        "workspace_offset_m": workspace_offset_m,  # (0,0) if no PCG_Workspace tag
+        "pcg_args": pcg_args,
+        "workspace_offset_m": workspace_offset_m,
+        "volume_size_m": volume_size_m,
+        "room_overridden_by_volume": room_override,
+        "elapsed_s": elapsed_s,
     }
 
 
