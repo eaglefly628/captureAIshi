@@ -322,35 +322,81 @@ def invalidate_workspace_cache() -> None:
 
 
 def _resolve_pcg_workspace(mcp) -> dict:
-    """Find user-tagged PCG Builder Volume (tag = 'PCG_Workspace') and
-    return both its offset from BP_DemoOrigin AND its bounding size.
+    """Find the user's workspace volume and return offset + bounds.
+
+    Resolution order:
+      1. find_actors {tag: 'PCGVolume'} -- explicit user opt-in.
+         Works for any actor type (TriggerVolume, APCGVolume, custom BP).
+      2. find_actors {glob: '*TriggerVolume*'} -- fallback. If the level
+         has exactly one TriggerVolume we adopt it silently; if there
+         are multiple we still pick the first but log a hint.
+      3. find_actors {glob: '*PCGVolume*' / '*PCGBuilderVolume*'} -- last
+         fallback for APCGVolume placements without a tag.
 
     Returns:
-        {
-            "offset_m": (dx, dy),  # always present, (0,0) on any failure
-            "size_m":   (w, l, h) or None,  # None if extent unreadable
-            "ref":      "/Game/...:PCGBuilderVolume_1" or None,
-        }
-
-    PCG Builder Volume root is a Brush/BoxComponent; we try several
-    common UE Property names because UE5.8 MCP exposes them with varying
-    snake/camel casings depending on the toolset version.
+        {"offset_m": (dx, dy), "size_m": (w,l,h)|None, "ref": str|None,
+         "resolved_by": "tag"|"trigger_volume_glob"|"pcg_volume_glob"|None}
 
     All exceptions are swallowed -- callers treat missing fields as
     "no volume tagged, fall back to LLM-provided room_w/l_m".
     """
-    out: dict = {"offset_m": (0.0, 0.0), "size_m": None, "ref": None}
+    out: dict = {"offset_m": (0.0, 0.0), "size_m": None, "ref": None,
+                 "resolved_by": None}
     try:
-        actors = mcp.call_tool_unwrapped(
-            "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
-            {"tag": "PCG_Workspace"},
-        )
-        if isinstance(actors, dict):
-            actors = actors.get("actors") or actors.get("results") or []
-        if not isinstance(actors, list) or not actors:
-            return out
-        first = actors[0]
-        ref = first.get("refPath") if isinstance(first, dict) else first
+        ref = None
+        # Stage 1: explicit tag.
+        try:
+            tagged = mcp.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                {"tag": "PCGVolume"},
+            )
+            if isinstance(tagged, dict):
+                tagged = tagged.get("actors") or tagged.get("results") or []
+            if isinstance(tagged, list) and tagged:
+                first = tagged[0]
+                ref = first.get("refPath") if isinstance(first, dict) else first
+                if ref:
+                    out["resolved_by"] = "tag"
+        except Exception:
+            pass
+
+        # Stage 2: TriggerVolume glob fallback (user just dropped a
+        # TriggerVolume in the level without tagging it).
+        if ref is None:
+            try:
+                tvs = mcp.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                    {"glob": "*TriggerVolume*"},
+                )
+                if isinstance(tvs, dict):
+                    tvs = tvs.get("actors") or tvs.get("results") or []
+                if isinstance(tvs, list) and tvs:
+                    first = tvs[0]
+                    ref = first.get("refPath") if isinstance(first, dict) else first
+                    if ref:
+                        out["resolved_by"] = "trigger_volume_glob"
+            except Exception:
+                pass
+
+        # Stage 3: APCGVolume glob fallback.
+        if ref is None:
+            for pat in ("*PCGBuilderVolume*", "*PCGVolume*"):
+                try:
+                    res = mcp.call_tool_unwrapped(
+                        "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                        {"glob": pat},
+                    )
+                    if isinstance(res, dict):
+                        res = res.get("actors") or res.get("results") or []
+                    if isinstance(res, list) and res:
+                        first = res[0]
+                        ref = first.get("refPath") if isinstance(first, dict) else first
+                        if ref:
+                            out["resolved_by"] = "pcg_volume_glob"
+                            break
+                except Exception:
+                    continue
+
         if not ref:
             return out
         out["ref"] = ref
@@ -371,7 +417,7 @@ def _resolve_pcg_workspace(mcp) -> dict:
                 (volume_cm[1] - bp["y"]) / 100.0,
             )
 
-        # --- size: prefer box_extent (BoxComponent) * scale ---
+        # --- size: try box_extent (BoxComponent / BrushComponent) * scale ---
         scale = (rc.get("relative_scale3d") or rc.get("relativeScale3D")
                  or {"x": 1, "y": 1, "z": 1})
         sx = float(scale.get("x", 1)); sy = float(scale.get("y", 1)); sz = float(scale.get("z", 1))
@@ -382,9 +428,6 @@ def _resolve_pcg_workspace(mcp) -> dict:
                 extent_cm = (float(v["x"]), float(v["y"]), float(v.get("z", 200)))
                 break
         if extent_cm is None:
-            # Fallback: dump every prop on the actor and scan for any
-            # field whose name contains 'extent' (covers MCP toolset
-            # versions that surface PCG Volume extent under unusual keys).
             try:
                 all_props = mcp.list_actor_properties(ref)
                 if isinstance(all_props, dict):
@@ -396,7 +439,6 @@ def _resolve_pcg_workspace(mcp) -> dict:
                 pass
 
         if extent_cm is not None:
-            # box_extent is HALF-extent; full size = 2 * extent * scale
             out["size_m"] = (
                 round(2 * extent_cm[0] * sx / 100.0, 2),
                 round(2 * extent_cm[1] * sy / 100.0, 2),
@@ -529,7 +571,7 @@ def dispatch_warehouse(
     object_budget.
 
     PCG Builder Volume integration:
-      - tag "PCG_Workspace" on a PCGBuilderVolume actor
+      - tag "PCGVolume" on a PCGBuilderVolume actor
       - offset_m  -> layout centred at volume center
       - size_m    -> overrides room_w_m / room_l_m so layout fits volume
 
@@ -559,7 +601,7 @@ def dispatch_warehouse(
         except Exception:
             pass
 
-    # PCG_Workspace volume resolution: offset + size (size may be None).
+    # PCGVolume volume resolution: offset + size (size may be None).
     # Force a fresh fetch -- user may have just moved the volume.
     invalidate_workspace_cache()
     ws = _cached_workspace(mcp)
@@ -666,7 +708,7 @@ def dispatch_warehouse(
         if viewport_hint_needed():
             done_payload["viewport_hint"] = (
                 "UE viewport 不会自动刷新 -- 请按 Ctrl+R 启用 viewport Realtime, "
-                "或在 PCG_Workspace 蓝图里加 RefreshViewport function (见 docs/scene_foundry_bp_contract.md)"
+                "或在 PCGVolume 蓝图里加 RefreshViewport function (见 docs/scene_foundry_bp_contract.md)"
             )
         on_progress(done_payload)
 

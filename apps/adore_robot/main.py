@@ -908,12 +908,12 @@ def find_pcg_actors():
 
 @app.route("/api/demo/diagnose_workspace")
 def diagnose_workspace():
-    """Print everything we know about PCG_Workspace anchoring.
+    """Print everything we know about PCGVolume anchoring.
 
     Returns a fat envelope so xiaohuan can eyeball why dispatch_spawn
     ends up placing actors outside the volume:
 
-      - tagged_actors:   raw find_actors {tag: PCG_Workspace} result
+      - tagged_actors:   raw find_actors {tag: PCGVolume} result
       - chosen_ref:      which one _resolve_pcg_workspace picked
       - workspace:       _resolve_pcg_workspace output (offset_m, size_m, ref)
       - bp_demo_origin:  what _demo_origin_world_cm sees (cm)
@@ -940,7 +940,7 @@ def diagnose_workspace():
     try:
         tagged = mcp.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
-            {"tag": "PCG_Workspace"},
+            {"tag": "PCGVolume"},
         )
         out["tagged_actors_raw"] = tagged
     except Exception as e:
