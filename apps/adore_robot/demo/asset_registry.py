@@ -101,8 +101,27 @@ for _real in ("forklift", "shelf", "worker", "drum", "box"):
     ASSET_PIVOT_Z_M[_real] = 0.0
 
 
+def _normalize_asset_path(p: str) -> str:
+    """Convert UE Object Path -> Package Path when the trailing object
+    name is the same as the package's last segment (UE 'default object'
+    convention -- equivalent forms, but package path is what UE5 MCP's
+    add_to_scene_from_asset documents in its example).
+
+    Rules:
+      '/Game/X/Foo.Foo'        -> '/Game/X/Foo'      (default object, simplify)
+      '/Game/X/Foo.SubObj'     -> '/Game/X/Foo.SubObj' (kept; package has multiple objects)
+      '/Game/X/Foo'            -> '/Game/X/Foo'      (already package path)
+    """
+    if "." not in p:
+        return p
+    pkg, _, obj = p.rpartition(".")
+    last_seg = pkg.rsplit("/", 1)[-1]
+    return pkg if obj == last_seg else p
+
+
 def resolve(asset_name: str) -> str:
-    """Returns the UE path, or raises KeyError if not in v0 catalog.
+    """Returns the UE asset path (normalized to package form when
+    applicable), or raises KeyError if not in v0 catalog.
 
     If the registry entry is a list (asset variants), picks one uniformly
     at random per call so e.g. a shelf row gets visual variety. The choice
@@ -117,8 +136,8 @@ def resolve(asset_name: str) -> str:
     v = ASSET_REGISTRY[asset_name]
     if isinstance(v, list):
         import random
-        return random.choice(v)
-    return v
+        v = random.choice(v)
+    return _normalize_asset_path(v)
 
 
 def pivot_z(asset_name: str) -> float:
