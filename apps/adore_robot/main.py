@@ -1071,6 +1071,168 @@ def mcp_tools():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
+@app.route("/api/mcp/toolsets")
+def mcp_toolsets():
+    """List the higher-level toolsets the server advertises.
+
+    Different from /api/mcp/tools which returns 39 individual MCP tools
+    (some are meta: list_toolsets / describe_toolset / load_toolset).
+    Toolsets are bundles; the user reported '41 tools/sets' which may
+    correspond to all-toolsets + loaded set count combined.
+    """
+    try:
+        ts = mcp.call_tool_unwrapped(
+            "list_toolsets", {}
+        )
+        return jsonify({"ok": True, "toolsets": ts})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+@app.route("/tools")
+def tools_page():
+    """Browsable tools index. Fetches /api/mcp/tools + /api/mcp/toolsets
+    client-side, groups by toolset prefix, renders cards with name +
+    description + input schema summary. Filter box at the top.
+    """
+    return Response(_TOOLS_PAGE_HTML, mimetype="text/html")
+
+
+_TOOLS_PAGE_HTML = r"""<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>ADORE · MCP Tools</title>
+<style>
+  body { background:#0e0f12; color:#e6e8eb; font:13px/1.4 -apple-system,
+         "SF Pro Text", "PingFang SC", system-ui, sans-serif; margin:0; padding:18px; }
+  h1 { font-size:18px; margin:0 0 4px; color:#7cf; }
+  .sub { color:#888; font-size:11px; margin-bottom:14px; }
+  .ctl { margin-bottom:12px; }
+  input[type=search] { background:#1a1c20; border:1px solid #333; color:#eee;
+         padding:6px 10px; border-radius:4px; width:280px; font:13px var(--mono); }
+  .group { margin:18px 0 6px; padding:6px 10px; background:#1a1d24;
+         border-left:3px solid #4af; font-weight:600; color:#9cf;
+         display:flex; justify-content:space-between; }
+  .group .cnt { color:#666; font-weight:400; font-size:11px; }
+  .tool { padding:8px 12px; margin:3px 0; background:#15171b;
+         border-left:2px solid #2a2d33; border-radius:3px; }
+  .tool.hide { display:none; }
+  .tool .n { font-family:Menlo, Consolas, monospace; color:#e8a; font-weight:600;
+         font-size:12px; word-break:break-all; }
+  .tool .d { color:#aab; font-size:11.5px; margin-top:3px; white-space:pre-wrap; }
+  .tool .args { color:#5a8; font-family:Menlo, Consolas, monospace;
+         font-size:10.5px; margin-top:4px; }
+  .stat { display:inline-block; padding:1px 6px; margin-right:6px;
+         background:#222; border-radius:2px; color:#888; font-size:10.5px; }
+  .err { background:#321; border:1px solid #533; padding:10px;
+         border-radius:4px; color:#faa; }
+</style></head>
+<body>
+  <h1>MCP Tools / Toolsets</h1>
+  <div class="sub">live snapshot from UE5.8 MCP · session-dependent ·
+    <a href="/api/mcp/tools" style="color:#7cf">raw /api/mcp/tools JSON</a> ·
+    <a href="/api/mcp/toolsets" style="color:#7cf">raw /api/mcp/toolsets JSON</a> ·
+    <a href="/" style="color:#7cf">← back to ADORE</a>
+  </div>
+  <div class="ctl">
+    <input id="q" type="search" placeholder="filter by name / description...">
+    <span id="counts" class="stat">loading...</span>
+  </div>
+  <div id="root"></div>
+
+<script>
+async function load() {
+  const root = document.getElementById('root');
+  const counts = document.getElementById('counts');
+  try {
+    const [toolsResp, tsResp] = await Promise.all([
+      fetch('/api/mcp/tools').then(r => r.json()),
+      fetch('/api/mcp/toolsets').then(r => r.json()).catch(() => ({ok: false})),
+    ]);
+    if (!toolsResp.ok) {
+      root.innerHTML = '<div class="err">tools fetch failed: ' +
+        (toolsResp.error || 'unknown') +
+        '</div><div class="sub">Is UE Editor running with ModelContextProtocol.StartServer?</div>';
+      return;
+    }
+    const tools = toolsResp.tools || [];
+    const tsCount = (tsResp && tsResp.ok && Array.isArray(tsResp.toolsets))
+      ? tsResp.toolsets.length : '?';
+    counts.textContent = `${tools.length} tools · ${tsCount} toolsets`;
+
+    // Group by prefix before the last "."
+    const groups = {};
+    for (const t of tools) {
+      const parts = t.name.split('.');
+      const g = parts.length > 1 ? parts.slice(0, -1).join('.') : '<meta>';
+      (groups[g] = groups[g] || []).push(t);
+    }
+    const sortedGroups = Object.keys(groups).sort();
+
+    let html = '';
+    if (tsResp && tsResp.ok && Array.isArray(tsResp.toolsets)) {
+      html += '<div class="group">Available toolsets <span class="cnt">' +
+              tsResp.toolsets.length + '</span></div>';
+      for (const t of tsResp.toolsets) {
+        html += '<div class="tool"><span class="n">' + (t.name || t) +
+                '</span>' +
+                (t.description ? '<div class="d">' + escapeHtml(t.description) + '</div>' : '') +
+                '</div>';
+      }
+    }
+    for (const g of sortedGroups) {
+      html += '<div class="group group-tools">' + escapeHtml(g) +
+              '<span class="cnt">' + groups[g].length + ' tool' +
+              (groups[g].length===1?'':'s') + '</span></div>';
+      for (const t of groups[g]) {
+        const inputProps = (t.inputSchema && t.inputSchema.properties) || {};
+        const argHints = Object.entries(inputProps).map(([k, v]) => {
+          const ty = (v && v.type) || '?';
+          return k + ':' + ty;
+        }).join(', ');
+        const req = (t.inputSchema && t.inputSchema.required) || [];
+        html += '<div class="tool" data-name="' + escapeHtml(t.name) +
+                '" data-desc="' + escapeHtml(t.description||'') + '">' +
+                '<div class="n">' + escapeHtml(t.name) + '</div>';
+        if (t.description) {
+          html += '<div class="d">' + escapeHtml(t.description.slice(0, 280) +
+                  (t.description.length > 280 ? '...' : '')) + '</div>';
+        }
+        if (argHints) {
+          html += '<div class="args">args: { ' + escapeHtml(argHints) + ' }' +
+                  (req.length ? ' · required: [' + req.join(', ') + ']' : '') +
+                  '</div>';
+        }
+        html += '</div>';
+      }
+    }
+    root.innerHTML = html;
+    wireFilter();
+  } catch (e) {
+    root.innerHTML = '<div class="err">' + e.message + '</div>';
+  }
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+}
+function wireFilter() {
+  const q = document.getElementById('q');
+  q.addEventListener('input', () => {
+    const term = q.value.trim().toLowerCase();
+    document.querySelectorAll('.tool').forEach(el => {
+      if (!term) { el.classList.remove('hide'); return; }
+      const n = (el.dataset.name||'').toLowerCase();
+      const d = (el.dataset.desc||'').toLowerCase();
+      el.classList.toggle('hide', !(n.includes(term) || d.includes(term)));
+    });
+  });
+}
+load();
+</script>
+</body></html>
+"""
+
+
 @app.route("/api/mcp/call", methods=["POST"])
 def mcp_call():
     body = request.get_json(silent=True) or {}

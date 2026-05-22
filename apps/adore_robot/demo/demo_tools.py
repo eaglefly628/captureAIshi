@@ -401,48 +401,91 @@ def _resolve_pcg_workspace(mcp) -> dict:
             return out
         out["ref"] = ref
 
-        props = mcp.get_actor_properties(ref, ["root_component"])
-        rc = props.get("root_component") if isinstance(props, dict) else None
-        if not isinstance(rc, dict):
-            return out
+        # --- offset: TriggerVolume's root_component can't be read via
+        # UE5.8 MCP (log: "the following properties could not be read:
+        # root_component"). Try actor-level location candidates first,
+        # then component fallbacks. Each get_actor_properties call only
+        # asks for one candidate so a failure on one doesn't block the
+        # others.
+        loc_cm = None
+        loc_candidates = [
+            ("actor_location",),
+            ("actor_world_location",),
+            ("actor_transform",),
+            ("brush_component",),
+            ("root_component",),
+        ]
+        for fields in loc_candidates:
+            try:
+                props = mcp.get_actor_properties(ref, list(fields))
+            except Exception:
+                continue
+            if not isinstance(props, dict):
+                continue
+            for k, v in props.items():
+                if not isinstance(v, dict):
+                    continue
+                # Direct Vector return
+                if "x" in v and "y" in v:
+                    loc_cm = (float(v["x"]), float(v["y"]))
+                    break
+                # Nested transform.location
+                t_loc = v.get("location")
+                if isinstance(t_loc, dict) and "x" in t_loc:
+                    loc_cm = (float(t_loc["x"]), float(t_loc["y"]))
+                    break
+                # Component object -> relative_location
+                rel = v.get("relative_location") or v.get("relativeLocation")
+                if isinstance(rel, dict) and "x" in rel:
+                    loc_cm = (float(rel["x"]), float(rel["y"]))
+                    break
+            if loc_cm:
+                out["resolved_by"] = (out["resolved_by"] or "?") + ":" + "+".join(fields)
+                break
 
-        # --- offset ---
-        loc = (rc.get("relative_location") or rc.get("relativeLocation")
-               or rc.get("location") or {})
-        if isinstance(loc, dict) and "x" in loc:
-            volume_cm = (float(loc.get("x", 0)), float(loc.get("y", 0)))
+        if loc_cm:
             bp = mcp._demo_origin_world_cm()
             out["offset_m"] = (
-                (volume_cm[0] - bp["x"]) / 100.0,
-                (volume_cm[1] - bp["y"]) / 100.0,
+                (loc_cm[0] - bp["x"]) / 100.0,
+                (loc_cm[1] - bp["y"]) / 100.0,
             )
 
-        # --- size: try box_extent (BoxComponent / BrushComponent) * scale ---
-        scale = (rc.get("relative_scale3d") or rc.get("relativeScale3D")
-                 or {"x": 1, "y": 1, "z": 1})
-        sx = float(scale.get("x", 1)); sy = float(scale.get("y", 1)); sz = float(scale.get("z", 1))
+        # --- size: best-effort. Try brush_component bounds, fall through
+        # to None (caller's room_w/l_m default kicks in).
         extent_cm = None
-        for k in ("box_extent", "boxExtent", "brush_extent", "extent"):
-            v = rc.get(k)
-            if isinstance(v, dict) and "x" in v:
-                extent_cm = (float(v["x"]), float(v["y"]), float(v.get("z", 200)))
-                break
-        if extent_cm is None:
+        scale = {"x": 1.0, "y": 1.0, "z": 1.0}
+        for fields in [("brush_component",), ("box_extent",), ("RootComponent",)]:
             try:
-                all_props = mcp.list_actor_properties(ref)
-                if isinstance(all_props, dict):
-                    for kk, vv in all_props.items():
-                        if "extent" in kk.lower() and isinstance(vv, dict) and "x" in vv:
-                            extent_cm = (float(vv["x"]), float(vv["y"]), float(vv.get("z", 200)))
-                            break
+                props = mcp.get_actor_properties(ref, list(fields))
             except Exception:
-                pass
+                continue
+            if not isinstance(props, dict):
+                continue
+            for k, v in props.items():
+                if not isinstance(v, dict):
+                    continue
+                # Direct extent vector
+                if "x" in v and "y" in v and "z" in v and extent_cm is None:
+                    extent_cm = (float(v["x"]), float(v["y"]), float(v.get("z", 200)))
+                # Nested component with extent + scale
+                for ek in ("box_extent", "boxExtent", "brush_extent", "extent"):
+                    sub = v.get(ek)
+                    if isinstance(sub, dict) and "x" in sub and extent_cm is None:
+                        extent_cm = (float(sub["x"]), float(sub["y"]),
+                                     float(sub.get("z", 200)))
+                        break
+                s = v.get("relative_scale3d") or v.get("relativeScale3D")
+                if isinstance(s, dict) and "x" in s:
+                    scale = {"x": float(s["x"]), "y": float(s["y"]),
+                             "z": float(s.get("z", 1))}
+            if extent_cm:
+                break
 
         if extent_cm is not None:
             out["size_m"] = (
-                round(2 * extent_cm[0] * sx / 100.0, 2),
-                round(2 * extent_cm[1] * sy / 100.0, 2),
-                round(2 * extent_cm[2] * sz / 100.0, 2),
+                round(2 * extent_cm[0] * scale["x"] / 100.0, 2),
+                round(2 * extent_cm[1] * scale["y"] / 100.0, 2),
+                round(2 * extent_cm[2] * scale["z"] / 100.0, 2),
             )
     except Exception:
         pass
