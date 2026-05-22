@@ -591,16 +591,22 @@ class UnrealMCPClient:
     def demo_spawn(self, asset_path: str, asset_name: str,
                    x_m: float, y_m: float, z_m: float = 0.0,
                    yaw_deg: float = 0.0,
-                   id_number_override: int | None = None) -> dict:
+                   id_number_override: int | None = None,
+                   anchor_override_cm: dict | None = None) -> dict:
         """Spawn a static mesh at scene-local (x,y,z) meters. Tags via
         outliner folder Demo/v0 for safe bulk-delete later.
 
         id_number_override: when set (e.g. by demo_move's respawn path),
         keeps the previous handle's number so the user's "F1" doesn't
         become "F2" after a move.
+
+        anchor_override_cm: {x, y, z} in cm. When given, used as the
+        world anchor INSTEAD of BP_DemoOrigin -- typically the PCGVolume
+        center XY + volume-bottom Z so a spawn at (0,0,0) lands on the
+        floor inside the volume. Falls back to BP_DemoOrigin when None.
         """
         self.auto_load_toolsets()
-        anchor = self._demo_origin_world_cm()
+        anchor = anchor_override_cm if anchor_override_cm else self._demo_origin_world_cm()
         world = {
             "x": anchor["x"] + x_m * 100,
             "y": anchor["y"] + y_m * 100,

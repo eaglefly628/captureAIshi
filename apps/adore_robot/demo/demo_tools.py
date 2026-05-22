@@ -253,20 +253,23 @@ def _clamp_xy(args: dict) -> dict:
 # stays in mcp_client.py where it can be tested independently.
 
 def dispatch_spawn(mcp, args: dict) -> dict:
-    off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
+    anchor = _cached_workspace(mcp).get("world_cm")
     return mcp.demo_spawn(
         asset_path=resolve_asset(args["asset_name"]),
         asset_name=args["asset_name"],
-        x_m=float(args["x"]) + off[0],
-        y_m=float(args["y"]) + off[1],
+        x_m=float(args["x"]),
+        y_m=float(args["y"]),
         z_m=float(args.get("z", 0)) + pivot_z(args["asset_name"]),
         yaw_deg=float(args.get("yaw_deg", 0)),
+        anchor_override_cm=anchor,
     )
 
 def dispatch_delete(mcp, args: dict) -> dict:
     return mcp.demo_delete(args["actor_handle"])
 
 def dispatch_move(mcp, args: dict) -> dict:
+    # demo_move doesn't accept anchor_override yet; keep offset_m path as
+    # a stopgap so absolute moves still resolve to the same volume frame.
     off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
     return mcp.demo_move(
         handle=args["actor_handle"],
@@ -414,13 +417,12 @@ def _resolve_pcg_workspace(mcp) -> dict:
         #   2. component.RelativeLocation +
         #      component.RelativeScale3D     -> the actual vectors
         loc_cm = None
+        loc_z_cm = 0.0
         component_data = None
         try:
             props = mcp.get_actor_properties(ref, ["BrushComponent"])
             bc = props.get("BrushComponent") if isinstance(props, dict) else None
 
-            # Normalize: extract a component refPath, OR an already-expanded
-            # dict containing RelativeLocation.
             component_ref = None
             if isinstance(bc, dict):
                 if "RelativeLocation" in bc or "relative_location" in bc:
@@ -430,7 +432,6 @@ def _resolve_pcg_workspace(mcp) -> dict:
             elif isinstance(bc, str):
                 component_ref = bc
 
-            # Second RPC: pull the actual vectors off the component.
             if component_ref and not component_data:
                 try:
                     cprops = mcp.get_actor_properties(
@@ -446,11 +447,12 @@ def _resolve_pcg_workspace(mcp) -> dict:
                        or component_data.get("relative_location"))
                 if isinstance(rel, dict) and "x" in rel:
                     loc_cm = (float(rel["x"]), float(rel["y"]))
+                    loc_z_cm = float(rel.get("z", 0))
                     out["resolved_by"] = ((out["resolved_by"] or "?")
                                           + ":BrushComponent.RelativeLocation")
         except Exception:
             pass
-        component_obj = component_data  # for the size-lookup block
+        component_obj = component_data
 
         if loc_cm:
             bp = mcp._demo_origin_world_cm()
@@ -504,6 +506,19 @@ def _resolve_pcg_workspace(mcp) -> dict:
             )
             out["brush_xyz_cm"] = brush_xyz
             out["scale"] = scale
+
+        # --- world_cm: volume center XY + volume BOTTOM Z (the floor) ---
+        # This is the single anchor downstream code should use. By making
+        # Z = volume bottom (center.z - half_z), a spawn passed (0,0,0)
+        # lands on the floor inside the volume -- no separate floor_z
+        # hunt, no BP_DemoOrigin middle-step.
+        if loc_cm:
+            half_z_cm = (brush_xyz[2] * (scale[2] if scale else 1.0)) / 2.0
+            out["world_cm"] = {
+                "x": loc_cm[0],
+                "y": loc_cm[1],
+                "z": loc_z_cm - half_z_cm,
+            }
     except Exception:
         pass
     return out
@@ -664,7 +679,8 @@ def dispatch_warehouse(
     # PCGVolume resolution: offset + size (size may be None).
     # Cache persists -- only invalidated by dispatch_clear / switch_level.
     ws = _cached_workspace(mcp)
-    workspace_offset_m = ws["offset_m"]
+    anchor_cm = ws.get("world_cm")
+    workspace_offset_m = ws["offset_m"]  # retained in summary for debug
     volume_size_m = ws["size_m"]
 
     # Filter to pcg-recognized keys.
@@ -717,10 +733,11 @@ def dispatch_warehouse(
             rec = mcp.demo_spawn(
                 asset_path=asset_path,
                 asset_name=asset_name,
-                x_m=float(sr.x) + workspace_offset_m[0],
-                y_m=float(sr.y) + workspace_offset_m[1],
+                x_m=float(sr.x),
+                y_m=float(sr.y),
                 z_m=z_adjusted,
                 yaw_deg=float(sr.yaw_deg),
+                anchor_override_cm=anchor_cm,
             )
             spawned.append(rec)
             ok = True
@@ -739,8 +756,8 @@ def dispatch_warehouse(
             evt = {
                 "phase": "spawn", "i": i + 1, "total": total,
                 "asset_name": asset_name,
-                "x": float(sr.x) + workspace_offset_m[0],
-                "y": float(sr.y) + workspace_offset_m[1],
+                "x": float(sr.x),  # volume-local (anchor is volume center)
+                "y": float(sr.y),
                 "z": z_adjusted,
                 "yaw_deg": float(sr.yaw_deg),
                 "ok": ok,
@@ -786,7 +803,7 @@ def dispatch_warehouse(
 
 def dispatch_batch(mcp, args: dict) -> dict:
     items = args.get("items") or []
-    off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
+    anchor = _cached_workspace(mcp).get("world_cm")
     spawned = []
     errors = []
     for it in items:
@@ -795,10 +812,11 @@ def dispatch_batch(mcp, args: dict) -> dict:
             rec = mcp.demo_spawn(
                 asset_path=resolve_asset(clamped["asset_name"]),
                 asset_name=clamped["asset_name"],
-                x_m=float(clamped["x"]) + off[0],
-                y_m=float(clamped["y"]) + off[1],
+                x_m=float(clamped["x"]),
+                y_m=float(clamped["y"]),
                 z_m=float(clamped.get("z", 0)) + pivot_z(clamped["asset_name"]),
                 yaw_deg=float(clamped.get("yaw_deg", 0)),
+                anchor_override_cm=anchor,
             )
             spawned.append(rec)
         except Exception as e:
