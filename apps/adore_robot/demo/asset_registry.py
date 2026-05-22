@@ -29,9 +29,9 @@ _ROBOT_REAL = "/Game/Robot_scout_R_21/Mesh/SK_Robot_scout_R21.SK_Robot_scout_R21
 # entries stay as plain strings (no behavior change).
 _SHELF_VARIANTS = [
     "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_01",
-    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_02",
-    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_03",
-    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_04",
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_02.BPP_Ind_War_Rack_02",
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_03.BPP_Ind_War_Rack_03",
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_04.BPP_Ind_War_Rack_04",
 ]
 
 ASSET_REGISTRY: dict[str, "str | list[str]"] = {
