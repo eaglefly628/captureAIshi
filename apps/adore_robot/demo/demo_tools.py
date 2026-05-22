@@ -277,11 +277,63 @@ def dispatch_list(mcp, _args: dict) -> dict:
 def dispatch_clear(mcp, _args: dict) -> dict:
     return mcp.demo_clear()
 
+def _find_pcg_workspace_offset_m(mcp) -> tuple[float, float]:
+    """Find user-tagged PCG Builder Volume (tag = 'PCG_Workspace') and
+    return offset in meters from BP_DemoOrigin to the volume center.
+
+    Returns (0.0, 0.0) if either:
+    - Volume tag not found (LLM never tagged, or different scene)
+    - BP_DemoOrigin missing (anchor falls back to world origin anyway)
+
+    All errors silently fallback to (0, 0) so dispatch_warehouse never throws.
+    """
+    try:
+        actors = mcp.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+            {"tag": "PCG_Workspace"},
+        )
+        if isinstance(actors, dict):
+            actors = actors.get("actors") or actors.get("results") or []
+        if not isinstance(actors, list) or not actors:
+            return (0.0, 0.0)
+        first = actors[0]
+        ref = first.get("refPath") if isinstance(first, dict) else first
+        if not ref:
+            return (0.0, 0.0)
+        # Read volume location
+        props = mcp.get_actor_properties(ref, ["root_component"])
+        rc = props.get("root_component") if isinstance(props, dict) else None
+        if not isinstance(rc, dict):
+            return (0.0, 0.0)
+        loc = (
+            rc.get("relative_location")
+            or rc.get("relativeLocation")
+            or rc.get("location")
+            or {}
+        )
+        if not isinstance(loc, dict) or "x" not in loc:
+            return (0.0, 0.0)
+        volume_cm = (float(loc.get("x", 0)), float(loc.get("y", 0)))
+        # Subtract BP_DemoOrigin (existing spawn anchor) to get relative offset
+        bp = mcp._demo_origin_world_cm()
+        return (
+            (volume_cm[0] - bp["x"]) / 100.0,
+            (volume_cm[1] - bp["y"]) / 100.0,
+        )
+    except Exception:
+        return (0.0, 0.0)
+
+
 def dispatch_warehouse(mcp, args: dict) -> dict:
     """Run xiaohuan procgen module + spawn each result via mcp.demo_spawn.
 
     13-param contract: shelf_density / alley_width_m / forklift/worker/pallet/box/
     drum_count / room_w/l_m / seed / lighting_preset / rotation_jitter_deg / chaos.
+
+    Anchor priority:
+    1. PCG Builder Volume tagged "PCG_Workspace" (if present, layout centered here)
+    2. BP_DemoOrigin actor (existing fallback in mcp.demo_spawn)
+    3. World origin (0,0,0) if both above missing
 
     Replaces the old mcp.demo_generate_warehouse path (which had a fixed
     12-param algorithm). The new module lives at apps/adore_robot/pcg/.
@@ -306,6 +358,9 @@ def dispatch_warehouse(mcp, args: dict) -> dict:
 
     result = generate_warehouse(**pcg_args)
 
+    # Volume-anchor offset: 0,0 if no PCG Builder Volume tagged
+    workspace_offset_m = _find_pcg_workspace_offset_m(mcp)
+
     # Spawn each SpawnRequest via existing mcp.demo_spawn
     spawned: list[dict] = []
     errors: list[dict] = []
@@ -321,8 +376,8 @@ def dispatch_warehouse(mcp, args: dict) -> dict:
             rec = mcp.demo_spawn(
                 asset_path=asset_path,
                 asset_name=asset_name,
-                x_m=float(sr.x),
-                y_m=float(sr.y),
+                x_m=float(sr.x) + workspace_offset_m[0],
+                y_m=float(sr.y) + workspace_offset_m[1],
                 z_m=float(sr.z),
                 yaw_deg=float(sr.yaw_deg),
             )
@@ -344,6 +399,7 @@ def dispatch_warehouse(mcp, args: dict) -> dict:
         "by_asset": by_asset,
         "errors": errors,
         "pcg_args": pcg_args,  # echo back for debugging
+        "workspace_offset_m": workspace_offset_m,  # (0,0) if no PCG_Workspace tag
     }
 
 
