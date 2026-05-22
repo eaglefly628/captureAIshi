@@ -407,64 +407,97 @@ def _resolve_pcg_workspace(mcp) -> dict:
         # then component fallbacks. Each get_actor_properties call only
         # asks for one candidate so a failure on one doesn't block the
         # others.
-        loc_cm = None
-        # T3D dump confirms: TriggerVolume's position lives on
-        # BrushComponent.RelativeLocation -- Brush actors keep their
-        # transform on the component, NOT on the actor (ActorLocation
-        # is (0,0,0)). UE5.8 MCP reflection uses PascalCase prop names
-        # ("BrushComponent" not "brush_component") so we list both.
-        loc_candidates = [
-            "BrushComponent", "brush_component",     # Brush actor path
-            "actor_location", "actor_world_location",
-            "actor_transform",
-        ]
+        # Strategy: ONE batch get_properties for every readable schema
+        # key, then scan the result for a vector-shaped value. This is
+        # more robust than guessing prop names one-by-one (the earlier
+        # candidate-loop missed because reflection only exposes some
+        # PascalCase variants and we kept guessing snake_case).
 
-        # Discover schema once so we only ask for fields that exist.
-        readable: set[str] = set()
+        # 1) Schema discovery.
+        readable: list[str] = []
         try:
             schema = mcp.list_actor_properties(ref)
             if isinstance(schema, dict):
-                readable = set(schema.keys())
+                readable = list(schema.keys())
         except Exception:
             pass
-        if readable:
-            loc_candidates = [c for c in loc_candidates if c in readable]
-            for k in readable:
-                kl = k.lower()
-                if ("location" in kl or "position" in kl or "transform" in kl
-                        or "brush" in kl) and k not in loc_candidates:
-                    loc_candidates.append(k)
 
-        component_obj = None  # cache for size lookup below
-        for field in loc_candidates:
-            try:
-                props = mcp.get_actor_properties(ref, [field])
-            except Exception:
+        # 2) Batch fetch all readable props in one RPC. UE will warn-but-
+        # return for any unreadable ones; we just won't see them in the
+        # response. If the schema dump failed, fall back to a hard-coded
+        # candidate list so we degrade gracefully instead of going blind.
+        all_props: dict = {}
+        keys_to_fetch = readable or [
+            "BrushComponent", "RootComponent",
+            "ActorLocation", "actor_location",
+            "ActorTransform", "actor_transform",
+        ]
+        try:
+            r = mcp.get_actor_properties(ref, keys_to_fetch)
+            if isinstance(r, dict):
+                all_props = r
+        except Exception:
+            pass
+
+        loc_cm = None
+        component_obj = None
+
+        def _vec_xy(d):
+            if isinstance(d, dict) and "x" in d and "y" in d:
+                return float(d["x"]), float(d["y"])
+            return None
+
+        def _extract_location(value):
+            """Pull a Vector out of any of the shapes UE returns."""
+            if not isinstance(value, dict):
+                return None, None  # (loc_cm, component_holding_scale)
+            # Direct {x,y,z}
+            v = _vec_xy(value)
+            if v:
+                return v, None
+            # Transform with .location / .Location
+            for tk in ("location", "Location"):
+                t = value.get(tk)
+                v = _vec_xy(t)
+                if v:
+                    return v, value
+            # Component with RelativeLocation
+            for rk in ("RelativeLocation", "relative_location", "relativeLocation"):
+                v = _vec_xy(value.get(rk))
+                if v:
+                    return v, value
+            return None, None
+
+        # 3) Priority lookup -- BrushComponent first (Volume actors keep
+        # their position there per the T3D dump).
+        priority_keys = [
+            "BrushComponent", "brush_component",
+            "RootComponent", "root_component",
+            "ActorLocation", "actor_location",
+            "actor_world_location", "ActorTransform", "actor_transform",
+        ]
+        for k in priority_keys:
+            if k not in all_props:
                 continue
-            if not isinstance(props, dict):
-                continue
-            for k, v in props.items():
-                if not isinstance(v, dict):
-                    continue
-                # 1) Direct Vector return (actor_location etc.)
-                if "x" in v and "y" in v:
-                    loc_cm = (float(v["x"]), float(v["y"]))
-                    break
-                # 2) Transform with nested location
-                t_loc = v.get("location") or v.get("Location")
-                if isinstance(t_loc, dict) and "x" in t_loc:
-                    loc_cm = (float(t_loc["x"]), float(t_loc["y"]))
-                    break
-                # 3) Component object -> RelativeLocation / relative_location
-                rel = (v.get("RelativeLocation") or v.get("relative_location")
-                       or v.get("relativeLocation"))
-                if isinstance(rel, dict) and "x" in rel:
-                    loc_cm = (float(rel["x"]), float(rel["y"]))
-                    component_obj = v
-                    break
-            if loc_cm:
-                out["resolved_by"] = (out["resolved_by"] or "?") + ":" + field
+            v, comp = _extract_location(all_props[k])
+            if v:
+                loc_cm = v
+                component_obj = comp
+                out["resolved_by"] = (out["resolved_by"] or "?") + ":" + k
                 break
+
+        # 4) Last-resort scan: any field whose name screams location.
+        if not loc_cm:
+            for k, val in all_props.items():
+                kl = k.lower()
+                if not any(t in kl for t in ("location", "position", "transform", "brush", "component")):
+                    continue
+                v, comp = _extract_location(val)
+                if v:
+                    loc_cm = v
+                    component_obj = comp
+                    out["resolved_by"] = (out["resolved_by"] or "?") + ":scan(" + k + ")"
+                    break
 
         if loc_cm:
             bp = mcp._demo_origin_world_cm()
