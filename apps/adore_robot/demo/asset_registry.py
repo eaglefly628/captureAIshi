@@ -23,6 +23,8 @@ _FORKLIFT_REAL = "/Game/Scene_Warehouse/Maps/PackedLevels/Ind_War_HandTruck_01.I
 # In ADORE the "worker" slot is actually the robot scout -- this is a
 # robotics training-scene foundry, the moving agent IS the robot.
 _ROBOT_REAL = "/Game/Robot_scout_R_21/Mesh/SK_Robot_scout_R21.SK_Robot_scout_R21"
+_DRUM_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_Aba_Storage_Barrel_Metal_Green_01/"
+              "SM_Ind_Aba_Storage_Barrel_Metal_Green_01.SM_Ind_Aba_Storage_Barrel_Metal_Green_01")
 
 # Rack variants: 4 BPP variants in the same package; resolve() picks one
 # at random per call so a 'shelf' row visually varies. Single-asset
@@ -40,7 +42,7 @@ ASSET_REGISTRY: dict[str, "str | list[str]"] = {
     "forklift": _FORKLIFT_REAL,    # real Ind_War_HandTruck_01 PackedLevel
     "pallet":   _CUBE_PLACEHOLDER,
     "box":      _CUBE_PLACEHOLDER,
-    "drum":     _CUBE_PLACEHOLDER,
+    "drum":     _DRUM_REAL,        # SM_Ind_Aba_Storage_Barrel_Metal_Green_01
     "worker":   _ROBOT_REAL,       # SK_Robot_scout_R21 -- the robot agent
 
     # Lighting (warehouse procgen v0.4.1 -- xiaohuan apps/adore_robot/pcg/)
@@ -91,9 +93,9 @@ ASSET_PIVOT_Z_M: dict[str, float] = {
 # already set to ceiling_h_m in pcg/lighting.py).
 for _light in ("light_sodium", "light_cool_white", "light_mixed", "ceiling_pendant"):
     ASSET_PIVOT_Z_M[_light] = 0.0
-# Real assets (PackedLevel / BPP / SkeletalMesh) publish their pivot at
-# floor level (z=0) -- no extra lift needed when spawning.
-for _real in ("forklift", "shelf", "worker"):
+# Real assets (PackedLevel / BPP / SkeletalMesh / StaticMesh) publish
+# their pivot at floor level (z=0) -- no extra lift needed when spawning.
+for _real in ("forklift", "shelf", "worker", "drum"):
     ASSET_PIVOT_Z_M[_real] = 0.0
 
 
