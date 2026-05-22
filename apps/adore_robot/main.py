@@ -875,6 +875,37 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/demo/find_pcg_actors")
+def find_pcg_actors():
+    """Wide net: list every actor whose label/path contains 'PCG' or
+    'Builder' or 'Volume'. Used to figure out what kind of object the
+    user's PCGBuilderVolume actually is when find_actors {tag: ...}
+    returns 0.
+
+    Returns:
+        {ok: bool, by_glob: {pattern: [actors]}, error?: str}
+    """
+    patterns = ["*PCG*", "*Builder*", "*Volume*", "*Workspace*"]
+    out: dict = {"ok": True, "by_glob": {}}
+    for p in patterns:
+        try:
+            res = mcp.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                {"glob": p},
+            )
+            if isinstance(res, dict):
+                res = res.get("actors") or res.get("results") or []
+            out["by_glob"][p] = res
+        except Exception as e:
+            out["by_glob"][p] = {"error": f"{type(e).__name__}: {e}"}
+    # Also dump the current level path for context.
+    try:
+        out["current_level"] = mcp.get_current_level()
+    except Exception as e:
+        out["current_level_error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
 @app.route("/api/demo/diagnose_workspace")
 def diagnose_workspace():
     """Print everything we know about PCG_Workspace anchoring.
