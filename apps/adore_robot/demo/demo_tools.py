@@ -295,28 +295,39 @@ def dispatch_clear(mcp, _args: dict) -> dict:
     invalidate_workspace_cache()  # user may re-place volume after clear
     return mcp.demo_clear()
 
-# In-memory workspace cache. Filled on first lookup, persists until the
-# user clears the demo or switches level (volume placement doesn't drift
-# within a session, so no time-based expiry is needed).
-_WORKSPACE_CACHE: dict = {"ws": None}
+# In-memory workspace cache. Keyed by current UE level so that opening
+# a different map in-editor automatically forces a re-resolve without
+# requiring the user to hit /api/demo/refresh_volume.
+_WORKSPACE_CACHE: dict = {"ws": None, "level": None}
 
 
 def _cached_workspace(mcp) -> dict:
-    if _WORKSPACE_CACHE["ws"] is None:
+    # mcp._current_level_cached() has its own 2s TTL, so this is cheap.
+    current_level = None
+    try:
+        current_level = mcp._current_level_cached()
+    except Exception:
+        pass
+
+    if (_WORKSPACE_CACHE["ws"] is None
+            or _WORKSPACE_CACHE["level"] != current_level):
         try:
             _WORKSPACE_CACHE["ws"] = _resolve_pcg_workspace(mcp)
         except Exception:
             _WORKSPACE_CACHE["ws"] = {"offset_m": (0.0, 0.0),
                                        "size_m": None, "ref": None,
                                        "resolved_by": None}
+        _WORKSPACE_CACHE["level"] = current_level
     return _WORKSPACE_CACHE["ws"]
 
 
 def invalidate_workspace_cache() -> None:
     """Clear the workspace cache. Called from dispatch_clear and
     dispatch_switch_level (user may re-place the volume in those flows).
+    Also called from /api/demo/refresh_volume for manual override.
     """
     _WORKSPACE_CACHE["ws"] = None
+    _WORKSPACE_CACHE["level"] = None
 
 
 def _resolve_pcg_workspace(mcp) -> dict:
@@ -677,6 +688,10 @@ def dispatch_warehouse(
 
     # PCGVolume resolution: offset + size (size may be None).
     # Cache persists -- only invalidated by dispatch_clear / switch_level.
+    # Force re-fetch on every warehouse run so the user can tweak the
+    # PCGVolume between attempts (move it, resize it, replace it) and
+    # the next "生成仓库" picks up the change without any cache flush.
+    invalidate_workspace_cache()
     ws = _cached_workspace(mcp)
     anchor_cm = ws.get("world_cm")
     workspace_offset_m = ws["offset_m"]  # retained in summary for debug
