@@ -253,12 +253,13 @@ def _clamp_xy(args: dict) -> dict:
 # stays in mcp_client.py where it can be tested independently.
 
 def dispatch_spawn(mcp, args: dict) -> dict:
+    off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
     return mcp.demo_spawn(
         asset_path=resolve_asset(args["asset_name"]),
         asset_name=args["asset_name"],
-        x_m=float(args["x"]),
-        y_m=float(args["y"]),
-        z_m=float(args.get("z", 0)),
+        x_m=float(args["x"]) + off[0],
+        y_m=float(args["y"]) + off[1],
+        z_m=float(args.get("z", 0)) + pivot_z(args["asset_name"]),
         yaw_deg=float(args.get("yaw_deg", 0)),
     )
 
@@ -266,14 +267,17 @@ def dispatch_delete(mcp, args: dict) -> dict:
     return mcp.demo_delete(args["actor_handle"])
 
 def dispatch_move(mcp, args: dict) -> dict:
+    off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
     return mcp.demo_move(
         handle=args["actor_handle"],
-        x_m=float(args["x"]),
-        y_m=float(args["y"]),
+        x_m=float(args["x"]) + off[0],
+        y_m=float(args["y"]) + off[1],
         z_m=float(args.get("z", 0)),
     )
 
 def dispatch_nudge(mcp, args: dict) -> dict:
+    # Nudge is a RELATIVE delta -- no workspace anchor needed; the
+    # mcp.demo_nudge server-side reads current actor pos and adds dx/dy.
     return mcp.demo_nudge(
         handle=args["actor_handle"],
         dx_m=float(args.get("dx", 0)),
@@ -285,7 +289,37 @@ def dispatch_list(mcp, _args: dict) -> dict:
     return mcp.demo_list()
 
 def dispatch_clear(mcp, _args: dict) -> dict:
+    invalidate_workspace_cache()  # user may re-place volume after clear
     return mcp.demo_clear()
+
+# In-memory workspace cache. dispatch_spawn/batch/move query MCP every
+# call would mean an extra ~30ms RPC per actor on a 60-item batch.
+# Cache for 30s; cleared explicitly when level switches or demo clears.
+_WORKSPACE_CACHE: dict = {"ws": None, "ts": 0.0}
+_WORKSPACE_TTL_S = 30.0
+
+
+def _cached_workspace(mcp) -> dict:
+    import time
+    now = time.time()
+    cached = _WORKSPACE_CACHE.get("ws")
+    if cached is None or (now - _WORKSPACE_CACHE.get("ts", 0)) > _WORKSPACE_TTL_S:
+        try:
+            cached = _resolve_pcg_workspace(mcp)
+        except Exception:
+            cached = {"offset_m": (0.0, 0.0), "size_m": None, "ref": None}
+        _WORKSPACE_CACHE["ws"] = cached
+        _WORKSPACE_CACHE["ts"] = now
+    return cached
+
+
+def invalidate_workspace_cache() -> None:
+    """Clear the workspace cache. Call after switch_level / clear_demo
+    when the user might have moved or replaced the PCGBuilderVolume.
+    """
+    _WORKSPACE_CACHE["ws"] = None
+    _WORKSPACE_CACHE["ts"] = 0.0
+
 
 def _resolve_pcg_workspace(mcp) -> dict:
     """Find user-tagged PCG Builder Volume (tag = 'PCG_Workspace') and
@@ -442,7 +476,9 @@ def dispatch_warehouse(
             pass
 
     # PCG_Workspace volume resolution: offset + size (size may be None).
-    ws = _resolve_pcg_workspace(mcp)
+    # Force a fresh fetch -- user may have just moved the volume.
+    invalidate_workspace_cache()
+    ws = _cached_workspace(mcp)
     workspace_offset_m = ws["offset_m"]
     volume_size_m = ws["size_m"]
 
@@ -559,6 +595,7 @@ def dispatch_warehouse(
 
 def dispatch_batch(mcp, args: dict) -> dict:
     items = args.get("items") or []
+    off = _cached_workspace(mcp).get("offset_m", (0.0, 0.0))
     spawned = []
     errors = []
     for it in items:
@@ -567,9 +604,9 @@ def dispatch_batch(mcp, args: dict) -> dict:
             rec = mcp.demo_spawn(
                 asset_path=resolve_asset(clamped["asset_name"]),
                 asset_name=clamped["asset_name"],
-                x_m=float(clamped["x"]),
-                y_m=float(clamped["y"]),
-                z_m=float(clamped.get("z", 0)),
+                x_m=float(clamped["x"]) + off[0],
+                y_m=float(clamped["y"]) + off[1],
+                z_m=float(clamped.get("z", 0)) + pivot_z(clamped["asset_name"]),
                 yaw_deg=float(clamped.get("yaw_deg", 0)),
             )
             spawned.append(rec)
@@ -583,6 +620,7 @@ def dispatch_batch(mcp, args: dict) -> dict:
 
 
 def dispatch_switch_level(mcp, args: dict) -> dict:
+    invalidate_workspace_cache()  # different level => different volume
     return mcp.demo_switch_level(args.get("level_path", ""))
 
 
