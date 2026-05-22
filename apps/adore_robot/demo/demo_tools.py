@@ -338,8 +338,15 @@ def dispatch_warehouse(mcp, args: dict) -> dict:
     Replaces the old mcp.demo_generate_warehouse path (which had a fixed
     12-param algorithm). The new module lives at apps/adore_robot/pcg/.
     """
-    # Import here to avoid top-level circular import if pcg evolves
-    from apps.adore_robot.pcg import generate_warehouse
+    # Import here to avoid top-level circular import if pcg evolves.
+    # 多路径 fallback: 用户可能 main.py 从 captureAIshi 根 / apps/adore_robot 跑
+    try:
+        from pcg import generate_warehouse  # cwd = apps/adore_robot (sys.path 有这条)
+    except ImportError:
+        try:
+            from ..pcg import generate_warehouse  # 包内 relative (demo 是 package)
+        except ImportError:
+            from apps.adore_robot.pcg import generate_warehouse  # 全路径 (cwd = captureAIshi)
 
     # Optional clear
     if args.get("clear_first", True):
