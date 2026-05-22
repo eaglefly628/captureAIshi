@@ -110,24 +110,34 @@ GENERATE_WAREHOUSE_TOOL = ToolDef(
     name="generate_warehouse_layout",
     description=(
         "Procedurally lay out a warehouse: shelf rows separated by aisles, "
-        "forklifts in aisles, pallets/boxes/drums scattered, optional workers."
+        "forklifts in aisles, pallets/boxes/drums scattered, optional workers, "
+        "ceiling lights. 13 chat-controllable params (xiaohuan procgen module)."
     ),
     input_schema={
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "room_w_m": {"type": "number", "minimum": 10, "maximum": 60, "default": 30},
-            "room_l_m": {"type": "number", "minimum": 10, "maximum": 60, "default": 40},
-            "shelf_rows": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
-            "shelves_per_row": {"type": "integer", "minimum": 2, "maximum": 12, "default": 6},
-            "aisle_width_m": {"type": "number", "minimum": 2.0, "maximum": 5.0, "default": 3.0},
+            # Tier 1: 7 必备
+            "shelf_density":  {"type": "number", "minimum": 0.2, "maximum": 1.0, "default": 0.7,
+                               "description": "Shelf fill rate, drives rows + per_row derivation"},
+            "alley_width_m":  {"type": "number", "minimum": 1.5, "maximum": 4.0, "default": 2.4,
+                               "description": "Aisle width between shelf rows (meters)"},
             "forklift_count": {"type": "integer", "minimum": 0, "maximum": 5, "default": 1},
-            "pallet_count": {"type": "integer", "minimum": 0, "maximum": 50, "default": 10},
-            "box_count": {"type": "integer", "minimum": 0, "maximum": 30, "default": 5},
-            "drum_count": {"type": "integer", "minimum": 0, "maximum": 20, "default": 3},
-            "worker_count": {"type": "integer", "minimum": 0, "maximum": 8, "default": 0},
-            "seed": {"type": "integer", "default": 0},
-            "clear_first": {"type": "boolean", "default": True},
+            "worker_count":   {"type": "integer", "minimum": 0, "maximum": 8, "default": 0},
+            "room_w_m":       {"type": "number", "minimum": 8, "maximum": 40, "default": 18},
+            "room_l_m":       {"type": "number", "minimum": 8, "maximum": 60, "default": 28},
+            "seed":           {"type": "integer", "minimum": 0, "maximum": 9999, "default": 0},
+            # Tier 2: 6 炫酷
+            "pallet_count":   {"type": "integer", "minimum": 0, "maximum": 50, "default": 8},
+            "box_count":      {"type": "integer", "minimum": 0, "maximum": 30, "default": 5},
+            "drum_count":     {"type": "integer", "minimum": 0, "maximum": 20, "default": 3},
+            "lighting_preset":{"type": "integer", "minimum": 0, "maximum": 2, "default": 0,
+                               "description": "0=warehouse_sodium, 1=cool_white, 2=mixed"},
+            "rotation_jitter_deg": {"type": "number", "minimum": 0, "maximum": 180, "default": 15,
+                                    "description": "Per-object yaw chaos (0=neat, 180=fully random)"},
+            "chaos":          {"type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3,
+                               "description": "Master messiness knob (position jitter + variety)"},
+            "clear_first":    {"type": "boolean", "default": True},
         },
     },
 )
@@ -268,7 +278,73 @@ def dispatch_clear(mcp, _args: dict) -> dict:
     return mcp.demo_clear()
 
 def dispatch_warehouse(mcp, args: dict) -> dict:
-    return mcp.demo_generate_warehouse(asset_resolver=resolve_asset, **args)
+    """Run xiaohuan procgen module + spawn each result via mcp.demo_spawn.
+
+    13-param contract: shelf_density / alley_width_m / forklift/worker/pallet/box/
+    drum_count / room_w/l_m / seed / lighting_preset / rotation_jitter_deg / chaos.
+
+    Replaces the old mcp.demo_generate_warehouse path (which had a fixed
+    12-param algorithm). The new module lives at apps/adore_robot/pcg/.
+    """
+    # Import here to avoid top-level circular import if pcg evolves
+    from apps.adore_robot.pcg import generate_warehouse
+
+    # Optional clear
+    if args.get("clear_first", True):
+        try:
+            mcp.demo_clear()
+        except Exception:
+            pass  # 没东西可清也 OK
+
+    # Filter to pcg-recognized keys (drops clear_first + 任何未来 LLM 多塞的 key)
+    pcg_keys = {
+        "shelf_density", "alley_width_m", "forklift_count", "worker_count",
+        "room_w_m", "room_l_m", "seed", "pallet_count", "box_count",
+        "drum_count", "lighting_preset", "rotation_jitter_deg", "chaos",
+    }
+    pcg_args = {k: v for k, v in args.items() if k in pcg_keys}
+
+    result = generate_warehouse(**pcg_args)
+
+    # Spawn each SpawnRequest via existing mcp.demo_spawn
+    spawned: list[dict] = []
+    errors: list[dict] = []
+    for sr in result.spawns:
+        asset_name = sr.asset_name
+        # Resolve asset; unknown (light_sodium / cool_white / etc.) → cube fallback
+        try:
+            asset_path = resolve_asset(asset_name)
+        except KeyError:
+            # v0: light + future asset names fallback to cube placeholder
+            asset_path = resolve_asset("box")
+        try:
+            rec = mcp.demo_spawn(
+                asset_path=asset_path,
+                asset_name=asset_name,
+                x_m=float(sr.x),
+                y_m=float(sr.y),
+                z_m=float(sr.z),
+                yaw_deg=float(sr.yaw_deg),
+            )
+            spawned.append(rec)
+        except Exception as e:
+            errors.append({
+                "asset_name": asset_name,
+                "x": sr.x, "y": sr.y,
+                "error": f"{type(e).__name__}: {e}",
+            })
+
+    by_asset: dict[str, int] = {}
+    for s in spawned:
+        by_asset[s.get("asset_name", "?")] = by_asset.get(s.get("asset_name", "?"), 0) + 1
+
+    return {
+        "spawned": spawned,
+        "total": len(spawned),
+        "by_asset": by_asset,
+        "errors": errors,
+        "pcg_args": pcg_args,  # echo back for debugging
+    }
 
 
 def dispatch_batch(mcp, args: dict) -> dict:
