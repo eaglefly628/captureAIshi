@@ -875,6 +875,66 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/demo/list_actor_props")
+def list_actor_props():
+    """Dump the full property schema for one actor.
+
+    Usage:
+      /api/demo/list_actor_props?ref=/Game/.../TriggerVolume_5
+      /api/demo/list_actor_props?tag=PCGVolume       (resolves first tagged actor)
+      /api/demo/list_actor_props?glob=*TriggerVolume* (resolves first matching)
+
+    Returns:
+      {ok, ref, list_properties: <full schema>, smoke_reads: {<probe>: <result>}}
+    where smoke_reads tries every prop name we use anywhere in the
+    codebase so the failing ones light up in red.
+    """
+    ref = request.args.get("ref")
+    if not ref:
+        # Resolve via tag/glob if user didn't pass an explicit ref.
+        try:
+            criteria = {}
+            if request.args.get("tag"):
+                criteria["tag"] = request.args["tag"]
+            else:
+                criteria["glob"] = request.args.get("glob", "*TriggerVolume*")
+            actors = mcp.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                criteria,
+            )
+            if isinstance(actors, dict):
+                actors = actors.get("actors") or actors.get("results") or []
+            if isinstance(actors, list) and actors:
+                first = actors[0]
+                ref = first.get("refPath") if isinstance(first, dict) else first
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"resolve: {type(e).__name__}: {e}"}), 500
+    if not ref:
+        return jsonify({"ok": False, "error": "no actor resolved"}), 404
+
+    out: dict = {"ok": True, "ref": ref}
+    try:
+        out["list_properties"] = mcp.list_actor_properties(ref)
+    except Exception as e:
+        out["list_properties_error"] = f"{type(e).__name__}: {e}"
+
+    smoke = {}
+    for probe in [
+        "actor_location", "actor_world_location", "actor_transform",
+        "actor_rotation", "actor_scale3d", "actor_label", "tags",
+        "root_component", "RootComponent",
+        "brush_component", "BrushComponent",
+        "brush", "Brush",
+    ]:
+        try:
+            v = mcp.get_actor_properties(ref, [probe])
+            smoke[probe] = v
+        except Exception as e:
+            smoke[probe] = {"__error__": f"{type(e).__name__}: {e}"}
+    out["smoke_reads"] = smoke
+    return jsonify(out)
+
+
 @app.route("/api/demo/find_pcg_actors")
 def find_pcg_actors():
     """Wide net: list every actor whose label/path contains 'PCG' or

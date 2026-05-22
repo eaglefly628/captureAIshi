@@ -408,16 +408,39 @@ def _resolve_pcg_workspace(mcp) -> dict:
         # asks for one candidate so a failure on one doesn't block the
         # others.
         loc_cm = None
+        # root_component is known-unreadable on Volume actors via UE5.8
+        # MCP ("the following properties could not be read: root_component")
+        # so don't include it -- it'd just spam a warning per spawn.
         loc_candidates = [
-            ("actor_location",),
-            ("actor_world_location",),
-            ("actor_transform",),
-            ("brush_component",),
-            ("root_component",),
+            "actor_location",
+            "actor_world_location",
+            "actor_transform",
+            "brush_component",
         ]
-        for fields in loc_candidates:
+
+        # First discover what's actually readable so we only ask for
+        # those names (avoids the warning torrent the user is seeing).
+        readable: set[str] = set()
+        try:
+            schema = mcp.list_actor_properties(ref)
+            if isinstance(schema, dict):
+                readable = set(schema.keys())
+        except Exception:
+            pass
+
+        # If we know the schema, restrict candidates; else try all.
+        if readable:
+            loc_candidates = [c for c in loc_candidates if c in readable]
+            # Add any schema-discovered field whose name screams location.
+            for k in readable:
+                kl = k.lower()
+                if ("location" in kl or "position" in kl or "transform" in kl) \
+                        and k not in loc_candidates:
+                    loc_candidates.append(k)
+
+        for field in loc_candidates:
             try:
-                props = mcp.get_actor_properties(ref, list(fields))
+                props = mcp.get_actor_properties(ref, [field])
             except Exception:
                 continue
             if not isinstance(props, dict):
@@ -425,22 +448,19 @@ def _resolve_pcg_workspace(mcp) -> dict:
             for k, v in props.items():
                 if not isinstance(v, dict):
                     continue
-                # Direct Vector return
                 if "x" in v and "y" in v:
                     loc_cm = (float(v["x"]), float(v["y"]))
                     break
-                # Nested transform.location
                 t_loc = v.get("location")
                 if isinstance(t_loc, dict) and "x" in t_loc:
                     loc_cm = (float(t_loc["x"]), float(t_loc["y"]))
                     break
-                # Component object -> relative_location
                 rel = v.get("relative_location") or v.get("relativeLocation")
                 if isinstance(rel, dict) and "x" in rel:
                     loc_cm = (float(rel["x"]), float(rel["y"]))
                     break
             if loc_cm:
-                out["resolved_by"] = (out["resolved_by"] or "?") + ":" + "+".join(fields)
+                out["resolved_by"] = (out["resolved_by"] or "?") + ":" + field
                 break
 
         if loc_cm:
@@ -450,13 +470,20 @@ def _resolve_pcg_workspace(mcp) -> dict:
                 (loc_cm[1] - bp["y"]) / 100.0,
             )
 
-        # --- size: best-effort. Try brush_component bounds, fall through
-        # to None (caller's room_w/l_m default kicks in).
+        # --- size: best-effort. Try brush_component / box_extent, fall
+        # through to None (caller's room_w/l_m default kicks in).
         extent_cm = None
         scale = {"x": 1.0, "y": 1.0, "z": 1.0}
-        for fields in [("brush_component",), ("box_extent",), ("RootComponent",)]:
+        size_candidates = ["brush_component", "box_extent"]
+        if readable:
+            size_candidates = [c for c in size_candidates if c in readable]
+            for k in readable:
+                kl = k.lower()
+                if ("extent" in kl or "bounds" in kl) and k not in size_candidates:
+                    size_candidates.append(k)
+        for field in size_candidates:
             try:
-                props = mcp.get_actor_properties(ref, list(fields))
+                props = mcp.get_actor_properties(ref, [field])
             except Exception:
                 continue
             if not isinstance(props, dict):
