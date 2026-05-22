@@ -92,6 +92,7 @@ class UESpawner:
         actors: list[dict],
         on_progress: Callable[[int, int, dict], None] | None = None,
         inter_spawn_delay: float = 0.05,
+        refresh_every: int = 1,
     ) -> dict:
         """Spawn all actors. Calls on_progress(index, total, actor) for each.
 
@@ -99,6 +100,10 @@ class UESpawner:
             actors:            List of actor dicts from layout_gen.generate_layout.
             on_progress:       Called after each spawn attempt.
             inter_spawn_delay: Seconds between spawn commands (avoid flooding).
+            refresh_every:     Send SceneFoundry_RefreshViewport every N spawns
+                               so the editor viewport redraws without manual
+                               clicks. 0 disables. BP must implement
+                               EditorInvalidateViewports on this function.
 
         Returns:
             {"ok": bool, "spawned": int, "failed": int, "bridge_connected": bool}
@@ -117,6 +122,8 @@ class UESpawner:
                     failed += 1
                 else:
                     spawned += 1
+                if refresh_every > 0 and (i + 1) % refresh_every == 0:
+                    self._send("ke * SceneFoundry_RefreshViewport")
             else:
                 # Offline / demo: log the command, count as spawned
                 logger.debug("[SPAWNER] (no bridge) %s", cmd)
@@ -127,6 +134,10 @@ class UESpawner:
 
             if inter_spawn_delay > 0 and i < total - 1:
                 time.sleep(inter_spawn_delay)
+
+        # Final refresh to make sure last batch shows up
+        if connected and refresh_every > 0:
+            self._send("ke * SceneFoundry_RefreshViewport")
 
         self.disconnect()
         return {

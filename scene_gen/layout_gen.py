@@ -70,6 +70,28 @@ def _build_system(count: int, area_x: int, area_y: int, min_gap: int) -> str:
     )
 
 
+# Average footprint per asset class (cm^2)
+_AVG_FOOTPRINT_CM2 = 4900  # ~70x70 cm typical mixed-warehouse
+
+
+def recommend_count(area_x_cm: int, area_y_cm: int, density: str = "medium") -> dict:
+    """Recommend object count based on volume floor area + density preset.
+
+    Returns: {"min": int, "recommended": int, "max": int, "area_m2": float}
+    """
+    area_cm2 = max(1, area_x_cm * area_y_cm)
+    area_m2 = area_cm2 / 10000.0
+
+    # Coverage ratios (footprint area / total floor area)
+    ratios = {"sparse": 0.08, "medium": 0.18, "dense": 0.32}
+    ratio = ratios.get(density, 0.18)
+
+    rec = max(1, int(area_cm2 * ratio / _AVG_FOOTPRINT_CM2))
+    mn = max(1, int(area_cm2 * ratios["sparse"] / _AVG_FOOTPRINT_CM2))
+    mx = max(rec + 1, int(area_cm2 * ratios["dense"] / _AVG_FOOTPRINT_CM2))
+    return {"min": mn, "recommended": rec, "max": mx, "area_m2": round(area_m2, 1)}
+
+
 def _parse_actors(raw: str, count: int) -> list[dict]:
     """Parse LLM JSON, normalise, enforce count (slice if over, raise if under)."""
     try:
@@ -152,6 +174,7 @@ def generate_layout(
     area_y: int = 2000,
     min_gap: int = 150,
     floor_z: float = 0.0,
+    centre_xy: tuple[float, float] = (0.0, 0.0),
     api_key: str | None = None,
     model: str = "deepseek-chat",
 ) -> list[dict]:
@@ -209,7 +232,12 @@ def generate_layout(
             raw = resp.json()["choices"][0]["message"]["content"]
             actors = _parse_actors(raw, count)
             actors = _enforce_no_overlap(actors, min_gap)
+            # Clamp into [-area/2, area/2], then shift to volume centre.
+            cx, cy = centre_xy
+            hx, hy = area_x / 2.0, area_y / 2.0
             for a in actors:
+                a["x"] = max(-hx, min(hx, a["x"])) + cx
+                a["y"] = max(-hy, min(hy, a["y"])) + cy
                 a["z"] = floor_z
             logger.info("[LAYOUT] OK: %d actors generated.", len(actors))
             return actors

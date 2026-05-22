@@ -1263,6 +1263,12 @@ body {
     </div>
     <!-- ── AI Scene Generation Panel ── -->
     <div id="aiScenePanel">
+      <div class="sg-row" style="border-bottom:1px solid var(--border);padding-bottom:6px">
+        <span class="sg-label">Volume</span>
+        <input type="text" id="sgVolName" value="PCGBuilderVolume" style="flex:1;max-width:170px">
+        <button class="btn" onclick="sceneFetchVolume()" id="btnSgFetch">Fetch</button>
+        <span id="sgVolStatus" style="font-size:10px;color:var(--text-tertiary);margin-left:6px">untouched</span>
+      </div>
       <div class="sg-row">
         <span class="sg-label">Prompt</span>
         <input class="sg-input" type="text" id="sgPrompt" placeholder="warehouse with shelves and crates" value="warehouse with shelves and crates">
@@ -1270,6 +1276,12 @@ body {
       <div class="sg-row">
         <span class="sg-label">Count</span>
         <input class="sg-input" type="number" id="sgCount" value="40" min="1" max="200" style="max-width:70px">
+        <select class="sel" id="sgDensity" onchange="sceneApplyRecommend()" style="height:24px;font-size:11px">
+          <option value="sparse">sparse</option>
+          <option value="medium" selected>medium</option>
+          <option value="dense">dense</option>
+        </select>
+        <span id="sgRecHint" style="font-size:10px;color:var(--text-tertiary)"></span>
         <span class="sg-label" style="margin-left:8px">Floor Z</span>
         <input class="sg-input" type="number" id="sgFloorZ" value="0" step="10" style="max-width:70px">
         <span class="sg-label" style="margin-left:8px">Gap cm</span>
@@ -1288,6 +1300,16 @@ body {
           <input type="checkbox" id="sgSpawn" checked>
           <div class="track"></div>Send to UE
         </label>
+      </div>
+      <div class="sg-row">
+        <span class="sg-label">Viewport</span>
+        <label class="tog">
+          <input type="checkbox" id="sgRefresh" checked>
+          <div class="track"></div>Auto-invalidate after spawn
+        </label>
+        <span style="font-size:10px;color:var(--text-tertiary);margin-left:6px">
+          Tip: also enable Realtime (Ctrl+R) in UE viewport
+        </span>
       </div>
       <div class="sg-row" style="gap:10px">
         <button class="btn btn-accent" id="btnSceneGen" onclick="sceneGenStart()">Generate</button>
@@ -4317,6 +4339,7 @@ async function saveAnalyzeIndices() {
 // ─── AI Scene Generation ───────────────────────────────────────────────────
 let _sgEvt = null;      // active EventSource
 let _sgActors = [];     // accumulated actor list for canvas preview
+let _sgVolume = null;   // last fetched volume bounds (or manual override)
 
 function sceneGenStart() {
   const prompt   = document.getElementById('sgPrompt').value.trim() || 'warehouse';
@@ -4327,6 +4350,17 @@ function sceneGenStart() {
   const bHost    = document.getElementById('sgBridgeHost').value.trim() || '127.0.0.1';
   const bPort    = parseInt(document.getElementById('sgBridgePort').value) || 9998;
   const doSpawn  = document.getElementById('sgSpawn').checked;
+  const doRefresh= document.getElementById('sgRefresh').checked;
+
+  // Resolve area + centre from fetched volume, or fall back to defaults.
+  let areaX = 3000, areaY = 2000, centreX = 0, centreY = 0;
+  if (_sgVolume) {
+    const bmin = _sgVolume.bounds_min, bmax = _sgVolume.bounds_max;
+    areaX = Math.max(1, Math.round(bmax[0] - bmin[0]));
+    areaY = Math.max(1, Math.round(bmax[1] - bmin[1]));
+    centreX = (bmin[0] + bmax[0]) / 2;
+    centreY = (bmin[1] + bmax[1]) / 2;
+  }
 
   _sgActors = [];
   sgCanvasClear();
@@ -4340,6 +4374,9 @@ function sceneGenStart() {
 
   const params = new URLSearchParams({
     prompt, count, floor_z: floorZ, min_gap: minGap,
+    area_x: areaX, area_y: areaY,
+    centre_x: centreX, centre_y: centreY,
+    refresh_every: doRefresh ? 1 : 0,
     bridge_host: bHost, bridge_port: bPort,
     spawn: doSpawn ? 'true' : 'false',
     ...(apiKey ? {api_key: apiKey} : {}),
@@ -4413,6 +4450,95 @@ function sgLogLine(msg, cls) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// ─── Volume Fetch + Count Recommendation ─────────────────────────────────
+async function sceneFetchVolume() {
+  const name = document.getElementById('sgVolName').value.trim() || 'PCGBuilderVolume';
+  const bHost = document.getElementById('sgBridgeHost').value.trim() || '127.0.0.1';
+  const bPort = parseInt(document.getElementById('sgBridgePort').value) || 9998;
+  const btn = document.getElementById('btnSgFetch');
+  const status = document.getElementById('sgVolStatus');
+  btn.disabled = true;
+  status.style.color = 'var(--text-tertiary)';
+  status.textContent = 'fetching...';
+  try {
+    const r = await fetch('/api/scene/volume_fetch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, bridge_host: bHost, bridge_port: bPort, timeout: 5}),
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      status.style.color = 'var(--danger)';
+      status.textContent = 'failed: ' + (d.error || 'unknown');
+      return;
+    }
+    _sgVolume = d.volume;
+    const bmin = d.volume.bounds_min, bmax = d.volume.bounds_max;
+    _SG_AREA_X = bmax[0] - bmin[0];
+    _SG_AREA_Y = bmax[1] - bmin[1];
+    _SG_CENTRE_X = (bmin[0] + bmax[0]) / 2;
+    _SG_CENTRE_Y = (bmin[1] + bmax[1]) / 2;
+    const area_m2 = (_SG_AREA_X * _SG_AREA_Y / 10000).toFixed(1);
+    status.style.color = 'var(--success)';
+    status.textContent =
+      `${(_SG_AREA_X/100).toFixed(1)}m x ${(_SG_AREA_Y/100).toFixed(1)}m (${area_m2}m^2) z=${bmin[2].toFixed(0)}`;
+    // Auto-fill floor Z
+    document.getElementById('sgFloorZ').value = bmin[2];
+    // Refresh recommendation + canvas
+    sceneApplyRecommend();
+    sgCanvasClear();
+  } catch (e) {
+    status.style.color = 'var(--danger)';
+    status.textContent = 'error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function sceneApplyRecommend() {
+  // Query backend for recommended count using current area+density.
+  const density = document.getElementById('sgDensity').value;
+  const ax = Math.round(_SG_AREA_X), ay = Math.round(_SG_AREA_Y);
+  try {
+    const r = await fetch(`/api/scene/recommend_count?area_x=${ax}&area_y=${ay}&density=${density}`);
+    const d = await r.json();
+    if (!d.ok) return;
+    const hint = document.getElementById('sgRecHint');
+    hint.textContent = `~${d.recommended} (${d.min}-${d.max}, ${d.area_m2}m^2)`;
+    hint.style.cursor = 'pointer';
+    hint.title = 'click to apply';
+    hint.onclick = () => { document.getElementById('sgCount').value = d.recommended; };
+  } catch (e) { /* silent */ }
+}
+
+// Auto-load cached volume + initial recommendation on first tab open
+(function _sgInitOnce() {
+  let inited = false;
+  const orig = window.switchCenterTab;
+  window.switchCenterTab = function(tab) {
+    orig.apply(this, arguments);
+    if (tab === 'scene' && !inited) {
+      inited = true;
+      sceneApplyRecommend();
+      fetch('/api/scene/volume').then(r => r.json()).then(d => {
+        if (d.ok && d.volume) {
+          _sgVolume = d.volume;
+          const bmin = d.volume.bounds_min, bmax = d.volume.bounds_max;
+          _SG_AREA_X = bmax[0] - bmin[0];
+          _SG_AREA_Y = bmax[1] - bmin[1];
+          _SG_CENTRE_X = (bmin[0] + bmax[0]) / 2;
+          _SG_CENTRE_Y = (bmin[1] + bmax[1]) / 2;
+          document.getElementById('sgVolStatus').style.color = 'var(--success)';
+          document.getElementById('sgVolStatus').textContent =
+            `cached ${(_SG_AREA_X/100).toFixed(1)}m x ${(_SG_AREA_Y/100).toFixed(1)}m`;
+          document.getElementById('sgFloorZ').value = bmin[2];
+          sceneApplyRecommend();
+        }
+      }).catch(()=>{});
+    }
+  };
+})();
+
 // ─── 2D top-down layout preview ──────────────────────────────────────────
 const _CLASS_COLORS = {
   SM_Shelf_Large: '#4f8ef7', SM_Shelf_Small: '#4f8ef7',
@@ -4428,7 +4554,7 @@ const _CLASS_SIZE = {
   SM_Barrel: [25,25], SM_Box_Large: [40,40], SM_Box_Small: [25,25],
   SM_ConveyorBelt: [150,40], SM_Forklift: [100,80],
 };
-const _SG_AREA_X = 3000, _SG_AREA_Y = 2000;
+let _SG_AREA_X = 3000, _SG_AREA_Y = 2000, _SG_CENTRE_X = 0, _SG_CENTRE_Y = 0;
 
 function sgCanvasClear() {
   const c = document.getElementById('sgCanvas');
@@ -4457,15 +4583,23 @@ function sgCanvasDraw(actors, total) {
   for (let x = 0; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
   for (let y = 0; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
 
-  // Map world cm → canvas px
+  // Map world cm → canvas px (volume-relative)
   const margin = 10;
   const scaleX = (W - margin*2) / _SG_AREA_X;
   const scaleY = (H - margin*2) / _SG_AREA_Y;
   const sc = Math.min(scaleX, scaleY);
   const offX = W/2, offY = H/2;
 
-  function wx(x) { return offX + x * sc; }
-  function wy(y) { return offY + y * sc; }
+  function wx(x) { return offX + (x - _SG_CENTRE_X) * sc; }
+  function wy(y) { return offY + (y - _SG_CENTRE_Y) * sc; }
+
+  // Draw volume outline
+  ctx.strokeStyle = 'rgba(100,180,255,0.8)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  const vw = _SG_AREA_X * sc, vh = _SG_AREA_Y * sc;
+  ctx.strokeRect(offX - vw/2, offY - vh/2, vw, vh);
+  ctx.setLineDash([]);
 
   // Draw actors
   for (const a of actors) {
