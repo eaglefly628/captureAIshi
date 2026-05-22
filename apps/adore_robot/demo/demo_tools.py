@@ -292,33 +292,28 @@ def dispatch_clear(mcp, _args: dict) -> dict:
     invalidate_workspace_cache()  # user may re-place volume after clear
     return mcp.demo_clear()
 
-# In-memory workspace cache. dispatch_spawn/batch/move query MCP every
-# call would mean an extra ~30ms RPC per actor on a 60-item batch.
-# Cache for 30s; cleared explicitly when level switches or demo clears.
-_WORKSPACE_CACHE: dict = {"ws": None, "ts": 0.0}
-_WORKSPACE_TTL_S = 30.0
+# In-memory workspace cache. Filled on first lookup, persists until the
+# user clears the demo or switches level (volume placement doesn't drift
+# within a session, so no time-based expiry is needed).
+_WORKSPACE_CACHE: dict = {"ws": None}
 
 
 def _cached_workspace(mcp) -> dict:
-    import time
-    now = time.time()
-    cached = _WORKSPACE_CACHE.get("ws")
-    if cached is None or (now - _WORKSPACE_CACHE.get("ts", 0)) > _WORKSPACE_TTL_S:
+    if _WORKSPACE_CACHE["ws"] is None:
         try:
-            cached = _resolve_pcg_workspace(mcp)
+            _WORKSPACE_CACHE["ws"] = _resolve_pcg_workspace(mcp)
         except Exception:
-            cached = {"offset_m": (0.0, 0.0), "size_m": None, "ref": None}
-        _WORKSPACE_CACHE["ws"] = cached
-        _WORKSPACE_CACHE["ts"] = now
-    return cached
+            _WORKSPACE_CACHE["ws"] = {"offset_m": (0.0, 0.0),
+                                       "size_m": None, "ref": None,
+                                       "resolved_by": None}
+    return _WORKSPACE_CACHE["ws"]
 
 
 def invalidate_workspace_cache() -> None:
-    """Clear the workspace cache. Call after switch_level / clear_demo
-    when the user might have moved or replaced the PCGBuilderVolume.
+    """Clear the workspace cache. Called from dispatch_clear and
+    dispatch_switch_level (user may re-place the volume in those flows).
     """
     _WORKSPACE_CACHE["ws"] = None
-    _WORKSPACE_CACHE["ts"] = 0.0
 
 
 def _resolve_pcg_workspace(mcp) -> dict:
@@ -666,9 +661,8 @@ def dispatch_warehouse(
         except Exception:
             pass
 
-    # PCGVolume volume resolution: offset + size (size may be None).
-    # Force a fresh fetch -- user may have just moved the volume.
-    invalidate_workspace_cache()
+    # PCGVolume resolution: offset + size (size may be None).
+    # Cache persists -- only invalidated by dispatch_clear / switch_level.
     ws = _cached_workspace(mcp)
     workspace_offset_m = ws["offset_m"]
     volume_size_m = ws["size_m"]
