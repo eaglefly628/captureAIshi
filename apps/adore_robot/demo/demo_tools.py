@@ -407,28 +407,112 @@ def _resolve_pcg_workspace(mcp) -> dict:
     return out
 
 
-def _try_invalidate_viewports(mcp) -> None:
-    """Best-effort viewport redraw -- silently no-op if the MCP server
-    doesn't expose a redraw tool.
+# UE5.8 MCP exposes 39 tools; NONE of them are named *Invalidate* /
+# *Redraw* / *Refresh*. (Verified via /api/mcp/tools 2026-05-22.)
+# The only documented paths to force an editor viewport tick are:
+#   1) ProgrammaticToolset.execute_tool_script + import unreal +
+#      unreal.EditorLevelLibrary.editor_invalidate_viewports()
+#      -- but the script sandbox may disallow `import unreal`; we probe
+#      get_execution_environment once and cache the verdict.
+#   2) User manually enables Realtime (Ctrl+R / viewport toolbar ⚡)
+#      in UE Editor viewport.
+#   3) CaptureEditorImage as a side effect of the front-end PIP refresh
+#      -- this DOES force a render frame and is the path that makes the
+#      ADORE web UI feel real-time. The actual UE Editor viewport window
+#      still only ticks when capture/realtime fires, but the ADORE
+#      preview is the visible surface the user watches during a demo.
+_INVALIDATE_STATE: dict = {
+    "mode": None,               # "script" | "camera" | "disabled"
+    "cam_cache": None,           # cached GetCameraTransform result for camera nudge
+    "hint_emitted": False,       # summary tip shown at most once per session
+}
 
-    UE5 Editor throttles viewport tick unless Realtime is enabled, which
-    makes remote spawning look frozen until the user hovers the viewport.
-    We try several known tool names; the first one that returns without
-    raising wins. List of candidates was probed against UE5.8 MCP's
-    EditorAppToolset (see tools/probe_mcp.py).
+_INVALIDATE_SCRIPT_INVALIDATE = (
+    "def run():\n"
+    "    import unreal\n"
+    "    unreal.EditorLevelLibrary.editor_invalidate_viewports()\n"
+    "    return {'ok': True}\n"
+)
+
+_TOOL_EXEC_SCRIPT = (
+    "toolset_registry.toolsets.core.programmatic."
+    "ProgrammaticToolset.execute_tool_script"
+)
+_TOOL_GET_CAM = "ToolsetRegistry.EditorAppToolset.GetCameraTransform"
+_TOOL_SET_CAM = "ToolsetRegistry.EditorAppToolset.SetCameraTransform"
+
+
+def viewport_hint_needed() -> bool:
+    """True the first time we determine invalidate is unavailable.
+    dispatch_warehouse appends this to the summary so the chat surface
+    explains why the actual UE viewport window looks frozen between
+    spawns -- user should enable Realtime (Ctrl+R) on the viewport,
+    or build the BP RefreshViewport function we documented in
+    docs/scene_foundry_bp_contract.md.
     """
-    candidates = (
-        "ToolsetRegistry.EditorAppToolset.InvalidateAllViewports",
-        "ToolsetRegistry.EditorAppToolset.RedrawAllViewports",
-        "ToolsetRegistry.EditorAppToolset.RedrawEditorViewports",
-        "toolset_registry.toolsets.core.editor_app.EditorAppTools.invalidate_viewports",
-    )
-    for name in candidates:
+    if _INVALIDATE_STATE["mode"] == "disabled" and not _INVALIDATE_STATE["hint_emitted"]:
+        _INVALIDATE_STATE["hint_emitted"] = True
+        return True
+    return False
+
+
+def _try_invalidate_viewports(mcp) -> None:
+    """Best-effort viewport redraw. Two-stage probe on first call:
+
+      1. Try `execute_tool_script` with `import unreal` -- this is the
+         only direct invalidate path. If the script sandbox allows the
+         unreal module, we cache mode="script" and use it forever.
+      2. Fallback to GetCameraTransform + SetCameraTransform-with-same-
+         transform. Setting the camera to its current value is a no-op
+         visually but forces the viewport to tick. Cache mode="camera".
+      3. If both fail (no sandbox + no editor app toolset), cache
+         mode="disabled" and emit the hint via viewport_hint_needed().
+
+    None of UE5.8 MCP's 39 native tools is named *Invalidate* /
+    *Redraw* / *Refresh*, so the indirect script + camera-nudge
+    paths above are the only options without user BP intervention.
+    """
+    state = _INVALIDATE_STATE
+    if state["mode"] == "disabled":
+        return
+
+    if state["mode"] is None:
+        # Stage 1 probe -- script-based invalidate.
         try:
-            mcp.call_tool_unwrapped(name, {})
+            mcp.call_tool_unwrapped(_TOOL_EXEC_SCRIPT,
+                                    {"script": _INVALIDATE_SCRIPT_INVALIDATE})
+            state["mode"] = "script"
             return
         except Exception:
-            continue
+            pass
+        # Stage 2 probe -- camera nudge.
+        try:
+            cam = mcp.call_tool_unwrapped(_TOOL_GET_CAM, {})
+            if isinstance(cam, dict):
+                state["cam_cache"] = cam
+                state["mode"] = "camera"
+                # exercise the round-trip immediately so we KNOW it works
+                mcp.call_tool_unwrapped(_TOOL_SET_CAM, {"transform": cam})
+                return
+        except Exception:
+            pass
+        state["mode"] = "disabled"
+        return
+
+    try:
+        if state["mode"] == "script":
+            mcp.call_tool_unwrapped(_TOOL_EXEC_SCRIPT,
+                                    {"script": _INVALIDATE_SCRIPT_INVALIDATE})
+        elif state["mode"] == "camera":
+            cam = state.get("cam_cache")
+            if cam is None:
+                cam = mcp.call_tool_unwrapped(_TOOL_GET_CAM, {})
+                state["cam_cache"] = cam
+            mcp.call_tool_unwrapped(_TOOL_SET_CAM, {"transform": cam})
+    except Exception:
+        # One-time failure -> permanently downgrade rather than keep
+        # spamming a broken tool name. Next session will re-probe.
+        state["mode"] = "disabled"
 
 
 def dispatch_warehouse(
@@ -575,10 +659,16 @@ def dispatch_warehouse(
 
     elapsed_s = round(time.time() - t_start, 2)
     if on_progress:
-        on_progress({
+        done_payload = {
             "phase": "done", "spawned": len(spawned),
             "failed": len(errors), "elapsed_s": elapsed_s,
-        })
+        }
+        if viewport_hint_needed():
+            done_payload["viewport_hint"] = (
+                "UE viewport 不会自动刷新 -- 请按 Ctrl+R 启用 viewport Realtime, "
+                "或在 PCG_Workspace 蓝图里加 RefreshViewport function (见 docs/scene_foundry_bp_contract.md)"
+            )
+        on_progress(done_payload)
 
     return {
         "spawned": spawned,

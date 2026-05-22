@@ -875,6 +875,58 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/mcp/probe_sandbox")
+def mcp_probe_sandbox():
+    """Tell xiaohuan whether the MCP Python sandbox allows `import unreal`.
+
+    UE5.8 MCP has 39 tools but NONE invalidate the viewport. The only
+    indirect path is ProgrammaticToolset.execute_tool_script with the
+    unreal module. This endpoint runs:
+      - get_execution_environment (sandbox manifest)
+      - one tiny `import unreal` smoke script
+
+    Returns {ok: bool, unreal_importable: bool, env: <manifest>, ...}.
+    Use this to decide whether to build a BP RefreshViewport function
+    (only worth it if unreal_importable=true; otherwise build the BP
+    AND we need a different trigger path).
+    """
+    env_info = None
+    unreal_importable = False
+    error = None
+    try:
+        env_info = mcp.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.programmatic."
+            "ProgrammaticToolset.get_execution_environment",
+            {},
+        )
+    except Exception as e:
+        error = f"env_probe: {type(e).__name__}: {e}"
+    try:
+        smoke = mcp.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.programmatic."
+            "ProgrammaticToolset.execute_tool_script",
+            {"script": (
+                "def run():\n"
+                "    try:\n"
+                "        import unreal  # noqa\n"
+                "        return {'unreal_importable': True}\n"
+                "    except Exception as e:\n"
+                "        return {'unreal_importable': False, 'err': str(e)}\n"
+            )},
+        )
+        if isinstance(smoke, dict):
+            unreal_importable = bool(smoke.get("unreal_importable"))
+    except Exception as e:
+        if error is None:
+            error = f"smoke: {type(e).__name__}: {e}"
+    return jsonify({
+        "ok": error is None,
+        "unreal_importable": unreal_importable,
+        "env": env_info,
+        "error": error,
+    })
+
+
 @app.route("/api/mcp/tools")
 def mcp_tools():
     try:

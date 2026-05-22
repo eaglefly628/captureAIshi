@@ -552,12 +552,24 @@ function App() {
             // the build happening in near-real-time without spamming MCP.
             if (d.i % 5 === 0) setUeShotKey(k => k + 1);
           },
+          onDone: (d) => {
+            // 'done' arrives before 'summary' and carries the optional
+            // viewport_hint when invalidate has been permanently disabled.
+            // Stash it on the message; onSummary appends the actor count
+            // tail without clobbering this hint.
+            if (d.viewport_hint) {
+              setMessages(prev => prev.map((m, mi) => mi === assistantIdx
+                ? { ...m, text: `${m.text}\n💡 ${d.viewport_hint}` }
+                : m));
+            }
+          },
           onSummary: (d) => {
             setSceneSeeded(true);
             setUeShotKey(k => k + 1);
+            const tail = d.spawned != null ? `  ·  ✓ ${d.spawned} actors` : '';
             setMessages(prev => prev.map((m, mi) => mi === assistantIdx
               ? { ...m,
-                  text: `${resp.narrate}  ·  ✓ ${d.spawned} actors (${d.elapsed_s}s)`,
+                  text: m.text.includes('✓') ? m.text : `${m.text}${tail}`,
                   warehouseProgress: null }
               : m));
           },
