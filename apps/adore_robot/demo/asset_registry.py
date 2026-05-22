@@ -20,15 +20,28 @@ _CUBE_PLACEHOLDER = "/PCG/SampleContent/MeshSockets/Meshes/1M_CubeWithSocket.1M_
 # the asset's published pivot point in UE; PackedLevels typically place
 # the pivot at floor level (z=0) already, so pivot_z_m = 0.
 _FORKLIFT_REAL = "/Game/Scene_Warehouse/Maps/PackedLevels/Ind_War_HandTruck_01.Ind_War_HandTruck_01"
+# In ADORE the "worker" slot is actually the robot scout -- this is a
+# robotics training-scene foundry, the moving agent IS the robot.
+_ROBOT_REAL = "/Game/Robot_scout_R_21/Mesh/SK_Robot_scout_R21.SK_Robot_scout_R21"
 
-ASSET_REGISTRY: dict[str, str] = {
+# Rack variants: 4 BPP variants in the same package; resolve() picks one
+# at random per call so a 'shelf' row visually varies. Single-asset
+# entries stay as plain strings (no behavior change).
+_SHELF_VARIANTS = [
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_01",
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_02",
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_03",
+    "/Game/Scene_Warehouse/Assets/Blueprints/BPP_Ind_War_Rack_01.BPP_Ind_War_Rack_04",
+]
+
+ASSET_REGISTRY: dict[str, "str | list[str]"] = {
     # Warehouse v0 (LLM primary catalog)
-    "shelf":    _CUBE_PLACEHOLDER,
-    "forklift": _FORKLIFT_REAL,  # real Ind_War_HandTruck_01 PackedLevel
+    "shelf":    _SHELF_VARIANTS,   # random rack variant per spawn
+    "forklift": _FORKLIFT_REAL,    # real Ind_War_HandTruck_01 PackedLevel
     "pallet":   _CUBE_PLACEHOLDER,
     "box":      _CUBE_PLACEHOLDER,
     "drum":     _CUBE_PLACEHOLDER,
-    "worker":   _CUBE_PLACEHOLDER,
+    "worker":   _ROBOT_REAL,       # SK_Robot_scout_R21 -- the robot agent
 
     # Lighting (warehouse procgen v0.4.1 -- xiaohuan apps/adore_robot/pcg/)
     # Real impl: BP_MegaLight_Sodium / CoolWhite; v0 placeholder cube
@@ -76,20 +89,32 @@ ASSET_PIVOT_Z_M: dict[str, float] = {
 }
 # Ceiling lights hang from ceiling -- no floor offset needed (their z is
 # already set to ceiling_h_m in pcg/lighting.py).
-for _light in ("light_sodium", "light_cool_write", "light_cool_white", "light_mixed", "ceiling_pendant"):
+for _light in ("light_sodium", "light_cool_white", "light_mixed", "ceiling_pendant"):
     ASSET_PIVOT_Z_M[_light] = 0.0
-# Real PackedLevel assets publish their own floor pivot at z=0.
-ASSET_PIVOT_Z_M["forklift"] = 0.0
+# Real assets (PackedLevel / BPP / SkeletalMesh) publish their pivot at
+# floor level (z=0) -- no extra lift needed when spawning.
+for _real in ("forklift", "shelf", "worker"):
+    ASSET_PIVOT_Z_M[_real] = 0.0
 
 
 def resolve(asset_name: str) -> str:
-    """Returns the UE path, or raises KeyError if not in v0 catalog."""
+    """Returns the UE path, or raises KeyError if not in v0 catalog.
+
+    If the registry entry is a list (asset variants), picks one uniformly
+    at random per call so e.g. a shelf row gets visual variety. The choice
+    is INTENTIONALLY not pcg-seeded -- it's purely cosmetic and we don't
+    want a re-spawn with the same seed to keep the same rack stamp.
+    """
     if asset_name not in ASSET_REGISTRY:
         raise KeyError(
             f"asset_name '{asset_name}' not in v0 catalog; "
             f"valid: {', '.join(ASSET_NAMES)}"
         )
-    return ASSET_REGISTRY[asset_name]
+    v = ASSET_REGISTRY[asset_name]
+    if isinstance(v, list):
+        import random
+        return random.choice(v)
+    return v
 
 
 def pivot_z(asset_name: str) -> float:
