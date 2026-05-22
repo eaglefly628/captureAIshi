@@ -408,18 +408,18 @@ def _resolve_pcg_workspace(mcp) -> dict:
         # asks for one candidate so a failure on one doesn't block the
         # others.
         loc_cm = None
-        # root_component is known-unreadable on Volume actors via UE5.8
-        # MCP ("the following properties could not be read: root_component")
-        # so don't include it -- it'd just spam a warning per spawn.
+        # T3D dump confirms: TriggerVolume's position lives on
+        # BrushComponent.RelativeLocation -- Brush actors keep their
+        # transform on the component, NOT on the actor (ActorLocation
+        # is (0,0,0)). UE5.8 MCP reflection uses PascalCase prop names
+        # ("BrushComponent" not "brush_component") so we list both.
         loc_candidates = [
-            "actor_location",
-            "actor_world_location",
+            "BrushComponent", "brush_component",     # Brush actor path
+            "actor_location", "actor_world_location",
             "actor_transform",
-            "brush_component",
         ]
 
-        # First discover what's actually readable so we only ask for
-        # those names (avoids the warning torrent the user is seeing).
+        # Discover schema once so we only ask for fields that exist.
         readable: set[str] = set()
         try:
             schema = mcp.list_actor_properties(ref)
@@ -427,17 +427,15 @@ def _resolve_pcg_workspace(mcp) -> dict:
                 readable = set(schema.keys())
         except Exception:
             pass
-
-        # If we know the schema, restrict candidates; else try all.
         if readable:
             loc_candidates = [c for c in loc_candidates if c in readable]
-            # Add any schema-discovered field whose name screams location.
             for k in readable:
                 kl = k.lower()
-                if ("location" in kl or "position" in kl or "transform" in kl) \
-                        and k not in loc_candidates:
+                if ("location" in kl or "position" in kl or "transform" in kl
+                        or "brush" in kl) and k not in loc_candidates:
                     loc_candidates.append(k)
 
+        component_obj = None  # cache for size lookup below
         for field in loc_candidates:
             try:
                 props = mcp.get_actor_properties(ref, [field])
@@ -448,16 +446,21 @@ def _resolve_pcg_workspace(mcp) -> dict:
             for k, v in props.items():
                 if not isinstance(v, dict):
                     continue
+                # 1) Direct Vector return (actor_location etc.)
                 if "x" in v and "y" in v:
                     loc_cm = (float(v["x"]), float(v["y"]))
                     break
-                t_loc = v.get("location")
+                # 2) Transform with nested location
+                t_loc = v.get("location") or v.get("Location")
                 if isinstance(t_loc, dict) and "x" in t_loc:
                     loc_cm = (float(t_loc["x"]), float(t_loc["y"]))
                     break
-                rel = v.get("relative_location") or v.get("relativeLocation")
+                # 3) Component object -> RelativeLocation / relative_location
+                rel = (v.get("RelativeLocation") or v.get("relative_location")
+                       or v.get("relativeLocation"))
                 if isinstance(rel, dict) and "x" in rel:
                     loc_cm = (float(rel["x"]), float(rel["y"]))
+                    component_obj = v
                     break
             if loc_cm:
                 out["resolved_by"] = (out["resolved_by"] or "?") + ":" + field
@@ -470,50 +473,61 @@ def _resolve_pcg_workspace(mcp) -> dict:
                 (loc_cm[1] - bp["y"]) / 100.0,
             )
 
-        # --- size: best-effort. Try brush_component / box_extent, fall
-        # through to None (caller's room_w/l_m default kicks in).
-        extent_cm = None
-        scale = {"x": 1.0, "y": 1.0, "z": 1.0}
-        size_candidates = ["brush_component", "box_extent"]
+        # --- size = (BrushBuilder.X/Y/Z) * RelativeScale3D / 100 cm/m ---
+        # T3D ground truth (from user 2026-05-22):
+        #   BrushComponent0.RelativeScale3D = (X=5, Y=5, Z=1)
+        #   CubeBuilder defaults X=Y=Z=200 (full extent, cm)
+        # so for an unmodified cube volume scaled 5x5x1, size = (10,10,2) m.
+        scale = None
+        if component_obj:
+            s = (component_obj.get("RelativeScale3D")
+                 or component_obj.get("relative_scale3d")
+                 or component_obj.get("relativeScale3D"))
+            if isinstance(s, dict) and "x" in s:
+                scale = (float(s["x"]), float(s["y"]), float(s.get("z", 1)))
+
+        # --- offset (use loc_cm collected above) ---
+        if loc_cm:
+            bp = mcp._demo_origin_world_cm()
+            out["offset_m"] = (
+                (loc_cm[0] - bp["x"]) / 100.0,
+                (loc_cm[1] - bp["y"]) / 100.0,
+            )
+
+        # --- size: BrushBuilder.X/Y/Z (cm, full extent) * RelativeScale3D ---
+        # CubeBuilder defaults X=Y=Z=200; user T3D scale (5,5,1) -> 10x10x2 m.
+        brush_xyz = (200.0, 200.0, 200.0)
+        bb_candidates = ["BrushBuilder", "brush_builder"]
         if readable:
-            size_candidates = [c for c in size_candidates if c in readable]
+            bb_candidates = [c for c in bb_candidates if c in readable]
             for k in readable:
-                kl = k.lower()
-                if ("extent" in kl or "bounds" in kl) and k not in size_candidates:
-                    size_candidates.append(k)
-        for field in size_candidates:
+                if "builder" in k.lower() and k not in bb_candidates:
+                    bb_candidates.append(k)
+        for field in bb_candidates:
             try:
                 props = mcp.get_actor_properties(ref, [field])
             except Exception:
                 continue
             if not isinstance(props, dict):
                 continue
-            for k, v in props.items():
-                if not isinstance(v, dict):
-                    continue
-                # Direct extent vector
-                if "x" in v and "y" in v and "z" in v and extent_cm is None:
-                    extent_cm = (float(v["x"]), float(v["y"]), float(v.get("z", 200)))
-                # Nested component with extent + scale
-                for ek in ("box_extent", "boxExtent", "brush_extent", "extent"):
-                    sub = v.get(ek)
-                    if isinstance(sub, dict) and "x" in sub and extent_cm is None:
-                        extent_cm = (float(sub["x"]), float(sub["y"]),
-                                     float(sub.get("z", 200)))
-                        break
-                s = v.get("relative_scale3d") or v.get("relativeScale3D")
-                if isinstance(s, dict) and "x" in s:
-                    scale = {"x": float(s["x"]), "y": float(s["y"]),
-                             "z": float(s.get("z", 1))}
-            if extent_cm:
+            bb = props.get(field)
+            if not isinstance(bb, dict):
+                continue
+            x = bb.get("X") or bb.get("x")
+            y = bb.get("Y") or bb.get("y")
+            z = bb.get("Z") or bb.get("z")
+            if x and y and z:
+                brush_xyz = (float(x), float(y), float(z))
                 break
 
-        if extent_cm is not None:
+        if scale is not None:
             out["size_m"] = (
-                round(2 * extent_cm[0] * scale["x"] / 100.0, 2),
-                round(2 * extent_cm[1] * scale["y"] / 100.0, 2),
-                round(2 * extent_cm[2] * scale["z"] / 100.0, 2),
+                round(brush_xyz[0] * scale[0] / 100.0, 2),
+                round(brush_xyz[1] * scale[1] / 100.0, 2),
+                round(brush_xyz[2] * scale[2] / 100.0, 2),
             )
+            out["brush_xyz_cm"] = brush_xyz
+            out["scale"] = scale
     except Exception:
         pass
     return out
