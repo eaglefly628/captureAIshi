@@ -7,6 +7,7 @@ from web.routes.hacks import bp as hacks_bp
 from web.routes.input_rec import bp as input_rec_bp
 from web.routes.obs import bp as obs_bp
 from web.routes.paths import bp as paths_bp
+from web.routes.scene import bp as scene_bp
 from web.routes.sessions import bp as sessions_bp
 from web.routes.tools import bp as tools_bp
 from web.routes.trajectory import bp as trajectory_bp
@@ -22,4 +23,5 @@ ALL_BLUEPRINTS = [
     tools_bp,
     obs_bp,
     input_rec_bp,
+    scene_bp,
 ]

@@ -593,6 +593,16 @@ body {
   transition: width 0.3s;
 }
 
+/* ─── AI Scene Panel ─── */
+#aiScenePanel { display:none; flex-direction:column; height:100%; padding:10px; gap:8px; box-sizing:border-box; overflow-y:auto; }
+#aiScenePanel .sg-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+#aiScenePanel .sg-label { font-size:11px; color:var(--text-tertiary); min-width:64px; flex-shrink:0; }
+#aiScenePanel .sg-input { flex:1; min-width:60px; }
+#sgProgress { display:none; flex-direction:column; gap:4px; margin-top:4px; }
+#sgProgressBar .progress-fill { transition: width 0.15s; }
+#sgLog { font-size:10px; color:var(--text-secondary); max-height:110px; overflow-y:auto; line-height:1.5; }
+#sgCanvas { width:100%; height:160px; background:var(--bg-base); border-radius:var(--radius); border:1px solid var(--border); flex-shrink:0; }
+
 /* ─── Lightbox ─── */
 .lightbox {
   position: fixed;
@@ -1218,6 +1228,7 @@ body {
         <span class="center-tab active" id="tabLog" onclick="switchCenterTab('log')">Output</span>
         <span class="center-tab" id="tab3d" onclick="switchCenterTab('3d')">3D View</span>
         <span class="center-tab" id="tabInput" onclick="switchCenterTab('input')">⏺ Input Rec</span>
+        <span class="center-tab" id="tabScene" onclick="switchCenterTab('scene')">AI Scene</span>
       </div>
       <span id="logCount" style="font-weight:400;text-transform:none;letter-spacing:0">0 lines</span>
     </div>
@@ -1250,6 +1261,52 @@ body {
       <div id="inputRecSummary" style="font-size:10px;color:var(--text-tertiary);flex-shrink:0;display:none"></div>
       <canvas id="inputRecCanvas" style="flex:1;min-height:0;width:100%;background:var(--bg-base);border-radius:var(--radius)"></canvas>
     </div>
+    <!-- ── AI Scene Generation Panel ── -->
+    <div id="aiScenePanel">
+      <div class="sg-row">
+        <span class="sg-label">Prompt</span>
+        <input class="sg-input" type="text" id="sgPrompt" placeholder="warehouse with shelves and crates" value="warehouse with shelves and crates">
+      </div>
+      <div class="sg-row">
+        <span class="sg-label">Count</span>
+        <input class="sg-input" type="number" id="sgCount" value="40" min="1" max="200" style="max-width:70px">
+        <span class="sg-label" style="margin-left:8px">Floor Z</span>
+        <input class="sg-input" type="number" id="sgFloorZ" value="0" step="10" style="max-width:70px">
+        <span class="sg-label" style="margin-left:8px">Gap cm</span>
+        <input class="sg-input" type="number" id="sgMinGap" value="150" min="50" max="500" style="max-width:70px">
+      </div>
+      <div class="sg-row">
+        <span class="sg-label">API Key</span>
+        <input class="sg-input" type="password" id="sgApiKey" placeholder="DEEPSEEK_API_KEY (or set env var)">
+      </div>
+      <div class="sg-row">
+        <span class="sg-label">Bridge</span>
+        <input type="text" id="sgBridgeHost" value="127.0.0.1" style="width:110px">
+        <span style="font-size:11px;color:var(--text-tertiary)">:</span>
+        <input type="number" id="sgBridgePort" value="9998" min="1" max="65535" style="width:64px">
+        <label class="tog" style="margin-left:6px">
+          <input type="checkbox" id="sgSpawn" checked>
+          <div class="track"></div>Send to UE
+        </label>
+      </div>
+      <div class="sg-row" style="gap:10px">
+        <button class="btn btn-accent" id="btnSceneGen" onclick="sceneGenStart()">Generate</button>
+        <button class="btn" onclick="sceneGenCancel()" id="btnSceneCancel" style="display:none">Cancel</button>
+        <span id="sgStatus" style="font-size:11px;color:var(--text-tertiary)">Ready</span>
+      </div>
+      <div id="sgProgress">
+        <div class="sg-row" style="font-size:10px;gap:6px">
+          <span id="sgProgressLabel" style="color:var(--text-secondary);min-width:80px"></span>
+          <span id="sgProgressPct" style="color:var(--accent);min-width:36px;text-align:right"></span>
+        </div>
+        <div class="progress-track" id="sgProgressBar" style="height:6px">
+          <div class="progress-fill" id="sgProgressFill"></div>
+        </div>
+        <div id="sgLog"></div>
+      </div>
+      <canvas id="sgCanvas" title="Top-down layout preview"></canvas>
+    </div>
+
     <div class="path-controls" id="pathControls">
       <div class="path-toolbar">
         <select class="sel" id="pathSelect" onchange="switchPath(this.value)">
@@ -2113,15 +2170,18 @@ function switchCenterTab(tab) {
   const canvas = document.getElementById('view3d');
   const pathCtl = document.getElementById('pathControls');
   const inputPanel = document.getElementById('inputRecPanel');
+  const scenePanel = document.getElementById('aiScenePanel');
   document.getElementById('tabLog').classList.toggle('active', tab === 'log');
   document.getElementById('tab3d').classList.toggle('active', tab === '3d');
   document.getElementById('tabInput').classList.toggle('active', tab === 'input');
+  document.getElementById('tabScene').classList.toggle('active', tab === 'scene');
   if (tab === '3d') {
     logEl.style.display = 'none';
     progEl.style.display = 'none';
     canvas.style.display = 'block';
     pathCtl.classList.add('visible');
     inputPanel.style.display = 'none';
+    scenePanel.style.display = 'none';
     view3dActive = true;
     resizeCanvas3d();
     loadTrajectory();
@@ -2133,17 +2193,28 @@ function switchCenterTab(tab) {
     canvas.style.display = 'none';
     pathCtl.classList.remove('visible');
     inputPanel.style.display = 'flex';
+    scenePanel.style.display = 'none';
     view3dActive = false;
     inputRecRefreshFiles();
     inputRecPollStart();
     // Redraw canvas after layout settles
     requestAnimationFrame(() => { const s=document.getElementById('inputRecFileList'); if(s?.value) inputRecLoad(s.value); });
+  } else if (tab === 'scene') {
+    logEl.style.display = 'none';
+    progEl.style.display = 'none';
+    canvas.style.display = 'none';
+    pathCtl.classList.remove('visible');
+    inputPanel.style.display = 'none';
+    scenePanel.style.display = 'flex';
+    view3dActive = false;
+    inputRecPollStop();
   } else {
     logEl.style.display = '';
     progEl.style.display = '';
     canvas.style.display = 'none';
     pathCtl.classList.remove('visible');
     inputPanel.style.display = 'none';
+    scenePanel.style.display = 'none';
     view3dActive = false;
     inputRecPollStop();
   }
@@ -4241,6 +4312,181 @@ async function saveAnalyzeIndices() {
       status.style.color = 'var(--danger)';
     }
   } catch(e) { status.textContent = 'Error: '+e; }
+}
+
+// ─── AI Scene Generation ───────────────────────────────────────────────────
+let _sgEvt = null;      // active EventSource
+let _sgActors = [];     // accumulated actor list for canvas preview
+
+function sceneGenStart() {
+  const prompt   = document.getElementById('sgPrompt').value.trim() || 'warehouse';
+  const count    = parseInt(document.getElementById('sgCount').value) || 40;
+  const floorZ   = parseFloat(document.getElementById('sgFloorZ').value) || 0;
+  const minGap   = parseInt(document.getElementById('sgMinGap').value) || 150;
+  const apiKey   = document.getElementById('sgApiKey').value.trim();
+  const bHost    = document.getElementById('sgBridgeHost').value.trim() || '127.0.0.1';
+  const bPort    = parseInt(document.getElementById('sgBridgePort').value) || 9998;
+  const doSpawn  = document.getElementById('sgSpawn').checked;
+
+  _sgActors = [];
+  sgCanvasClear();
+
+  document.getElementById('btnSceneGen').disabled = true;
+  document.getElementById('btnSceneCancel').style.display = '';
+  document.getElementById('sgStatus').textContent = 'Starting...';
+  document.getElementById('sgProgress').style.display = 'flex';
+  document.getElementById('sgLog').innerHTML = '';
+  sgSetProgress(0, count, 'Calling LLM...');
+
+  const params = new URLSearchParams({
+    prompt, count, floor_z: floorZ, min_gap: minGap,
+    bridge_host: bHost, bridge_port: bPort,
+    spawn: doSpawn ? 'true' : 'false',
+    ...(apiKey ? {api_key: apiKey} : {}),
+  });
+
+  if (_sgEvt) { _sgEvt.close(); _sgEvt = null; }
+  const es = new EventSource('/api/scene/generate_stream?' + params.toString());
+  _sgEvt = es;
+
+  es.onmessage = function(e) {
+    let d;
+    try { d = JSON.parse(e.data); } catch { return; }
+
+    if (d.phase === 'llm') {
+      sgSetProgress(0, count, d.msg);
+      sgLogLine(d.msg, 'info');
+    } else if (d.phase === 'llm_done') {
+      sgLogLine(d.msg, 'success');
+    } else if (d.phase === 'spawn_start') {
+      const msg = d.bridge_connected ? 'Bridge connected' : 'Bridge offline (layout saved, no spawn)';
+      sgLogLine(msg, d.bridge_connected ? 'success' : 'warn');
+    } else if (d.phase === 'spawn') {
+      sgSetProgress(d.i, d.total, `Spawning ${d.i}/${d.total}`);
+      if (!d.ok) sgLogLine(`[FAIL] ${d.class} @ (${d.x},${d.y})`, 'error');
+      _sgActors.push(d);
+      sgCanvasDraw(_sgActors, count);
+    } else if (d.phase === 'done') {
+      sgSetProgress(d.total, d.total, `Done: ${d.spawned}/${d.total} spawned`);
+      document.getElementById('sgStatus').textContent =
+        `${d.spawned}/${d.total} actors ${d.bridge_connected ? 'sent to UE' : 'layout saved'}`;
+      sceneGenDone();
+    } else if (d.phase === 'error') {
+      document.getElementById('sgStatus').textContent = 'Error: ' + d.msg;
+      sgLogLine('Error: ' + d.msg, 'error');
+      sceneGenDone();
+    }
+  };
+  es.onerror = function() {
+    document.getElementById('sgStatus').textContent = 'Connection error';
+    sceneGenDone();
+  };
+}
+
+function sceneGenCancel() {
+  if (_sgEvt) { _sgEvt.close(); _sgEvt = null; }
+  document.getElementById('sgStatus').textContent = 'Cancelled';
+  sceneGenDone();
+}
+
+function sceneGenDone() {
+  if (_sgEvt) { _sgEvt.close(); _sgEvt = null; }
+  document.getElementById('btnSceneGen').disabled = false;
+  document.getElementById('btnSceneCancel').style.display = 'none';
+}
+
+function sgSetProgress(cur, total, label) {
+  const pct = total > 0 ? Math.round(cur / total * 100) : 0;
+  document.getElementById('sgProgressFill').style.width = pct + '%';
+  document.getElementById('sgProgressLabel').textContent = label;
+  document.getElementById('sgProgressPct').textContent = pct + '%';
+}
+
+function sgLogLine(msg, cls) {
+  const logEl = document.getElementById('sgLog');
+  const line = document.createElement('div');
+  line.style.color = cls === 'error' ? 'var(--danger)' :
+                     cls === 'warn'  ? 'var(--warning)' :
+                     cls === 'success' ? 'var(--success)' : 'var(--text-secondary)';
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ─── 2D top-down layout preview ──────────────────────────────────────────
+const _CLASS_COLORS = {
+  SM_Shelf_Large: '#4f8ef7', SM_Shelf_Small: '#4f8ef7',
+  SM_Pallet_Wood: '#b07c3a', SM_Pallet_Metal: '#888',
+  SM_Crate_Large: '#e07030', SM_Crate_Small: '#f09050',
+  SM_Barrel: '#9060c0', SM_Box_Large: '#30b070', SM_Box_Small: '#50d090',
+  SM_ConveyorBelt: '#c0c020', SM_Forklift: '#e04040',
+};
+const _CLASS_SIZE = {
+  SM_Shelf_Large: [90,30], SM_Shelf_Small: [60,25],
+  SM_Pallet_Wood: [60,60], SM_Pallet_Metal: [60,60],
+  SM_Crate_Large: [50,50], SM_Crate_Small: [30,30],
+  SM_Barrel: [25,25], SM_Box_Large: [40,40], SM_Box_Small: [25,25],
+  SM_ConveyorBelt: [150,40], SM_Forklift: [100,80],
+};
+const _SG_AREA_X = 3000, _SG_AREA_Y = 2000;
+
+function sgCanvasClear() {
+  const c = document.getElementById('sgCanvas');
+  const ctx = c.getContext('2d');
+  c.width = c.offsetWidth * (window.devicePixelRatio || 1);
+  c.height = c.offsetHeight * (window.devicePixelRatio || 1);
+  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+
+function sgCanvasDraw(actors, total) {
+  const c = document.getElementById('sgCanvas');
+  if (!c) return;
+  const W = c.offsetWidth, H = c.offsetHeight;
+  c.width = W * (window.devicePixelRatio || 1);
+  c.height = H * (window.devicePixelRatio || 1);
+  const ctx = c.getContext('2d');
+  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+  // Background grid
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 0.5;
+  const gs = 30;
+  for (let x = 0; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = 0; y < H; y += gs) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  // Map world cm → canvas px
+  const margin = 10;
+  const scaleX = (W - margin*2) / _SG_AREA_X;
+  const scaleY = (H - margin*2) / _SG_AREA_Y;
+  const sc = Math.min(scaleX, scaleY);
+  const offX = W/2, offY = H/2;
+
+  function wx(x) { return offX + x * sc; }
+  function wy(y) { return offY + y * sc; }
+
+  // Draw actors
+  for (const a of actors) {
+    const [hw, hd] = (_CLASS_SIZE[a.class] || [40,40]).map(v => v * (a.scale||1) * sc);
+    const color = _CLASS_COLORS[a.class] || '#88aaff';
+    const rad = (a.yaw || 0) * Math.PI / 180;
+    ctx.save();
+    ctx.translate(wx(a.x), wy(a.y));
+    ctx.rotate(rad);
+    ctx.fillStyle = color + 'cc';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.fillRect(-hw, -hd, hw*2, hd*2);
+    ctx.strokeRect(-hw, -hd, hw*2, hd*2);
+    ctx.restore();
+  }
+
+  // Progress label
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '10px monospace';
+  ctx.fillText(`${actors.length} / ${total}`, 6, 14);
 }
 </script>
 </body>
