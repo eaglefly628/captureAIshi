@@ -16,10 +16,15 @@ from __future__ import annotations
 # without suffix in 5.8.
 _CUBE_PLACEHOLDER = "/PCG/SampleContent/MeshSockets/Meshes/1M_CubeWithSocket.1M_CubeWithSocket"
 
+# Real warehouse asset paths (PackedLevelActor / StaticMesh). Pivot is
+# the asset's published pivot point in UE; PackedLevels typically place
+# the pivot at floor level (z=0) already, so pivot_z_m = 0.
+_FORKLIFT_REAL = "/Game/Scene_Warehouse/Maps/PackedLevels/Ind_War_HandTruck_01.Ind_War_HandTruck_01"
+
 ASSET_REGISTRY: dict[str, str] = {
     # Warehouse v0 (LLM primary catalog)
     "shelf":    _CUBE_PLACEHOLDER,
-    "forklift": _CUBE_PLACEHOLDER,
+    "forklift": _FORKLIFT_REAL,  # real Ind_War_HandTruck_01 PackedLevel
     "pallet":   _CUBE_PLACEHOLDER,
     "box":      _CUBE_PLACEHOLDER,
     "drum":     _CUBE_PLACEHOLDER,
@@ -71,8 +76,10 @@ ASSET_PIVOT_Z_M: dict[str, float] = {
 }
 # Ceiling lights hang from ceiling -- no floor offset needed (their z is
 # already set to ceiling_h_m in pcg/lighting.py).
-for _light in ("light_sodium", "light_cool_white", "light_mixed", "ceiling_pendant"):
+for _light in ("light_sodium", "light_cool_write", "light_cool_white", "light_mixed", "ceiling_pendant"):
     ASSET_PIVOT_Z_M[_light] = 0.0
+# Real PackedLevel assets publish their own floor pivot at z=0.
+ASSET_PIVOT_Z_M["forklift"] = 0.0
 
 
 def resolve(asset_name: str) -> str:
