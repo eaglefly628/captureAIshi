@@ -877,21 +877,62 @@ def mcp_status():
 
 @app.route("/api/demo/pie_start", methods=["POST", "GET"])
 def pie_start():
-    """Send Alt+P to the UE Editor window to start Play-In-Editor.
+    """Start Play-In-Editor via SlateInspectorToolset.
 
-    Requires the ADORE Flask process to run on the same Windows box as
-    UE Editor (the Win32 SendInput path) and UE's default 'Play In
-    Editor' hotkey (Alt+P) untouched.
+    Real MCP path (no OS keyboard synthesis): focus main editor window,
+    then PressKey('Alt+P'). UE default hotkey for Play In Editor.
+    Falls back to Win32 SendInput on hosts where SlateInspector RPC
+    fails (e.g. UE not running, toolset not loaded).
     """
-    from demo.pie_control import play_in_editor
-    return jsonify(play_in_editor())
+    # Step 1: focus main editor window
+    try:
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.Windows",
+            {"action": "select", "index": 0},
+        )
+        # Step 2: send Alt+P to focused window
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.PressKey",
+            {"key": "Alt+P"},
+        )
+        return jsonify({"ok": True, "method": "slate_inspector",
+                        "combo": "Alt+P"})
+    except Exception as slate_err:
+        # Fallback: Windows-only SendInput hack
+        try:
+            from demo.pie_control import play_in_editor as _sendinput_play
+            result = _sendinput_play()
+            result["slate_error"] = f"{type(slate_err).__name__}: {slate_err}"
+            return jsonify(result)
+        except Exception as fallback_err:
+            return jsonify({"ok": False,
+                            "slate_error": f"{type(slate_err).__name__}: {slate_err}",
+                            "fallback_error": f"{type(fallback_err).__name__}: {fallback_err}"}), 500
 
 
 @app.route("/api/demo/pie_stop", methods=["POST", "GET"])
 def pie_stop():
-    """Send Esc to UE Editor to stop the active PIE session."""
-    from demo.pie_control import end_play_in_editor
-    return jsonify(end_play_in_editor())
+    """Stop PIE via SlateInspectorToolset: focus window + PressKey('Esc')."""
+    try:
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.Windows",
+            {"action": "select", "index": 0},
+        )
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.PressKey",
+            {"key": "Esc"},
+        )
+        return jsonify({"ok": True, "method": "slate_inspector", "combo": "Esc"})
+    except Exception as slate_err:
+        try:
+            from demo.pie_control import end_play_in_editor as _sendinput_stop
+            result = _sendinput_stop()
+            result["slate_error"] = f"{type(slate_err).__name__}: {slate_err}"
+            return jsonify(result)
+        except Exception as fallback_err:
+            return jsonify({"ok": False,
+                            "slate_error": f"{type(slate_err).__name__}: {slate_err}",
+                            "fallback_error": f"{type(fallback_err).__name__}: {fallback_err}"}), 500
 
 
 @app.route("/api/demo/refresh_volume", methods=["POST", "GET"])
