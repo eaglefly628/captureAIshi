@@ -964,57 +964,25 @@ def pie_stop():
 
 @app.route("/api/demo/capture_channel")
 def capture_channel():
-    """Mock RGB+Depth+Normal+ObjectID multi-channel for the demo.
-
-    RGB is captured live from UE via CaptureEditorImage; depth/normal/
-    objectid are derived from RGB server-side until the real apps/capture
-    pipeline is wired (TODO xiaohuan post-demo).
+    """Serve a single channel of a prior dispatch_capture run from the
+    in-memory CAPTURE_CACHE. Front-end fetches all 4 URLs concurrently,
+    so we must NOT call UE's CaptureEditorImage from this endpoint --
+    that's what caused 3/4 to fail in the user screenshot.
     """
-    channel = (request.args.get("channel") or "rgb").lower()
+    from demo.demo_tools import CAPTURE_CACHE
     try:
-        png = mcp.capture_editor_image()
-    except Exception as e:
-        return Response(f"capture err: {e}".encode(), status=500,
-                        mimetype="text/plain")
+        ts = int(request.args.get("ts", "0"))
+    except Exception:
+        ts = 0
+    channel = (request.args.get("channel") or "rgb").lower()
+    entry = CAPTURE_CACHE.get(ts)
+    if not entry:
+        return Response(b"capture cache miss; re-issue capture",
+                        status=410, mimetype="text/plain")
+    png = entry.get(channel)
     if not png:
         return Response(b"", status=204)
-
-    if channel == "rgb":
-        return Response(png, mimetype="image/png",
-                        headers={"Cache-Control": "no-store"})
-
-    # Derived channels via PIL. PIL ships with Flask install (it doesn't,
-    # but Pillow is common; degrade gracefully if missing).
-    try:
-        from PIL import Image, ImageOps, ImageFilter
-        import io, hashlib
-    except Exception:
-        return Response(png, mimetype="image/png")
-
-    img = Image.open(io.BytesIO(png)).convert("RGB")
-    if channel == "depth":
-        # Grayscale + invert, looks like a depth map
-        gray = ImageOps.grayscale(img)
-        depth = ImageOps.invert(gray)
-        out_img = depth.convert("RGB")
-    elif channel == "normal":
-        # Edge-emphasized + tint blue/red, looks like normal map
-        edges = img.filter(ImageFilter.FIND_EDGES)
-        out_img = Image.merge("RGB", (
-            ImageOps.autocontrast(edges.split()[0]),
-            ImageOps.autocontrast(edges.split()[1]),
-            Image.eval(edges.split()[2], lambda v: 128 + v // 2),
-        ))
-    elif channel == "objectid":
-        # Posterize + colorize -- looks like a segmentation mask
-        post = ImageOps.posterize(img, 2)
-        out_img = post
-    else:
-        out_img = img
-
-    buf = io.BytesIO()
-    out_img.save(buf, format="PNG")
-    return Response(buf.getvalue(), mimetype="image/png",
+    return Response(png, mimetype="image/png",
                     headers={"Cache-Control": "no-store"})
 
 

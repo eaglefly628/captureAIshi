@@ -1053,37 +1053,87 @@ DISPATCHERS = {
 }
 
 
-def dispatch_capture(mcp, _args: dict) -> dict:
-    """v0.4.3 demo: capture 4 robot-training channels.
+# Module-level cache: ts -> {rgb, depth, normal, objectid} as PNG bytes.
+# Avoids 4 concurrent CaptureEditorImage RPCs the moment the front-end
+# renders the 2x2 grid -- one win 3 lose race observed in user screenshot.
+CAPTURE_CACHE: dict[int, dict[str, bytes]] = {}
+_CAPTURE_CACHE_MAX = 8
 
-    RGB is real (CaptureEditorImage). Depth/Normal/ObjectID are
-    SERVER-SIDE MOCKS for now: we return URLs that the front-end
-    fetches, and the server generates derived images (grayscale of
-    RGB for depth, solid normal-map color, palette-colorized blocks
-    for objectid). The legend lists demo actors from the ledger so
-    the chat can show 'segment N = forklift_1'.
+
+def dispatch_capture(mcp, _args: dict) -> dict:
+    """v0.4.3 demo: capture 4 robot-training channels in ONE shot.
+
+    Server captures RGB once via CaptureEditorImage, derives the other
+    three channels with PIL, stores all four PNG bytes in CAPTURE_CACHE,
+    and returns URLs that hit the cache (not UE) so the 4 simultaneous
+    front-end <img> loads can't race each other.
 
     Post-demo (TODO xiaohuan): wire this to apps/capture pipeline's
-    renderdoc RGB+Depth+Normal+ObjectID real export.
+    renderdoc multi-buffer real export.
     """
-    import time
+    import time, io
     ts = int(time.time() * 1000)
-    rgb_url = f"/api/mcp/screenshot.png?t={ts}"
-    base = "/api/demo/capture_channel"
-    out = {
-        "ok": True,
-        "ts": ts,
-        "channels": {
-            "rgb":      rgb_url,
-            "depth":    f"{base}?channel=depth&t={ts}",
-            "normal":   f"{base}?channel=normal&t={ts}",
-            "objectid": f"{base}?channel=objectid&t={ts}",
-        },
-        "legend": _capture_legend(mcp),
-        "note": "depth/normal/objectid currently MOCK (derived). "
-                "RGB is real CaptureEditorImage.",
+    try:
+        png = mcp.capture_editor_image()
+    except Exception as e:
+        return {"ok": False, "ts": ts,
+                "error": f"capture_editor_image: {type(e).__name__}: {e}",
+                "hint": "Open a level in UE Editor and make sure a viewport is visible."}
+    if not png:
+        return {"ok": False, "ts": ts,
+                "error": "capture_editor_image returned no data",
+                "hint": "Open a level + show a viewport, then retry."}
+
+    try:
+        from PIL import Image, ImageOps, ImageFilter
+    except Exception:
+        # PIL missing -- still return the RGB, mock channels can't be
+        # derived. Front-end will show RGB and blank tiles.
+        CAPTURE_CACHE[ts] = {"rgb": png}
+        return {"ok": True, "ts": ts,
+                "channels": _channel_urls(ts, only=["rgb"]),
+                "legend": _capture_legend(mcp),
+                "note": "PIL not installed -- only RGB available."}
+
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+
+    def _png(im) -> bytes:
+        b = io.BytesIO()
+        im.save(b, format="PNG")
+        return b.getvalue()
+
+    gray = ImageOps.grayscale(img)
+    depth_img = ImageOps.invert(gray).convert("RGB")
+    edges = img.filter(ImageFilter.FIND_EDGES)
+    er, eg, eb = edges.split()
+    normal_img = Image.merge("RGB", (
+        ImageOps.autocontrast(er),
+        ImageOps.autocontrast(eg),
+        Image.eval(eb, lambda v: 128 + v // 2),
+    ))
+    objectid_img = ImageOps.posterize(img, 2)
+
+    CAPTURE_CACHE[ts] = {
+        "rgb": png,
+        "depth": _png(depth_img),
+        "normal": _png(normal_img),
+        "objectid": _png(objectid_img),
     }
-    return out
+    # Trim oldest if cache too big.
+    while len(CAPTURE_CACHE) > _CAPTURE_CACHE_MAX:
+        oldest = min(CAPTURE_CACHE.keys())
+        CAPTURE_CACHE.pop(oldest, None)
+
+    return {"ok": True, "ts": ts,
+            "channels": _channel_urls(ts),
+            "legend": _capture_legend(mcp),
+            "note": "depth/normal/objectid currently MOCK (derived). RGB is real."}
+
+
+def _channel_urls(ts: int, only: list[str] | None = None) -> dict:
+    base = "/api/demo/capture_channel"
+    keys = only or ["rgb", "depth", "normal", "objectid"]
+    return {k: f"{base}?ts={ts}&channel={k}" for k in keys}
 
 
 def _capture_legend(mcp) -> list[dict]:
