@@ -64,7 +64,7 @@ from mcp_client import UnrealMCPClient
 from demo.prompts import SYSTEM_PROMPT, UPDATE_SCENE_TOOL
 from demo.demo_tools import (
     DEMO_TOOLS, DEMO_TOOL_NAMES, dispatch as dispatch_demo, _clamp_xy,
-    dispatch_warehouse,
+    dispatch_warehouse, dispatch_bulk_spawn,
 )
 from demo.runner import DemoJobRegistry
 from demo.thumbnail import render_thumbnail_svg
@@ -458,14 +458,17 @@ def _try_demo_tool(tool_name: str, args: dict) -> dict:
     user zero feedback (the "MCP -> UE: layout · 113 actors" message
     arrived all at once).
     """
-    if tool_name == "generate_warehouse_layout":
+    if tool_name in ("generate_warehouse_layout", "bulk_spawn"):
         clamped, warns = _clamp_xy(args)
+        stream_url = ("/api/demo/generate_warehouse_stream"
+                      if tool_name == "generate_warehouse_layout"
+                      else "/api/demo/bulk_spawn_stream")
         out = {
             "ok": True,
             "tool": tool_name,
             "args": clamped,
             "deferred": True,
-            "stream_url": "/api/demo/generate_warehouse_stream",
+            "stream_url": stream_url,
             "result": {},  # filled in by the SSE consumer
         }
         if warns:
@@ -795,6 +798,59 @@ def api_demo_stream(job_id):
 # and produce duplicate-name actors like box_76_85cf x2).
 _WAREHOUSE_GEN_LOCK = threading.Lock()
 _WAREHOUSE_GEN_RUNNING = False
+
+
+@app.route("/api/demo/bulk_spawn_stream", methods=["POST"])
+def api_bulk_spawn_stream():
+    """SSE-streamed bulk_spawn -- mirrors warehouse stream so the
+    front-end's runWarehouseStream consumer works unchanged. Streams
+    plan/spawn/done events for a single asset_name x count scatter.
+    """
+    import queue as _q
+    import threading
+
+    args = request.get_json(silent=True) or {}
+    q: _q.Queue = _q.Queue()
+    SENTINEL = object()
+    final: dict = {}
+
+    def _emit(payload: dict) -> None:
+        q.put(payload)
+
+    def _worker() -> None:
+        try:
+            result = dispatch_bulk_spawn(mcp, args, on_progress=_emit)
+            final.update(result)
+        except ConnectionError as e:
+            _emit({"phase": "error", "message": f"UE MCP unreachable: {e}"})
+        except Exception as e:
+            _emit({"phase": "error", "message": f"{type(e).__name__}: {e}"})
+        finally:
+            q.put(SENTINEL)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    def gen():
+        while True:
+            payload = q.get()
+            if payload is SENTINEL:
+                if final:
+                    yield _sse("summary", {
+                        "spawned": final.get("total", 0),
+                        "asset_name": final.get("asset_name"),
+                        "requested": final.get("requested"),
+                        "errors": final.get("errors", []),
+                        "scatter_region_m": final.get("scatter_region_m"),
+                        "elapsed_s": final.get("elapsed_s"),
+                    })
+                break
+            phase = payload.get("phase", "msg")
+            yield _sse(phase, payload)
+
+    return Response(gen(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
 
 
 @app.route("/api/demo/generate_warehouse_stream", methods=["POST"])

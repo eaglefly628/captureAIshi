@@ -569,10 +569,16 @@ function App() {
       // of waiting 5-15s for one giant relay response. resp.relayMeta is
       // the chat-endpoint's mcp_relay envelope; deferred=true means the
       // backend skipped the synchronous dispatch and handed the args back.
-      if (tc.name === 'generate_warehouse_layout'
+      if ((tc.name === 'generate_warehouse_layout' || tc.name === 'bulk_spawn')
           && resp.relayMeta && resp.relayMeta.deferred) {
-        // Clear any previous warehouse so live spawns are visible.
-        setSpawnedActors([]);
+        // Only warehouse clears the scene first; bulk_spawn appends.
+        if (tc.name === 'generate_warehouse_layout') {
+          setSpawnedActors([]);
+        }
+        const streamUrl = resp.relayMeta.stream_url
+          || (tc.name === 'bulk_spawn'
+              ? '/api/demo/bulk_spawn_stream'
+              : '/api/demo/generate_warehouse_stream');
         await runWarehouseStream(resp.relayMeta.args || tc.args || {}, {
           onPlan: (d) => {
             setMessages(prev => prev.map((m, mi) => mi === assistantIdx
@@ -629,7 +635,7 @@ function App() {
               ? { ...m, text: `${resp.narrate}  ·  ✗ ${d.message || 'stream failed'}` }
               : m));
           },
-        });
+        }, streamUrl);
       } else {
         await sleep(220 + Math.random() * 120);
       }
@@ -1110,10 +1116,10 @@ async function callRealChat(userText, scene, currentParams) {
 // EventSource only supports GET; we POST + manually parse the text/event-stream
 // body. Block-by-block: events are separated by "\n\n", lines inside an event
 // are "event: <name>" / "data: <json>".
-async function runWarehouseStream(args, cb) {
+async function runWarehouseStream(args, cb, url = '/api/demo/generate_warehouse_stream') {
   let resp;
   try {
-    resp = await fetch('/api/demo/generate_warehouse_stream', {
+    resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(args || {}),

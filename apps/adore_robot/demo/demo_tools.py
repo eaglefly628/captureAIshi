@@ -962,44 +962,84 @@ def dispatch_switch_level(mcp, args: dict) -> dict:
     return mcp.demo_switch_level(args.get("level_path", ""))
 
 
-def dispatch_bulk_spawn(mcp, args: dict) -> dict:
+def dispatch_bulk_spawn(mcp, args: dict,
+                        on_progress: Callable[[dict], None] | None = None) -> dict:
     """Server-side scatter: pick N random (x,y) inside the PCGVolume and
     spawn the same asset at each. LLM only supplied {asset_name, count}.
+
+    on_progress (v0.4.3 demo): emits plan/spawn/done events for the SSE
+    progress-bar path. If None, runs silently.
     """
-    import random
+    import random, time
     asset_name = args["asset_name"]
     count = int(args["count"])
     ws = _cached_workspace(mcp)
     anchor = ws.get("world_cm")
     size = ws.get("size_m") or (20.0, 20.0, 2.0)
-    half_w = max(0.5, size[0] / 2.0 - 0.5)   # 0.5m margin from wall
+    half_w = max(0.5, size[0] / 2.0 - 0.5)
     half_l = max(0.5, size[1] / 2.0 - 0.5)
     rng = random.Random()
     try:
         asset_path = resolve_asset(asset_name)
     except Exception as e:
+        if on_progress:
+            on_progress({"phase": "error", "message": str(e)})
         return {"ok": False, "total": 0, "error": str(e)}
     pz = pivot_z(asset_name)
+    t_start = time.time()
+
+    if on_progress:
+        on_progress({
+            "phase": "plan", "total": count,
+            "by_asset": {asset_name: count},
+            "volume_anchored": bool(ws.get("ref")),
+            "volume_size_m": ws.get("size_m"),
+            "args": {"asset_name": asset_name, "count": count},
+        })
+
     spawned: list[dict] = []
     errors: list[dict] = []
     for i in range(count):
         x = rng.uniform(-half_w, half_w)
         y = rng.uniform(-half_l, half_l)
+        yaw = rng.uniform(0, 360)
+        ok = False
         try:
             rec = mcp.demo_spawn(
                 asset_path=asset_path,
                 asset_name=asset_name,
                 x_m=x, y_m=y, z_m=pz,
-                yaw_deg=rng.uniform(0, 360),
+                yaw_deg=yaw,
                 anchor_override_cm=anchor,
             )
             spawned.append(rec)
+            ok = True
         except Exception as e:
             errors.append({"i": i, "error": f"{type(e).__name__}: {e}"})
+
+        if on_progress:
+            evt = {
+                "phase": "spawn", "i": i + 1, "total": count,
+                "asset_name": asset_name,
+                "x": x, "y": y, "z": pz, "yaw_deg": yaw,
+                "ok": ok,
+            }
+            if ok and spawned:
+                last = spawned[-1]
+                evt["actor_handle"] = last.get("actor_handle")
+                evt["id_number"] = last.get("id_number")
+            on_progress(evt)
+
+    elapsed_s = round(time.time() - t_start, 2)
+    if on_progress:
+        on_progress({"phase": "done", "spawned": len(spawned),
+                     "failed": len(errors), "elapsed_s": elapsed_s})
+
     return {"ok": True, "total": len(spawned),
             "asset_name": asset_name, "requested": count,
             "spawned": spawned, "errors": errors,
-            "scatter_region_m": (half_w * 2, half_l * 2)}
+            "scatter_region_m": (half_w * 2, half_l * 2),
+            "elapsed_s": elapsed_s}
 
 
 def dispatch_pie_start(mcp, _args: dict) -> dict:
