@@ -875,6 +875,25 @@ def mcp_status():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "url": MCP_URL}), 500
 
 
+@app.route("/api/demo/pie_start", methods=["POST", "GET"])
+def pie_start():
+    """Send Alt+P to the UE Editor window to start Play-In-Editor.
+
+    Requires the ADORE Flask process to run on the same Windows box as
+    UE Editor (the Win32 SendInput path) and UE's default 'Play In
+    Editor' hotkey (Alt+P) untouched.
+    """
+    from demo.pie_control import play_in_editor
+    return jsonify(play_in_editor())
+
+
+@app.route("/api/demo/pie_stop", methods=["POST", "GET"])
+def pie_stop():
+    """Send Esc to UE Editor to stop the active PIE session."""
+    from demo.pie_control import end_play_in_editor
+    return jsonify(end_play_in_editor())
+
+
 @app.route("/api/demo/refresh_volume", methods=["POST", "GET"])
 def refresh_volume():
     """Drop cached workspace and re-resolve. Use after switching UE level
