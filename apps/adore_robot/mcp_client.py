@@ -58,6 +58,12 @@ class UnrealMCPClient:
         self._session_id: str | None = None
         self._next_id = 1
         self._lock = threading.Lock()
+        # Separate lock for the spawn id-allocation critical section.
+        # _lock is per-RPC; two demo_spawn calls on different threads
+        # both released _lock between their _next_id_for read and the
+        # subsequent ledger write -> both picked the same id_number.
+        # _spawn_id_lock holds across that read-allocate-write window.
+        self._spawn_id_lock = threading.Lock()
         self._loaded_toolsets: set[str] = set()
         # Persistent http.client.HTTPConnection -- reused across all POSTs so
         # the underlying TCP socket survives across RPCs. urllib opens a new
@@ -628,17 +634,21 @@ class UnrealMCPClient:
         # forklift_2, shelf_1 ... User can say "挪开 2 号叉车" and LLM
         # maps it through list_objects -> handle "forklift_2".
         bucket_for_id = self._ledger_bucket()
-        id_number = (id_number_override if id_number_override is not None
-                     else self._next_id_for(bucket_for_id, asset_name))
-        # Append a uuid4 hash so two spawns can never share an actor_name,
-        # even when the ledger was cleared but old UE actors lingered
-        # (e.g. demo_clear missed PackedLevel orphans). Same-name actors
-        # in UE confused add_to_scene_from_asset's return ref -- markers
-        # would write to the FIRST box_4, leaving the second as untagged
-        # orphan. Verified via Outliner: two 'box_4' actors, only one in
-        # Demo/v0 folder with tags.
+        # Serialize the id-allocation -> ledger-placeholder write so a
+        # second concurrent demo_spawn can't pick the same id_number.
+        # Without this lock, user saw box_76_85cf x2 (same id, same
+        # uuid suffix even -- two threads computed both in lock-step).
         import uuid as _uuid
-        actor_name = f"{asset_name}_{id_number}_{_uuid.uuid4().hex[:4]}"
+        with self._spawn_id_lock:
+            id_number = (id_number_override if id_number_override is not None
+                         else self._next_id_for(bucket_for_id, asset_name))
+            actor_name = f"{asset_name}_{id_number}_{_uuid.uuid4().hex[:4]}"
+            # Reserve the id immediately so the next concurrent
+            # _next_id_for sees it as used.
+            bucket_for_id[actor_name] = {
+                "actor_handle": actor_name, "asset_name": asset_name,
+                "id_number": id_number, "_pending": True,
+            }
         spawned = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.add_to_scene_from_asset",
             {

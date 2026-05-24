@@ -764,6 +764,14 @@ def api_demo_stream(job_id):
     })
 
 
+# Mutex preventing two SSE warehouse generations from running at once
+# (front-end StrictMode / double-click / SSE auto-reconnect can all
+# fire the endpoint twice; both worker threads then race on _next_id_for
+# and produce duplicate-name actors like box_76_85cf x2).
+_WAREHOUSE_GEN_LOCK = threading.Lock()
+_WAREHOUSE_GEN_RUNNING = False
+
+
 @app.route("/api/demo/generate_warehouse_stream", methods=["POST"])
 def api_generate_warehouse_stream():
     """SSE-streamed warehouse generation. Stream events:
@@ -780,6 +788,22 @@ def api_generate_warehouse_stream():
     import threading
 
     args = request.get_json(silent=True) or {}
+
+    # Reject re-entrant invocations -- the second front-end trigger gets
+    # an immediate 'in progress' instead of starting a parallel worker.
+    global _WAREHOUSE_GEN_RUNNING
+    with _WAREHOUSE_GEN_LOCK:
+        if _WAREHOUSE_GEN_RUNNING:
+            return Response(
+                _sse("error", {"message": "another warehouse generation in progress; ignored duplicate trigger"})
+                + _sse("done", {"spawned": 0, "failed": 0, "elapsed_s": 0,
+                                 "rejected_as_duplicate": True}),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache",
+                         "X-Accel-Buffering": "no"},
+            )
+        _WAREHOUSE_GEN_RUNNING = True
+
     q: _q.Queue = _q.Queue()
     SENTINEL = object()
     final: dict = {}
@@ -788,6 +812,7 @@ def api_generate_warehouse_stream():
         q.put(payload)
 
     def _worker() -> None:
+        global _WAREHOUSE_GEN_RUNNING
         try:
             result = dispatch_warehouse(mcp, args, on_progress=_emit)
             final.update(result)
@@ -798,6 +823,8 @@ def api_generate_warehouse_stream():
         except Exception as e:
             _emit({"phase": "error", "message": f"{type(e).__name__}: {e}"})
         finally:
+            with _WAREHOUSE_GEN_LOCK:
+                _WAREHOUSE_GEN_RUNNING = False
             q.put(SENTINEL)
 
     threading.Thread(target=_worker, daemon=True).start()
