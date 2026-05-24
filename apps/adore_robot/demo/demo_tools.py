@@ -189,11 +189,13 @@ SWITCH_LEVEL_TOOL = ToolDef(
 SPAWN_BATCH_TOOL = ToolDef(
     name="spawn_batch",
     description=(
-        "Spawn many static mesh actors in one call. PREFERRED for any "
-        "intent that places multiple objects -- rows, grids, lines, "
-        "evenly-spaced sets, 'put N forklifts in the back', etc. One "
-        "tool call instead of N. Each item is {asset_name, x, y, z?, "
-        "yaw_deg?} with the same enum + bounds rules as spawn_object."
+        "Spawn many static mesh actors AT EXPLICIT COORDINATES in one call. "
+        "Use for tight layouts where each actor's (x,y) matters -- rows, "
+        "grids, lines, evenly-spaced sets. Each item is {asset_name, x, y, "
+        "z?, yaw_deg?} with the same enum + bounds rules as spawn_object. "
+        "For >50 items OR when only the COUNT matters (not the position), "
+        "prefer bulk_spawn -- it auto-scatters in the PCGVolume so the "
+        "LLM doesn't have to invent 100 coordinates."
     ),
     input_schema={
         "type": "object",
@@ -218,6 +220,28 @@ SPAWN_BATCH_TOOL = ToolDef(
             },
         },
         "required": ["items"],
+    },
+)
+
+
+BULK_SPAWN_TOOL = ToolDef(
+    name="bulk_spawn",
+    description=(
+        "Scatter N actors of the SAME asset_name randomly inside the PCG "
+        "volume. PREFERRED for '100 个油桶 / 50 个 box / 30 个 forklift / "
+        "spawn 200 pallets / batch add N X'. Server picks random positions "
+        "inside the volume bounds and yaw 0-360, so the LLM only needs to "
+        "name the asset and count -- no coordinate invention required. "
+        "Max count 500 per call."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "asset_name": {"type": "string", "enum": ASSET_NAMES},
+            "count": {"type": "integer", "minimum": 1, "maximum": 500},
+        },
+        "required": ["asset_name", "count"],
     },
 )
 
@@ -284,6 +308,7 @@ DEMO_TOOLS: list[ToolDef] = [
     PIE_START_TOOL,
     PIE_STOP_TOOL,
     CAPTURE_TOOL,
+    BULK_SPAWN_TOOL,
 ]
 
 DEMO_TOOL_NAMES = {t.name for t in DEMO_TOOLS}
@@ -937,6 +962,46 @@ def dispatch_switch_level(mcp, args: dict) -> dict:
     return mcp.demo_switch_level(args.get("level_path", ""))
 
 
+def dispatch_bulk_spawn(mcp, args: dict) -> dict:
+    """Server-side scatter: pick N random (x,y) inside the PCGVolume and
+    spawn the same asset at each. LLM only supplied {asset_name, count}.
+    """
+    import random
+    asset_name = args["asset_name"]
+    count = int(args["count"])
+    ws = _cached_workspace(mcp)
+    anchor = ws.get("world_cm")
+    size = ws.get("size_m") or (20.0, 20.0, 2.0)
+    half_w = max(0.5, size[0] / 2.0 - 0.5)   # 0.5m margin from wall
+    half_l = max(0.5, size[1] / 2.0 - 0.5)
+    rng = random.Random()
+    try:
+        asset_path = resolve_asset(asset_name)
+    except Exception as e:
+        return {"ok": False, "total": 0, "error": str(e)}
+    pz = pivot_z(asset_name)
+    spawned: list[dict] = []
+    errors: list[dict] = []
+    for i in range(count):
+        x = rng.uniform(-half_w, half_w)
+        y = rng.uniform(-half_l, half_l)
+        try:
+            rec = mcp.demo_spawn(
+                asset_path=asset_path,
+                asset_name=asset_name,
+                x_m=x, y_m=y, z_m=pz,
+                yaw_deg=rng.uniform(0, 360),
+                anchor_override_cm=anchor,
+            )
+            spawned.append(rec)
+        except Exception as e:
+            errors.append({"i": i, "error": f"{type(e).__name__}: {e}"})
+    return {"ok": True, "total": len(spawned),
+            "asset_name": asset_name, "requested": count,
+            "spawned": spawned, "errors": errors,
+            "scatter_region_m": (half_w * 2, half_l * 2)}
+
+
 def dispatch_pie_start(mcp, _args: dict) -> dict:
     """Start PIE via SlateInspectorToolset (Windows.select + PressKey Alt+P).
     Same path as /api/demo/pie_start so the LLM and the manual endpoint
@@ -984,6 +1049,7 @@ DISPATCHERS = {
     "play_in_editor": dispatch_pie_start,
     "end_play_in_editor": dispatch_pie_stop,
     "capture_robot_views": lambda mcp, args: dispatch_capture(mcp, args),
+    "bulk_spawn": dispatch_bulk_spawn,
 }
 
 

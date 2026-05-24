@@ -465,7 +465,8 @@ function App() {
             x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
           })));
           setSceneSeeded(true);
-        } else if (r.tool === 'spawn_batch' && Array.isArray(res.spawned)) {
+        } else if ((r.tool === 'spawn_batch' || r.tool === 'bulk_spawn')
+                   && Array.isArray(res.spawned)) {
           setSpawnedActors(prev => [...prev, ...res.spawned.map(s => ({
             actor_handle: s.actor_handle,
             asset_name: s.asset_name,
