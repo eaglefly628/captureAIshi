@@ -763,14 +763,13 @@ class UnrealMCPClient:
                      "tries": 0, "errors": []}
 
         deadline = time.time() + deadline_s
-        wait_s = 0.1                        # initial backoff, doubles each round
-        actor_obj = {"refPath": actor_ref}  # for ActorTools fallback
+        wait_s = 0.1   # initial backoff; doubles each round, capped 0.6s
 
         while time.time() < deadline:
             out["tries"] += 1
             attempt = out["tries"]
 
-            # ── Folder set + verify ────────────────────────────────────
+            # ── Folder: set then verify ─────────────────────────────────
             if not out["folder_ok"]:
                 try:
                     self.call_tool_unwrapped(
@@ -779,36 +778,6 @@ class UnrealMCPClient:
                     )
                 except Exception as e:
                     out["errors"].append(f"set_folder t{attempt}: {type(e).__name__}: {e}")
-
-            # ── Tag set (set_properties first, ActorTools.add_tag after
-            # half the deadline so transient sync issues get a fair shot
-            # before we switch APIs) + verify ──────────────────────────
-            half_done = time.time() > deadline - (deadline_s / 2)
-            if not out["tag_ok"]:
-                try:
-                    if half_done:
-                        # Fallback path: per-tag ActorTools.add_tag.
-                        for tag in desired_tags:
-                            self.call_tool_unwrapped(
-                                "toolset_registry.toolsets.core.actor.ActorTools.add_tag",
-                                {"actor": actor_obj, "tag": tag},
-                            )
-                    else:
-                        self.set_actor_properties(actor_ref, {"tags": desired_tags})
-                except Exception as e:
-                    out["errors"].append(f"set_tags t{attempt}: {type(e).__name__}: {e}")
-
-            if not out["tag_ok"]:
-                try:
-                    chk = self.get_actor_properties(actor_ref, ["tags"])
-                    tags = chk.get("tags") if isinstance(chk, dict) else None
-                    if isinstance(tags, list) and "demo_v0_spawned" in [str(t) for t in tags]:
-                        out["tag_ok"] = True
-                except Exception as e:
-                    out["errors"].append(f"verify_tags t{attempt}: {type(e).__name__}: {e}")
-
-            # ── Folder verify ──────────────────────────────────────────
-            if not out["folder_ok"]:
                 try:
                     folder_actors = self.call_tool_unwrapped(
                         "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
@@ -827,10 +796,24 @@ class UnrealMCPClient:
                 except Exception as e:
                     out["errors"].append(f"verify_folder t{attempt}: {type(e).__name__}: {e}")
 
+            # ── Tag: set then verify ────────────────────────────────────
+            if not out["tag_ok"]:
+                try:
+                    self.set_actor_properties(actor_ref, {"tags": desired_tags})
+                except Exception as e:
+                    out["errors"].append(f"set_tags t{attempt}: {type(e).__name__}: {e}")
+                try:
+                    chk = self.get_actor_properties(actor_ref, ["tags"])
+                    tags = chk.get("tags") if isinstance(chk, dict) else None
+                    if isinstance(tags, list) and "demo_v0_spawned" in [str(t) for t in tags]:
+                        out["tag_ok"] = True
+                except Exception as e:
+                    out["errors"].append(f"verify_tags t{attempt}: {type(e).__name__}: {e}")
+
             if out["folder_ok"] and out["tag_ok"]:
                 return out
             time.sleep(wait_s)
-            wait_s = min(wait_s * 1.5, 0.6)  # exp backoff cap 0.6s
+            wait_s = min(wait_s * 1.5, 0.6)
 
         return out
 
