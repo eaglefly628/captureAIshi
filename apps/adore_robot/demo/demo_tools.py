@@ -216,6 +216,36 @@ SPAWN_BATCH_TOOL = ToolDef(
 )
 
 
+PIE_START_TOOL = ToolDef(
+    name="play_in_editor",
+    description=(
+        "Start UE Editor Play-In-Editor (PIE). Use this when the user "
+        "says '开始 PIE / play / 运行 / 进入游戏 / start play / "
+        "play in editor / 开始播放'. Drives the editor UI via "
+        "SlateInspector to press Alt+P."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+    },
+)
+
+PIE_STOP_TOOL = ToolDef(
+    name="end_play_in_editor",
+    description=(
+        "Stop the current PIE session. Use this when the user says "
+        "'停止 PIE / stop play / end play / 退出游戏 / 关闭 PIE'. "
+        "Sends Esc to the editor."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+    },
+)
+
+
 DEMO_TOOLS: list[ToolDef] = [
     SPAWN_OBJECT_TOOL,
     SPAWN_BATCH_TOOL,
@@ -226,6 +256,8 @@ DEMO_TOOLS: list[ToolDef] = [
     GENERATE_WAREHOUSE_TOOL,
     CLEAR_DEMO_TOOL,
     SWITCH_LEVEL_TOOL,
+    PIE_START_TOOL,
+    PIE_STOP_TOOL,
 ]
 
 DEMO_TOOL_NAMES = {t.name for t in DEMO_TOOLS}
@@ -879,6 +911,40 @@ def dispatch_switch_level(mcp, args: dict) -> dict:
     return mcp.demo_switch_level(args.get("level_path", ""))
 
 
+def dispatch_pie_start(mcp, _args: dict) -> dict:
+    """Start PIE via SlateInspectorToolset (Windows.select + PressKey Alt+P).
+    Same path as /api/demo/pie_start so the LLM and the manual endpoint
+    behave identically.
+    """
+    try:
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.Windows",
+            {"action": "select", "index": 0},
+        )
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.PressKey",
+            {"key": "Alt+P"},
+        )
+        return {"ok": True, "method": "slate_inspector", "combo": "Alt+P"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def dispatch_pie_stop(mcp, _args: dict) -> dict:
+    try:
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.Windows",
+            {"action": "select", "index": 0},
+        )
+        mcp.call_tool_unwrapped(
+            "SlateInspectorToolset.SlateInspectorToolset.PressKey",
+            {"key": "Esc"},
+        )
+        return {"ok": True, "method": "slate_inspector", "combo": "Esc"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 DISPATCHERS = {
     "spawn_object": dispatch_spawn,
     "spawn_batch": dispatch_batch,
@@ -889,6 +955,8 @@ DISPATCHERS = {
     "clear_demo_objects": dispatch_clear,
     "generate_warehouse_layout": dispatch_warehouse,
     "switch_level": dispatch_switch_level,
+    "play_in_editor": dispatch_pie_start,
+    "end_play_in_editor": dispatch_pie_stop,
 }
 
 
