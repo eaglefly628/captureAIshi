@@ -1141,8 +1141,11 @@ DISPATCHERS = {
     "play_in_editor": dispatch_pie_start,
     "end_play_in_editor": dispatch_pie_stop,
     "capture_robot_views": lambda mcp, args: dispatch_capture(mcp, args),
-    "flythrough_capture": dispatch_flythrough,
-    "capture_dataset": dispatch_capture_dataset,
+    # lambdas defer name lookup -- dispatch_flythrough/capture_dataset are
+    # defined further down in the file (after _capture_legend), so direct
+    # references would NameError on import.
+    "flythrough_capture": lambda mcp, args: dispatch_flythrough(mcp, args),
+    "capture_dataset": lambda mcp, args: dispatch_capture_dataset(mcp, args),
     "bulk_spawn": dispatch_bulk_spawn,
 }
 
