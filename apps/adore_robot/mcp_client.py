@@ -630,7 +630,15 @@ class UnrealMCPClient:
         bucket_for_id = self._ledger_bucket()
         id_number = (id_number_override if id_number_override is not None
                      else self._next_id_for(bucket_for_id, asset_name))
-        actor_name = f"{asset_name}_{id_number}"
+        # Append a uuid4 hash so two spawns can never share an actor_name,
+        # even when the ledger was cleared but old UE actors lingered
+        # (e.g. demo_clear missed PackedLevel orphans). Same-name actors
+        # in UE confused add_to_scene_from_asset's return ref -- markers
+        # would write to the FIRST box_4, leaving the second as untagged
+        # orphan. Verified via Outliner: two 'box_4' actors, only one in
+        # Demo/v0 folder with tags.
+        import uuid as _uuid
+        actor_name = f"{asset_name}_{id_number}_{_uuid.uuid4().hex[:4]}"
         spawned = self.call_tool_unwrapped(
             "toolset_registry.toolsets.core.scene.SceneTools.add_to_scene_from_asset",
             {
@@ -671,9 +679,12 @@ class UnrealMCPClient:
                 # Loud warn so we see broken markers immediately instead
                 # of discovering them on the next demo_clear orphan.
                 print(f"[demo_spawn] WARN marker incomplete for "
-                      f"{actor_name}: folder_ok={marker_result['folder_ok']} "
+                      f"{actor_name} (ref={actor_ref}): "
+                      f"folder_ok={marker_result['folder_ok']} "
                       f"tag_ok={marker_result['tag_ok']} "
-                      f"errors={marker_result['errors']}", flush=True)
+                      f"tries={marker_result['tries']} "
+                      f"last_get_tags={marker_result.get('last_get_tags','n/a')} "
+                      f"errors={marker_result['errors'][-3:]}", flush=True)
 
         record = {
             "actor_handle": actor_name,
@@ -816,14 +827,24 @@ class UnrealMCPClient:
                     except Exception as e:
                         out["errors"].append(
                             f"add_tag '{tag}' t{attempt}: {type(e).__name__}: {e}")
+                # Verify via get_tags (returns the list of strings -- no
+                # ambiguity about return shape like has_tag had).
                 try:
                     chk = self.call_tool_unwrapped(
-                        "toolset_registry.toolsets.core.actor.ActorTools.has_tag",
-                        {"actor": actor_obj, "tag": "demo_v0_spawned"},
+                        "toolset_registry.toolsets.core.actor.ActorTools.get_tags",
+                        {"actor": actor_obj},
                     )
-                    truthy = (chk is True
-                              or (isinstance(chk, dict) and chk.get("result") is True))
-                    if truthy:
+                    tags_list = None
+                    if isinstance(chk, list):
+                        tags_list = chk
+                    elif isinstance(chk, dict):
+                        for k in ("tags", "result", "value", "Tags"):
+                            v = chk.get(k)
+                            if isinstance(v, list):
+                                tags_list = v
+                                break
+                    out["last_get_tags"] = repr(chk)[:200]
+                    if isinstance(tags_list, list) and "demo_v0_spawned" in [str(t) for t in tags_list]:
                         out["tag_ok"] = True
                 except Exception as e:
                     out["errors"].append(f"verify_tag t{attempt}: {type(e).__name__}: {e}")
