@@ -804,14 +804,21 @@ class UnrealMCPClient:
                 "z": float(p[2]) if len(p) > 2 else 0.0}
                for p in waypoints_world_cm]
         try:
+            # Write both with-b and without-b bool keys so this works
+            # regardless of whether UE5.8 MCP strips the 'b' UPROPERTY
+            # prefix or keeps it. Set the path first; flip IsWalking
+            # last so the Tick never sees a half-written Waypoints array.
             self.set_actor_properties(ref, {
                 "Waypoints": wps,
                 "WalkSpeed": float(walk_speed_cms),
                 "LoopPath": bool(loop),
+                "bLoopPath": bool(loop),
                 "CurrentIndex": 0,
             })
-            # Final flip: BP starts walking on the next Tick.
-            self.set_actor_properties(ref, {"IsWalking": True})
+            self.set_actor_properties(ref, {
+                "IsWalking": True,
+                "bIsWalking": True,
+            })
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}",
                     "actor_ref": ref}
