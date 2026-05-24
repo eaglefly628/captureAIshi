@@ -2,6 +2,69 @@
 
 ## Changelog
 
+### [v0.4.3] 2026-05-25 -- xiaohuan -- demo robustness pass
+
+State of the "actors missing tag/folder" bug after a long debug run.
+Final shape of fixes in `apps/adore_robot/mcp_client.py` + `main.py`:
+
+**Active defenses (left ON, all working)**
+
+1. `actor_name = f"{asset}_{id_number}_{uuid4().hex[:4]}"` -- globally
+   unique UE actor name even if ledger was cleared but UE actor lingered.
+   (commit a26517c)
+
+2. `UnrealMCPClient._spawn_id_lock` -- serializes id-allocation +
+   ledger-reserve so two concurrent demo_spawn threads can't pick the
+   same id_number. Reserves a placeholder record so `_next_id_for` of
+   the next caller sees the id as used. (commit bff50c9)
+
+3. `_WAREHOUSE_GEN_LOCK` + `_WAREHOUSE_GEN_RUNNING` in main.py --
+   /api/demo/generate_warehouse_stream rejects a second concurrent
+   call with `rejected_as_duplicate` SSE error. Catches front-end
+   StrictMode / double-trigger / SSE-reconnect fan-out. (bff50c9)
+
+4. `_apply_markers_with_retry` switched to `ActorTools.add_tag` +
+   `ActorTools.get_tags` for verify (not set_actor_properties --
+   the latter was returning pending-shadow values that verified true
+   but UE later reset). 5s deadline + exp backoff. (commit bc6b800)
+
+5. `demo_clear` scans 4 sources: folder + tag + ledger + glob
+   `<asset>_*`. Glob is the demo safety net per user "标 TODO 后面
+   研究". (commit abf0a47)
+
+**Parked, not auto-invoked**
+
+- `_fixup_markers_after_batch(mcp)` (cf4196e) -- 1.5s sleep then re-set
+   folder/tag on any ledger entry where verify fails. Designed for
+   tail of dispatch_warehouse / dispatch_bulk_spawn but not yet wired
+   in. User wanted to see capture demo first.
+
+**Reverted (kept for breadcrumbs)**
+
+- monotonic id counter `__id_max_per_asset__` (5279613 -> 361df2a) --
+   user "不是 id_number 的错"; rolled back.
+
+**Remaining failure mode** (300 spawn -> 1 orphan, 99.7%)
+
+  - tag + folder both NOT in. User confirmed (not folder-only).
+  - 5s retry never fires (no [demo_spawn] WARN in terminal) ->
+    verify pass on first attempt but UE later resets the actor.
+  - SM (box) doesn't go through LevelInstance streaming, so the
+    "PostInit reset" hypothesis only partially explains it. Real
+    cause: marker write hits ADORE's bookkeeping ok, but a UE-side
+    deferred callback (queued before mcp.demo_spawn released its
+    lock) blanks the actor's tag+folder.
+  - `_fixup_markers_after_batch` is the planned fix; not enabled.
+
+**TODOs**
+
+- Wire `_fixup_markers_after_batch` into dispatch_warehouse /
+  dispatch_bulk_spawn tails (after user OK).
+- Source 4 glob is acknowledged tech debt -- remove once fixup pass
+  proves 100% reliable.
+- Verify whether front-end StrictMode / SSE retry was the original
+  race source (check `rejected_as_duplicate` SSE events count).
+
 ### [v0.4.2] <pending sha> -- xiaohuan
 - `pcg/conflict.py` (新增): 跨 asset overlap pass + budget cap + recommend_object_budget
 - `pcg/warehouse.py`: 加 `object_budget` 参; budget 给定时自适应 shelf_density + decor 比例缩放; 末尾跑 conflict + budget pass
