@@ -239,6 +239,7 @@ function App() {
   // server-confirmed action; viewport renders these 1:1 so the SVG iso
   // mock matches what's actually in the UE level.
   const [spawnedActors, setSpawnedActors] = useState([]);
+  const [captureCount, setCaptureCount] = useState(0);
   const [currentLevel, setCurrentLevel] = useState('');
   // PCG availability per current level. Surfaces a chip in TopBar +
   // (later) example prompts hint when PCG mode is on.
@@ -475,8 +476,6 @@ function App() {
           }))]);
           if (res.total > 0) setSceneSeeded(true);
         } else if (r.tool === 'capture_robot_views' && res.channels) {
-          // Attach a capture payload onto the most recent assistant
-          // message so the chat renders the 2x2 grid + legend card.
           setMessages(prev => {
             const out = [...prev];
             for (let i = out.length - 1; i >= 0; i--) {
@@ -485,12 +484,33 @@ function App() {
                   channels: res.channels,
                   legend: res.legend || [],
                   note: res.note || '',
+                  dataset_summary: res.dataset_summary || null,
                 } };
                 break;
               }
             }
             return out;
           });
+          setCaptureCount(c => c + 1);
+        } else if ((r.tool === 'flythrough_capture' || r.tool === 'capture_dataset')
+                    && Array.isArray(res.views)) {
+          setMessages(prev => {
+            const out = [...prev];
+            for (let i = out.length - 1; i >= 0; i--) {
+              if (out[i].role === 'assistant') {
+                out[i] = { ...out[i], flythrough: {
+                  views: res.views,
+                  legend: res.legend || [],
+                  note: res.note || '',
+                  dataset_summary: res.dataset_summary || null,
+                  tag: res.tag || r.tool,
+                } };
+                break;
+              }
+            }
+            return out;
+          });
+          setCaptureCount(c => c + (res.dataset_summary?.frames || res.views.length));
         } else if (r.tool === 'clear_demo_objects') {
           setSpawnedActors([]);
           setSceneSeeded(false);
@@ -956,6 +976,13 @@ function App() {
               </div>
               <div className="vp-stat"><span className="k">tris</span><span className="v">~{Math.round((118 + params.shelf_density * 240 + params.forklift_count * 30) * 1000).toLocaleString()}</span></div>
               <div className="vp-stat"><span className="k">lumen</span><span className="v">on</span><span className="k">·</span><span className="v">path-tracer ready</span></div>
+              {captureCount > 0 && (
+                <div className="vp-stat">
+                  <span className="k">captured</span>
+                  <span className="v" style={{color: '#7cf'}}>{captureCount}</span>
+                  <span className="k">frames</span>
+                </div>
+              )}
             </div>
             {/* Schematic vs live UE: left iso SVG is the schematic, this
                 PIP is the actual editor viewport, refreshed on every spawn. */}

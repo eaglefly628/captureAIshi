@@ -285,6 +285,7 @@ function Msg({ m }) {
         </div>
       )}
       {m.capture && <CaptureCard cap={m.capture} />}
+      {m.flythrough && <FlythroughCard fly={m.flythrough} />}
       {m.dataset && <DatasetCard d={m.dataset} />}
     </div>
   );
@@ -318,7 +319,12 @@ function formatVal(v) {
 
 function CaptureCard({ cap }) {
   const ch = cap.channels || {};
-  const labels = { rgb: 'RGB', depth: 'Depth', normal: 'WorldNormal', objectid: 'ObjectID' };
+  const labels = {
+    rgb: 'RGB', depth: 'Depth', normal: 'WorldNormal',
+    objectid: 'ObjectID', segmentation: 'AR Segmentation',
+  };
+  const order = ['rgb', 'depth', 'normal', 'objectid', 'segmentation']
+    .filter(k => ch[k]);
   const cellStyle = {
     background: '#0d0f12', border: '1px solid #1f2228', borderRadius: 4,
     overflow: 'hidden', display: 'flex', flexDirection: 'column',
@@ -335,20 +341,15 @@ function CaptureCard({ cap }) {
                     marginBottom: 6 }}>
         ◉ Robot training capture · 4 channels
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+      <div style={{ display: 'grid',
+                    gridTemplateColumns: order.length >= 5 ? '1fr 1fr 1fr' : '1fr 1fr',
                     gap: 4 }}>
-        {['rgb','depth','normal','objectid'].map(k => (
+        {order.map(k => (
           <div key={k} style={cellStyle}>
-            <div style={captionStyle}>{labels[k]}</div>
-            {ch[k] ? (
-              <img src={ch[k]} alt={k}
-                   style={{ width: '100%', height: 96, objectFit: 'cover',
-                            background: '#000' }} />
-            ) : (
-              <div style={{ height: 96, display: 'flex',
-                            alignItems: 'center', justifyContent: 'center',
-                            color: '#666', fontSize: 10 }}>未捕获</div>
-            )}
+            <div style={captionStyle}>{labels[k] || k}</div>
+            <img src={ch[k]} alt={k}
+                 style={{ width: '100%', height: 96, objectFit: 'cover',
+                          background: '#000' }} />
           </div>
         ))}
       </div>
@@ -375,12 +376,129 @@ function CaptureCard({ cap }) {
           </div>
         </div>
       )}
+      {cap.dataset_summary && <DatasetExportCard summary={cap.dataset_summary} />}
       {cap.note && (
         <div style={{ marginTop: 6, fontSize: 10, color: '#888',
                       fontStyle: 'italic' }}>
           {cap.note}
         </div>
       )}
+    </div>
+  );
+}
+
+
+function FlythroughCard({ fly }) {
+  const views = fly.views || [];
+  const isDataset = fly.tag === 'dataset' || fly.tag === 'capture_dataset';
+  const cellStyle = {
+    background: '#0d0f12', border: '1px solid #1f2228', borderRadius: 3,
+    overflow: 'hidden',
+  };
+  const captionStyle = {
+    fontFamily: 'var(--mono)', fontSize: 9, padding: '2px 4px',
+    color: '#7cf', background: 'rgba(120,180,255,0.08)',
+  };
+  return (
+    <div style={{ marginTop: 8, padding: 8,
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid #222', borderRadius: 5 }}>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#fc8',
+                    marginBottom: 6 }}>
+        ◉ {isDataset ? 'Dataset capture' : 'Camera fly-through'} ·
+        {' '}{views.filter(v => v.ok).length}/{views.length} viewpoints
+      </div>
+      <div style={{ display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+                    gap: 4 }}>
+        {views.map(v => {
+          const chs = Object.entries(v.channels || {});
+          return (
+            <div key={v.i} style={cellStyle}>
+              <div style={captionStyle}>view {v.i + 1}{v.yaw_deg != null ?
+                ` · yaw ${Math.round(v.yaw_deg)}°` : ''}</div>
+              {v.ok && chs.length > 0 ? (
+                <div style={{ display: 'grid',
+                              gridTemplateColumns: chs.length > 1 ? '1fr 1fr' : '1fr',
+                              gap: 1, background: '#000' }}>
+                  {chs.map(([k, url]) => (
+                    <img key={k} src={url} alt={k}
+                         style={{ width: '100%', height: chs.length > 1 ? 44 : 80,
+                                  objectFit: 'cover' }} />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ height: 80, display: 'flex',
+                              alignItems: 'center', justifyContent: 'center',
+                              color: '#a44', fontSize: 9 }}>
+                  {v.error || 'skipped'}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {fly.dataset_summary && <DatasetExportCard summary={fly.dataset_summary} />}
+      {fly.note && (
+        <div style={{ marginTop: 6, fontSize: 10, color: '#888',
+                      fontStyle: 'italic' }}>
+          {fly.note}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function DatasetExportCard({ summary }) {
+  const handleDownload = (e) => {
+    e.preventDefault();
+    alert(`(mock) 数据集下载:\n` +
+          `${summary.frames} frames × ${summary.channels} channels × ${summary.classes} classes\n` +
+          `= ${summary.labeled_samples} labeled samples\n` +
+          `format: ${summary.format}\n` +
+          `~${summary.estimated_size_mb} MB\n\n` +
+          `real export pending apps/capture pipeline integration.`);
+  };
+  return (
+    <div style={{ marginTop: 8, padding: 8,
+                  background: 'linear-gradient(135deg, rgba(34,197,94,0.10), rgba(59,130,246,0.10))',
+                  border: '1px solid rgba(34,197,94,0.4)', borderRadius: 5 }}>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#9f9',
+                    marginBottom: 4 }}>
+        ▣ Training dataset ready
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+                    gap: 4, marginBottom: 6 }}>
+        <Stat k="frames" v={summary.frames} />
+        <Stat k="channels" v={summary.channels} />
+        <Stat k="classes" v={summary.classes} />
+        <Stat k="samples" v={summary.labeled_samples} />
+      </div>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 10,
+                    color: '#bdf', marginBottom: 6 }}>
+        format: {summary.format} · ~{summary.estimated_size_mb} MB
+      </div>
+      <a href={summary.download_stub_url} onClick={handleDownload}
+         style={{ display: 'inline-block', padding: '4px 10px',
+                  background: 'rgba(34,197,94,0.18)',
+                  border: '1px solid rgba(34,197,94,0.6)',
+                  borderRadius: 3, fontFamily: 'var(--mono)',
+                  fontSize: 11, color: '#9f9',
+                  textDecoration: 'none', cursor: 'pointer' }}>
+        ↓ download .zip
+      </a>
+    </div>
+  );
+}
+
+
+function Stat({ k, v }) {
+  return (
+    <div style={{ background: 'rgba(0,0,0,0.3)', padding: '4px 6px',
+                  borderRadius: 3, fontFamily: 'var(--mono)' }}>
+      <div style={{ fontSize: 9, color: '#7a8' }}>{k}</div>
+      <div style={{ fontSize: 14, color: '#fff' }}>{v}</div>
     </div>
   );
 }

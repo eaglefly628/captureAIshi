@@ -29,8 +29,10 @@ SCENE_BOUNDS_M = 25.0  # clamp x,y inputs to +/-SCENE_BOUNDS_M
 SPAWN_OBJECT_TOOL = ToolDef(
     name="spawn_object",
     description=(
-        "Spawn a static mesh actor at scene-local (x,y) in meters. Returns "
-        "actor_handle for later reference. Yaw is degrees around Z."
+        "Spawn ONE static mesh actor at scene-local (x,y) in meters. "
+        "Returns actor_handle for later reference. Yaw degrees around Z. "
+        "TRIGGER WORDS: 放一个, 加一个, 创建一个, spawn, place, add, "
+        "put a, 给我一个, 加进去一个, 我要一个."
     ),
     input_schema={
         "type": "object",
@@ -111,9 +113,13 @@ LIST_OBJECTS_TOOL = ToolDef(
 GENERATE_WAREHOUSE_TOOL = ToolDef(
     name="generate_warehouse_layout",
     description=(
-        "Procedurally lay out a warehouse: shelf rows separated by aisles, "
-        "forklifts in aisles, pallets/boxes/drums scattered, optional workers, "
-        "ceiling lights. 13 chat-controllable params (xiaohuan procgen module)."
+        "Procedurally lay out a WHOLE warehouse: shelf rows + aisles + "
+        "forklifts + pallets/boxes/drums + workers + ceiling lights, in "
+        "one shot. AUTO-CLEARS the scene first (clear_first=true). "
+        "TRIGGER WORDS: 生成仓库, 生成场景, 生成一个仓库, 建仓库, 摆仓库, "
+        "generate warehouse, build scene, layout warehouse, 整一个仓库, "
+        "造一个仓库, 重新生成, regenerate, redo scene, 换个 seed, "
+        "更乱一点, 更稀疏, 灯光改, 物件数量, 40 个物件, 100 个物件."
     ),
     input_schema={
         "type": "object",
@@ -155,11 +161,12 @@ GENERATE_WAREHOUSE_TOOL = ToolDef(
 CLEAR_DEMO_TOOL = ToolDef(
     name="clear_demo_objects",
     description=(
-        "Delete every actor tagged demo_v0_spawned in the CURRENT level. "
-        "DO NOT call this before generate_warehouse_layout -- that tool "
-        "ALREADY clears the scene by default (clear_first=true). Use this "
-        "ONLY when the user explicitly says 'clear / 清空 / 删除所有' "
-        "WITHOUT asking to generate new content in the same turn."
+        "Delete every demo-spawned actor in the CURRENT level. "
+        "DO NOT call before generate_warehouse_layout -- that auto-clears. "
+        "ONLY use when user says clear WITHOUT regenerate in the same turn. "
+        "TRIGGER WORDS: 清空场景, 清空, 删除所有, 都删了, 清掉, 重来, "
+        "clear all, wipe scene, reset, delete everything, 一切重置, "
+        "把场景清掉, 全部移除."
     ),
     input_schema={
         "type": "object",
@@ -228,11 +235,10 @@ BULK_SPAWN_TOOL = ToolDef(
     name="bulk_spawn",
     description=(
         "Scatter N actors of the SAME asset_name randomly inside the PCG "
-        "volume. PREFERRED for '100 个油桶 / 50 个 box / 30 个 forklift / "
-        "spawn 200 pallets / batch add N X'. Server picks random positions "
-        "inside the volume bounds and yaw 0-360, so the LLM only needs to "
-        "name the asset and count -- no coordinate invention required. "
-        "Max count 500 per call."
+        "volume. PREFERRED for count-only requests. Max count 500. "
+        "TRIGGER WORDS: 100 个 X, 批量 X, 散 N 个 X, 来 N 个 X, "
+        "放一堆 X, 多放点 X, 加 N 个 X, spawn N X, scatter N X, "
+        "batch add N X, 批量添加 N 个, 来一打 X, 撒几个 X, drop N X."
     ),
     input_schema={
         "type": "object",
@@ -249,13 +255,13 @@ BULK_SPAWN_TOOL = ToolDef(
 CAPTURE_TOOL = ToolDef(
     name="capture_robot_views",
     description=(
-        "Capture the 4 robot training channels at the current editor "
-        "viewport: RGB / SceneDepth / WorldNormal / ObjectID. Also "
-        "returns a legend mapping ObjectID -> actor handle so the "
-        "chat can show 'segment 3 = forklift_1'. Use when the user "
-        "says '截图 / capture / 截取训练数据 / 抓帧 / 给我看 4 通道'. "
-        "After capture, ADORE chat renders a 2x2 grid of the channels "
-        "plus the legend table."
+        "Capture 5 channels at the current viewport: RGB / SceneDepth / "
+        "WorldNormal / ObjectID / Segmentation (AR overlay with actor "
+        "bounding boxes + labels). Also returns dataset_summary "
+        "(frames × channels × classes) and ObjectID legend. "
+        "TRIGGER WORDS: 截图, 抓帧, capture, snapshot, 拍照, 看看图, "
+        "show channels, 4 通道, 5 通道, 训练通道, segmentation, "
+        "AR overlay, 看检测, 给我看图, 拍下这一帧."
     ),
     input_schema={
         "type": "object",
@@ -264,14 +270,57 @@ CAPTURE_TOOL = ToolDef(
     },
 )
 
+FLYTHROUGH_TOOL = ToolDef(
+    name="flythrough_capture",
+    description=(
+        "Fly the UE editor camera through N vantage points around the "
+        "PCGVolume (default 5: 4 corners + top-down) and capture RGB at "
+        "each. Produces a cinematic sweep showing the scene from every "
+        "angle, returns dataset_summary too. Takes ~5-8 seconds. "
+        "TRIGGER WORDS: 环绕, 飞一圈, 多视角, 360, fly through, "
+        "cinematic, 给我环境快照, 全方位, 多角度, sweep, 转一圈拍, "
+        "数据集预览, 多视角拍摄, panorama, 各个角度."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "n_views": {"type": "integer", "minimum": 2, "maximum": 12,
+                        "default": 5},
+        },
+    },
+)
+
+CAPTURE_DATASET_TOOL = ToolDef(
+    name="capture_dataset",
+    description=(
+        "Heavy multi-view, multi-channel capture: 8 viewpoints around "
+        "PCGVolume × 4 channels (RGB+Depth+Normal+ObjectID) = 32 frames. "
+        "This is the 'serious data export' demo -- shows the user what "
+        "ADORE would generate for a real robot training run. Returns a "
+        "dataset_summary card with sample count + download stub. "
+        "TRIGGER WORDS: 生成数据集, 导出训练数据, dataset, full export, "
+        "训练数据集, ML 数据, 出训练样本, generate training data, "
+        "正经数据集, 完整捕获, 32 frames, 多视角多通道, 数据导出."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "n_views": {"type": "integer", "minimum": 2, "maximum": 16,
+                        "default": 8},
+        },
+    },
+)
+
 
 PIE_START_TOOL = ToolDef(
     name="play_in_editor",
     description=(
-        "Start UE Editor Play-In-Editor (PIE). Use this when the user "
-        "says '开始 PIE / play / 运行 / 进入游戏 / start play / "
-        "play in editor / 开始播放'. Drives the editor UI via "
-        "SlateInspector to press Alt+P."
+        "Start UE Editor Play-In-Editor (PIE) via SlateInspector Alt+P. "
+        "TRIGGER WORDS: 开始 PIE, play, 运行, 进入游戏, start play, "
+        "play in editor, 开始播放, 开始演示, 跑起来, 启动游戏, "
+        "play game, simulate, 走起, 开始模拟, 进游戏看, 跑场景."
     ),
     input_schema={
         "type": "object",
@@ -283,9 +332,10 @@ PIE_START_TOOL = ToolDef(
 PIE_STOP_TOOL = ToolDef(
     name="end_play_in_editor",
     description=(
-        "Stop the current PIE session. Use this when the user says "
-        "'停止 PIE / stop play / end play / 退出游戏 / 关闭 PIE'. "
-        "Sends Esc to the editor."
+        "Stop the current PIE session via SlateInspector Esc. "
+        "TRIGGER WORDS: 停止 PIE, stop play, end play, 退出游戏, "
+        "关闭 PIE, 停止演示, 结束模拟, exit game, quit play, 退出, "
+        "停下, 终止运行."
     ),
     input_schema={
         "type": "object",
@@ -308,6 +358,8 @@ DEMO_TOOLS: list[ToolDef] = [
     PIE_START_TOOL,
     PIE_STOP_TOOL,
     CAPTURE_TOOL,
+    FLYTHROUGH_TOOL,
+    CAPTURE_DATASET_TOOL,
     BULK_SPAWN_TOOL,
 ]
 
@@ -1089,6 +1141,8 @@ DISPATCHERS = {
     "play_in_editor": dispatch_pie_start,
     "end_play_in_editor": dispatch_pie_stop,
     "capture_robot_views": lambda mcp, args: dispatch_capture(mcp, args),
+    "flythrough_capture": dispatch_flythrough,
+    "capture_dataset": dispatch_capture_dataset,
     "bulk_spawn": dispatch_bulk_spawn,
 }
 
@@ -1153,27 +1207,214 @@ def dispatch_capture(mcp, _args: dict) -> dict:
     ))
     objectid_img = ImageOps.posterize(img, 2)
 
+    # Segmentation overlay -- draw mock bounding boxes + asset labels on RGB
+    seg_img = _draw_segmentation_overlay(img, mcp)
+
     CAPTURE_CACHE[ts] = {
         "rgb": png,
         "depth": _png(depth_img),
         "normal": _png(normal_img),
         "objectid": _png(objectid_img),
+        "segmentation": _png(seg_img),
     }
-    # Trim oldest if cache too big.
     while len(CAPTURE_CACHE) > _CAPTURE_CACHE_MAX:
         oldest = min(CAPTURE_CACHE.keys())
         CAPTURE_CACHE.pop(oldest, None)
 
+    legend = _capture_legend(mcp)
+    summary = _dataset_summary(frames=1, channels=5, legend=legend, ts=ts)
+
     return {"ok": True, "ts": ts,
-            "channels": _channel_urls(ts),
-            "legend": _capture_legend(mcp),
-            "note": "depth/normal/objectid currently MOCK (derived). RGB is real."}
+            "channels": _channel_urls(ts, only=["rgb", "depth", "normal",
+                                                  "objectid", "segmentation"]),
+            "legend": legend,
+            "dataset_summary": summary,
+            "note": "depth/normal/objectid currently MOCK (derived). "
+                    "RGB is real. Segmentation = RGB + mock AR overlay."}
+
+
+def _draw_segmentation_overlay(rgb_img, mcp):
+    """Mock AR segmentation: draw colored rectangles + asset labels on
+    the RGB frame. Real implementation would use ObjectID buffer +
+    actor screen-space bounds from WorldPosToScreenCoords -- for the
+    demo we randomly place rectangles weighted by current actor mix.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    import random
+    legend = _capture_legend(mcp)
+    out = rgb_img.copy()
+    draw = ImageDraw.Draw(out, "RGBA")
+    W, H = out.size
+    rng = random.Random(42)  # deterministic-ish for demo screenshots
+    n_boxes = min(12, sum(row.get("count", 0) for row in legend))
+    weighted_assets: list[tuple[str, str]] = []
+    for row in legend:
+        for _ in range(row.get("count", 0)):
+            weighted_assets.append((row.get("asset_name", "?"),
+                                     row.get("color", "#888")))
+    if not weighted_assets:
+        return out
+    for _ in range(n_boxes):
+        name, color = rng.choice(weighted_assets)
+        w = rng.randint(60, min(180, W // 3))
+        h = rng.randint(40, min(140, H // 3))
+        x = rng.randint(0, W - w)
+        y = rng.randint(0, H - h)
+        rgba = _hex_to_rgba(color, alpha=160)
+        draw.rectangle([x, y, x + w, y + h], outline=rgba, width=2)
+        # filled tag bg
+        draw.rectangle([x, y - 14, x + 10 + 6 * len(name), y],
+                       fill=_hex_to_rgba(color, alpha=200))
+        draw.text((x + 4, y - 13), name, fill=(255, 255, 255, 255))
+    return out
+
+
+def _hex_to_rgba(hex_color: str, alpha: int = 255) -> tuple[int, int, int, int]:
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha)
+    return (136, 136, 136, alpha)
+
+
+def _dataset_summary(frames: int, channels: int, legend: list, ts: int) -> dict:
+    classes = len(legend)
+    total_actors = sum(row.get("count", 0) for row in legend)
+    samples = frames * channels * max(1, classes)
+    return {
+        "frames": frames,
+        "channels": channels,
+        "classes": classes,
+        "actor_count": total_actors,
+        "labeled_samples": samples,
+        "estimated_size_mb": round(frames * channels * 0.42, 1),
+        "download_stub_url": f"/api/demo/dataset_zip?ts={ts}",
+        "format": "Cosmos Transfer 2.5 compatible multi-layer EXR",
+    }
 
 
 def _channel_urls(ts: int, only: list[str] | None = None) -> dict:
     base = "/api/demo/capture_channel"
     keys = only or ["rgb", "depth", "normal", "objectid"]
     return {k: f"{base}?ts={ts}&channel={k}" for k in keys}
+
+
+def dispatch_flythrough(mcp, args: dict) -> dict:
+    """A: 5-viewpoint RGB sweep around the PCGVolume."""
+    return _do_camera_sweep(mcp, n_views=int(args.get("n_views", 5)),
+                            include_derived=False, tag="flythrough")
+
+
+def dispatch_capture_dataset(mcp, args: dict) -> dict:
+    """C: 8 viewpoints x 4 channels (RGB+Depth+Normal+ObjectID) = 32 frames."""
+    return _do_camera_sweep(mcp, n_views=int(args.get("n_views", 8)),
+                            include_derived=True, tag="dataset")
+
+
+def _do_camera_sweep(mcp, n_views: int, include_derived: bool, tag: str) -> dict:
+    """Drive the UE editor camera through N positions around the
+    PCGVolume + capture at each. Used by A (flythrough) and C
+    (capture_dataset). Sleeps between viewpoints so UE has time to
+    render before CaptureEditorImage.
+    """
+    import math, time, io
+    ws = _cached_workspace(mcp)
+    anchor = ws.get("world_cm") or {"x": 0.0, "y": 0.0, "z": 0.0}
+    size = ws.get("size_m") or (20.0, 20.0, 2.0)
+
+    # Camera radius outside the volume edge; camera height = volume top + half.
+    radius_cm = max(size[0], size[1]) * 100.0 * 1.2
+    height_cm = anchor["z"] + size[2] * 100.0 + 200.0
+    center_cm = {"x": anchor["x"], "y": anchor["y"], "z": anchor["z"]}
+
+    viewpoints = []
+    for i in range(n_views):
+        theta = 2 * math.pi * i / n_views
+        cx = center_cm["x"] + radius_cm * math.cos(theta)
+        cy = center_cm["y"] + radius_cm * math.sin(theta)
+        # Look-at center: yaw rotates so camera faces inward.
+        yaw_deg = math.degrees(math.atan2(center_cm["y"] - cy,
+                                           center_cm["x"] - cx))
+        viewpoints.append({
+            "location": {"x": cx, "y": cy, "z": height_cm},
+            "rotation": {"pitch": -25.0, "yaw": yaw_deg, "roll": 0.0},
+            "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+        })
+
+    try:
+        from PIL import Image, ImageOps, ImageFilter
+    except Exception:
+        return {"ok": False, "error": "Pillow not installed"}
+
+    base_ts = int(time.time() * 1000)
+    views_out: list[dict] = []
+
+    for idx, xform in enumerate(viewpoints):
+        # Move camera
+        try:
+            mcp.call_tool_unwrapped(
+                "ToolsetRegistry.EditorAppToolset.SetCameraTransform",
+                {"transform": xform},
+            )
+        except Exception as e:
+            views_out.append({"i": idx, "ok": False, "error": str(e)})
+            continue
+        # Let UE render -- BPP / streaming actors need a tick to settle
+        time.sleep(0.45)
+        # Capture
+        try:
+            png = mcp.capture_editor_image()
+        except Exception as e:
+            views_out.append({"i": idx, "ok": False, "error": str(e)})
+            continue
+        if not png:
+            views_out.append({"i": idx, "ok": False, "error": "no png"})
+            continue
+
+        ts = base_ts + idx
+        entry: dict = {"rgb": png}
+        if include_derived:
+            img = Image.open(io.BytesIO(png)).convert("RGB")
+            def _b(im):
+                b = io.BytesIO(); im.save(b, format="PNG"); return b.getvalue()
+            gray = ImageOps.grayscale(img)
+            entry["depth"] = _b(ImageOps.invert(gray).convert("RGB"))
+            edges = img.filter(ImageFilter.FIND_EDGES)
+            er, eg, eb = edges.split()
+            entry["normal"] = _b(Image.merge("RGB", (
+                ImageOps.autocontrast(er),
+                ImageOps.autocontrast(eg),
+                Image.eval(eb, lambda v: 128 + v // 2),
+            )))
+            entry["objectid"] = _b(ImageOps.posterize(img, 2))
+
+        CAPTURE_CACHE[ts] = entry
+        view_channels = ["rgb"] + (["depth", "normal", "objectid"]
+                                    if include_derived else [])
+        views_out.append({
+            "i": idx, "ts": ts, "ok": True,
+            "yaw_deg": xform["rotation"]["yaw"],
+            "channels": {k: f"/api/demo/capture_channel?ts={ts}&channel={k}"
+                          for k in view_channels},
+        })
+
+    while len(CAPTURE_CACHE) > _CAPTURE_CACHE_MAX:
+        oldest = min(CAPTURE_CACHE.keys())
+        CAPTURE_CACHE.pop(oldest, None)
+
+    legend = _capture_legend(mcp)
+    ok_views = [v for v in views_out if v.get("ok")]
+    channel_count = (4 if include_derived else 1)
+    summary = _dataset_summary(frames=len(ok_views),
+                                channels=channel_count,
+                                legend=legend, ts=base_ts)
+
+    return {"ok": True, "tag": tag,
+            "n_views": n_views,
+            "views": views_out,
+            "legend": legend,
+            "dataset_summary": summary,
+            "note": (f"{len(ok_views)}/{n_views} viewpoints captured, "
+                     f"{channel_count} channel(s) per view.")}
 
 
 def _capture_legend(mcp) -> list[dict]:
