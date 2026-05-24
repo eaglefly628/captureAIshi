@@ -154,7 +154,13 @@ GENERATE_WAREHOUSE_TOOL = ToolDef(
 
 CLEAR_DEMO_TOOL = ToolDef(
     name="clear_demo_objects",
-    description="Delete every actor tagged demo_v0_spawned in the CURRENT level.",
+    description=(
+        "Delete every actor tagged demo_v0_spawned in the CURRENT level. "
+        "DO NOT call this before generate_warehouse_layout -- that tool "
+        "ALREADY clears the scene by default (clear_first=true). Use this "
+        "ONLY when the user explicitly says 'clear / 清空 / 删除所有' "
+        "WITHOUT asking to generate new content in the same turn."
+    ),
     input_schema={
         "type": "object",
         "additionalProperties": False,
