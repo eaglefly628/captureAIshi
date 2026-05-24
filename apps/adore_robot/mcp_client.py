@@ -764,6 +764,7 @@ class UnrealMCPClient:
 
         deadline = time.time() + deadline_s
         wait_s = 0.1   # initial backoff; doubles each round, capped 0.6s
+        actor_obj = {"refPath": actor_ref}
 
         while time.time() < deadline:
             out["tries"] += 1
@@ -796,19 +797,36 @@ class UnrealMCPClient:
                 except Exception as e:
                     out["errors"].append(f"verify_folder t{attempt}: {type(e).__name__}: {e}")
 
-            # ── Tag: set then verify ────────────────────────────────────
+            # ── Tag: ActorTools.add_tag per tag, then has_tag verify ───
+            # NOT set_actor_properties({'tags':[...]}) -- that path was
+            # silently corrupt (set returned ok, get returned a pending
+            # shadow value, but the final actor in the level had Tags=[]
+            # once LevelInstance async load finished and reset state).
+            # Verified via UE log: zero retries observed yet shelf_39
+            # ended up with empty Tags. ActorTools.add_tag is the
+            # UPROPERTY-level API; not affected by the pending-write
+            # cache trap.
             if not out["tag_ok"]:
+                for tag in desired_tags:
+                    try:
+                        self.call_tool_unwrapped(
+                            "toolset_registry.toolsets.core.actor.ActorTools.add_tag",
+                            {"actor": actor_obj, "tag": tag},
+                        )
+                    except Exception as e:
+                        out["errors"].append(
+                            f"add_tag '{tag}' t{attempt}: {type(e).__name__}: {e}")
                 try:
-                    self.set_actor_properties(actor_ref, {"tags": desired_tags})
-                except Exception as e:
-                    out["errors"].append(f"set_tags t{attempt}: {type(e).__name__}: {e}")
-                try:
-                    chk = self.get_actor_properties(actor_ref, ["tags"])
-                    tags = chk.get("tags") if isinstance(chk, dict) else None
-                    if isinstance(tags, list) and "demo_v0_spawned" in [str(t) for t in tags]:
+                    chk = self.call_tool_unwrapped(
+                        "toolset_registry.toolsets.core.actor.ActorTools.has_tag",
+                        {"actor": actor_obj, "tag": "demo_v0_spawned"},
+                    )
+                    truthy = (chk is True
+                              or (isinstance(chk, dict) and chk.get("result") is True))
+                    if truthy:
                         out["tag_ok"] = True
                 except Exception as e:
-                    out["errors"].append(f"verify_tags t{attempt}: {type(e).__name__}: {e}")
+                    out["errors"].append(f"verify_tag t{attempt}: {type(e).__name__}: {e}")
 
             if out["folder_ok"] and out["tag_ok"]:
                 return out
