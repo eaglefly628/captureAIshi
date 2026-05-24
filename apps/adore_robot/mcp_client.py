@@ -925,24 +925,84 @@ class UnrealMCPClient:
         return {"objects": out}
 
     def demo_clear(self) -> dict:
+        """Remove every demo-spawned actor in the current level.
+
+        Earlier this only walked the Demo/v0 outliner folder, but
+        PackedLevelActor instances frequently refuse set_actor_folder
+        AND set_actor_properties({tags:...}) -- both fail silently. Those
+        actors then survived demo_clear with no folder, no tag, no name
+        match (the bug user hit on reseed). Fix: union 3 independent
+        sources of truth, dedupe by refPath, remove each.
+        """
         self.auto_load_toolsets()
+
+        refs: set[str] = set()
+        sources_hit = {"folder": 0, "tag": 0, "ledger": 0}
+
+        # Source 1: Demo/v0 outliner folder (the original path).
+        try:
+            for a in self._list_demo_folder():
+                r = a.get("refPath") if isinstance(a, dict) else a
+                if r:
+                    if r not in refs:
+                        sources_hit["folder"] += 1
+                    refs.add(r)
+        except Exception:
+            pass
+
+        # Source 2: tag = 'demo_v0_spawned'. Spawn tries to set this; on
+        # PackedLevelActor it may fail, but on every StaticMeshActor it
+        # sticks and survives ADORE restarts even when the ledger lost
+        # the entry.
+        try:
+            tagged = self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                {"tag": "demo_v0_spawned"},
+            )
+            if isinstance(tagged, dict):
+                tagged = tagged.get("actors") or tagged.get("results") or []
+            if isinstance(tagged, list):
+                for a in tagged:
+                    r = a.get("refPath") if isinstance(a, dict) else a
+                    if r:
+                        if r not in refs:
+                            sources_hit["tag"] += 1
+                        refs.add(r)
+        except Exception:
+            pass
+
+        # Source 3: in-memory ledger. Catches PackedLevelActor instances
+        # that refused both folder and tag -- as long as ADORE saw them
+        # at spawn time, the ledger remembers their refPath.
+        try:
+            bucket = self._ledger_bucket()
+            for _h, rec in bucket.items():
+                if not isinstance(rec, dict):
+                    continue
+                r = rec.get("actor_ref")
+                if r:
+                    if r not in refs:
+                        sources_hit["ledger"] += 1
+                    refs.add(r)
+        except Exception:
+            pass
+
         cleared = 0
-        # iterate the folder live (covers actors spawned outside ledger too)
-        for a in self._list_demo_folder():
-            ref = a.get("refPath") if isinstance(a, dict) else a
-            if not ref:
-                continue
+        failed: list[str] = []
+        for r in refs:
             try:
                 self.call_tool_unwrapped(
                     "toolset_registry.toolsets.core.scene.SceneTools.remove_from_scene",
-                    {"actor": ref},
+                    {"actor": r},
                 )
                 cleared += 1
-            except Exception:
-                pass
+            except Exception as e:
+                failed.append(f"{r}: {type(e).__name__}: {e}")
+
         self._ledger_bucket().clear()
         self._ledger_save()
-        return {"cleared": cleared}
+        return {"cleared": cleared, "total": len(refs),
+                "sources_hit": sources_hit, "failed": failed}
 
     def demo_nudge(self, handle: str, dx_m: float = 0, dy_m: float = 0, dz_m: float = 0,
                    anchor_override_cm: dict | None = None) -> dict:
