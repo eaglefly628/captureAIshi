@@ -29,6 +29,18 @@ DEFAULT_TOOLSETS = [
     "toolset_registry.toolsets.core.object.ObjectTools",
     "toolset_registry.toolsets.core.scene.SceneTools",
     "toolset_registry.toolsets.core.programmatic.ProgrammaticToolset",
+    # v0.4.3 census (xiaohuan 2026-05-22): Epic ships 41 toolsets total
+    # in UE 5.8 Preview; only ~4 were auto-loaded. Adding ActorTools
+    # unlocks SetActorLocation/Rotation/Scale (the standard AActor API)
+    # so demo_move + patrol can stop using delete+respawn (no more
+    # flicker). AssetTools + StaticMeshTools provide bounds metadata
+    # for footprint-accurate overlap detection. SlateInspectorToolset
+    # is the Playwright-style UI driver -- PIE control via UI when
+    # Epic still has no native PIE toolset.
+    "toolset_registry.toolsets.core.actor.ActorTools",
+    "toolset_registry.toolsets.core.asset.AssetTools",
+    "toolset_registry.toolsets.core.static_mesh.StaticMeshTools",
+    "SlateInspectorToolset.SlateInspectorToolset",
 ]
 
 
