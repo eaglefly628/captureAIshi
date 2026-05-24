@@ -7,6 +7,9 @@
 # Job state persistence
 jobs.jsonl
 
+# Demo actor ledger (runtime cache, per-machine state)
+.demo_ledger.json
+
 # Python
 __pycache__/
 *.pyc
