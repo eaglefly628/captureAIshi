@@ -83,10 +83,11 @@ function McpBootOverlay({ state, onRetry, onDismiss }) {
   else if (state.phase === 'skipped') headline = '工具集已就绪';
   else headline = 'ADORE-AI · 引导中';
 
+  const loadedCount = (state.total || 1) - 1;  // total includes the handshake step; subtract it.
   const subline = failed
     ? state.error
     : ready
-      ? `握手完成 · 4 个工具集挂载 · 协议延迟 ${elapsed}s`
+      ? `握手完成 · ${loadedCount} 个工具集挂载 · 协议延迟 ${elapsed}s`
       : (state.toolset ? toolsetLabel(state.toolset) : '...');
 
   const steps = (state.steps || []).slice(-6);
