@@ -1357,6 +1357,103 @@ def mcp_toolsets():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 
 
+@app.route("/api/mcp/explore_all")
+def mcp_explore_all():
+    """One-shot full inventory: every toolset + every tool inside it.
+
+    Calls list_toolsets to enumerate all 41 toolsets, then describe_toolset
+    on each to pull tool schemas. Use this to find functionality hiding
+    in toolsets we haven't auto_load_toolsets'd yet (e.g. PIE control,
+    asset import, simulation start/stop, etc.).
+
+    Query params:
+      ?keyword=play     filter to toolset/tool with this substring (case-insensitive)
+      ?short=true       drop inputSchema to keep payload small
+      ?names_only=true  return just toolset.name + tool.name (very compact)
+    """
+    keyword = (request.args.get("keyword") or "").lower().strip()
+    short = (request.args.get("short", "").lower() in ("1", "true", "yes"))
+    names_only = (request.args.get("names_only", "").lower() in ("1", "true", "yes"))
+
+    try:
+        ts_raw = mcp.call_tool_unwrapped("list_toolsets", {})
+    except Exception as e:
+        return jsonify({"ok": False,
+                        "error": f"list_toolsets: {type(e).__name__}: {e}"}), 500
+
+    ts_list = ts_raw
+    if isinstance(ts_raw, dict):
+        ts_list = ts_raw.get("toolsets") or ts_raw.get("results") or []
+    if not isinstance(ts_list, list):
+        return jsonify({"ok": False,
+                        "error": f"unexpected toolsets shape: {type(ts_list).__name__}",
+                        "raw": ts_raw}), 500
+
+    loaded = set(getattr(mcp, "loaded_toolsets", []) or [])
+    entries = []
+    total_tools = 0
+    describe_errors = 0
+
+    for ts in ts_list:
+        name = ts.get("name") if isinstance(ts, dict) else str(ts)
+        if not name:
+            continue
+        desc = (ts.get("description") if isinstance(ts, dict) else "") or ""
+        entry: dict = {
+            "name": name,
+            "description": desc,
+            "loaded": name in loaded,
+        }
+        # Try describe even if not loaded -- describe_toolset works on
+        # unloaded ones too (it's a registry lookup, doesn't activate).
+        try:
+            details = mcp.call_tool_unwrapped(
+                "describe_toolset", {"toolset_name": name}
+            )
+            tools = []
+            if isinstance(details, dict):
+                tools = details.get("tools") or details.get("results") or []
+            if isinstance(tools, list):
+                if names_only:
+                    entry["tools"] = [t.get("name") if isinstance(t, dict) else str(t)
+                                       for t in tools]
+                elif short:
+                    entry["tools"] = [
+                        {"name": t.get("name"), "description": t.get("description")}
+                        for t in tools if isinstance(t, dict)
+                    ]
+                else:
+                    entry["tools"] = tools
+                total_tools += len(tools)
+        except Exception as e:
+            entry["describe_error"] = f"{type(e).__name__}: {e}"
+            describe_errors += 1
+
+        if keyword:
+            hay = (
+                name.lower() + " " + desc.lower() + " "
+                + " ".join(
+                    (t.get("name", "") + " " + t.get("description", ""))
+                    if isinstance(t, dict) else str(t)
+                    for t in (entry.get("tools") or [])
+                ).lower()
+            )
+            if keyword not in hay:
+                continue
+        entries.append(entry)
+
+    return jsonify({
+        "ok": True,
+        "n_toolsets_seen": len(ts_list),
+        "n_toolsets_returned": len(entries),
+        "n_tools_total": total_tools,
+        "describe_errors": describe_errors,
+        "loaded": sorted(loaded),
+        "filter_keyword": keyword or None,
+        "toolsets": entries,
+    })
+
+
 @app.route("/tools")
 def tools_page():
     """Browsable tools index. Fetches /api/mcp/tools + /api/mcp/toolsets
