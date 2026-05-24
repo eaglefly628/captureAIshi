@@ -490,28 +490,19 @@ class UnrealMCPClient:
     _level_cache: str = ""
     _level_cache_ts: float = 0.0
 
-    _ID_MAX_KEY = "__id_max_per_asset__"
-
     def _next_id_for(self, bucket: dict, asset_name: str) -> int:
-        """Per-asset monotonic ID. Persists max-seen value in the ledger
-        bucket itself (key __id_max_per_asset__) and just bumps it.
-        Never reuses an id even after demo_clear / level switch, so two
-        rapid spawns can't both land on the same id (the previous
-        'scan bucket for max' approach had a race window between
-        _next_id_for returning N and the new record being written, which
-        let two parallel spawns both pick N).
-        """
-        raw = bucket.get(self._ID_MAX_KEY)
-        id_max = raw if isinstance(raw, dict) else {}
-        next_id = int(id_max.get(asset_name, 0)) + 1
-        id_max[asset_name] = next_id
-        bucket[self._ID_MAX_KEY] = id_max
-        # Persist immediately so concurrent calls see the bump.
-        try:
-            self._ledger_save()
-        except Exception:
-            pass
-        return next_id
+        """Per-asset auto-increment ID. Scans current bucket so we don't
+        collide if the user reloaded a level with existing demo actors."""
+        used = set()
+        for rec in bucket.values():
+            if rec.get("asset_name") == asset_name:
+                idn = rec.get("id_number")
+                if isinstance(idn, int):
+                    used.add(idn)
+        i = 1
+        while i in used:
+            i += 1
+        return i
 
     @classmethod
     def _ledger_load(cls):
@@ -1192,14 +1183,7 @@ class UnrealMCPClient:
             except Exception as e:
                 failed.append(f"{r}: {type(e).__name__}: {e}")
 
-        # Clear actor records but PRESERVE the monotonic id counter so
-        # the next spawn keeps incrementing instead of restarting at 1
-        # (which would collide with any UE actor demo_clear missed).
-        bucket = self._ledger_bucket()
-        id_max = bucket.get(self._ID_MAX_KEY)
-        bucket.clear()
-        if isinstance(id_max, dict):
-            bucket[self._ID_MAX_KEY] = id_max
+        self._ledger_bucket().clear()
         self._ledger_save()
         return {"cleared": cleared, "total": len(refs),
                 "sources_hit": sources_hit, "failed": failed}
