@@ -1136,6 +1136,45 @@ def _channel_urls(ts: int, only: list[str] | None = None) -> dict:
     return {k: f"{base}?ts={ts}&channel={k}" for k in keys}
 
 
+def _capture_legend(mcp) -> list[dict]:
+    """List spawned demo actors with stable color hint per asset_name.
+    Front-end uses {color, asset_name, count} to draw the legend rows.
+    """
+    palette = {
+        "shelf":    "#7cb342",
+        "forklift": "#fb8c00",
+        "pallet":   "#1e88e5",
+        "box":      "#e53935",
+        "drum":     "#8e24aa",
+        "worker":   "#00acc1",
+        "light_sodium":     "#ffb300",
+        "light_cool_white": "#90caf9",
+    }
+    try:
+        bucket = mcp._ledger_bucket()
+    except Exception:
+        bucket = {}
+    counts: dict[str, int] = {}
+    handles: dict[str, list[str]] = {}
+    for k, rec in bucket.items():
+        if not isinstance(rec, dict):
+            continue
+        name = rec.get("asset_name")
+        if not name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+        handles.setdefault(name, []).append(rec.get("actor_handle", k))
+    legend = []
+    for name, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        legend.append({
+            "asset_name": name,
+            "count": n,
+            "color": palette.get(name, "#888"),
+            "examples": handles.get(name, [])[:3],
+        })
+    return legend
+
+
 def _fixup_markers_after_batch(mcp, drained_wait_s: float = 1.5) -> dict:
     """Run AFTER a large spawn batch (warehouse / bulk_spawn) once UE
     has drained its deferred post-init queue. Re-verifies folder + tag
