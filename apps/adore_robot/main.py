@@ -886,6 +886,86 @@ def refresh_volume():
     return jsonify({"ok": True, "workspace": fresh})
 
 
+# ─── Worker patrol (fake-but-visible demo) ────────────────────────────────
+# 2 workers spawn at fixed PCGVolume-local positions, a background thread
+# steps them around a closed loop every step_s seconds via demo_move
+# (delete + respawn). Visually flickers but the path is recognizable --
+# real implementation will be a Robot13_Blueprint Tick on UE side.
+_PATROL_STATE: dict = {"thread": None, "stop": None, "handles": {}}
+_PATROL_PATH_A = [(-3, -3), ( 3, -3), ( 3,  3), (-3,  3)]  # rectangle CCW
+_PATROL_PATH_B = [( 0, -3), ( 3,  0), ( 0,  3), (-3,  0)]  # diamond CCW
+
+
+@app.route("/api/demo/start_patrol", methods=["POST", "GET"])
+def start_patrol():
+    """Spawn two workers and run them around fixed loops."""
+    import threading
+    from demo.demo_tools import _cached_workspace
+    from demo.asset_registry import resolve as resolve_asset, pivot_z
+
+    if _PATROL_STATE["thread"] and _PATROL_STATE["thread"].is_alive():
+        return jsonify({"ok": False, "error": "patrol already running",
+                        "handles": _PATROL_STATE["handles"]})
+
+    step_s = float(request.args.get("step_s", 2.0))
+    anchor = _cached_workspace(mcp).get("world_cm")
+    worker_path = resolve_asset("worker")
+    worker_pivot = pivot_z("worker")
+
+    try:
+        w1 = mcp.demo_spawn(asset_path=worker_path, asset_name="worker",
+                            x_m=_PATROL_PATH_A[0][0], y_m=_PATROL_PATH_A[0][1],
+                            z_m=worker_pivot, anchor_override_cm=anchor)
+        w2 = mcp.demo_spawn(asset_path=worker_path, asset_name="worker",
+                            x_m=_PATROL_PATH_B[0][0], y_m=_PATROL_PATH_B[0][1],
+                            z_m=worker_pivot, anchor_override_cm=anchor)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"spawn: {type(e).__name__}: {e}"}), 500
+
+    state = _PATROL_STATE
+    state["handles"] = {"A": w1["actor_handle"], "B": w2["actor_handle"]}
+    state["stop"] = threading.Event()
+
+    def loop(stop_evt: "threading.Event"):
+        handles = {"A": w1["actor_handle"], "B": w2["actor_handle"]}
+        idx_a, idx_b = 0, 0
+        while not stop_evt.wait(step_s):
+            idx_a = (idx_a + 1) % len(_PATROL_PATH_A)
+            idx_b = (idx_b + 1) % len(_PATROL_PATH_B)
+            for tag, path, idx in (("A", _PATROL_PATH_A, idx_a),
+                                    ("B", _PATROL_PATH_B, idx_b)):
+                try:
+                    rec = mcp.demo_move(handles[tag], path[idx][0], path[idx][1],
+                                        worker_pivot, anchor_override_cm=anchor)
+                    new_h = rec.get("actor_handle")
+                    if new_h:
+                        handles[tag] = new_h
+                        state["handles"][tag] = new_h
+                except Exception as e:
+                    print(f"[patrol] {tag} step failed: "
+                          f"{type(e).__name__}: {e}", flush=True)
+
+    t = threading.Thread(target=loop, args=(state["stop"],), daemon=True)
+    state["thread"] = t
+    t.start()
+    return jsonify({"ok": True,
+                    "workers": {"A": w1, "B": w2},
+                    "paths": {"A": _PATROL_PATH_A, "B": _PATROL_PATH_B},
+                    "step_s": step_s})
+
+
+@app.route("/api/demo/stop_patrol", methods=["POST", "GET"])
+def stop_patrol():
+    state = _PATROL_STATE
+    if not state["thread"] or not state["thread"].is_alive():
+        return jsonify({"ok": True, "was_running": False})
+    state["stop"].set()
+    state["thread"].join(timeout=3.0)
+    state["thread"] = None
+    return jsonify({"ok": True, "was_running": True,
+                    "final_handles": state["handles"]})
+
+
 @app.route("/api/demo/dump_volume_raw")
 def dump_volume_raw():
     """Hard-evidence dump: resolve the PCGVolume actor + show the LITERAL
