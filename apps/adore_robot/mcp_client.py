@@ -741,8 +741,7 @@ class UnrealMCPClient:
     def _apply_markers_with_retry(self, actor_ref: str, asset_name: str,
                                    actor_name: str, x_m: float, y_m: float,
                                    z_m: float, yaw_deg: float,
-                                   max_retries: int = 3,
-                                   wait_s: float = 0.25) -> dict:
+                                   deadline_s: float = 5.0) -> dict:
         """Set Demo/v0 folder + tags on actor; verify both stuck; retry
         on failure. Returns a result dict the caller logs/inspects.
 
@@ -763,9 +762,15 @@ class UnrealMCPClient:
         out: dict = {"folder_ok": False, "tag_ok": False,
                      "tries": 0, "errors": []}
 
-        for attempt in range(1, max_retries + 1):
-            out["tries"] = attempt
+        deadline = time.time() + deadline_s
+        wait_s = 0.1                        # initial backoff, doubles each round
+        actor_obj = {"refPath": actor_ref}  # for ActorTools fallback
 
+        while time.time() < deadline:
+            out["tries"] += 1
+            attempt = out["tries"]
+
+            # ── Folder set + verify ────────────────────────────────────
             if not out["folder_ok"]:
                 try:
                     self.call_tool_unwrapped(
@@ -775,13 +780,21 @@ class UnrealMCPClient:
                 except Exception as e:
                     out["errors"].append(f"set_folder t{attempt}: {type(e).__name__}: {e}")
 
-            # set_actor_properties works on ~99% of spawns. The 1% miss
-            # is a transient (LevelInstance streaming async). The
-            # retry+verify loop handles that without inflating RPC cost
-            # by 5x like the ActorTools.add_tag-per-tag path would.
+            # ── Tag set (set_properties first, ActorTools.add_tag after
+            # half the deadline so transient sync issues get a fair shot
+            # before we switch APIs) + verify ──────────────────────────
+            half_done = time.time() > deadline - (deadline_s / 2)
             if not out["tag_ok"]:
                 try:
-                    self.set_actor_properties(actor_ref, {"tags": desired_tags})
+                    if half_done:
+                        # Fallback path: per-tag ActorTools.add_tag.
+                        for tag in desired_tags:
+                            self.call_tool_unwrapped(
+                                "toolset_registry.toolsets.core.actor.ActorTools.add_tag",
+                                {"actor": actor_obj, "tag": tag},
+                            )
+                    else:
+                        self.set_actor_properties(actor_ref, {"tags": desired_tags})
                 except Exception as e:
                     out["errors"].append(f"set_tags t{attempt}: {type(e).__name__}: {e}")
 
@@ -794,7 +807,7 @@ class UnrealMCPClient:
                 except Exception as e:
                     out["errors"].append(f"verify_tags t{attempt}: {type(e).__name__}: {e}")
 
-            # Verify folder really took (look for our actor in the folder list).
+            # ── Folder verify ──────────────────────────────────────────
             if not out["folder_ok"]:
                 try:
                     folder_actors = self.call_tool_unwrapped(
@@ -816,8 +829,8 @@ class UnrealMCPClient:
 
             if out["folder_ok"] and out["tag_ok"]:
                 return out
-            if attempt < max_retries:
-                time.sleep(wait_s)
+            time.sleep(wait_s)
+            wait_s = min(wait_s * 1.5, 0.6)  # exp backoff cap 0.6s
 
         return out
 
