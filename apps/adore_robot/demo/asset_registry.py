@@ -22,7 +22,7 @@ _CUBE_PLACEHOLDER = "/PCG/SampleContent/MeshSockets/Meshes/1M_CubeWithSocket.1M_
 _FORKLIFT_REAL = "/Game/Scene_Warehouse/Maps/PackedLevels/Ind_War_HandTruck_01.Ind_War_HandTruck_01"
 # In ADORE the "worker" slot is actually the robot scout -- this is a
 # robotics training-scene foundry, the moving agent IS the robot.
-_ROBOT_REAL = "/Game/Robot_scout_R_21/Mesh/SK_Robot_scout_R21.SK_Robot_scout_R21"
+_ROBOT_REAL = "/Game/Robot13/Blueprints/Robot13_Blueprint.Robot13_Blueprint"
 _DRUM_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_Aba_Storage_Barrel_Metal_Green_01/"
               "SM_Ind_Aba_Storage_Barrel_Metal_Green_01.SM_Ind_Aba_Storage_Barrel_Metal_Green_01")
 _BOX_REAL = ("/Game/Scene_Warehouse/Assets/MS/3D/Ind_War_Storage_Box_Cardboard_Worn_02/"
