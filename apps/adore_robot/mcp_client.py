@@ -773,6 +773,52 @@ class UnrealMCPClient:
             "yaw_deg": new_rec.get("yaw_deg"),
         }
 
+    def set_worker_path(self, handle: str,
+                        waypoints_world_cm: list[tuple[float, float, float]],
+                        walk_speed_cms: float = 200.0,
+                        loop: bool = True) -> dict:
+        """Write a path into Robot13_Blueprint's Waypoints array + flip
+        IsWalking = true. Requires the BP-side variables documented in
+        docs/robot13_path_follower_bp.md (Waypoints / WalkSpeed /
+        LoopPath / IsWalking / CurrentIndex, all Instance Editable).
+
+        Returns {ok, actor_ref, n_waypoints, error?}.
+        """
+        self.auto_load_toolsets()
+        bucket = self._ledger_bucket()
+        rec = bucket.get(handle)
+        ref = rec.get("actor_ref") if rec else None
+        if not ref:
+            ref = self._find_demo_actor(handle)
+            if not ref:
+                return {"ok": False, "error": f"no actor matching '{handle}'"}
+
+        # Reset IsWalking first so a half-written Waypoints array doesn't
+        # cause a Tick to read uninitialised data.
+        try:
+            self.set_actor_properties(ref, {"IsWalking": False})
+        except Exception:
+            pass
+
+        wps = [{"x": float(p[0]), "y": float(p[1]),
+                "z": float(p[2]) if len(p) > 2 else 0.0}
+               for p in waypoints_world_cm]
+        try:
+            self.set_actor_properties(ref, {
+                "Waypoints": wps,
+                "WalkSpeed": float(walk_speed_cms),
+                "LoopPath": bool(loop),
+                "CurrentIndex": 0,
+            })
+            # Final flip: BP starts walking on the next Tick.
+            self.set_actor_properties(ref, {"IsWalking": True})
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}",
+                    "actor_ref": ref}
+        return {"ok": True, "actor_ref": ref,
+                "n_waypoints": len(wps), "walk_speed_cms": walk_speed_cms,
+                "loop": loop}
+
     def demo_list(self) -> dict:
         """Return every actor currently in the Demo/v0 folder, augmented
         with whatever metadata we can find. Two sources, tried in order:

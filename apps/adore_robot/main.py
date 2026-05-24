@@ -896,6 +896,52 @@ _PATROL_PATH_A = [(-3, -3), ( 3, -3), ( 3,  3), (-3,  3)]  # rectangle CCW
 _PATROL_PATH_B = [( 0, -3), ( 3,  0), ( 0,  3), (-3,  0)]  # diamond CCW
 
 
+@app.route("/api/demo/set_worker_path", methods=["POST"])
+def set_worker_path():
+    """Write a Waypoints path into a Robot13_Blueprint actor and start
+    it walking. BP-side requirements: docs/robot13_path_follower_bp.md.
+
+    Body:
+      {
+        "actor_handle": "worker_1",
+        "waypoints_local_m": [[-3,-3], [3,-3], [3,3], [-3,3]],
+        "walk_speed_mps": 2.0,    # optional, default 2 m/s
+        "loop": true              # optional, default true
+      }
+    """
+    from demo.demo_tools import _cached_workspace
+    body = request.get_json(silent=True) or {}
+    handle = body.get("actor_handle")
+    pts = body.get("waypoints_local_m") or []
+    speed_mps = float(body.get("walk_speed_mps", 2.0))
+    loop = bool(body.get("loop", True))
+    if not handle or not pts:
+        return jsonify({"ok": False,
+                        "error": "missing actor_handle or waypoints_local_m"}), 400
+
+    anchor = _cached_workspace(mcp).get("world_cm") or {"x": 0, "y": 0, "z": 0}
+    # Volume-local meters -> world cm via the same anchor used at spawn time.
+    waypoints_world_cm = []
+    for p in pts:
+        wx = anchor["x"] + float(p[0]) * 100.0
+        wy = anchor["y"] + float(p[1]) * 100.0
+        wz = anchor["z"] + (float(p[2]) if len(p) > 2 else 0.0) * 100.0
+        waypoints_world_cm.append((wx, wy, wz))
+
+    try:
+        result = mcp.set_worker_path(
+            handle=handle,
+            waypoints_world_cm=waypoints_world_cm,
+            walk_speed_cms=speed_mps * 100.0,
+            loop=loop,
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+    return jsonify({"ok": result.get("ok", False), **result,
+                    "anchor_cm": anchor,
+                    "waypoints_world_cm": waypoints_world_cm})
+
+
 @app.route("/api/demo/start_patrol", methods=["POST", "GET"])
 def start_patrol():
     """Spawn two workers and run them around fixed loops."""
