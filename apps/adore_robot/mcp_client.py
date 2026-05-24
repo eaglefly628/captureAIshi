@@ -1121,7 +1121,7 @@ class UnrealMCPClient:
         self.auto_load_toolsets()
 
         refs: set[str] = set()
-        sources_hit = {"folder": 0, "tag": 0, "ledger": 0}
+        sources_hit = {"folder": 0, "tag": 0, "ledger": 0, "glob": 0}
 
         # Source 1: Demo/v0 outliner folder (the original path).
         try:
@@ -1170,6 +1170,43 @@ class UnrealMCPClient:
                     refs.add(r)
         except Exception:
             pass
+
+        # Source 4 (DEMO SAFETY NET, 2026-05-24, xiaohuan):
+        # ==================================================================
+        # TODO: this is a workaround for the "same id_number twice"
+        # symptom (e.g. box_10_08ce + box_10_199c in Outliner). User
+        # hypothesis: two spawns may run concurrently and both pick
+        # id=10. The second spawn's actor still has unique uuid suffix
+        # so UE keeps it, but if its markers race-failed it becomes an
+        # orphan invisible to Sources 1-3. Glob-by-name catches it.
+        # ROOT-CAUSE INVESTIGATION OWED (post-demo):
+        #   - is Flask Werkzeug threaded=True spawning concurrent?
+        #   - is SSE worker firing twice from front-end StrictMode?
+        #   - is dispatch_warehouse for-loop actually serial under MCP?
+        # Once root cause is fixed, this Source 4 can be removed --
+        # the glob carries a small false-positive risk (a level pre-
+        # existing actor named 'box_99' would be caught).
+        try:
+            from demo.asset_registry import ASSET_NAMES as _ASSET_NAMES
+        except Exception:
+            _ASSET_NAMES = []
+        for asset in _ASSET_NAMES:
+            try:
+                hits = self.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                    {"glob": f"{asset}_*"},
+                )
+                if isinstance(hits, dict):
+                    hits = hits.get("actors") or hits.get("results") or []
+                if not isinstance(hits, list):
+                    continue
+                for a in hits:
+                    r = a.get("refPath") if isinstance(a, dict) else a
+                    if r and r not in refs:
+                        sources_hit["glob"] += 1
+                        refs.add(r)
+            except Exception:
+                continue
 
         cleared = 0
         failed: list[str] = []
