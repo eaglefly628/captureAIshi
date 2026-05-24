@@ -627,43 +627,49 @@ class UnrealMCPClient:
                 "xform": self._xform(world, yaw_deg),
             },
         )
-        actor_ref = None
-        if isinstance(spawned, str):
-            actor_ref = spawned
-        elif isinstance(spawned, dict):
-            actor_ref = spawned.get("refPath") or spawned.get("actor")
-        # Move into demo folder + write asset_name as an actor tag so
-        # the actor is self-identifying when we re-load a saved level
-        # without the in-memory ledger. Best-effort; ignore individual
-        # failures.
+        # ── Stage A: extract actor_ref from the spawn return value ──
+        # add_to_scene_from_asset's return shape varies between asset
+        # types (PackedLevelActor nests it under .actor, StaticMeshActor
+        # returns a bare refPath, sometimes wrapped in {refPath:}). Walk
+        # all known shapes; fall through to a glob-by-name lookup when
+        # nothing parses.
+        actor_ref = self._extract_actor_ref(spawned)
+        if not actor_ref:
+            actor_ref = self._find_by_actor_name(actor_name)
+
+        # ── Stage B: apply markers (folder + tags) with verify + retry ──
+        # PackedLevelActor and LevelInstance subclasses frequently refuse
+        # set_actor_folder / set_actor_properties on the first attempt
+        # because the actor is still streaming (LogStreaming shows
+        # 'flushing async loading' right after add_to_scene). Retrying
+        # after a short wait lets the actor finish init and accept the
+        # write. We verify each marker stuck after every attempt so a
+        # silent-success-but-no-effect failure mode (UE5.8 MCP returns
+        # ok=true even when reflection drops the write) gets caught.
+        marker_result = {"folder_ok": False, "tag_ok": False,
+                          "tries": 0, "errors": []}
         if actor_ref:
-            try:
-                self.call_tool_unwrapped(
-                    "toolset_registry.toolsets.core.scene.SceneTools.set_actor_folder",
-                    {"actor": actor_ref, "folder_path": self.DEMO_FOLDER},
-                )
-            except Exception:
-                pass
-            try:
-                # Tags double as a sidecar metadata store that survives
-                # the level save + reopen + Flask restart cycle. Position
-                # and yaw encoded here so demo_list can recover them when
-                # the in-memory ledger is empty.
-                self.set_actor_properties(actor_ref, {"tags": [
-                    "demo_v0_spawned",
-                    f"demo_v0_asset:{asset_name}",
-                    f"demo_v0_handle:{actor_name}",
-                    f"demo_v0_pos:{x_m:.3f},{y_m:.3f},{z_m:.3f}",
-                    f"demo_v0_yaw:{yaw_deg:.2f}",
-                ]})
-            except Exception:
-                pass
+            marker_result = self._apply_markers_with_retry(
+                actor_ref=actor_ref,
+                asset_name=asset_name,
+                actor_name=actor_name,
+                x_m=x_m, y_m=y_m, z_m=z_m, yaw_deg=yaw_deg,
+            )
+            if not (marker_result["folder_ok"] and marker_result["tag_ok"]):
+                # Loud warn so we see broken markers immediately instead
+                # of discovering them on the next demo_clear orphan.
+                print(f"[demo_spawn] WARN marker incomplete for "
+                      f"{actor_name}: folder_ok={marker_result['folder_ok']} "
+                      f"tag_ok={marker_result['tag_ok']} "
+                      f"errors={marker_result['errors']}", flush=True)
+
         record = {
             "actor_handle": actor_name,
             "actor_ref": actor_ref,
             "asset_name": asset_name,
             "id_number": id_number,
             "x": x_m, "y": y_m, "z": z_m, "yaw_deg": yaw_deg,
+            "marker_result": marker_result,
         }
         bucket = self._ledger_bucket()
         bucket[actor_name] = record
@@ -671,6 +677,134 @@ class UnrealMCPClient:
             bucket[actor_ref] = record  # alt lookup
         self._ledger_save()
         return record
+
+    # ── Helpers for demo_spawn ────────────────────────────────────────
+
+    @staticmethod
+    def _extract_actor_ref(spawned) -> str | None:
+        """Walk every known shape add_to_scene_from_asset returns and
+        pick out the actor refPath. Returns None if no string ref is
+        recoverable; caller can fall back to glob-by-name.
+        """
+        if isinstance(spawned, str):
+            return spawned
+        if not isinstance(spawned, dict):
+            return None
+        r = spawned.get("refPath")
+        if isinstance(r, str):
+            return r
+        actor = spawned.get("actor")
+        if isinstance(actor, str):
+            return actor
+        if isinstance(actor, dict):
+            r = actor.get("refPath")
+            if isinstance(r, str):
+                return r
+        # Last shape: MCP envelope {"result": {actor: {refPath}}, ...}
+        result = spawned.get("result")
+        if isinstance(result, dict):
+            return UnrealMCPClient._extract_actor_ref(result)
+        return None
+
+    def _find_by_actor_name(self, actor_name: str) -> str | None:
+        """Resolve an actor we just spawned by the unique name we gave
+        it. Used as a fallback when the spawn RPC return shape didn't
+        carry a parseable refPath."""
+        try:
+            res = self.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                {"glob": actor_name},
+            )
+            if isinstance(res, dict):
+                res = res.get("actors") or res.get("results") or []
+            if isinstance(res, list) and res:
+                first = res[0]
+                ref = first.get("refPath") if isinstance(first, dict) else first
+                if isinstance(ref, str):
+                    return ref
+        except Exception:
+            pass
+        return None
+
+    def _apply_markers_with_retry(self, actor_ref: str, asset_name: str,
+                                   actor_name: str, x_m: float, y_m: float,
+                                   z_m: float, yaw_deg: float,
+                                   max_retries: int = 3,
+                                   wait_s: float = 0.25) -> dict:
+        """Set Demo/v0 folder + tags on actor; verify both stuck; retry
+        on failure. Returns a result dict the caller logs/inspects.
+
+        The verify step is the critical part: UE5.8 MCP set_properties
+        returns ok=true even when reflection silently drops the write
+        on async-streaming or read-only-during-init actors (typical for
+        PackedLevelActor). Reading back the tags + checking the folder's
+        actor list is the only way to know we actually marked the actor.
+        """
+        import time
+        desired_tags = [
+            "demo_v0_spawned",
+            f"demo_v0_asset:{asset_name}",
+            f"demo_v0_handle:{actor_name}",
+            f"demo_v0_pos:{x_m:.3f},{y_m:.3f},{z_m:.3f}",
+            f"demo_v0_yaw:{yaw_deg:.2f}",
+        ]
+        out: dict = {"folder_ok": False, "tag_ok": False,
+                     "tries": 0, "errors": []}
+
+        for attempt in range(1, max_retries + 1):
+            out["tries"] = attempt
+
+            if not out["folder_ok"]:
+                try:
+                    self.call_tool_unwrapped(
+                        "toolset_registry.toolsets.core.scene.SceneTools.set_actor_folder",
+                        {"actor": actor_ref, "folder_path": self.DEMO_FOLDER},
+                    )
+                except Exception as e:
+                    out["errors"].append(f"set_folder t{attempt}: {type(e).__name__}: {e}")
+
+            if not out["tag_ok"]:
+                try:
+                    self.set_actor_properties(actor_ref, {"tags": desired_tags})
+                except Exception as e:
+                    out["errors"].append(f"set_tags t{attempt}: {type(e).__name__}: {e}")
+
+            # Verify tags really stuck (read back).
+            if not out["tag_ok"]:
+                try:
+                    chk = self.get_actor_properties(actor_ref, ["tags"])
+                    tags = chk.get("tags") if isinstance(chk, dict) else None
+                    if isinstance(tags, list) and "demo_v0_spawned" in [str(t) for t in tags]:
+                        out["tag_ok"] = True
+                except Exception as e:
+                    out["errors"].append(f"verify_tags t{attempt}: {type(e).__name__}: {e}")
+
+            # Verify folder really took (look for our actor in the folder list).
+            if not out["folder_ok"]:
+                try:
+                    folder_actors = self.call_tool_unwrapped(
+                        "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
+                        {"folder_path": self.DEMO_FOLDER, "recursive": False},
+                    )
+                    if isinstance(folder_actors, dict):
+                        folder_actors = (folder_actors.get("actors")
+                                          or folder_actors.get("results") or [])
+                    if isinstance(folder_actors, list):
+                        refs_in_folder = [
+                            a.get("refPath") if isinstance(a, dict) else a
+                            for a in folder_actors
+                        ]
+                        if actor_ref in refs_in_folder:
+                            out["folder_ok"] = True
+                except Exception as e:
+                    out["errors"].append(f"verify_folder t{attempt}: {type(e).__name__}: {e}")
+
+            if out["folder_ok"] and out["tag_ok"]:
+                return out
+            if attempt < max_retries:
+                time.sleep(wait_s)
+
+        return out
 
     def _list_demo_folder(self) -> list:
         """get_actors_in_folder, but treat 'folder does not exist' as
