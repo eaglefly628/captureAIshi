@@ -1136,7 +1136,88 @@ def _channel_urls(ts: int, only: list[str] | None = None) -> dict:
     return {k: f"{base}?ts={ts}&channel={k}" for k in keys}
 
 
-def _capture_legend(mcp) -> list[dict]:
+def _fixup_markers_after_batch(mcp, drained_wait_s: float = 1.5) -> dict:
+    """Run AFTER a large spawn batch (warehouse / bulk_spawn) once UE
+    has drained its deferred post-init queue. Re-verifies folder + tag
+    for every actor in the ledger and re-applies the missing marker.
+
+    Background: even with the id-lock + warehouse mutex, ADORE marker
+    writes can be silently reset by UE-side deferred init that fires
+    AFTER demo_spawn released its lock. The first verify reads the
+    pending-but-good state, returns ok, then UE's deferred callback
+    blanks the marker. This pass catches those drift-back orphans
+    while UE is idle so set_folder + add_tag write atomically.
+
+    Returns {fixed_folder, fixed_tag, still_missing} counts.
+    """
+    import time
+    time.sleep(drained_wait_s)
+
+    bucket = mcp._ledger_bucket()
+    # Snapshot the current folder so we don't re-call get_actors_in_folder
+    # per actor (one query, set membership).
+    try:
+        folder_actors = mcp.call_tool_unwrapped(
+            "toolset_registry.toolsets.core.scene.SceneTools.get_actors_in_folder",
+            {"folder_path": mcp.DEMO_FOLDER, "recursive": False},
+        )
+        if isinstance(folder_actors, dict):
+            folder_actors = (folder_actors.get("actors")
+                              or folder_actors.get("results") or [])
+        in_folder = {
+            a.get("refPath") if isinstance(a, dict) else a
+            for a in folder_actors
+        }
+    except Exception:
+        in_folder = set()
+
+    fixed_folder = 0
+    fixed_tag = 0
+    still_missing: list[str] = []
+
+    for handle, rec in list(bucket.items()):
+        if not isinstance(rec, dict):
+            continue
+        ref = rec.get("actor_ref")
+        if not ref:
+            continue
+
+        # ── Folder fixup ─────────────────────────────────────────────
+        if ref not in in_folder:
+            try:
+                mcp.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.scene.SceneTools.set_actor_folder",
+                    {"actor": ref, "folder_path": mcp.DEMO_FOLDER},
+                )
+                fixed_folder += 1
+            except Exception:
+                still_missing.append(f"folder:{handle}")
+
+        # ── Tag fixup ────────────────────────────────────────────────
+        actor_obj = {"refPath": ref}
+        try:
+            chk = mcp.call_tool_unwrapped(
+                "toolset_registry.toolsets.core.actor.ActorTools.has_tag",
+                {"actor": actor_obj, "tag": "demo_v0_spawned"},
+            )
+            truthy = (chk is True
+                      or (isinstance(chk, dict) and chk.get("result") is True))
+            if not truthy:
+                try:
+                    mcp.call_tool_unwrapped(
+                        "toolset_registry.toolsets.core.actor.ActorTools.add_tag",
+                        {"actor": actor_obj, "tag": "demo_v0_spawned"},
+                    )
+                    fixed_tag += 1
+                except Exception:
+                    still_missing.append(f"tag:{handle}")
+        except Exception:
+            still_missing.append(f"has_tag_check:{handle}")
+
+    return {"fixed_folder": fixed_folder, "fixed_tag": fixed_tag,
+            "still_missing": still_missing,
+            "drained_wait_s": drained_wait_s,
+            "ledger_size": len(bucket)}
     """List spawned demo actors with stable color hint per asset_name.
     Front-end uses {color, asset_name, count} to draw the legend rows.
     """

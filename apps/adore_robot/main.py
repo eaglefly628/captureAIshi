@@ -83,6 +83,31 @@ APP_CHANNEL = "demo-v0"
 
 MCP_URL = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8000/mcp")
 
+# Suppress werkzeug access log lines for polling / heartbeat endpoints
+# so the terminal isn't drowned by /api/mcp/current_level once a second.
+# Real flow (chat, spawn batch, demo_clear, errors) still prints.
+import logging as _logging
+class _NoisyPathsFilter(_logging.Filter):
+    NOISY = (
+        "/api/mcp/current_level",
+        "/api/mcp/status",
+        "/api/status/capture",
+        "/api/status/adore_robot",
+        "/api/mcp/screenshot.png",
+        "/api/mcp/init",
+        "/api/mcp/pcg_status",
+        "/api/demo/list_objects",
+    )
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not any(p in msg for p in self.NOISY)
+
+_logging.getLogger("werkzeug").addFilter(_NoisyPathsFilter())
+
+
 app = Flask(
     __name__,
     template_folder=str(TEMPLATES),
