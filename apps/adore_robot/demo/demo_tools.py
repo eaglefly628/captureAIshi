@@ -560,10 +560,29 @@ _INVALIDATE_STATE: dict = {
 
 _INVALIDATE_SCRIPT_INVALIDATE = (
     "def run():\n"
-    "    import unreal\n"
-    "    unreal.EditorLevelLibrary.editor_invalidate_viewports()\n"
-    "    return {'ok': True}\n"
+    "    try:\n"
+    "        import unreal\n"
+    "        unreal.EditorLevelLibrary.editor_invalidate_viewports()\n"
+    "        return {'ok': True}\n"
+    "    except Exception as e:\n"
+    "        return {'ok': False, 'err': type(e).__name__ + ':' + str(e)}\n"
 )
+
+
+def _script_invalidate_ok(result) -> bool:
+    """ProgrammaticToolset returns the script's dict; UE-side
+    RaiseScriptError on disallowed `import unreal` is a *warning*
+    that does NOT raise to RPC. So we must inspect the actual
+    return value to know if the script body actually ran clean.
+    """
+    if isinstance(result, dict):
+        if result.get("ok") is True:
+            return True
+        # Some wrappers nest: {"result": {"ok": True}}
+        inner = result.get("result")
+        if isinstance(inner, dict) and inner.get("ok") is True:
+            return True
+    return False
 
 _TOOL_EXEC_SCRIPT = (
     "toolset_registry.toolsets.core.programmatic."
@@ -607,12 +626,18 @@ def _try_invalidate_viewports(mcp) -> None:
         return
 
     if state["mode"] is None:
-        # Stage 1 probe -- script-based invalidate.
+        # Stage 1 probe -- script-based invalidate. We MUST check the
+        # actual return dict; UE-side RaiseScriptError on disallowed
+        # 'import unreal' is a warning that does NOT raise to RPC, so
+        # call_tool_unwrapped not throwing is meaningless here.
         try:
-            mcp.call_tool_unwrapped(_TOOL_EXEC_SCRIPT,
-                                    {"script": _INVALIDATE_SCRIPT_INVALIDATE})
-            state["mode"] = "script"
-            return
+            result = mcp.call_tool_unwrapped(
+                _TOOL_EXEC_SCRIPT,
+                {"script": _INVALIDATE_SCRIPT_INVALIDATE},
+            )
+            if _script_invalidate_ok(result):
+                state["mode"] = "script"
+                return
         except Exception:
             pass
         # Stage 2 probe -- camera nudge.
@@ -621,7 +646,6 @@ def _try_invalidate_viewports(mcp) -> None:
             if isinstance(cam, dict):
                 state["cam_cache"] = cam
                 state["mode"] = "camera"
-                # exercise the round-trip immediately so we KNOW it works
                 mcp.call_tool_unwrapped(_TOOL_SET_CAM, {"transform": cam})
                 return
         except Exception:
@@ -631,8 +655,14 @@ def _try_invalidate_viewports(mcp) -> None:
 
     try:
         if state["mode"] == "script":
-            mcp.call_tool_unwrapped(_TOOL_EXEC_SCRIPT,
-                                    {"script": _INVALIDATE_SCRIPT_INVALIDATE})
+            result = mcp.call_tool_unwrapped(
+                _TOOL_EXEC_SCRIPT,
+                {"script": _INVALIDATE_SCRIPT_INVALIDATE},
+            )
+            if not _script_invalidate_ok(result):
+                # Downgrade -- script started returning failures (e.g.
+                # sandbox tightened or unreal import revoked mid-session).
+                state["mode"] = "disabled"
         elif state["mode"] == "camera":
             cam = state.get("cam_cache")
             if cam is None:
@@ -640,8 +670,6 @@ def _try_invalidate_viewports(mcp) -> None:
                 state["cam_cache"] = cam
             mcp.call_tool_unwrapped(_TOOL_SET_CAM, {"transform": cam})
     except Exception:
-        # One-time failure -> permanently downgrade rather than keep
-        # spamming a broken tool name. Next session will re-probe.
         state["mode"] = "disabled"
 
 
