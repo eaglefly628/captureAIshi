@@ -222,6 +222,25 @@ SPAWN_BATCH_TOOL = ToolDef(
 )
 
 
+CAPTURE_TOOL = ToolDef(
+    name="capture_robot_views",
+    description=(
+        "Capture the 4 robot training channels at the current editor "
+        "viewport: RGB / SceneDepth / WorldNormal / ObjectID. Also "
+        "returns a legend mapping ObjectID -> actor handle so the "
+        "chat can show 'segment 3 = forklift_1'. Use when the user "
+        "says '截图 / capture / 截取训练数据 / 抓帧 / 给我看 4 通道'. "
+        "After capture, ADORE chat renders a 2x2 grid of the channels "
+        "plus the legend table."
+    ),
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+    },
+)
+
+
 PIE_START_TOOL = ToolDef(
     name="play_in_editor",
     description=(
@@ -264,6 +283,7 @@ DEMO_TOOLS: list[ToolDef] = [
     SWITCH_LEVEL_TOOL,
     PIE_START_TOOL,
     PIE_STOP_TOOL,
+    CAPTURE_TOOL,
 ]
 
 DEMO_TOOL_NAMES = {t.name for t in DEMO_TOOLS}
@@ -963,7 +983,78 @@ DISPATCHERS = {
     "switch_level": dispatch_switch_level,
     "play_in_editor": dispatch_pie_start,
     "end_play_in_editor": dispatch_pie_stop,
+    "capture_robot_views": lambda mcp, args: dispatch_capture(mcp, args),
 }
+
+
+def dispatch_capture(mcp, _args: dict) -> dict:
+    """v0.4.3 demo: capture 4 robot-training channels.
+
+    RGB is real (CaptureEditorImage). Depth/Normal/ObjectID are
+    SERVER-SIDE MOCKS for now: we return URLs that the front-end
+    fetches, and the server generates derived images (grayscale of
+    RGB for depth, solid normal-map color, palette-colorized blocks
+    for objectid). The legend lists demo actors from the ledger so
+    the chat can show 'segment N = forklift_1'.
+
+    Post-demo (TODO xiaohuan): wire this to apps/capture pipeline's
+    renderdoc RGB+Depth+Normal+ObjectID real export.
+    """
+    import time
+    ts = int(time.time() * 1000)
+    rgb_url = f"/api/mcp/screenshot.png?t={ts}"
+    base = "/api/demo/capture_channel"
+    out = {
+        "ok": True,
+        "ts": ts,
+        "channels": {
+            "rgb":      rgb_url,
+            "depth":    f"{base}?channel=depth&t={ts}",
+            "normal":   f"{base}?channel=normal&t={ts}",
+            "objectid": f"{base}?channel=objectid&t={ts}",
+        },
+        "legend": _capture_legend(mcp),
+        "note": "depth/normal/objectid currently MOCK (derived). "
+                "RGB is real CaptureEditorImage.",
+    }
+    return out
+
+
+def _capture_legend(mcp) -> list[dict]:
+    """List spawned demo actors with stable color hint per asset_name.
+    Front-end uses {color, asset_name, count} to draw the legend rows.
+    """
+    palette = {
+        "shelf":    "#7cb342",
+        "forklift": "#fb8c00",
+        "pallet":   "#1e88e5",
+        "box":      "#e53935",
+        "drum":     "#8e24aa",
+        "worker":   "#00acc1",
+    }
+    try:
+        bucket = mcp._ledger_bucket()
+    except Exception:
+        bucket = {}
+    counts: dict[str, int] = {}
+    handles: dict[str, list[str]] = {}
+    for k, rec in bucket.items():
+        if not isinstance(rec, dict):
+            continue
+        name = rec.get("asset_name")
+        if not name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+        handles.setdefault(name, []).append(rec.get("actor_handle", k))
+    legend = []
+    for name, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        legend.append({
+            "asset_name": name,
+            "count": n,
+            "color": palette.get(name, "#888"),
+            "examples": handles.get(name, [])[:3],
+        })
+    return legend
 
 
 def dispatch(mcp, tool_name: str, args: dict) -> dict:

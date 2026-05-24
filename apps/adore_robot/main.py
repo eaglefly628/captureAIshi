@@ -935,6 +935,62 @@ def pie_stop():
                             "fallback_error": f"{type(fallback_err).__name__}: {fallback_err}"}), 500
 
 
+@app.route("/api/demo/capture_channel")
+def capture_channel():
+    """Mock RGB+Depth+Normal+ObjectID multi-channel for the demo.
+
+    RGB is captured live from UE via CaptureEditorImage; depth/normal/
+    objectid are derived from RGB server-side until the real apps/capture
+    pipeline is wired (TODO xiaohuan post-demo).
+    """
+    channel = (request.args.get("channel") or "rgb").lower()
+    try:
+        png = mcp.capture_editor_image()
+    except Exception as e:
+        return Response(f"capture err: {e}".encode(), status=500,
+                        mimetype="text/plain")
+    if not png:
+        return Response(b"", status=204)
+
+    if channel == "rgb":
+        return Response(png, mimetype="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+    # Derived channels via PIL. PIL ships with Flask install (it doesn't,
+    # but Pillow is common; degrade gracefully if missing).
+    try:
+        from PIL import Image, ImageOps, ImageFilter
+        import io, hashlib
+    except Exception:
+        return Response(png, mimetype="image/png")
+
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    if channel == "depth":
+        # Grayscale + invert, looks like a depth map
+        gray = ImageOps.grayscale(img)
+        depth = ImageOps.invert(gray)
+        out_img = depth.convert("RGB")
+    elif channel == "normal":
+        # Edge-emphasized + tint blue/red, looks like normal map
+        edges = img.filter(ImageFilter.FIND_EDGES)
+        out_img = Image.merge("RGB", (
+            ImageOps.autocontrast(edges.split()[0]),
+            ImageOps.autocontrast(edges.split()[1]),
+            Image.eval(edges.split()[2], lambda v: 128 + v // 2),
+        ))
+    elif channel == "objectid":
+        # Posterize + colorize -- looks like a segmentation mask
+        post = ImageOps.posterize(img, 2)
+        out_img = post
+    else:
+        out_img = img
+
+    buf = io.BytesIO()
+    out_img.save(buf, format="PNG")
+    return Response(buf.getvalue(), mimetype="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
 @app.route("/api/demo/refresh_volume", methods=["POST", "GET"])
 def refresh_volume():
     """Drop cached workspace and re-resolve. Use after switching UE level

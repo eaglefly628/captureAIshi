@@ -473,6 +473,23 @@ function App() {
             x: s.x, y: s.y, z: s.z ?? 0, yaw_deg: s.yaw_deg ?? 0,
           }))]);
           if (res.total > 0) setSceneSeeded(true);
+        } else if (r.tool === 'capture_robot_views' && res.channels) {
+          // Attach a capture payload onto the most recent assistant
+          // message so the chat renders the 2x2 grid + legend card.
+          setMessages(prev => {
+            const out = [...prev];
+            for (let i = out.length - 1; i >= 0; i--) {
+              if (out[i].role === 'assistant') {
+                out[i] = { ...out[i], capture: {
+                  channels: res.channels,
+                  legend: res.legend || [],
+                  note: res.note || '',
+                } };
+                break;
+              }
+            }
+            return out;
+          });
         } else if (r.tool === 'clear_demo_objects') {
           setSpawnedActors([]);
           setSceneSeeded(false);

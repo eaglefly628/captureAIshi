@@ -284,6 +284,7 @@ function Msg({ m }) {
           ))}
         </div>
       )}
+      {m.capture && <CaptureCard cap={m.capture} />}
       {m.dataset && <DatasetCard d={m.dataset} />}
     </div>
   );
@@ -314,6 +315,76 @@ function formatVal(v) {
   if (typeof v === 'string') return v;
   return JSON.stringify(v);
 }
+
+function CaptureCard({ cap }) {
+  const ch = cap.channels || {};
+  const labels = { rgb: 'RGB', depth: 'Depth', normal: 'WorldNormal', objectid: 'ObjectID' };
+  const cellStyle = {
+    background: '#0d0f12', border: '1px solid #1f2228', borderRadius: 4,
+    overflow: 'hidden', display: 'flex', flexDirection: 'column',
+  };
+  const captionStyle = {
+    fontFamily: 'var(--mono)', fontSize: 10, padding: '3px 6px',
+    color: '#9cf', background: 'rgba(120,180,255,0.08)',
+  };
+  return (
+    <div style={{ marginTop: 8, padding: 8,
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid #222', borderRadius: 5 }}>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#8df',
+                    marginBottom: 6 }}>
+        ◉ Robot training capture · 4 channels
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                    gap: 4 }}>
+        {['rgb','depth','normal','objectid'].map(k => (
+          <div key={k} style={cellStyle}>
+            <div style={captionStyle}>{labels[k]}</div>
+            {ch[k] ? (
+              <img src={ch[k]} alt={k}
+                   style={{ width: '100%', height: 96, objectFit: 'cover',
+                            background: '#000' }} />
+            ) : (
+              <div style={{ height: 96, display: 'flex',
+                            alignItems: 'center', justifyContent: 'center',
+                            color: '#666', fontSize: 10 }}>未捕获</div>
+            )}
+          </div>
+        ))}
+      </div>
+      {cap.legend && cap.legend.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 10,
+                        color: '#888', marginBottom: 3 }}>
+            ObjectID legend ({cap.legend.length} class)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {cap.legend.map((row, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '2px 6px', background: 'rgba(255,255,255,0.04)',
+                borderRadius: 3, fontSize: 10.5,
+                fontFamily: 'var(--mono)',
+              }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2,
+                               background: row.color }} />
+                <span style={{ color: '#eee' }}>{row.asset_name}</span>
+                <span style={{ color: '#888' }}>x{row.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {cap.note && (
+        <div style={{ marginTop: 6, fontSize: 10, color: '#888',
+                      fontStyle: 'italic' }}>
+          {cap.note}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function DatasetCard({ d }) {
   return (
