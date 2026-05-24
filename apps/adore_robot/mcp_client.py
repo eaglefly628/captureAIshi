@@ -1133,6 +1133,35 @@ class UnrealMCPClient:
         except Exception:
             pass
 
+        # Source 4: outliner glob by spawn naming convention. demo_spawn
+        # names actors '<asset_name>_<id>' (e.g. forklift_1, shelf_3).
+        # For PackedLevel/LevelInstance actors that refused tag + folder
+        # AND were lost from the ledger (cross-session / level switch),
+        # the actor label is the only surviving marker. Risk: a level
+        # could already contain unrelated actors named 'forklift_xyz';
+        # we accept that since demo asset names are specific enough.
+        try:
+            from demo.asset_registry import ASSET_NAMES as _ASSET_NAMES
+        except Exception:
+            _ASSET_NAMES = []
+        for asset in _ASSET_NAMES:
+            try:
+                hits = self.call_tool_unwrapped(
+                    "toolset_registry.toolsets.core.scene.SceneTools.find_actors",
+                    {"glob": f"{asset}_*"},
+                )
+                if isinstance(hits, dict):
+                    hits = hits.get("actors") or hits.get("results") or []
+                if not isinstance(hits, list):
+                    continue
+                for a in hits:
+                    r = a.get("refPath") if isinstance(a, dict) else a
+                    if r and r not in refs:
+                        sources_hit["glob"] += 1
+                        refs.add(r)
+            except Exception:
+                continue
+
         cleared = 0
         failed: list[str] = []
         for r in refs:
