@@ -775,38 +775,24 @@ class UnrealMCPClient:
                 except Exception as e:
                     out["errors"].append(f"set_folder t{attempt}: {type(e).__name__}: {e}")
 
-            # ActorTools.add_tag is the proper per-tag API and works on
-            # PackedLevelActor / BPP where set_properties({"tags":[...]})
-            # silently fails. 5 RPCs per spawn is acceptable (we run
-            # spawns serially anyway). actor passed as {refPath:str} dict
-            # to satisfy the actor:object schema strictly.
-            actor_obj = {"refPath": actor_ref}
-            if not out["tag_ok"]:
-                for tag in desired_tags:
-                    try:
-                        self.call_tool_unwrapped(
-                            "toolset_registry.toolsets.core.actor.ActorTools.add_tag",
-                            {"actor": actor_obj, "tag": tag},
-                        )
-                    except Exception as e:
-                        out["errors"].append(
-                            f"add_tag '{tag}' t{attempt}: {type(e).__name__}: {e}")
-
-            # Verify via ActorTools.has_tag (also bypasses set_properties).
+            # set_actor_properties works on ~99% of spawns. The 1% miss
+            # is a transient (LevelInstance streaming async). The
+            # retry+verify loop handles that without inflating RPC cost
+            # by 5x like the ActorTools.add_tag-per-tag path would.
             if not out["tag_ok"]:
                 try:
-                    chk = self.call_tool_unwrapped(
-                        "toolset_registry.toolsets.core.actor.ActorTools.has_tag",
-                        {"actor": actor_obj, "tag": "demo_v0_spawned"},
-                    )
-                    truthy = (chk is True
-                              or (isinstance(chk, dict)
-                                  and chk.get("result") is True))
-                    if truthy:
+                    self.set_actor_properties(actor_ref, {"tags": desired_tags})
+                except Exception as e:
+                    out["errors"].append(f"set_tags t{attempt}: {type(e).__name__}: {e}")
+
+            if not out["tag_ok"]:
+                try:
+                    chk = self.get_actor_properties(actor_ref, ["tags"])
+                    tags = chk.get("tags") if isinstance(chk, dict) else None
+                    if isinstance(tags, list) and "demo_v0_spawned" in [str(t) for t in tags]:
                         out["tag_ok"] = True
                 except Exception as e:
-                    out["errors"].append(
-                        f"verify_tag t{attempt}: {type(e).__name__}: {e}")
+                    out["errors"].append(f"verify_tags t{attempt}: {type(e).__name__}: {e}")
 
             # Verify folder really took (look for our actor in the folder list).
             if not out["folder_ok"]:
