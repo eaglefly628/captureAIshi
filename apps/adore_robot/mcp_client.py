@@ -636,13 +636,14 @@ class UnrealMCPClient:
         bucket_for_id = self._ledger_bucket()
         # Serialize the id-allocation -> ledger-placeholder write so a
         # second concurrent demo_spawn can't pick the same id_number.
-        # Without this lock, user saw box_76_85cf x2 (same id, same
-        # uuid suffix even -- two threads computed both in lock-step).
-        import uuid as _uuid
+        # (Previously also appended a uuid4 suffix as belt-and-braces
+        # against same-name collisions, but with this lock + the 4-source
+        # demo_clear the suffix was redundant AND broke chat handle
+        # references like 'forklift_1' -- dropped. Clean name is back.)
         with self._spawn_id_lock:
             id_number = (id_number_override if id_number_override is not None
                          else self._next_id_for(bucket_for_id, asset_name))
-            actor_name = f"{asset_name}_{id_number}_{_uuid.uuid4().hex[:4]}"
+            actor_name = f"{asset_name}_{id_number}"
             # Reserve the id immediately so the next concurrent
             # _next_id_for sees it as used.
             bucket_for_id[actor_name] = {
@@ -882,6 +883,47 @@ class UnrealMCPClient:
             actors = actors.get("actors") or actors.get("results") or []
         return actors if isinstance(actors, list) else []
 
+    def _resolve_record(self, bucket: dict, handle: str) -> dict | None:
+        """Find a ledger record for a user/LLM-supplied handle, tolerant
+        of the uuid suffix we now append + common abbreviations.
+
+        Match order:
+          1. exact key            'forklift_1_a3f1'
+          2. uuid-stripped base   'forklift_1' -> 'forklift_1_a3f1'
+          3. abbreviation         'f1' / 'F1' -> asset starts with 'f'
+                                  + id_number == 1
+        Skips _pending placeholder records.
+        """
+        if not handle:
+            return None
+        h = handle.strip()
+
+        rec = bucket.get(h)
+        if isinstance(rec, dict) and not rec.get("_pending"):
+            return rec
+
+        # 2. uuid-stripped base match
+        for k, r in bucket.items():
+            if not isinstance(r, dict) or r.get("_pending"):
+                continue
+            base = k.rsplit("_", 1)[0]  # drop the _<uuid4hex> suffix
+            if base == h or k == h:
+                return r
+
+        # 3. abbreviation: first letter of asset_name + id_number
+        import re
+        m = re.match(r"^([a-zA-Z])[a-zA-Z]*[_\- ]?(\d+)$", h)
+        if m:
+            letter = m.group(1).lower()
+            idn = int(m.group(2))
+            for k, r in bucket.items():
+                if not isinstance(r, dict) or r.get("_pending"):
+                    continue
+                asset = str(r.get("asset_name", ""))
+                if asset[:1].lower() == letter and r.get("id_number") == idn:
+                    return r
+        return None
+
     def _find_demo_actor(self, handle: str) -> str | None:
         actors = self._list_demo_folder()
         for a in actors:
@@ -896,7 +938,7 @@ class UnrealMCPClient:
     def demo_delete(self, handle: str) -> dict:
         self.auto_load_toolsets()
         bucket = self._ledger_bucket()
-        rec = bucket.get(handle)
+        rec = self._resolve_record(bucket, handle)
         ref = (rec or {}).get("actor_ref") or self._find_demo_actor(handle)
         if not ref:
             return {"error": f"no demo actor matching '{handle}'"}
@@ -924,7 +966,7 @@ class UnrealMCPClient:
         """
         self.auto_load_toolsets()
         bucket = self._ledger_bucket()
-        rec = bucket.get(handle)
+        rec = self._resolve_record(bucket, handle)
         if not rec:
             ref = self._find_demo_actor(handle)
             if not ref:
@@ -980,7 +1022,7 @@ class UnrealMCPClient:
         """
         self.auto_load_toolsets()
         bucket = self._ledger_bucket()
-        rec = bucket.get(handle)
+        rec = self._resolve_record(bucket, handle)
         ref = rec.get("actor_ref") if rec else None
         if not ref:
             ref = self._find_demo_actor(handle)
@@ -1242,7 +1284,7 @@ class UnrealMCPClient:
         list_objects to look up the absolute target."""
         self.auto_load_toolsets()
         bucket = self._ledger_bucket()
-        rec = bucket.get(handle)
+        rec = self._resolve_record(bucket, handle)
         cur_x = rec.get("x", 0) if rec else None
         cur_y = rec.get("y", 0) if rec else None
         cur_z = rec.get("z", 0) if rec else None
